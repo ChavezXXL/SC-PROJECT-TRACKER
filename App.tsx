@@ -5,7 +5,7 @@ import {
   Search, Plus, User as UserIcon, Calendar, Edit2, Save, X,
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
-  RotateCcw, ChevronUp, Database, ExternalLink
+  RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
@@ -19,6 +19,11 @@ const formatDuration = (mins: number | undefined) => {
   const m = Math.round(mins % 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+};
+
+const formatDurationDecimal = (mins: number | undefined) => {
+    if (mins === undefined || mins === null) return 0;
+    return (mins / 60).toFixed(2);
 };
 
 // --- PRINT STYLES ---
@@ -761,23 +766,154 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 // --- ADMIN: LOGS ---
 const LogsView = () => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
-   useEffect(() => DB.subscribeLogs(setLogs), []);
+   const [search, setSearch] = useState('');
+   const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
+   const [refreshKey, setRefreshKey] = useState(0);
+
+   useEffect(() => {
+     // Trigger subscription refresh when key changes (simulated refresh)
+     const unsub = DB.subscribeLogs(setLogs);
+     return () => unsub();
+   }, [refreshKey]);
+
+   const getFilterDate = (type: 'week' | 'month' | 'year' | 'all') => {
+       const now = new Date();
+       if (type === 'all') return 0;
+       
+       const d = new Date();
+       if (type === 'week') {
+           // Start of current week (Monday)
+           const day = now.getDay() || 7; 
+           if (day !== 1) d.setHours(-24 * (day - 1));
+           else d.setHours(0,0,0,0);
+       } else if (type === 'month') {
+           d.setDate(1);
+       } else if (type === 'year') {
+           d.setMonth(0, 1);
+       }
+       d.setHours(0,0,0,0);
+       return d.getTime();
+   };
+
+   const filteredLogs = useMemo(() => {
+       const minDate = getFilterDate(timeFilter);
+       const term = search.toLowerCase();
+
+       return logs.filter(l => {
+           // Date Check
+           if (l.startTime < minDate) return false;
+           // Search Check
+           if (!term) return true;
+           return (
+               l.jobId.toLowerCase().includes(term) ||
+               l.userName.toLowerCase().includes(term) ||
+               l.operation.toLowerCase().includes(term)
+           );
+       }).sort((a,b) => b.startTime - a.startTime);
+   }, [logs, search, timeFilter]);
+
+   const stats = useMemo(() => {
+       const totalMinutes = filteredLogs.reduce((acc, l) => acc + (l.durationMinutes || 0), 0);
+       const uniqueJobs = new Set(filteredLogs.map(l => l.jobId)).size;
+       return { totalMinutes, uniqueJobs, count: filteredLogs.length };
+   }, [filteredLogs]);
+
    return (
       <div className="space-y-6">
-         <h2 className="text-2xl font-bold">Production Logs</h2>
+         {/* HEADER */}
+         <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+             <h2 className="text-2xl font-bold flex items-center gap-2"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
+             
+             <div className="flex gap-2 bg-zinc-900 border border-white/10 p-1 rounded-xl">
+                 {(['week', 'month', 'year', 'all'] as const).map((t) => (
+                     <button 
+                        key={t}
+                        onClick={() => setTimeFilter(t)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}
+                     >
+                         {t === 'all' ? 'All Time' : `This ${t}`}
+                     </button>
+                 ))}
+             </div>
+         </div>
+
+         {/* CONTROLS & SEARCH */}
+         <div className="flex gap-2">
+            <div className="relative flex-1">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
+                <input 
+                    value={search} 
+                    onChange={e => setSearch(e.target.value)} 
+                    placeholder="Filter by Job ID, Employee, or Operation..." 
+                    className="w-full pl-9 pr-4 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder-zinc-600" 
+                />
+            </div>
+            <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh">
+                <RefreshCw className="w-4 h-4" />
+            </button>
+         </div>
+
+         {/* SUMMARY AGGREGATION */}
+         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+             <div className="bg-blue-600/10 border border-blue-600/20 p-4 rounded-2xl">
+                 <p className="text-xs text-blue-400 font-bold uppercase mb-1 flex items-center gap-2"><Clock className="w-3 h-3"/> Total Hours</p>
+                 <p className="text-2xl font-bold text-white">{formatDurationDecimal(stats.totalMinutes)} <span className="text-sm font-normal text-blue-300">hrs</span></p>
+             </div>
+             <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
+                 <p className="text-xs text-zinc-500 font-bold uppercase mb-1">Total Records</p>
+                 <p className="text-2xl font-bold text-white">{stats.count}</p>
+             </div>
+             <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
+                 <p className="text-xs text-zinc-500 font-bold uppercase mb-1">Unique Jobs</p>
+                 <p className="text-2xl font-bold text-white">{stats.uniqueJobs}</p>
+             </div>
+         </div>
+
+         {/* DATA TABLE */}
          <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
              <table className="w-full text-sm text-left">
-                <thead className="bg-white/5 text-zinc-500"><tr><th className="p-4">Date</th><th className="p-4">Start</th><th className="p-4">End</th><th className="p-4">User</th><th className="p-4">Op</th></tr></thead>
+                <thead className="bg-white/5 text-zinc-500 text-xs uppercase font-bold tracking-wider">
+                    <tr>
+                        <th className="p-4">Date</th>
+                        <th className="p-4">Time</th>
+                        <th className="p-4">Job ID</th>
+                        <th className="p-4">Employee</th>
+                        <th className="p-4">Operation</th>
+                        <th className="p-4 text-right">Duration</th>
+                    </tr>
+                </thead>
                 <tbody className="divide-y divide-white/5">
-                   {logs.map(l => (
-                      <tr key={l.id}>
+                   {filteredLogs.map(l => (
+                      <tr key={l.id} className="hover:bg-white/5 transition-colors">
                          <td className="p-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                         <td className="p-4 font-mono text-zinc-300">{new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                         <td className="p-4 font-mono text-zinc-300">{l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-500 font-bold text-xs">ACTIVE</span>}</td>
-                         <td className="p-4 text-white font-medium">{l.userName}</td>
-                         <td className="p-4 text-blue-400">{l.operation}</td>
+                         <td className="p-4 font-mono text-zinc-500 text-xs">
+                             {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                             <ArrowRight className="inline w-3 h-3 mx-1 opacity-50"/>
+                             {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
+                         </td>
+                         <td className="p-4 text-white font-medium">{l.jobId}</td>
+                         <td className="p-4 text-zinc-300 flex items-center gap-2">
+                             <div className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold">{l.userName.charAt(0)}</div>
+                             {l.userName}
+                         </td>
+                         <td className="p-4"><span className="bg-zinc-800 text-zinc-300 px-2 py-1 rounded text-xs border border-white/5">{l.operation}</span></td>
+                         <td className="p-4 text-right font-mono">
+                             {l.endTime ? (
+                                 <span className="text-zinc-300">{formatDuration(l.durationMinutes)}</span>
+                             ) : (
+                                 <span className="text-emerald-400 font-bold text-xs animate-pulse flex items-center justify-end gap-1"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"/> RUNNING</span>
+                             )}
+                         </td>
                       </tr>
                    ))}
+                   {filteredLogs.length === 0 && (
+                       <tr>
+                           <td colSpan={6} className="p-12 text-center text-zinc-500 flex flex-col items-center justify-center">
+                               <Search className="w-8 h-8 mb-2 opacity-20" />
+                               No logs found for this period.
+                           </td>
+                       </tr>
+                   )}
                 </tbody>
              </table>
          </div>
