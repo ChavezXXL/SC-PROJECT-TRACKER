@@ -1,5 +1,7 @@
-import * as firebaseApp from "firebase/app";
 import { getFirestore, Firestore, collection, getDocs, query, limit } from "firebase/firestore";
+
+// Workaround for environments where named exports from firebase/app are not detected correctly
+import * as firebaseApp from "firebase/app";
 
 const STORAGE_KEY_FB = 'nexus_firebase_config';
 
@@ -44,12 +46,24 @@ export function initFirebaseFromLocalStorage(): { ok: boolean; db?: Firestore; e
 
         let app: any;
         
+        // Access firebaseApp members safely. Cast to any to bypass TS check if definition is incomplete.
+        const fb = firebaseApp as any;
+
+        // Helper to find the app instance or functions
+        // Checks both named exports (v9) and default export (compat/v8 style or interop)
+        const getApps = fb.getApps || (fb.default && fb.default.getApps);
+        const getApp = fb.getApp || (fb.default && fb.default.getApp);
+        const initializeApp = fb.initializeApp || (fb.default && fb.default.initializeApp);
+
+        if (!initializeApp) {
+             throw new Error("Firebase initializeApp not found in import");
+        }
+
         // Use standard check for existing apps
-        // Using namespace import to avoid TypeScript resolution errors for named exports
-        if (firebaseApp.getApps && firebaseApp.getApps().length > 0) {
-            app = firebaseApp.getApp();
+        if (getApps && getApps().length > 0) {
+            app = getApp();
         } else {
-            app = firebaseApp.initializeApp(config);
+            app = initializeApp(config);
         }
 
         // Safely attempt to get Firestore

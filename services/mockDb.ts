@@ -63,10 +63,13 @@ if (initRes.ok && initRes.db) {
             // If both pass, we are effectively online
             firebaseStatus = { connected: true };
         } catch (e: any) {
-            console.error("❌ Connection/Diagnostic Check Failed:", e);
+            console.error("❌ Connection/Diagnostic Check Failed. FORCING OFFLINE MODE.", e);
             handleError(e);
-            // NOTE: We do NOT unset dbInstance here to avoid race conditions,
-            // but individual methods will fail and should handle it or UI shows status.
+            
+            // CRITICAL FIX: If check fails, nullify dbInstance immediately.
+            // This ensures loginUser() skips the cloud attempt and goes straight to local storage.
+            dbInstance = null;
+            firebaseStatus = { connected: false, error: "Offline Mode (Connection Failed)" };
         }
     })();
 
@@ -128,13 +131,40 @@ function writeLS<T>(key: string, value: T) {
 
 function ensureSeedUsers() {
   const users = readLS<User[]>(LS.users, []);
-  if (users.length > 0) return;
-  const seeded: User[] = [
+  
+  // GUARANTEED USERS: These will always be restored if missing
+  const hardcodedAdmins: User[] = [
+    { id: "admin_anthony", name: "Anthony", username: "anthony", pin: "2061", role: "admin", isActive: true },
     { id: "admin_chavez", name: "Chavez", username: "chavez", pin: "2061", role: "admin", isActive: true },
     { id: "admin1", name: "Shop Manager", username: "admin", pin: "9999", role: "admin", isActive: true },
     { id: "emp1", name: "John Doe", username: "jdoe", pin: "1234", role: "employee", isActive: true },
   ];
-  writeLS(LS.users, seeded);
+
+  let changed = false;
+  const merged = [...users];
+
+  hardcodedAdmins.forEach(admin => {
+     const existingIndex = merged.findIndex(u => u.username.toLowerCase() === admin.username.toLowerCase());
+     
+     if (existingIndex === -1) {
+         // User doesn't exist, add them
+         merged.push(admin);
+         changed = true;
+     } else {
+         // User exists, check if critical fields match. 
+         // If PIN or Role is different from hardcoded default, FORCE update to ensure access.
+         const existing = merged[existingIndex];
+         if (existing.pin !== admin.pin || existing.role !== admin.role) {
+             merged[existingIndex] = { ...existing, pin: admin.pin, role: admin.role, isActive: true };
+             changed = true;
+         }
+     }
+  });
+
+  if (changed || users.length === 0) {
+      console.log("Restoring guaranteed admin users...");
+      writeLS(LS.users, merged);
+  }
 }
 
 // Helper for polling local storage
@@ -391,30 +421,31 @@ export async function loginUser(username: string, pin: string): Promise<User | n
   
   if (dbInstance) {
       try {
+        // TIMEOUT SAFETY: If Cloud DB hangs (offline but not detected), reject after 1s (fast fail)
         const q = query(collection(dbInstance, COL.users));
-        const snap = await getDocs(q);
+        
+        const snap: any = await Promise.race([
+            getDocs(q),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Cloud timeout")), 1000))
+        ]);
+
         firebaseStatus = { connected: true };
         
-        const users = snap.docs.map((d) => d.data() as User);
-        const found = users.find(u => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
+        const users = snap.docs.map((d: any) => d.data() as User);
+        const found = users.find((u: User) => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
         
         // If found in cloud, return it. 
         if (found) return found;
-        
-        // If not found in cloud, we intentionally do NOT check local storage to prevent duplicate/conflicting accounts,
-        // UNLESS the connection failed. But here, the connection succeeded (snap worked).
-        // However, if the database is literally empty (fresh project), user is stuck.
-        // So for robustness in this specific app context:
-        // if (users.length === 0) { console.warn("Cloud DB empty. Falling back."); } else { return null; }
 
       } catch (e) {
-        // CRITICAL FIX: If Firebase connection fails (e.g. strict CSP, network error, invalid key),
+        // CRITICAL FIX: If Firebase connection fails or TIMEOUTS,
         // we CATCH the error and fallback to local storage so the user can still log in.
-        console.warn("Firebase Login failed (Network/Config), falling back to Local Storage:", e);
+        console.warn("Firebase Login failed (Network/Config/Timeout), falling back to Local Storage:", e);
       }
   }
 
   // Fallback / Offline / Local Mode
+  // ALWAYS run ensureSeedUsers here to guarantee 'Anthony' exists before checking
   ensureSeedUsers();
   const users = readLS<User[]>(LS.users, []);
   const found = users.find(u => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
