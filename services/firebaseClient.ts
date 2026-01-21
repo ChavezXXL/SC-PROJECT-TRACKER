@@ -1,4 +1,4 @@
-import * as firebase from "firebase/app";
+import * as firebaseApp from "firebase/app";
 import { getFirestore, Firestore, collection, getDocs, query, limit } from "firebase/firestore";
 
 const STORAGE_KEY_FB = 'nexus_firebase_config';
@@ -45,10 +45,11 @@ export function initFirebaseFromLocalStorage(): { ok: boolean; db?: Firestore; e
         let app: any;
         
         // Use standard check for existing apps
-        if (firebase.getApps().length > 0) {
-            app = firebase.getApp();
+        // Using namespace import to avoid TypeScript resolution errors for named exports
+        if (firebaseApp.getApps && firebaseApp.getApps().length > 0) {
+            app = firebaseApp.getApp();
         } else {
-            app = firebase.initializeApp(config);
+            app = firebaseApp.initializeApp(config);
         }
 
         // Safely attempt to get Firestore

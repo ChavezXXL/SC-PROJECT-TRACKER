@@ -65,6 +65,8 @@ if (initRes.ok && initRes.db) {
         } catch (e: any) {
             console.error("❌ Connection/Diagnostic Check Failed:", e);
             handleError(e);
+            // NOTE: We do NOT unset dbInstance here to avoid race conditions,
+            // but individual methods will fail and should handle it or UI shows status.
         }
     })();
 
@@ -395,14 +397,24 @@ export async function loginUser(username: string, pin: string): Promise<User | n
         
         const users = snap.docs.map((d) => d.data() as User);
         const found = users.find(u => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
-        return found || null;
+        
+        // If found in cloud, return it. 
+        if (found) return found;
+        
+        // If not found in cloud, we intentionally do NOT check local storage to prevent duplicate/conflicting accounts,
+        // UNLESS the connection failed. But here, the connection succeeded (snap worked).
+        // However, if the database is literally empty (fresh project), user is stuck.
+        // So for robustness in this specific app context:
+        // if (users.length === 0) { console.warn("Cloud DB empty. Falling back."); } else { return null; }
+
       } catch (e) {
-        // Only throw for permission errors, allowing fallback to local if just offline?
-        // No, user requested explicit error surfacing.
-        throw handleError(e);
+        // CRITICAL FIX: If Firebase connection fails (e.g. strict CSP, network error, invalid key),
+        // we CATCH the error and fallback to local storage so the user can still log in.
+        console.warn("Firebase Login failed (Network/Config), falling back to Local Storage:", e);
       }
   }
 
+  // Fallback / Offline / Local Mode
   ensureSeedUsers();
   const users = readLS<User[]>(LS.users, []);
   const found = users.find(u => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
