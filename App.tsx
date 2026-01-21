@@ -766,14 +766,16 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 // --- ADMIN: LOGS ---
 const LogsView = () => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
+   const [jobs, setJobs] = useState<Job[]>([]);
    const [search, setSearch] = useState('');
    const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
    const [refreshKey, setRefreshKey] = useState(0);
 
    useEffect(() => {
      // Trigger subscription refresh when key changes (simulated refresh)
-     const unsub = DB.subscribeLogs(setLogs);
-     return () => unsub();
+     const unsub1 = DB.subscribeLogs(setLogs);
+     const unsub2 = DB.subscribeJobs(setJobs);
+     return () => { unsub1(); unsub2(); };
    }, [refreshKey]);
 
    const getFilterDate = (type: 'week' | 'month' | 'year' | 'all') => {
@@ -795,28 +797,57 @@ const LogsView = () => {
        return d.getTime();
    };
 
-   const filteredLogs = useMemo(() => {
+   // Grouping and Filtering Logic
+   const groupedLogs = useMemo(() => {
        const minDate = getFilterDate(timeFilter);
        const term = search.toLowerCase();
-
-       return logs.filter(l => {
-           // Date Check
+       
+       // 1. Filter raw logs
+       const filtered = logs.filter(l => {
            if (l.startTime < minDate) return false;
-           // Search Check
            if (!term) return true;
+           
+           // Search context: Log fields OR Job context
+           const job = jobs.find(j => j.id === l.jobId);
+           const jobStr = job ? JSON.stringify(job).toLowerCase() : '';
+           
            return (
                l.jobId.toLowerCase().includes(term) ||
                l.userName.toLowerCase().includes(term) ||
-               l.operation.toLowerCase().includes(term)
+               l.operation.toLowerCase().includes(term) ||
+               jobStr.includes(term)
            );
-       }).sort((a,b) => b.startTime - a.startTime);
-   }, [logs, search, timeFilter]);
+       });
+
+       // 2. Group by Job ID
+       const groups: Record<string, { job: Job | undefined, logs: TimeLog[], totalMins: number, lastActive: number }> = {};
+       
+       filtered.forEach(l => {
+           if (!groups[l.jobId]) {
+               groups[l.jobId] = {
+                   job: jobs.find(j => j.id === l.jobId),
+                   logs: [],
+                   totalMins: 0,
+                   lastActive: 0
+               };
+           }
+           groups[l.jobId].logs.push(l);
+           groups[l.jobId].totalMins += (l.durationMinutes || 0);
+           if (l.startTime > groups[l.jobId].lastActive) {
+               groups[l.jobId].lastActive = l.startTime;
+           }
+       });
+
+       // 3. Sort groups by most recently active
+       return Object.values(groups).sort((a,b) => b.lastActive - a.lastActive);
+   }, [logs, jobs, search, timeFilter]);
 
    const stats = useMemo(() => {
-       const totalMinutes = filteredLogs.reduce((acc, l) => acc + (l.durationMinutes || 0), 0);
-       const uniqueJobs = new Set(filteredLogs.map(l => l.jobId)).size;
-       return { totalMinutes, uniqueJobs, count: filteredLogs.length };
-   }, [filteredLogs]);
+       // Re-calculate stats based on the GROUPS to ensure it matches view
+       const totalMinutes = groupedLogs.reduce((acc, g) => acc + g.totalMins, 0);
+       const totalRecords = groupedLogs.reduce((acc, g) => acc + g.logs.length, 0);
+       return { totalMinutes, uniqueJobs: groupedLogs.length, count: totalRecords };
+   }, [groupedLogs]);
 
    return (
       <div className="space-y-6">
@@ -844,7 +875,7 @@ const LogsView = () => {
                 <input 
                     value={search} 
                     onChange={e => setSearch(e.target.value)} 
-                    placeholder="Filter by Job ID, Employee, or Operation..." 
+                    placeholder="Filter by Job ID, PO, Part, or Employee..." 
                     className="w-full pl-9 pr-4 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder-zinc-600" 
                 />
             </div>
@@ -869,53 +900,88 @@ const LogsView = () => {
              </div>
          </div>
 
-         {/* DATA TABLE */}
-         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white/5 text-zinc-500 text-xs uppercase font-bold tracking-wider">
-                    <tr>
-                        <th className="p-4">Date</th>
-                        <th className="p-4">Time</th>
-                        <th className="p-4">Job ID</th>
-                        <th className="p-4">Employee</th>
-                        <th className="p-4">Operation</th>
-                        <th className="p-4 text-right">Duration</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                   {filteredLogs.map(l => (
-                      <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                         <td className="p-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                         <td className="p-4 font-mono text-zinc-500 text-xs">
-                             {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-                             <ArrowRight className="inline w-3 h-3 mx-1 opacity-50"/>
-                             {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
-                         </td>
-                         <td className="p-4 text-white font-medium">{l.jobId}</td>
-                         <td className="p-4 text-zinc-300 flex items-center gap-2">
-                             <div className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold">{l.userName.charAt(0)}</div>
-                             {l.userName}
-                         </td>
-                         <td className="p-4"><span className="bg-zinc-800 text-zinc-300 px-2 py-1 rounded text-xs border border-white/5">{l.operation}</span></td>
-                         <td className="p-4 text-right font-mono">
-                             {l.endTime ? (
-                                 <span className="text-zinc-300">{formatDuration(l.durationMinutes)}</span>
-                             ) : (
-                                 <span className="text-emerald-400 font-bold text-xs animate-pulse flex items-center justify-end gap-1"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"/> RUNNING</span>
-                             )}
-                         </td>
-                      </tr>
-                   ))}
-                   {filteredLogs.length === 0 && (
-                       <tr>
-                           <td colSpan={6} className="p-12 text-center text-zinc-500 flex flex-col items-center justify-center">
-                               <Search className="w-8 h-8 mb-2 opacity-20" />
-                               No logs found for this period.
-                           </td>
-                       </tr>
-                   )}
-                </tbody>
-             </table>
+         {/* GROUPED LOGS DISPLAY */}
+         <div className="space-y-6">
+             {groupedLogs.length === 0 && (
+                <div className="p-12 text-center text-zinc-500 flex flex-col items-center justify-center bg-zinc-900/30 rounded-2xl border border-white/5">
+                   <Search className="w-10 h-10 mb-2 opacity-20" />
+                   No logs found matching your criteria.
+                </div>
+             )}
+
+             {groupedLogs.map(group => (
+                 <div key={group.job?.id || Math.random()} className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm hover:border-white/10 transition-colors">
+                     {/* Job Header */}
+                     <div className="bg-zinc-800/50 p-4 flex flex-col md:flex-row justify-between md:items-center gap-4 border-b border-white/5">
+                         <div className="flex items-center gap-4">
+                             <div className="bg-blue-500/20 p-3 rounded-xl">
+                                 <Briefcase className="w-6 h-6 text-blue-400" />
+                             </div>
+                             <div>
+                                 <h3 className="font-bold text-lg text-white">{group.job?.jobIdsDisplay || 'Unknown Job'}</h3>
+                                 <div className="flex gap-3 text-xs text-zinc-400">
+                                     <span className="font-mono bg-black/30 px-2 py-0.5 rounded">PO: {group.job?.poNumber || 'N/A'}</span>
+                                     <span>Part: {group.job?.partNumber || 'N/A'}</span>
+                                 </div>
+                             </div>
+                         </div>
+                         <div className="flex items-center gap-4">
+                             <div className="text-right">
+                                 <p className="text-xs text-zinc-500 uppercase font-bold">Total Time</p>
+                                 <p className="text-xl font-bold text-white font-mono">{formatDuration(group.totalMins)}</p>
+                             </div>
+                             <div className="h-8 w-[1px] bg-white/10"></div>
+                             <div className="text-right">
+                                <p className="text-xs text-zinc-500 uppercase font-bold">Records</p>
+                                <p className="text-xl font-bold text-white">{group.logs.length}</p>
+                             </div>
+                         </div>
+                     </div>
+
+                     {/* Logs Table */}
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                           <thead className="bg-white/5 text-zinc-500 text-xs uppercase font-bold tracking-wider">
+                               <tr>
+                                   <th className="px-6 py-3">Date</th>
+                                   <th className="px-6 py-3">Time Range</th>
+                                   <th className="px-6 py-3">Employee</th>
+                                   <th className="px-6 py-3">Operation</th>
+                                   <th className="px-6 py-3 text-right">Duration</th>
+                               </tr>
+                           </thead>
+                           <tbody className="divide-y divide-white/5">
+                               {group.logs.sort((a,b) => b.startTime - a.startTime).map(l => (
+                                   <tr key={l.id} className="hover:bg-white/5 transition-colors group">
+                                       <td className="px-6 py-3 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
+                                       <td className="px-6 py-3 font-mono text-zinc-500 text-xs">
+                                           {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                           <span className="mx-2 text-zinc-700">-</span>
+                                           {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
+                                       </td>
+                                       <td className="px-6 py-3 text-zinc-300">
+                                           <div className="flex items-center gap-2">
+                                              <div className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold">{l.userName.charAt(0)}</div>
+                                              {l.userName}
+                                           </div>
+                                       </td>
+                                       <td className="px-6 py-3">
+                                           <span className="bg-zinc-800 text-zinc-300 px-2 py-1 rounded text-xs border border-white/5 group-hover:bg-zinc-700 transition-colors">{l.operation}</span>
+                                       </td>
+                                       <td className="px-6 py-3 text-right font-mono">
+                                            {l.endTime ? (
+                                                <span className="text-zinc-300">{formatDuration(l.durationMinutes)}</span>
+                                            ) : (
+                                                <span className="text-emerald-400 font-bold text-xs animate-pulse flex items-center justify-end gap-1"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"/> RUNNING</span>
+                                            )}
+                                       </td>
+                                   </tr>
+                               ))}
+                           </tbody>
+                        </table>
+                     </div>
+                 </div>
+             ))}
          </div>
       </div>
    )
