@@ -275,8 +275,10 @@ const EmployeeDashboard = ({
     try {
         await DB.startTimeLog(jobId, user.id, user.name, operation);
         addToast('success', 'Timer Started');
-    } catch (e) {
-        addToast('error', 'Failed to start timer');
+    } catch (e: any) {
+        console.error("Timer Start Error:", e);
+        // More descriptive error for the user
+        addToast('error', 'Failed to start: ' + (e.message || "Unknown Error"));
     }
   };
 

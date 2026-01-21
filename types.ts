@@ -34,8 +34,8 @@ export interface TimeLog {
   userName: string;
   operation: string;
   startTime: number;
-  endTime?: number;
-  durationMinutes?: number;
+  endTime?: number | null;
+  durationMinutes?: number | null;
   isAutoClosed?: boolean; // Flag if system auto-closed it
   notes?: string;
 }

@@ -87,9 +87,11 @@ function handleError(e: any) {
     } else if (msg.includes("not found")) {
         // Often happens if project ID is wrong or database doesn't exist
         msg = "Database Not Found (Check Project ID)";
+    } else if (msg.includes("Invalid data") || msg.includes("undefined")) {
+        msg = "Data Error: Invalid field value";
     }
     
-    console.error("DB Error:", msg);
+    console.error("DB Error:", msg, e);
     firebaseStatus = { connected: false, error: msg };
     return new Error(msg);
 }
@@ -316,9 +318,16 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
 export async function startTimeLog(jobId: string, userId: string, userName: string, operation: string) {
   const id = Date.now().toString();
   const startTime = Date.now();
+  // Firestore doesn't like undefined. Use null.
   const log: TimeLog = {
-    id, jobId, userId, userName, operation, startTime,
-    endTime: null as any, durationMinutes: undefined,
+    id, 
+    jobId, 
+    userId, 
+    userName, 
+    operation, 
+    startTime,
+    endTime: null, 
+    durationMinutes: null
   };
 
   if (dbInstance) {
