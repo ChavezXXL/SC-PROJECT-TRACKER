@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   LayoutDashboard, Briefcase, Users, Settings, LogOut, Menu,
@@ -290,7 +291,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                     <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-700" />
                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="FILTER_BATCHES..." className="pl-14 pr-6 py-4 bg-zinc-900 border border-white/5 rounded-[24px] text-[10px] font-black uppercase tracking-[0.3em] text-white w-full lg:w-80 outline-none backdrop-blur-xl" />
                 </div>
-                <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 px-8 py-4 rounded-[24px] text-[10px] font-black uppercase tracking-[0.4em] text-white flex items-center gap-3 hover:bg-blue-500 shadow-2xl transition-all active:scale-95"><Plus className="w-5 h-5"/> New Batch</button>
+                <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 px-8 py-4 rounded-[24px] text-[10px] font-black uppercase tracking-[0.4em] text-white flex items-center gap-3 hover:bg-blue-500 shadow-2xl transition-all"><Plus className="w-5 h-5"/> New Batch</button>
             </div>
          </div>
 
@@ -316,7 +317,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                         <button onClick={() => confirm({ title: "Reactivate Batch", message: "Move batch back to active floor?", onConfirm: () => DB.reopenJob(j.id) })} className="p-4 bg-blue-500/10 text-blue-500 rounded-2xl hover:bg-blue-500 hover:text-white transition-all shadow-lg border border-blue-500/20"><RotateCcw className="w-6 h-6"/></button>
                      )}
                      <button onClick={() => setPrintable(j)} className="p-4 bg-zinc-800 text-zinc-500 rounded-2xl hover:bg-zinc-700 hover:text-white transition-all shadow-lg border border-white/5"><Printer className="w-6 h-6"/></button>
-                     <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-4 bg-blue-500/10 text-blue-400 rounded-2xl hover:bg-blue-500 hover:text-white transition-all shadow-lg border border-blue-500/20"><Edit2 className="w-6 h-6"/></button>
+                     <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-4 bg-blue-500/10 text-blue-400 rounded-2xl hover:bg-blue-500 hover:text-white transition-all shadow-lg border border-blue-500/20"><Edit2 className="w-4 h-4"/></button>
                      <button onClick={() => confirm({ title: "Purge Record", message: "Permanently erase batch data?", onConfirm: () => DB.deleteJob(j.id) })} className="p-4 bg-red-500/10 text-red-500 rounded-2xl hover:bg-red-600 hover:text-white transition-all shadow-lg border border-red-500/20"><Trash2 className="w-6 h-6"/></button>
                   </div>
                </div>
@@ -348,12 +349,13 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    );
 };
 
-// --- ADMIN: LOGS (COMPACT INDIVIDUALIZED JOB BOXES WITH BIG FONTS) ---
+// --- ADMIN: LOGS ---
 const LogsView = ({ addToast }: { addToast: any }) => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
    const [jobs, setJobs] = useState<Job[]>([]);
    const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
    const [timeFilter, setTimeFilter] = useState<'week' | 'month' | 'year' | 'all'>('week');
+   const [statusFilter, setStatusFilter] = useState<'active' | 'completed'>('active');
    const [search, setSearch] = useState('');
 
    useEffect(() => {
@@ -364,31 +366,35 @@ const LogsView = ({ addToast }: { addToast: any }) => {
 
    const groupedLogs = useMemo(() => {
      const now = Date.now();
-     const filtered = logs.filter(l => {
-        if (search && !JSON.stringify(l).toLowerCase().includes(search.toLowerCase())) return false;
-        if (timeFilter === 'all') return true;
-        const diff = now - l.startTime;
-        if (timeFilter === 'week') return diff <= 7 * 24 * 60 * 60 * 1000;
-        if (timeFilter === 'month') return diff <= 30 * 24 * 60 * 60 * 1000;
-        if (timeFilter === 'year') return diff <= 365 * 24 * 60 * 60 * 1000;
-        return true;
-     });
-
      const groups: Record<string, { job: Job | null, logs: TimeLog[], totalMins: number }> = {};
-     filtered.forEach(log => {
+     logs.forEach(log => {
         if (!groups[log.jobId]) {
            groups[log.jobId] = { job: jobs.find(j => j.id === log.jobId) || null, logs: [], totalMins: 0 };
         }
         groups[log.jobId].logs.push(log);
         if (log.durationMinutes) groups[log.jobId].totalMins += log.durationMinutes;
      });
+
+     const result = Object.entries(groups).filter(([jobId, data]) => {
+        const isJobCompleted = data.job?.status === 'completed';
+        if (statusFilter === 'active' && isJobCompleted) return false;
+        if (statusFilter === 'completed' && !isJobCompleted) return false;
+        if (search && !JSON.stringify(data).toLowerCase().includes(search.toLowerCase())) return false;
+        if (timeFilter !== 'all') {
+            const latestLogTime = Math.max(...data.logs.map(l => l.startTime));
+            const diff = now - latestLogTime;
+            const limits = { week: 7, month: 30, year: 365 };
+            if (diff > (limits[timeFilter as keyof typeof limits] * 24 * 60 * 60 * 1000)) return false;
+        }
+        return true;
+     });
      
-     return Object.entries(groups).sort((a,b) => {
-        const timeA = a[1].logs[0]?.startTime || 0;
-        const timeB = b[1].logs[0]?.startTime || 0;
+     return result.sort((a,b) => {
+        const timeA = Math.max(...a[1].logs.map(l => l.startTime));
+        const timeB = Math.max(...b[1].logs.map(l => l.startTime));
         return timeB - timeA;
      });
-   }, [logs, jobs, timeFilter, search]);
+   }, [logs, jobs, timeFilter, search, statusFilter]);
 
    const handleSaveLog = async () => {
        if (editingLog) { await DB.updateTimeLog(editingLog); addToast('success', 'ARCHIVE_SYNCED'); setEditingLog(null); }
@@ -397,10 +403,16 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    return (
       <div className="space-y-6 animate-fade-in">
          <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-6">
-            <div>
-               <h2 className="text-5xl font-black uppercase tracking-tighter text-white leading-none mb-4">Batch Archives</h2>
-               <div className="flex gap-4 p-1.5 bg-zinc-900/60 border border-white/5 rounded-2xl w-fit backdrop-blur-xl shadow-lg">
-                  {['week', 'month', 'year', 'all'].map(t => <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] transition-all ${timeFilter === t ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>{t}</button>)}
+            <div className="space-y-4">
+               <h2 className="text-5xl font-black uppercase tracking-tighter text-white leading-none">Batch Archives</h2>
+               <div className="flex gap-4">
+                  <div className="flex gap-2 p-1.5 bg-zinc-900/60 border border-white/5 rounded-2xl w-fit backdrop-blur-xl shadow-lg">
+                    <button onClick={() => setStatusFilter('active')} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] transition-all ${statusFilter === 'active' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Active Jobs</button>
+                    <button onClick={() => setStatusFilter('completed')} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] transition-all ${statusFilter === 'completed' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Completed Jobs</button>
+                  </div>
+                  <div className="flex gap-2 p-1.5 bg-zinc-900/60 border border-white/5 rounded-2xl w-fit backdrop-blur-xl shadow-lg">
+                    {['week', 'month', 'year', 'all'].map(t => <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] transition-all ${timeFilter === t ? 'bg-zinc-800 text-blue-400 border border-blue-500/10' : 'text-zinc-600 hover:text-white'}`}>{t}</button>)}
+                  </div>
                </div>
             </div>
             <div className="relative flex-1 lg:flex-initial shadow-2xl">
@@ -412,11 +424,10 @@ const LogsView = ({ addToast }: { addToast: any }) => {
          <div className="space-y-8">
             {groupedLogs.map(([jobId, data]) => (
                <div key={jobId} className="bg-zinc-900/40 border border-white/10 rounded-[48px] overflow-hidden shadow-2xl backdrop-blur-xl border-t-[8px] border-t-blue-500/20">
-                  {/* Job Box Header - Compact but Big Font */}
                   <div className="p-8 md:p-10 border-b border-white/5 bg-zinc-950/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
                      <div className="flex-1 w-full">
                         <div className="flex items-center gap-3 mb-3">
-                           <span className="text-[9px] font-black text-blue-400 uppercase tracking-[0.3em] bg-blue-500/5 px-3 py-1 rounded-full border border-blue-500/20">Archived Record</span>
+                           <span className={`text-[9px] font-black uppercase tracking-[0.3em] px-3 py-1 rounded-full border ${statusFilter === 'active' ? 'text-blue-400 bg-blue-500/5 border-blue-500/20' : 'text-emerald-400 bg-emerald-500/5 border-emerald-500/20'}`}>{statusFilter === 'active' ? 'Active Record' : 'Completed Archive'}</span>
                            <span className="text-[9px] font-black text-zinc-800 uppercase tracking-widest">SEQ_{jobId}</span>
                         </div>
                         <h3 className="text-5xl md:text-7xl font-black text-white uppercase tracking-tighter break-all leading-none mb-6">{data.job?.poNumber || 'DATA_NULL'}</h3>
@@ -430,8 +441,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                         <div className="text-5xl md:text-6xl font-black text-white font-mono leading-none tracking-widest">{formatDuration(data.totalMins)}</div>
                      </div>
                   </div>
-
-                  {/* Individual Logs List - Compact Rows */}
                   <div className="overflow-x-auto custom-scrollbar">
                      <table className="w-full text-left border-collapse">
                         <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.4em] text-[10px]">
@@ -471,7 +480,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
             {groupedLogs.length === 0 && <div className="py-24 text-center text-zinc-800 text-sm font-black uppercase tracking-[0.6em] opacity-30">Archive section null</div>}
          </div>
 
-         {/* Log Editing Modal */}
          {editingLog && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
                <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[64px] shadow-2xl p-10 overflow-hidden">
@@ -558,49 +566,35 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
    );
 };
 
-// --- COMPONENT: CONFIRMATION MODAL ---
-const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-3xl p-4 animate-fade-in">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[48px] p-10 shadow-[0_64px_128px_-32px_rgba(0,0,0,0.8)]">
-        <h3 className="text-xl font-black text-white mb-4 flex items-center gap-4 uppercase tracking-tighter"><AlertTriangle className="text-red-500 w-6 h-6" /> {title}</h3>
-        <p className="text-zinc-500 text-[11px] font-black uppercase tracking-widest leading-relaxed mb-10">{message}</p>
-        <div className="flex justify-end gap-6">
-          <button onClick={onCancel} className="text-zinc-600 hover:text-white text-[10px] font-black uppercase tracking-[0.3em] transition-all">Abort</button>
-          <button onClick={() => { onConfirm(); onCancel(); }} className="bg-red-600 hover:bg-red-500 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] shadow-2xl transition-all active:scale-95">Confirm_Action</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// --- HELPER: JOB SELECTION CARD ---
+// --- COMPONENT: JOB SELECTION CARD ---
 const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[] }> = ({ job, onStart, disabled, operations }) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={`bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden transition-all duration-500 ${expanded ? 'border-blue-500/50 bg-zinc-900/80 shadow-[0_0_40px_rgba(59,130,246,0.1)]' : 'hover:bg-zinc-900/60'} ${disabled ? 'opacity-30 pointer-events-none grayscale' : ''} shadow-2xl backdrop-blur-xl`}>
-      <div className="p-8 cursor-pointer group" onClick={() => setExpanded(!expanded)}>
+    <div className={`bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden transition-all duration-300 ${expanded ? 'ring-2 ring-blue-500/50 bg-zinc-900/80 shadow-2xl' : 'hover:bg-zinc-900/60 shadow-xl'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div 
+        className="p-8 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
         <div className="flex justify-between items-start mb-4">
-          <h3 className="text-2xl font-black text-white tracking-tighter uppercase">{job.jobIdsDisplay}</h3>
-          <span className="bg-black/40 border border-white/5 text-blue-500 text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-inner">{job.quantity} PCS</span>
+          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{job.jobIdsDisplay}</h3>
+          <span className="bg-black/40 text-blue-500 text-[10px] px-4 py-1.5 rounded-full border border-blue-500/20 font-black uppercase tracking-widest shadow-inner">{job.quantity} units</span>
         </div>
-        <div className="space-y-2">
-          <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Part Index: <span className="text-zinc-400">{job.partNumber}</span></p>
-          <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Order Ref: <span className="text-zinc-500">{job.poNumber}</span></p>
+        <div className="text-[10px] text-zinc-600 font-black uppercase tracking-[0.2em] space-y-2">
+          <p>Part Index: <span className="text-zinc-300">{job.partNumber}</span></p>
+          <p>Order Ref: <span className="text-zinc-300">{job.poNumber}</span></p>
         </div>
         
         {!expanded && (
-          <div className="mt-6 flex items-center text-blue-500 text-[9px] font-black uppercase tracking-[0.4em] opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0">
-            Initialize_Sequence <ArrowRight className="w-3 h-3 ml-2" />
+          <div className="mt-8 flex items-center text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">
+            INIT_PHASE <ArrowRight className="w-4 h-4 ml-2" />
           </div>
         )}
       </div>
 
       {expanded && (
-        <div className="p-8 bg-black/40 border-t border-white/5 animate-slide-in-bottom">
-          <p className="text-[10px] text-zinc-600 font-black uppercase tracking-[0.3em] mb-6 flex items-center gap-2"><Settings className="w-3 h-3 text-blue-500"/> Select Workflow Phase</p>
+        <div className="p-8 bg-black/40 border-t border-white/5 animate-fade-in shadow-inner">
+          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-6">Select Production Phase:</p>
           <div className="grid grid-cols-2 gap-4">
             {operations.map(op => (
               <button
@@ -609,12 +603,12 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                   e.stopPropagation();
                   onStart(job.id, op);
                 }}
-                className="bg-zinc-800/50 hover:bg-blue-600 text-zinc-400 hover:text-white border border-white/5 py-4 px-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-inner active:scale-95"
+                className="bg-zinc-800/50 hover:bg-blue-600 text-white border border-white/5 py-4 px-6 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all hover:scale-105 active:scale-95 shadow-lg"
               >
                 {op}
               </button>
             ))}
-             {operations.length === 0 && <p className="col-span-2 text-[10px] text-zinc-700 font-black uppercase text-center py-4 tracking-widest italic">Phase matrix empty</p>}
+             {operations.length === 0 && <p className="col-span-2 text-[10px] text-zinc-700 font-black uppercase tracking-widest text-center py-4">No protocols defined</p>}
           </div>
         </div>
       )}
@@ -659,7 +653,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   const handleStartJob = async (jobId: string, operation: string) => {
     try {
         await DB.startTimeLog(jobId, user.id, user.name, operation);
-        addToast('success', 'PHASE_INITIALIZED');
+        addToast('success', 'PHASE_INITIATED');
     } catch (e) {
         addToast('error', 'INIT_FAILED');
     }
@@ -668,9 +662,9 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   const handleStopJob = async (logId: string) => {
     try {
       await DB.stopTimeLog(logId);
-      addToast('success', 'CYCLE_TERMINATED');
+      addToast('success', 'PHASE_TERMINATED');
     } catch (e) {
-      addToast('error', 'TERMINATION_ERROR');
+      addToast('error', 'STOP_SEQUENCE_ERROR');
     }
   };
 
@@ -681,7 +675,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           if (match) val = match[1];
           setSearch(val); 
           setTab('jobs'); 
-          addToast('success', 'SCAN_SUCCESS');
+          addToast('success', 'INDEX_CAPTURED');
       }
   }
 
@@ -690,66 +684,63 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   );
 
   return (
-    <div className="space-y-10 max-w-6xl mx-auto h-full flex flex-col pb-20 animate-fade-in">
+    <div className="space-y-12 max-w-7xl mx-auto flex flex-col pb-32 animate-fade-in">
       {activeLog && (
         <ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob} />
       )}
 
-      <div className="flex flex-wrap gap-4 justify-between items-center bg-zinc-900/60 backdrop-blur-2xl p-4 rounded-[32px] border border-white/5 shadow-2xl no-print">
-         <div className="flex gap-4 p-1 bg-black/40 rounded-2xl border border-white/5 shadow-inner">
-           <button onClick={() => setTab('jobs')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Queue</button>
-           <button onClick={() => setTab('history')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-3 ${tab === 'history' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}><History className="w-4 h-4" /> Activity</button>
+      <div className="flex flex-col md:flex-row gap-6 justify-between items-center bg-zinc-900/40 backdrop-blur-3xl p-4 rounded-[32px] border border-white/5 no-print shadow-2xl">
+         <div className="flex gap-4 p-1.5 bg-black/40 rounded-2xl border border-white/5">
+           <button onClick={() => setTab('jobs')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-2xl' : 'text-zinc-600 hover:text-white'}`}>Active Pool</button>
+           <button onClick={() => setTab('history')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-3 ${tab === 'history' ? 'bg-blue-600 text-white shadow-2xl' : 'text-zinc-600 hover:text-white'}`}><History className="w-4 h-4" /> Activity Log</button>
          </div>
          <div className="flex items-center gap-4">
-             <button onClick={() => setTab('scan')} className={`px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] flex items-center gap-3 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-xl' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-2xl'}`}><ScanLine className="w-5 h-5" /> Optical_Scan</button>
-             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] flex items-center gap-3 transition-all shadow-2xl border border-red-500/20"><LogOut className="w-5 h-5" /> Terminate_Session</button>
+             <button onClick={() => setTab('scan')} className={`px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.4em] flex items-center gap-3 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-2xl border border-blue-400/20' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-xl'}`}><ScanLine className="w-5 h-5" /> Scan QR</button>
+             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.4em] flex items-center gap-3 transition-all border border-red-500/20"><Power className="w-5 h-5" /> Exit</button>
          </div>
       </div>
 
       {tab === 'scan' ? (
-         <div className="flex-1 flex items-center justify-center py-20 animate-fade-in">
-            <div className="bg-zinc-900/80 p-12 rounded-[56px] border border-white/10 text-center max-w-md w-full shadow-[0_64px_128px_-32px_rgba(0,0,0,0.8)] backdrop-blur-xl">
-               <div className="w-24 h-24 bg-blue-600/10 rounded-[32px] flex items-center justify-center mx-auto mb-10 border border-blue-500/20 shadow-[0_0_40px_rgba(59,130,246,0.2)]">
+         <div className="flex-1 flex items-center justify-center py-20">
+            <div className="bg-zinc-900/60 p-12 rounded-[56px] border border-white/10 text-center max-w-md w-full shadow-[0_64px_128px_-32px_rgba(0,0,0,0.8)] backdrop-blur-3xl">
+               <div className="w-24 h-24 bg-blue-600/10 rounded-[32px] flex items-center justify-center mx-auto mb-8 border border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.2)]">
                   <QrCode className="w-12 h-12 text-blue-500" />
                </div>
-               <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-4 leading-none">Optical Input</h2>
-               <p className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.4em] mb-10 opacity-60">Scan Batch Traveler</p>
-               <input autoFocus onKeyDown={handleScan} className="bg-black/60 border-2 border-blue-600/50 rounded-[24px] px-8 py-6 text-white text-center w-full text-xl font-black tracking-widest focus:border-blue-500 outline-none shadow-inner" placeholder="READY_FOR_SCAN..." />
+               <h2 className="text-3xl font-black text-white mb-4 uppercase tracking-tight">Capture Travel ID</h2>
+               <p className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.4em] mb-10 opacity-60">Interface standby for scan</p>
+               <input autoFocus onKeyDown={handleScan} className="bg-black/60 border-2 border-blue-600/50 rounded-[24px] px-8 py-6 text-white text-center w-full text-xl font-black tracking-[0.3em] outline-none shadow-inner focus:border-blue-500 transition-all placeholder:text-zinc-900" placeholder="WAITING..." />
             </div>
          </div>
       ) : tab === 'history' ? (
-        <div className="bg-zinc-900/40 border border-white/10 rounded-[56px] overflow-hidden shadow-2xl backdrop-blur-xl animate-fade-in">
-          <div className="p-10 border-b border-white/5 bg-zinc-950/40 flex items-center gap-4">
-             <div className="w-10 h-10 rounded-2xl bg-blue-600/10 flex items-center justify-center text-blue-500 border border-blue-500/20 shadow-lg"><History className="w-5 h-5"/></div>
-             <h3 className="font-black text-white uppercase text-sm tracking-[0.3em]">Personal Production Log</h3>
-          </div>
+        <div className="bg-zinc-900/40 border border-white/10 rounded-[48px] overflow-hidden shadow-2xl backdrop-blur-xl">
+          <div className="p-10 border-b border-white/5 bg-zinc-950/40 flex items-center gap-4"><History className="w-6 h-6 text-blue-500"/><h3 className="font-black text-white uppercase text-sm tracking-[0.3em]">Individual Audit Stream</h3></div>
           <div className="overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left">
-              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.4em] text-[10px]"><tr><th className="p-10">Timestamp</th><th className="p-10">Batch Index</th><th className="p-10">Phase</th><th className="p-10 text-right">Cycle_Time</th></tr></thead>
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.4em] text-[10px]"><tr><th className="px-10 py-6">Date</th><th className="px-10 py-6">Batch ID</th><th className="px-10 py-6">Phase</th><th className="px-10 py-6">Duration</th></tr></thead>
               <tbody className="divide-y divide-white/5">
                 {myHistory.map(log => (
-                  <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
-                    <td className="p-10 text-zinc-500 font-black text-xs uppercase">{new Date(log.startTime).toLocaleDateString()} • {new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                    <td className="p-10 text-white font-black uppercase tracking-tight text-lg">{log.jobId}</td>
-                    <td className="p-10 text-blue-500 font-black uppercase tracking-widest text-[11px]">{log.operation}</td>
-                    <td className="p-10 text-right text-zinc-400 font-black font-mono text-xl">{formatDuration(log.durationMinutes)}</td>
+                  <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="px-10 py-6 text-zinc-600 font-black text-xs uppercase">{new Date(log.startTime).toLocaleDateString()}</td>
+                    <td className="px-10 py-6 text-white font-black uppercase tracking-tight text-base">{log.jobId}</td>
+                    <td className="px-10 py-6 text-blue-500 font-black uppercase text-[10px] tracking-widest">{log.operation}</td>
+                    <td className="px-10 py-6 text-zinc-400 font-black font-mono text-lg">{formatDuration(log.durationMinutes)}</td>
                   </tr>
                 ))}
-                {myHistory.length === 0 && <tr><td colSpan={4} className="p-20 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-xs">Section_Null</td></tr>}
+                {myHistory.length === 0 && <tr><td colSpan={4} className="p-20 text-center text-zinc-800 text-[10px] font-black uppercase tracking-[0.5em]">History stream null</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col animate-fade-in space-y-10">
+        <div className="flex-1 flex flex-col gap-10">
           <div className="relative shadow-2xl">
             <Search className="absolute left-6 top-5 w-6 h-6 text-zinc-700" />
-            <input type="text" placeholder="FILTER_LIVE_QUEUE..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[32px] pl-16 pr-8 py-6 text-white font-black uppercase tracking-[0.2em] text-sm focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner placeholder:text-zinc-800"/>
+            <input type="text" placeholder="FILTER_BATCH_INDEX..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/5 rounded-[32px] pl-16 pr-8 py-6 text-white text-[10px] font-black uppercase tracking-[0.4em] outline-none backdrop-blur-3xl shadow-inner focus:border-blue-600 transition-all"/>
           </div>
           
           {activeLog && (
-            <div className="p-6 rounded-[28px] bg-red-500/5 border border-red-500/20 text-red-500 text-[10px] font-black uppercase tracking-[0.3em] flex items-center justify-center gap-4 animate-pulse shadow-xl">
-              <AlertCircle className="w-5 h-5" /> Exclusive sequence active. Terminate current cycle to proceed.
+            <div className="p-6 rounded-[24px] bg-blue-600/10 border border-blue-500/20 text-blue-500 text-[10px] font-black uppercase tracking-[0.3em] flex items-center justify-center gap-4 animate-pulse shadow-2xl">
+              <Info className="w-5 h-5" /> Operation in progress. Finalize current phase to initiate new sequence.
             </div>
           )}
 
@@ -757,10 +748,27 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
             {filteredJobs.map(job => (
               <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} operations={ops} />
             ))}
-            {filteredJobs.length === 0 && <div className="col-span-full py-32 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-xs">Queue empty for current filter</div>}
+            {filteredJobs.length === 0 && <div className="col-span-full py-24 text-center text-zinc-800 text-[10px] font-black uppercase tracking-[0.6em] opacity-40">Section null</div>}
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// --- COMPONENT: CONFIRMATION MODAL ---
+const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[56px] p-10 shadow-[0_64px_128px_-32px_rgba(0,0,0,0.9)]">
+        <h3 className="text-2xl font-black text-white mb-4 flex items-center gap-4 tracking-tight uppercase leading-none"><AlertTriangle className="text-red-500 w-8 h-8" /> {title}</h3>
+        <p className="text-zinc-600 text-xs font-black uppercase tracking-widest leading-relaxed mb-10 opacity-80">{message}</p>
+        <div className="flex justify-end gap-6 items-center">
+          <button onClick={onCancel} className="text-zinc-600 hover:text-white text-[10px] font-black uppercase tracking-[0.4em] transition-colors">Abort</button>
+          <button onClick={() => { onConfirm(); onCancel(); }} className="bg-red-600 text-white px-8 py-4 rounded-[24px] text-[10px] font-black uppercase tracking-[0.4em] shadow-2xl hover:bg-red-500 transition-all active:scale-95">Confirm</button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -774,75 +782,76 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto no-print">
-      <div className="bg-white text-black w-full max-w-3xl rounded-[40px] shadow-2xl relative overflow-hidden flex flex-col max-h-full" id="printable-area-root">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto print-overlay">
+      <div className="bg-white text-black w-full max-w-3xl rounded-[48px] shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content" id="printable-area-root">
          
-         <div className="bg-zinc-950 text-white p-8 flex justify-between items-center no-print shrink-0 border-b border-white/10">
-             <div>
-               <h3 className="font-black flex items-center gap-4 text-xl uppercase tracking-tighter"><Printer className="w-6 h-6 text-blue-500"/> Traveler Preview</h3>
-               <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em] mt-2">Verify technical data before print</p>
+         {/* Toolbar (Hidden when printing) */}
+         <div className="bg-zinc-950 text-white p-8 flex justify-between items-center no-print shrink-0 border-b border-white/5">
+             <div className="flex items-center gap-6">
+               <div className="bg-blue-600 p-4 rounded-2xl shadow-2xl"><Printer className="w-6 h-6 text-white"/></div>
+               <div>
+                 <h3 className="font-black uppercase text-xl tracking-tight leading-none">Traveler Preview</h3>
+                 <p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.4em] mt-2">Audit documentation validation</p>
+               </div>
              </div>
-             <div className="flex gap-6">
-                 <button onClick={onClose} className="text-zinc-500 hover:text-white text-[10px] font-black uppercase tracking-[0.4em] transition-all">Abort</button>
-                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.4em] flex items-center gap-3 shadow-2xl transition-all active:scale-95"><Printer className="w-5 h-5"/> Print_Traveler</button>
+             <div className="flex gap-6 items-center">
+                 <button onClick={onClose} className="text-zinc-600 hover:text-white text-[10px] font-black uppercase tracking-[0.4em] transition-all">Discard</button>
+                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.4em] flex items-center gap-3 shadow-2xl transition-all active:scale-95">Print Protocol</button>
              </div>
          </div>
 
-         <div className="flex-1 p-12 bg-white overflow-auto">
-            <div className="flex justify-between items-end border-b-[8px] border-black pb-8 mb-12">
+         {/* Printable Content */}
+         <div id="printable-area" className="flex-1 p-12 bg-white overflow-auto">
+            {/* Header */}
+            <div className="flex justify-between items-center border-b-[8px] border-black pb-8 mb-12">
               <div>
-                 <h1 className="text-6xl font-black tracking-tighter leading-none">SC DEBURRING</h1>
-                 <p className="text-xs font-black uppercase tracking-[0.6em] text-gray-400 mt-4">Operations Production Traveler</p>
+                 <h1 className="text-6xl font-black tracking-tighter">SC DEBURRING</h1>
+                 <p className="text-sm font-black uppercase tracking-[0.6em] text-gray-400 mt-4">Production Traveler Matrix</p>
               </div>
               <div className="text-right">
-                 <h2 className="text-3xl font-black font-mono leading-none">{new Date().toLocaleDateString()}</h2>
-                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-2">Genesis_Timestamp</p>
+                 <h2 className="text-3xl font-black tracking-tighter">{new Date().toLocaleDateString()}</h2>
+                 <p className="text-[10px] font-black text-gray-400 mt-2 uppercase tracking-widest">Generation Timestamp</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-12 mb-12">
-               <div className="space-y-10">
+            {/* Main Info */}
+            <div className="grid grid-cols-2 gap-12 mb-12 flex-1">
+               <div className="space-y-10 flex flex-col">
                    <div className="border-[6px] border-black p-8">
-                      <label className="block text-[10px] uppercase font-black text-gray-400 mb-2 tracking-widest">Order Reference (PO)</label>
-                      <div className="text-6xl font-black leading-none break-all uppercase tracking-tighter">{job.poNumber}</div>
+                      <label className="block text-[10px] uppercase font-black text-gray-400 mb-4 tracking-widest">Order Ref (PO)</label>
+                      <div className="text-7xl font-black leading-none break-all tracking-tighter uppercase">{job.poNumber}</div>
                    </div>
                    <div className="grid grid-cols-2 gap-8">
-                      <div className="border-[4px] border-gray-200 p-6">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-1 tracking-widest">Part Catalog</label>
-                         <div className="text-2xl font-black break-words uppercase">{job.partNumber}</div>
+                      <div className="border-[4px] border-gray-100 p-6">
+                         <label className="block text-[10px] uppercase font-black text-gray-400 mb-2 tracking-widest">Part Catalog</label>
+                         <div className="text-3xl font-black break-words leading-none uppercase tracking-tighter">{job.partNumber}</div>
                       </div>
-                      <div className="border-[4px] border-gray-200 p-6">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-1 tracking-widest">Lot Size</label>
-                         <div className="text-2xl font-black">{job.quantity} PCS</div>
+                      <div className="border-[4px] border-gray-100 p-6">
+                         <label className="block text-[10px] uppercase font-black text-gray-400 mb-2 tracking-widest">Lot Size</label>
+                         <div className="text-3xl font-black leading-none">{job.quantity} <span className="text-xs">PCS</span></div>
                       </div>
-                      <div className="border-[4px] border-gray-200 p-6">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-1 tracking-widest">Ingress Date</label>
-                         <div className="text-xl font-black">{job.dateReceived || '---'}</div>
+                      <div className="border-[4px] border-gray-100 p-6">
+                         <label className="block text-[10px] uppercase font-black text-gray-400 mb-2 tracking-widest">Admission</label>
+                         <div className="text-xl font-black leading-none">{job.dateReceived || 'N/A'}</div>
                       </div>
-                      <div className="border-[4px] border-gray-200 p-6">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-1 tracking-widest">Floor Target</label>
-                         <div className="text-xl font-black text-red-600 underline underline-offset-4">{job.dueDate || '---'}</div>
+                      <div className="border-[4px] border-gray-100 p-6">
+                         <label className="block text-[10px] uppercase font-black text-gray-400 mb-2 tracking-widest">Target Deadline</label>
+                         <div className="text-2xl font-black text-red-600 leading-none">{job.dueDate || 'PRIORITY'}</div>
                       </div>
                    </div>
-                   <div>
-                     <label className="block text-[10px] uppercase font-black text-gray-400 mb-3 tracking-widest">Logic Instructions</label>
-                     <div className="text-lg font-medium border-l-[10px] border-black pl-8 py-6 bg-gray-50 min-h-[8rem] leading-relaxed italic text-gray-700">
-                       {job.info || "No specialized processing requirements."}
+                   <div className="flex-1">
+                     <label className="block text-[10px] uppercase font-black text-gray-400 mb-4 tracking-widest">Operations / Logic</label>
+                     <div className="text-xl border-l-[12px] border-black pl-8 py-6 bg-gray-50 min-h-[8rem] font-bold italic leading-relaxed">
+                       {job.info || "No specialized instructions logged for this batch."}
                      </div>
                    </div>
                </div>
                
-               <div className="flex flex-col items-center justify-center border-[8px] border-black p-12 bg-gray-50">
-                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply" crossOrigin="anonymous" />
-                  <p className="font-mono text-xl mt-10 text-gray-400 font-black tracking-widest uppercase">{job.id}</p>
-                  <p className="font-black uppercase tracking-[0.5em] text-2xl mt-4 border-t-2 border-black pt-4">Optical_Sync_Node</p>
+               <div className="flex flex-col items-center justify-center border-[6px] border-black p-10 bg-gray-50 h-full">
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[90%]" crossOrigin="anonymous" />
+                  <p className="font-mono text-xl mt-10 text-gray-400 text-center break-all font-bold tracking-tight">{job.id}</p>
+                  <p className="font-black uppercase tracking-[0.4em] text-3xl mt-4">SCAN_INDEX</p>
                </div>
-            </div>
-            
-            <div className="mt-20 border-t-2 border-dashed border-gray-200 pt-10 grid grid-cols-3 gap-10">
-                <div className="h-24 border-2 border-gray-100 p-4"><p className="text-[8px] font-black text-gray-300 uppercase tracking-widest">QC_SIG_A</p></div>
-                <div className="h-24 border-2 border-gray-100 p-4"><p className="text-[8px] font-black text-gray-300 uppercase tracking-widest">QC_SIG_B</p></div>
-                <div className="h-24 border-2 border-gray-100 p-4"><p className="text-[8px] font-black text-gray-300 uppercase tracking-widest">FLOOR_AUTH</p></div>
             </div>
          </div>
       </div>
