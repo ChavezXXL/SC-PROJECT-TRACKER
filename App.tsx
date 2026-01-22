@@ -27,6 +27,26 @@ const formatDurationDecimal = (mins: number | undefined) => {
     return (mins / 60).toFixed(2);
 };
 
+const groupLogsByJob = (logs: TimeLog[], jobs: Job[]) => {
+  const groups: Record<string, { job: Job | undefined; logs: TimeLog[]; totalMins: number }> = {};
+  for (const log of logs) {
+    if (!groups[log.jobId]) {
+      groups[log.jobId] = {
+        job: jobs.find((j) => j.id === log.jobId),
+        logs: [],
+        totalMins: 0,
+      };
+    }
+    groups[log.jobId].logs.push(log);
+    groups[log.jobId].totalMins += log.durationMinutes || 0;
+  }
+  return Object.values(groups).sort((a, b) => {
+    const tA = Math.max(...a.logs.map((l) => l.endTime || l.startTime));
+    const tB = Math.max(...b.logs.map((l) => l.endTime || l.startTime));
+    return tB - tA;
+  });
+};
+
 // --- PRINT STYLES (FAILSAFE) ---
 const PrintStyles = () => (
   <style>{`
@@ -1006,27 +1026,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    )
 }
 
-// Helper for grouping logs by Job ID
-const groupLogsByJob = (logsList: TimeLog[], jobsList: Job[]) => {
-    const groups: Record<string, { job: Job | undefined, logs: TimeLog[], totalMins: number, lastActive: number }> = {};
-    logsList.forEach(l => {
-        if (!groups[l.jobId]) {
-            groups[l.jobId] = {
-                job: jobsList.find(j => j.id === l.jobId),
-                logs: [],
-                totalMins: 0,
-                lastActive: 0
-            };
-        }
-        groups[l.jobId].logs.push(l);
-        groups[l.jobId].totalMins += (l.durationMinutes || 0);
-        if (l.startTime > groups[l.jobId].lastActive) {
-            groups[l.jobId].lastActive = l.startTime;
-        }
-    });
-    return Object.values(groups).sort((a,b) => b.lastActive - a.lastActive);
-};
-
 // --- ADMIN: LOGS ---
 const LogsView = () => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -1401,9 +1400,9 @@ export default function App() {
        <PrintStyles /><PrintableJobSheet job={printable} onClose={() => setPrintable(null)} /><ConfirmationModal isOpen={!!confirm} {...confirm} onCancel={() => setConfirm(null)} />
        {user.role === 'admin' && (
           <aside className="w-64 border-r border-white/5 bg-zinc-950 flex flex-col fixed h-full z-20">
-             <div className="p-6 font-bold text-white flex gap-2 items-center"><Sparkles className="text-blue-500"/> NEXUS</div>
+             <div className="p-6 font-bold text-white flex gap-2 items-center"><Sparkles className="text-blue-500"/> SC DEBURRING</div>
              <nav className="px-4 space-y-1">
-                {[{id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard}, {id: 'admin-jobs', l: 'Jobs', i: Briefcase}, {id: 'admin-logs', l: 'Logs', i: Calendar}, {id: 'admin-team', l: 'Team', i: Users}, {id: 'admin-settings', l: 'Settings', i: Settings}].map(x => <button key={x.id} onClick={() => setView(x.id as any)} className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white'}`}><x.i className="w-4 h-4" /> {x.l}</button>)}
+                {[{id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard}, {id: 'admin-jobs', l: 'Jobs', i: Briefcase}, {id: 'admin-logs', l: 'Logs', i: Calendar}, {id: 'admin-team', l: 'Team', i: Users}, {id: 'admin-settings', l: 'Settings', i: Settings}, {id: 'admin-scan', l: 'Work Station', i: ScanLine}].map(x => <button key={x.id} onClick={() => setView(x.id as any)} className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white'}`}><x.i className="w-4 h-4" /> {x.l}</button>)}
              </nav>
              <button onClick={() => setUser(null)} className="mt-auto m-6 flex items-center gap-3 text-zinc-500 hover:text-white text-sm font-bold"><LogOut className="w-4 h-4" /> Sign Out</button>
           </aside>
@@ -1414,6 +1413,7 @@ export default function App() {
           {view === 'admin-logs' && <LogsView />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
+          {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} />}
        </main>
        <div className="fixed bottom-6 right-6 z-50 pointer-events-none"><div className="pointer-events-auto flex flex-col items-end gap-2">{toasts.map(t => <Toast key={t.id} toast={t} onClose={id => setToasts(p => p.filter(x => x.id !== id))} />)}</div></div>
