@@ -733,6 +733,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                             <th className="p-4">PO</th>
                             <th className="p-4">Job</th>
                             <th className="p-4">Part</th>
+                            <th className="p-4">Qty</th>
                             <th className="p-4">Status</th>
                             <th className="p-4">Due Date</th>
                             <th className="p-4 text-right">Actions</th>
@@ -744,6 +745,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                               <td className="p-4 text-white font-bold">{j.poNumber}</td>
                               <td className="p-4 text-zinc-300 font-mono">{j.jobIdsDisplay}</td>
                               <td className="p-4 text-zinc-400">{j.partNumber}</td>
+                              <td className="p-4 text-zinc-300 font-mono">{j.quantity}</td>
                               <td className="p-4">
                                   <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide flex w-fit items-center gap-2 ${j.status === 'in-progress' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
                                       {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>}
@@ -759,7 +761,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                               </td>
                            </tr>
                         ))}
-                        {activeJobs.length === 0 && <tr><td colSpan={6} className="p-12 text-center text-zinc-500">No active jobs found.</td></tr>}
+                        {activeJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-zinc-500">No active jobs found.</td></tr>}
                     </tbody>
                 </table>
              </div>
@@ -805,6 +807,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                         <th className="p-4">PO</th>
                         <th className="p-4">Job</th>
                         <th className="p-4">Part</th>
+                        <th className="p-4">Qty</th>
                         <th className="p-4">Completed On</th>
                         <th className="p-4 text-right">Actions</th>
                     </tr>
@@ -815,6 +818,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                           <td className="p-4 text-zinc-400 font-bold">{j.poNumber}</td>
                           <td className="p-4 text-zinc-500 font-mono">{j.jobIdsDisplay}</td>
                           <td className="p-4 text-zinc-500">{j.partNumber}</td>
+                          <td className="p-4 text-zinc-400 font-mono">{j.quantity}</td>
                           <td className="p-4 text-zinc-400">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
                           <td className="p-4 text-right flex justify-end gap-2">
                              <button onClick={() => handleReopen(j.id)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Reopen"><RotateCcw className="w-4 h-4"/></button>
@@ -823,7 +827,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                           </td>
                        </tr>
                     ))}
-                    {historyJobs.length === 0 && <tr><td colSpan={5} className="p-12 text-center text-zinc-500">No completed jobs found in this period.</td></tr>}
+                    {historyJobs.length === 0 && <tr><td colSpan={6} className="p-12 text-center text-zinc-500">No completed jobs found in this period.</td></tr>}
                 </tbody>
             </table>
          </div>
@@ -1166,12 +1170,18 @@ const LogsView = () => {
 }
 
 // --- ADMIN: EMPLOYEES ---
-const AdminEmployees = ({ addToast }: { addToast: any }) => {
+const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
    const [users, setUsers] = useState<User[]>([]);
    const [editingUser, setEditingUser] = useState<Partial<User>>({});
    const [showModal, setShowModal] = useState(false);
 
    useEffect(() => DB.subscribeUsers(setUsers), []);
+
+   const handleDelete = (id: string) => confirm({
+      title: "Remove User",
+      message: "Are you sure you want to remove this user? This cannot be undone.",
+      onConfirm: () => DB.deleteUser(id)
+   });
 
    const handleSave = () => {
      if (!editingUser.name || !editingUser.username || !editingUser.pin) return addToast('error', 'Missing fields');
@@ -1199,7 +1209,10 @@ const AdminEmployees = ({ addToast }: { addToast: any }) => {
                 <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400"><UserIcon className="w-5 h-5" /></div>
                 <div><p className="font-bold text-white">{u.name}</p><p className="text-xs text-zinc-500">@{u.username} • {u.role}</p></div>
               </div>
-              <button onClick={() => { setEditingUser(u); setShowModal(true); }} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white"><Edit2 className="w-4 h-4" /></button>
+              <div className="flex gap-2">
+                 <button onClick={() => handleDelete(u.id)} className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                 <button onClick={() => { setEditingUser(u); setShowModal(true); }} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"><Edit2 className="w-4 h-4" /></button>
+              </div>
             </div>
           ))}
         </div>
@@ -1269,7 +1282,7 @@ export default function App() {
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} />}
           {view === 'admin-jobs' && <JobsView addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
           {view === 'admin-logs' && <LogsView />}
-          {view === 'admin-team' && <AdminEmployees addToast={addToast} />}
+          {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} />}
        </main>

@@ -425,6 +425,20 @@ export async function saveUser(user: User) {
   writeLS(LS.users, users);
 }
 
+export async function deleteUser(id: string) {
+  if (dbInstance) {
+      try {
+        await deleteDoc(doc(dbInstance, COL.users, id));
+        firebaseStatus = { connected: true };
+      } catch (e) {
+        throw handleError(e);
+      }
+      return;
+  }
+  const users = readLS<User[]>(LS.users, []).filter((u) => u.id !== id);
+  writeLS(LS.users, users);
+}
+
 export async function loginUser(username: string, pin: string): Promise<User | null> {
   const normalizedUser = username.toLowerCase();
   
