@@ -47,7 +47,7 @@ export const chatWithBot = async (history: {role: string, parts: {text: string}[
     model: "gemini-3-pro-preview",
     history: history,
     config: {
-      systemInstruction: "You are NexusBot, a helpful assistant for a manufacturing floor manager. You are concise, professional, and knowledgeable about industrial operations.",
+      systemInstruction: "You are SC Assistant, a helpful AI for a manufacturing floor manager at SC Deburring. You are concise, professional, and knowledgeable about industrial operations.",
     }
   });
 
