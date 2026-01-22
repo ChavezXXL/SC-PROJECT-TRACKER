@@ -5,7 +5,8 @@ import {
   Search, Plus, User as UserIcon, Calendar, Edit2, Save, X,
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
-  RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity
+  RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
+  Play
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
@@ -26,25 +27,64 @@ const formatDurationDecimal = (mins: number | undefined) => {
     return (mins / 60).toFixed(2);
 };
 
-// --- PRINT STYLES ---
+// --- PRINT STYLES (FIXED) ---
 const PrintStyles = () => (
   <style>{`
     @media print {
-      body * { visibility: hidden; }
-      #printable-area, #printable-area * { visibility: visible; }
-      #printable-area { 
-        position: absolute; 
-        left: 0; 
-        top: 0; 
-        width: 100%; 
-        height: 100%; 
-        z-index: 99999; 
-        background: white; 
-        color: black; 
-        overflow: visible;
+      /* Reset Body */
+      body {
+        background-color: white !important;
+        color: black !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
       }
-      @page { size: auto; margin: 0mm; }
-      .no-print { display: none !important; }
+
+      /* Hide App Shell Elements explicitly */
+      aside, 
+      main, 
+      .toast-container, 
+      .confirm-modal,
+      .no-print { 
+        display: none !important; 
+      }
+
+      /* Target the Modal Overlay to strip it down */
+      .print-overlay {
+        position: static !important;
+        background: white !important;
+        z-index: 9999 !important;
+        padding: 0 !important;
+        display: block !important;
+        height: auto !important;
+        width: 100% !important;
+        inset: auto !important;
+      }
+
+      /* Target the Content Container */
+      .print-content {
+        position: static !important;
+        box-shadow: none !important;
+        border: none !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        display: block !important;
+      }
+      
+      /* Ensure text colors are black for legibility */
+      .print-content * {
+        color: black !important;
+        border-color: black !important;
+      }
+
+      /* Allow the actual content to show */
+      #printable-area {
+        display: block !important;
+      }
     }
   `}</style>
 );
@@ -301,18 +341,9 @@ const EmployeeDashboard = ({
   const handleScan = (e: any) => {
       if (e.key === 'Enter') {
           let val = e.currentTarget.value.trim();
-          // Handle deep link URLs from scan
-          if (val.includes('jobId=')) {
-              try {
-                  const url = new URL(val);
-                  const id = url.searchParams.get('jobId');
-                  if (id) val = id;
-              } catch (e) {
-                  // Fallback regex if not full valid url
-                  const match = val.match(/[?&]jobId=([^&]+)/);
-                  if (match) val = match[1];
-              }
-          }
+          // Fallback regex if scanning a deep link url
+          const match = val.match(/[?&]jobId=([^&]+)/);
+          if (match) val = match[1];
           
           setSearch(val); 
           setTab('jobs'); 
@@ -343,7 +374,7 @@ const EmployeeDashboard = ({
              <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow' : 'bg-zinc-800 text-blue-400 hover:bg-blue-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
              
              {/* PROMINENT EXIT BUTTON */}
-             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
+             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> {user.role === 'admin' ? 'Close Tracker' : 'Exit'}</button>
          </div>
       </div>
 
@@ -406,7 +437,7 @@ const EmployeeDashboard = ({
 const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in confirm-modal">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl">
         <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><AlertTriangle className="text-red-500" /> {title}</h3>
         <p className="text-zinc-400 text-sm mb-6">{message}</p>
@@ -429,8 +460,8 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(deepLinkData)}`;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto">
-      <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto print-overlay">
+      <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content">
          
          {/* Toolbar (Hidden when printing) */}
          <div className="bg-zinc-900 text-white p-4 flex justify-between items-center no-print shrink-0 border-b border-zinc-700">
@@ -554,14 +585,16 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
 };
 
 // --- ADMIN DASHBOARD ---
-const AdminDashboard = ({ confirmAction }: any) => {
+const AdminDashboard = ({ confirmAction, setView }: any) => {
    const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
    const [jobs, setJobs] = useState<Job[]>([]);
+   const [logs, setLogs] = useState<TimeLog[]>([]);
 
    useEffect(() => {
      const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
      const unsub2 = DB.subscribeJobs(setJobs);
-     return () => { unsub1(); unsub2(); };
+     const unsub3 = DB.subscribeLogs((all) => setLogs(all.slice(0, 5))); // Get last 5 logs
+     return () => { unsub1(); unsub2(); unsub3(); };
    }, []);
 
    const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
@@ -570,6 +603,7 @@ const AdminDashboard = ({ confirmAction }: any) => {
 
    return (
       <div className="space-y-6 animate-fade-in">
+         {/* Top Stats Cards */}
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Card 1: Live Jobs */}
             <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center relative overflow-hidden">
@@ -601,24 +635,58 @@ const AdminDashboard = ({ confirmAction }: any) => {
                <Users className="text-emerald-500 w-10 h-10" />
             </div>
          </div>
+         
+         {/* Live Activity & Recent Feed Split */}
+         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+             {/* Left: Live Floor Status */}
+             <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col h-full">
+                <div className="p-6 border-b border-white/5"><h3 className="font-bold text-white flex items-center gap-2"><Activity className="w-4 h-4 text-emerald-500"/> Live Operations</h3></div>
+                <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[400px]">
+                   {activeLogs.length === 0 && <div className="p-8 text-center text-zinc-500">Floor is quiet. No active timers.</div>}
+                   {activeLogs.map(l => (
+                      <div key={l.id} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
+                         <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-zinc-400 border border-white/5">{l.userName.charAt(0)}</div>
+                            <div>
+                                <p className="font-bold text-white">{l.userName}</p>
+                                <p className="text-xs text-zinc-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> {l.operation}</p>
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-4">
+                            <div className="text-white text-xl font-bold font-mono"><LiveTimer startTime={l.startTime} /></div>
+                            <button onClick={() => confirmAction({ title: "Force Stop", message: "Stop this timer?", onConfirm: () => DB.stopTimeLog(l.id) })} className="bg-red-500/10 text-red-500 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors"><Power className="w-4 h-4" /></button>
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             </div>
 
-         <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden">
-            <div className="p-6 border-b border-white/5"><h3 className="font-bold text-white">Live Activity</h3></div>
-            <div className="divide-y divide-white/5">
-               {activeLogs.length === 0 && <div className="p-8 text-center text-zinc-500">Floor is quiet.</div>}
-               {activeLogs.map(l => (
-                  <div key={l.id} className="p-4 flex items-center justify-between">
-                     <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-zinc-400">{l.userName.charAt(0)}</div>
-                        <div><p className="font-bold text-white">{l.userName}</p><p className="text-xs text-zinc-500">{l.operation}</p></div>
-                     </div>
-                     <div className="flex items-center gap-4">
-                        <div className="text-white text-xl font-bold"><LiveTimer startTime={l.startTime} /></div>
-                        <button onClick={() => confirmAction({ title: "Force Stop", message: "Stop this timer?", onConfirm: () => DB.stopTimeLog(l.id) })} className="bg-red-500/10 text-red-500 p-2 rounded-lg hover:bg-red-500 hover:text-white"><Power className="w-4 h-4" /></button>
-                     </div>
-                  </div>
-               ))}
-            </div>
+             {/* Right: Recent Activity Feed */}
+             <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col h-full">
+                <div className="p-6 border-b border-white/5 flex justify-between items-center">
+                    <h3 className="font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-blue-500"/> Recent Activity</h3>
+                    <button onClick={() => setView('admin-logs')} className="text-xs text-blue-400 hover:text-white transition-colors">View All</button>
+                </div>
+                <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[400px]">
+                   {logs.length === 0 && <div className="p-8 text-center text-zinc-500">No recent history.</div>}
+                   {logs.map(l => (
+                       <div key={l.id} className="p-4 flex items-start gap-3 hover:bg-white/5 transition-colors">
+                           <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${l.endTime ? 'bg-zinc-500' : 'bg-emerald-500'}`}></div>
+                           <div className="flex-1">
+                               <p className="text-sm text-white">
+                                   <span className="font-bold">{l.userName}</span> {l.endTime ? 'completed' : 'started'} <span className="text-zinc-300">{l.operation}</span>
+                               </p>
+                               <p className="text-xs text-zinc-500 mt-0.5">Job: {l.jobId} • {new Date(l.startTime).toLocaleTimeString()}</p>
+                           </div>
+                           {l.durationMinutes && (
+                               <div className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-1 rounded">
+                                   {formatDuration(l.durationMinutes)}
+                               </div>
+                           )}
+                       </div>
+                   ))}
+                </div>
+             </div>
          </div>
       </div>
    );
@@ -767,8 +835,8 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                               <td className="p-4 text-zinc-400">{j.partNumber}</td>
                               <td className="p-4 text-zinc-300 font-mono">{j.quantity}</td>
                               <td className="p-4">
-                                  <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide flex w-fit items-center gap-2 ${j.status === 'in-progress' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
-                                      {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>}
+                                  <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide flex w-fit items-center gap-2 ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
+                                      {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"/>}
                                       {j.status}
                                   </span>
                               </td>
@@ -1299,7 +1367,7 @@ export default function App() {
           </aside>
        )}
        <main className={`flex-1 p-8 ${user.role === 'admin' ? 'ml-64' : ''}`}>
-          {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} />}
+          {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} />}
           {view === 'admin-jobs' && <JobsView addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
           {view === 'admin-logs' && <LogsView />}
