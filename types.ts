@@ -46,6 +46,7 @@ export interface SystemSettings {
   lunchDeductionMinutes: number; // 30
   autoClockOutTime: string; // "17:00"
   autoClockOutEnabled: boolean;
+  customOperations: string[]; // e.g. ["Cutting", "Deburring"]
 }
 
 export interface ToastMessage {

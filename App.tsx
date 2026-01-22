@@ -224,7 +224,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
 };
 
 // --- HELPER COMPONENT: JOB CARD ---
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean }> = ({ job, onStart, disabled }) => {
+const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[] }> = ({ job, onStart, disabled, operations }) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -253,7 +253,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
         <div className="p-4 bg-zinc-950/30 border-t border-white/5 animate-fade-in">
           <p className="text-xs text-zinc-500 uppercase font-bold mb-3">Select Operation:</p>
           <div className="grid grid-cols-2 gap-2">
-            {['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'].map(op => (
+            {operations.map(op => (
               <button
                 key={op}
                 onClick={(e) => {
@@ -265,6 +265,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                 {op}
               </button>
             ))}
+            {operations.length === 0 && <p className="col-span-2 text-xs text-zinc-500 text-center py-2">No operations configured.</p>}
           </div>
         </div>
       )}
@@ -292,6 +293,7 @@ const EmployeeDashboard = ({
   const [jobs, setJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
+  const [ops, setOps] = useState<string[]>([]);
 
   // Deep Link Handling
   useEffect(() => {
@@ -305,6 +307,10 @@ const EmployeeDashboard = ({
 
   // Use DB subscriptions to get real-time updates
   useEffect(() => {
+    // Get settings once on mount
+    const settings = DB.getSettings();
+    setOps(settings.customOperations || []);
+
     const unsubLogs = DB.subscribeLogs((allLogs) => {
        const myActive = allLogs.find(l => l.userId === user.id && !l.endTime);
        const history = allLogs.filter(l => l.userId === user.id).sort((a,b) => b.startTime - a.startTime);
@@ -432,7 +438,7 @@ const EmployeeDashboard = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredJobs.map(job => (
-              <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} />
+              <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} operations={ops} />
             ))}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
@@ -724,9 +730,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
    // NEW: State for starting job as admin
    const [startJobModal, setStartJobModal] = useState<Job | null>(null);
+   const [ops, setOps] = useState<string[]>([]);
 
    useEffect(() => {
        const u1 = DB.subscribeJobs(setJobs);
+       setOps(DB.getSettings().customOperations);
        return () => { u1(); };
    }, []);
 
@@ -1006,7 +1014,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
              <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
              <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong>{startJobModal.jobIdsDisplay}</strong> ({startJobModal.partNumber})</p>
              <div className="grid grid-cols-2 gap-2">
-               {['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'].map(op => (
+               {ops.map(op => (
                  <button
                    key={op}
                    onClick={() => handleAdminStartJob(op)}
@@ -1015,6 +1023,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
                    {op}
                  </button>
                ))}
+               {ops.length === 0 && <p className="col-span-2 text-center text-sm text-zinc-500">No operations defined. Check Settings.</p>}
              </div>
              <div className="mt-4 flex justify-end">
                <button onClick={() => setStartJobModal(null)} className="text-zinc-500 hover:text-white text-sm">Cancel</button>
@@ -1366,7 +1375,22 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
 // --- ADMIN: SETTINGS ---
 const SettingsView = ({ addToast }: { addToast: any }) => {
    const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
+   const [newOp, setNewOp] = useState('');
+
    const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
+   
+   const handleAddOp = () => {
+       if(!newOp.trim()) return;
+       const ops = settings.customOperations || [];
+       if(ops.includes(newOp.trim())) return;
+       setSettings({...settings, customOperations: [...ops, newOp.trim()]});
+       setNewOp('');
+   };
+   
+   const handleDeleteOp = (op: string) => {
+       setSettings({...settings, customOperations: (settings.customOperations || []).filter(o => o !== op)});
+   };
+
    return (
      <div className="max-w-xl space-y-6">
         <h2 className="text-2xl font-bold text-white">System Settings</h2>
@@ -1377,6 +1401,26 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
              <div><label className="text-xs text-zinc-500 block mb-1">Auto-Clock Out Time</label><input type="time" value={settings.autoClockOutTime} onChange={e => setSettings({...settings, autoClockOutTime: e.target.value})} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" /></div>
            </div>
         </div>
+
+        <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
+            <div className="flex items-center gap-3 mb-6 pb-6 border-b border-white/5"><div className="bg-blue-500/20 p-2 rounded-lg text-blue-400"><Activity className="w-6 h-6" /></div><div><h3 className="font-bold text-white">Production Operations</h3><p className="text-sm text-zinc-500">Customize the workflow steps available for tracking.</p></div></div>
+            <div className="space-y-4">
+                <div className="flex gap-2">
+                    <input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="New Operation Name..." className="flex-1 bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" onKeyDown={e => e.key === 'Enter' && handleAddOp()} />
+                    <button onClick={handleAddOp} className="bg-blue-600 px-4 rounded-lg text-white font-bold"><Plus className="w-4 h-4" /></button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {(settings.customOperations || []).map(op => (
+                        <div key={op} className="bg-zinc-800 border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-2">
+                            <span>{op}</span>
+                            <button onClick={() => handleDeleteOp(op)} className="text-zinc-500 hover:text-red-500"><X className="w-3 h-3" /></button>
+                        </div>
+                    ))}
+                    {(settings.customOperations || []).length === 0 && <span className="text-zinc-500 italic text-sm">No operations defined.</span>}
+                </div>
+            </div>
+        </div>
+
         <div className="flex justify-end"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2"><Save className="w-5 h-5" /> Save Changes</button></div>
      </div>
    );

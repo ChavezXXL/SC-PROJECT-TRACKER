@@ -481,10 +481,20 @@ export async function loginUser(username: string, pin: string): Promise<User | n
 export function getSettings(): SystemSettings {
   // Always prefer local for fast rendering, assume synced elsewhere
   const fallback: SystemSettings = {
-    lunchStart: "12:00", lunchEnd: "12:30", lunchDeductionMinutes: 30,
-    autoClockOutTime: "17:30", autoClockOutEnabled: false
+    lunchStart: "12:00", 
+    lunchEnd: "12:30", 
+    lunchDeductionMinutes: 30,
+    autoClockOutTime: "17:30", 
+    autoClockOutEnabled: false,
+    customOperations: ['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing']
   };
-  return readLS<SystemSettings>(LS.settings, fallback);
+  const settings = readLS<SystemSettings>(LS.settings, fallback);
+  
+  // Backwards compatibility: ensure customOperations exists
+  if (!settings.customOperations) {
+      settings.customOperations = fallback.customOperations;
+  }
+  return settings;
 }
 
 export async function saveSettings(settings: SystemSettings) {
