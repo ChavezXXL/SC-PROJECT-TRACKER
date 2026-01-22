@@ -384,6 +384,47 @@ export async function stopTimeLog(logId: string) {
   }
 }
 
+export async function updateTimeLog(log: TimeLog) {
+  // Recalculate duration if end time exists
+  if (log.endTime) {
+     log.durationMinutes = Math.max(0, Math.round((log.endTime - log.startTime) / 60000));
+  } else {
+     log.endTime = null;
+     log.durationMinutes = null;
+  }
+
+  if (dbInstance) {
+      try {
+        await setDoc(doc(dbInstance, COL.logs, log.id), log, { merge: true });
+        firebaseStatus = { connected: true };
+      } catch (e) {
+        throw handleError(e);
+      }
+      return;
+  }
+
+  const logs = readLS<TimeLog[]>(LS.logs, []);
+  const idx = logs.findIndex(l => l.id === log.id);
+  if (idx >= 0) {
+    logs[idx] = log;
+    writeLS(LS.logs, logs);
+  }
+}
+
+export async function deleteTimeLog(logId: string) {
+  if (dbInstance) {
+      try {
+        await deleteDoc(doc(dbInstance, COL.logs, logId));
+        firebaseStatus = { connected: true };
+      } catch (e) {
+        throw handleError(e);
+      }
+      return;
+  }
+  const logs = readLS<TimeLog[]>(LS.logs, []).filter(l => l.id !== logId);
+  writeLS(LS.logs, logs);
+}
+
 // --------------------
 // USERS
 // --------------------

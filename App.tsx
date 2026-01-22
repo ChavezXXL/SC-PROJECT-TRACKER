@@ -27,6 +27,18 @@ const formatDurationDecimal = (mins: number | undefined) => {
     return (mins / 60).toFixed(2);
 };
 
+const toDateTimeLocal = (ts: number | undefined | null) => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hour = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  return `${year}-${month}-${day}T${hour}:${min}`;
+};
+
 const groupLogsByJob = (logs: TimeLog[], jobs: Job[]) => {
   const groups: Record<string, { job: Job | undefined; logs: TimeLog[]; totalMins: number }> = {};
   for (const log of logs) {
@@ -1036,18 +1048,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
 }
 
 // --- ADMIN: LOGS ---
-const LogsView = () => {
+const LogsView = ({ addToast }: { addToast: any }) => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
    const [jobs, setJobs] = useState<Job[]>([]);
+   const [users, setUsers] = useState<User[]>([]);
    const [search, setSearch] = useState('');
    const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
    const [refreshKey, setRefreshKey] = useState(0);
+   
+   // Edit Modal State
+   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
+   const [showEditModal, setShowEditModal] = useState(false);
+   const [ops, setOps] = useState<string[]>([]);
 
    useEffect(() => {
-     // Trigger subscription refresh when key changes (simulated refresh)
      const unsub1 = DB.subscribeLogs(setLogs);
      const unsub2 = DB.subscribeJobs(setJobs);
-     return () => { unsub1(); unsub2(); };
+     const unsub3 = DB.subscribeUsers(setUsers);
+     setOps(DB.getSettings().customOperations);
+     return () => { unsub1(); unsub2(); unsub3(); };
    }, [refreshKey]);
 
    const getFilterDate = (type: 'week' | 'month' | 'year' | 'all') => {
@@ -1056,7 +1075,6 @@ const LogsView = () => {
        
        const d = new Date();
        if (type === 'week') {
-           // Start of current week (Monday)
            const day = now.getDay() || 7; 
            if (day !== 1) d.setHours(-24 * (day - 1));
            else d.setHours(0,0,0,0);
@@ -1072,7 +1090,6 @@ const LogsView = () => {
    // 1. ACTIVE OPERATIONS GROUPING
    const activeGroups = useMemo(() => {
        const running = logs.filter(l => !l.endTime);
-       // Optional: Filter running logs by search too, though usually we want to see them all
        const term = search.toLowerCase();
        const filtered = running.filter(l => {
            if (!term) return true;
@@ -1087,13 +1104,9 @@ const LogsView = () => {
    const historyGroups = useMemo(() => {
        const minDate = getFilterDate(timeFilter);
        const term = search.toLowerCase();
-       
-       // Only logs that HAVE an end time
        const completed = logs.filter(l => l.endTime && l.startTime >= minDate);
-       
        const filtered = completed.filter(l => {
            if (!term) return true;
-           // Search context: Log fields OR Job context
            const job = jobs.find(j => j.id === l.jobId);
            const jobStr = job ? JSON.stringify(job).toLowerCase() : '';
            return (
@@ -1107,11 +1120,45 @@ const LogsView = () => {
    }, [logs, jobs, search, timeFilter]);
 
    const stats = useMemo(() => {
-       // Only count History for the stats to keep them stable
        const totalMinutes = historyGroups.reduce((acc, g) => acc + g.totalMins, 0);
        const totalRecords = historyGroups.reduce((acc, g) => acc + g.logs.length, 0);
        return { totalMinutes, uniqueJobs: historyGroups.length, count: totalRecords };
    }, [historyGroups]);
+
+   const handleEditLog = (log: TimeLog) => {
+       setEditingLog({...log});
+       setShowEditModal(true);
+   };
+
+   const handleSaveLog = async () => {
+       if (!editingLog) return;
+       try {
+           // Ensure end time is valid
+           if (editingLog.endTime && editingLog.endTime < editingLog.startTime) {
+               addToast('error', 'End time cannot be before Start time');
+               return;
+           }
+           await DB.updateTimeLog(editingLog);
+           addToast('success', 'Log updated successfully');
+           setShowEditModal(false);
+           setEditingLog(null);
+       } catch(e) {
+           addToast('error', 'Failed to update log');
+       }
+   };
+
+   const handleDeleteLog = async () => {
+       if (!editingLog) return;
+       if (!window.confirm("Are you sure you want to permanently delete this log record?")) return;
+       try {
+           await DB.deleteTimeLog(editingLog.id);
+           addToast('success', 'Log deleted');
+           setShowEditModal(false);
+           setEditingLog(null);
+       } catch(e) {
+           addToast('error', 'Failed to delete log');
+       }
+   };
 
    return (
       <div className="space-y-6">
@@ -1173,7 +1220,6 @@ const LogsView = () => {
                {activeGroups.map(group => (
                  <div key={'active-' + (group.job?.id || Math.random())} className="bg-zinc-900/80 border border-emerald-500/30 rounded-2xl overflow-hidden shadow-[0_0_20px_rgba(16,185,129,0.1)] relative">
                      <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
-                     {/* Job Header */}
                      <div className="p-4 flex flex-col md:flex-row justify-between md:items-center gap-4 bg-emerald-500/5">
                          <div className="flex items-center gap-4">
                              <div className="bg-zinc-900 p-3 rounded-xl border border-white/5">
@@ -1187,13 +1233,10 @@ const LogsView = () => {
                                  </div>
                              </div>
                          </div>
-                         {/* Live Indicator */}
                          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30 text-xs font-bold uppercase tracking-wide">
                              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span> Live
                          </div>
                      </div>
-
-                     {/* Active Logs Table */}
                      <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
                            <tbody className="divide-y divide-white/5">
@@ -1209,6 +1252,9 @@ const LogsView = () => {
                                        <td className="px-6 py-4"><span className="bg-zinc-800 text-zinc-300 px-2 py-1 rounded text-xs border border-white/5 uppercase tracking-wide">{l.operation}</span></td>
                                        <td className="px-6 py-4 text-right font-mono text-xl font-bold text-emerald-400">
                                            <LiveTimer startTime={l.startTime} />
+                                       </td>
+                                       <td className="px-4 py-4 text-right">
+                                            <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white"><Edit2 className="w-4 h-4"/></button>
                                        </td>
                                    </tr>
                                ))}
@@ -1235,7 +1281,6 @@ const LogsView = () => {
 
              {historyGroups.map(group => (
                  <div key={'hist-' + (group.job?.id || Math.random())} className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm hover:border-white/10 transition-colors">
-                     {/* Job Header */}
                      <div className="bg-zinc-800/50 p-4 flex flex-col md:flex-row justify-between md:items-center gap-4 border-b border-white/5">
                          <div className="flex items-center gap-4">
                              <div className="bg-blue-500/20 p-3 rounded-xl">
@@ -1262,7 +1307,6 @@ const LogsView = () => {
                          </div>
                      </div>
 
-                     {/* Logs Table */}
                      <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
                            <thead className="bg-white/5 text-zinc-500 text-xs uppercase font-bold tracking-wider">
@@ -1272,6 +1316,7 @@ const LogsView = () => {
                                    <th className="px-6 py-3">Employee</th>
                                    <th className="px-6 py-3">Operation</th>
                                    <th className="px-6 py-3 text-right">Duration</th>
+                                   <th className="px-4 py-3"></th>
                                </tr>
                            </thead>
                            <tbody className="divide-y divide-white/5">
@@ -1295,6 +1340,9 @@ const LogsView = () => {
                                        <td className="px-6 py-3 text-right font-mono text-zinc-300">
                                             {formatDuration(l.durationMinutes)}
                                        </td>
+                                       <td className="px-4 py-3 text-right">
+                                            <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4"/></button>
+                                       </td>
                                    </tr>
                                ))}
                            </tbody>
@@ -1303,6 +1351,80 @@ const LogsView = () => {
                  </div>
              ))}
          </div>
+
+         {/* EDIT LOG MODAL */}
+         {showEditModal && editingLog && (
+             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+                 <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+                     <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+                         <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
+                         <button onClick={() => setShowEditModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+                     </div>
+                     <div className="p-6 space-y-5">
+                         {/* User Selection */}
+                         <div>
+                             <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Employee</label>
+                             <select 
+                                 className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                 value={editingLog.userId}
+                                 onChange={e => {
+                                     const u = users.find(u => u.id === e.target.value);
+                                     if(u) setEditingLog({...editingLog, userId: u.id, userName: u.name});
+                                 }}
+                             >
+                                 {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                             </select>
+                         </div>
+
+                         {/* Operation Selection */}
+                         <div>
+                             <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Operation</label>
+                             <select 
+                                 className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                 value={editingLog.operation}
+                                 onChange={e => setEditingLog({...editingLog, operation: e.target.value})}
+                             >
+                                 {ops.map(o => <option key={o} value={o}>{o}</option>)}
+                                 {!ops.includes(editingLog.operation) && <option value={editingLog.operation}>{editingLog.operation} (Legacy)</option>}
+                             </select>
+                         </div>
+
+                         {/* Time Adjustments */}
+                         <div className="grid grid-cols-2 gap-4">
+                             <div>
+                                 <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Start Time</label>
+                                 <input 
+                                     type="datetime-local" 
+                                     className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
+                                     value={toDateTimeLocal(editingLog.startTime)}
+                                     onChange={e => setEditingLog({...editingLog, startTime: new Date(e.target.value).getTime()})}
+                                 />
+                             </div>
+                             <div>
+                                 <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">End Time</label>
+                                 <input 
+                                     type="datetime-local" 
+                                     className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
+                                     value={toDateTimeLocal(editingLog.endTime)}
+                                     onChange={e => {
+                                         const val = e.target.value ? new Date(e.target.value).getTime() : null;
+                                         setEditingLog({...editingLog, endTime: val});
+                                     }}
+                                 />
+                                 <p className="text-[10px] text-zinc-500 mt-1">Clear to mark as active.</p>
+                             </div>
+                         </div>
+                     </div>
+                     <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center">
+                         <button onClick={handleDeleteLog} className="text-red-500 hover:text-red-400 text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4"/> Delete Log</button>
+                         <div className="flex gap-2">
+                             <button onClick={() => setShowEditModal(false)} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
+                             <button onClick={handleSaveLog} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg shadow-blue-900/20">Save Changes</button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+         )}
       </div>
    )
 }
@@ -1454,7 +1576,7 @@ export default function App() {
        <main className={`flex-1 p-8 ${user.role === 'admin' ? 'ml-64' : ''}`}>
           {view === 'admin-dashboard' && <AdminDashboard user={user} confirmAction={setConfirm} setView={setView} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
-          {view === 'admin-logs' && <LogsView />}
+          {view === 'admin-logs' && <LogsView addToast={addToast} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} />}
