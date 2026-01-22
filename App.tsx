@@ -31,59 +31,50 @@ const formatDurationDecimal = (mins: number | undefined) => {
 const PrintStyles = () => (
   <style>{`
     @media print {
-      /* Reset Body */
+      /* GLOBAL VISIBILITY RESET */
       body {
+        visibility: hidden !important;
         background-color: white !important;
-        color: black !important;
         margin: 0 !important;
         padding: 0 !important;
         overflow: visible !important;
       }
 
-      /* Hide App Shell Elements explicitly */
-      aside, 
-      main, 
-      .toast-container, 
-      .confirm-modal,
-      .no-print { 
-        display: none !important; 
-      }
-
-      /* Target the Modal Overlay to strip it down */
-      .print-overlay {
-        position: static !important;
+      /* TARGET PRINT AREA */
+      #printable-area {
+        visibility: visible !important;
+        display: block !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
         background: white !important;
-        z-index: 9999 !important;
-        padding: 0 !important;
-        display: block !important;
-        height: auto !important;
-        width: 100% !important;
-        inset: auto !important;
-      }
-
-      /* Target the Content Container */
-      .print-content {
-        position: static !important;
-        box-shadow: none !important;
-        border: none !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        height: auto !important;
+        color: black !important;
+        z-index: 2147483647 !important; /* Force top z-index */
         overflow: visible !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        display: block !important;
       }
       
-      /* Ensure text colors are black for legibility */
-      .print-content * {
+      /* ENSURE CHILDREN ARE VISIBLE */
+      #printable-area * {
+        visibility: visible !important;
         color: black !important;
-        border-color: black !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
 
-      /* Allow the actual content to show */
-      #printable-area {
-        display: block !important;
+      /* HIDE PARENT WRAPPERS FROM INTERFERING */
+      /* Use visibility hidden for parents so they don't block the absolute positioned print area */
+      #root, aside, nav, button, .toast-container, .no-print, .print-overlay {
+        visibility: hidden !important; 
+        /* Do NOT use display:none on #root or .print-overlay as it destroys the render tree including the print area */
+      }
+      
+      /* HIDE INTERFACE ELEMENTS */
+      .no-print {
+         display: none !important;
       }
     }
   `}</style>
@@ -133,7 +124,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
   };
 
   return (
-    <div className="bg-zinc-900 border border-blue-500/30 rounded-3xl p-6 shadow-2xl relative overflow-hidden animate-fade-in mb-8">
+    <div className="bg-zinc-900 border border-blue-500/30 rounded-3xl p-6 shadow-2xl relative overflow-hidden animate-fade-in mb-8 no-print">
       {/* Background Pulse/Gradient */}
       <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Briefcase className="w-64 h-64 text-blue-500" /></div>
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 opacity-50 animate-pulse"></div>
@@ -365,7 +356,7 @@ const EmployeeDashboard = ({
       )}
 
       {/* 2. NAVIGATION TABS */}
-      <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5">
+      <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
          <div className="flex gap-2">
            <button onClick={() => setTab('jobs')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
            <button onClick={() => setTab('history')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
