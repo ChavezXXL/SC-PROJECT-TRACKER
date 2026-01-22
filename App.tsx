@@ -228,14 +228,10 @@ const EmployeeDashboard = ({
   user, 
   addToast, 
   onLogout,
-  initialJobId,
-  onConsumeInitialId
 }: { 
   user: User, 
   addToast: any, 
   onLogout: () => void,
-  initialJobId?: string | null,
-  onConsumeInitialId?: () => void
 }) => {
   const [tab, setTab] = useState<'jobs' | 'history' | 'scan'>('jobs');
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
@@ -243,16 +239,6 @@ const EmployeeDashboard = ({
   const [jobs, setJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
-
-  // Deep Link Handling
-  useEffect(() => {
-    if (initialJobId) {
-        setSearch(initialJobId);
-        setTab('jobs');
-        addToast('success', 'Job Loaded from Scan');
-        if (onConsumeInitialId) onConsumeInitialId();
-    }
-  }, [initialJobId, onConsumeInitialId, addToast]);
 
   // Use DB subscriptions to get real-time updates
   useEffect(() => {
@@ -282,7 +268,6 @@ const EmployeeDashboard = ({
         addToast('success', 'Timer Started');
     } catch (e: any) {
         console.error("Timer Start Error:", e);
-        // More descriptive error for the user
         addToast('error', 'Failed to start: ' + (e.message || "Unknown Error"));
     }
   };
@@ -301,18 +286,9 @@ const EmployeeDashboard = ({
   const handleScan = (e: any) => {
       if (e.key === 'Enter') {
           let val = e.currentTarget.value.trim();
-          // Handle deep link URLs from scan
-          if (val.includes('jobId=')) {
-              try {
-                  const url = new URL(val);
-                  const id = url.searchParams.get('jobId');
-                  if (id) val = id;
-              } catch (e) {
-                  // Fallback regex if not full valid url
-                  const match = val.match(/[?&]jobId=([^&]+)/);
-                  if (match) val = match[1];
-              }
-          }
+          // Fallback regex if scanning a deep link url
+          const match = val.match(/[?&]jobId=([^&]+)/);
+          if (match) val = match[1];
           
           setSearch(val); 
           setTab('jobs'); 
@@ -564,21 +540,41 @@ const AdminDashboard = ({ confirmAction }: any) => {
      return () => { unsub1(); unsub2(); };
    }, []);
 
-   const stats = {
-      jobs: jobs.filter(j => j.status === 'in-progress').length,
-      workers: new Set(activeLogs.map(l => l.userId)).size
-   };
+   const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
+   const wipJobsCount = jobs.filter(j => j.status === 'in-progress').length;
+   const activeWorkersCount = new Set(activeLogs.map(l => l.userId)).size;
 
    return (
       <div className="space-y-6 animate-fade-in">
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-               <div><p className="text-zinc-500 text-sm">Active Jobs</p><h3 className="text-3xl font-bold text-white">{stats.jobs}</h3></div>
-               <Briefcase className="text-blue-500 w-8 h-8" />
+         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Card 1: Live Jobs */}
+            <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center relative overflow-hidden">
+               <div className="relative z-10">
+                   <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Live Activity</p>
+                   <h3 className="text-3xl font-black text-white">{liveJobsCount}</h3>
+                   <p className="text-xs text-blue-400 mt-1">Jobs running now</p>
+               </div>
+               <Activity className={`w-10 h-10 text-blue-500 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
             </div>
+
+            {/* Card 2: WIP */}
             <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-               <div><p className="text-zinc-500 text-sm">Floor Staff</p><h3 className="text-3xl font-bold text-white">{stats.workers}</h3></div>
-               <Users className="text-emerald-500 w-8 h-8" />
+               <div>
+                   <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">In Progress</p>
+                   <h3 className="text-3xl font-black text-white">{wipJobsCount}</h3>
+                   <p className="text-xs text-zinc-500 mt-1">Total open jobs</p>
+               </div>
+               <Briefcase className="text-zinc-600 w-10 h-10" />
+            </div>
+
+            {/* Card 3: Staff */}
+            <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
+               <div>
+                   <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p>
+                   <h3 className="text-3xl font-black text-white">{activeWorkersCount}</h3>
+                   <p className="text-xs text-zinc-500 mt-1">Clocked in</p>
+               </div>
+               <Users className="text-emerald-500 w-10 h-10" />
             </div>
          </div>
 
