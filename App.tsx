@@ -27,55 +27,75 @@ const formatDurationDecimal = (mins: number | undefined) => {
     return (mins / 60).toFixed(2);
 };
 
-// --- PRINT STYLES (FIXED & SCALED) ---
+// --- PRINT STYLES (ROBUST) ---
 const PrintStyles = () => (
   <style>{`
     @media print {
-      /* GLOBAL VISIBILITY RESET */
-      body {
-        visibility: hidden !important;
-        background-color: white !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        overflow: visible !important;
-      }
-
-      /* TARGET PRINT AREA */
-      #printable-area {
-        visibility: visible !important;
-        display: block !important;
-        position: absolute !important;
-        left: 0 !important;
-        top: 0 !important;
-        width: 100vw !important; /* Force full width */
-        height: 100vh !important; /* Force full height */
-        margin: 0 !important;
-        padding: 0 !important;
-        background: white !important;
-        color: black !important;
-        z-index: 2147483647 !important; /* Force top z-index */
-        overflow: visible !important;
-      }
-      
-      /* ENSURE CHILDREN ARE VISIBLE */
-      #printable-area * {
-        visibility: visible !important;
-        color: black !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-
-      /* HIDE PARENT WRAPPERS FROM INTERFERING */
-      #root, aside, nav, button, .toast-container, .no-print, .print-overlay {
-        visibility: hidden !important; 
-      }
-      
-      .no-print { display: none !important; }
-
-      /* Set page margins to small to maximize content area */
+      /* Reset page */
       @page {
         size: auto;
-        margin: 5mm; 
+        margin: 0.5cm;
+      }
+
+      /* Hide the main app UI */
+      body > div:not(#root), 
+      #root > div > aside, 
+      #root > div > main,
+      .no-print,
+      .toast-container {
+        display: none !important;
+      }
+
+      /* Reset body to allow full page print */
+      body, #root {
+        background: white !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        overflow: visible !important;
+      }
+
+      /* Force the print overlay to be the only visible thing */
+      .print-overlay {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        z-index: 9999 !important;
+        background: white !important;
+        display: flex !important;
+        flex-direction: column !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+
+      /* The actual content container */
+      .print-content {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        box-shadow: none !important;
+        border: none !important;
+        display: flex !important;
+        flex-direction: column !important;
+      }
+
+      /* Ensure print area fills space */
+      #printable-area {
+        flex: 1;
+        display: flex !important;
+        flex-direction: column !important;
+        padding: 1cm !important;
+      }
+
+      /* Color resets */
+      * {
+        color: black !important;
+        border-color: black !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
     }
   `}</style>
@@ -453,7 +473,7 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto print-overlay">
-      <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content print:max-w-none print:shadow-none print:w-full print:h-full">
+      <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content">
          
          {/* Toolbar (Hidden when printing) */}
          <div className="bg-zinc-900 text-white p-4 flex justify-between items-center no-print shrink-0 border-b border-zinc-700">
@@ -468,57 +488,56 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
          </div>
 
          {/* Printable Content */}
-         <div id="printable-area" className="flex-1 p-8 print:p-8 bg-white overflow-auto flex flex-col h-full justify-between">
+         <div id="printable-area" className="flex-1 p-8 bg-white overflow-auto">
             {/* Header */}
-            <div className="flex justify-between items-center border-b-4 print:border-b-8 border-black pb-4 mb-6 print:mb-12">
+            <div className="flex justify-between items-center border-b-4 border-black pb-4 mb-6">
               <div>
-                 <h1 className="text-4xl print:text-7xl font-black tracking-tighter">SC DEBURRING</h1>
-                 <p className="text-sm print:text-2xl font-bold uppercase tracking-widest text-gray-500 mt-2">Production Traveler</p>
+                 <h1 className="text-4xl font-black tracking-tighter">SC DEBURRING</h1>
+                 <p className="text-sm font-bold uppercase tracking-widest text-gray-500 mt-2">Production Traveler</p>
               </div>
               <div className="text-right">
-                 <h2 className="text-2xl print:text-5xl font-bold">{new Date().toLocaleDateString()}</h2>
-                 <p className="text-xs print:text-xl text-gray-400 mt-1">Printed On</p>
+                 <h2 className="text-2xl font-bold">{new Date().toLocaleDateString()}</h2>
+                 <p className="text-xs text-gray-400 mt-1">Printed On</p>
               </div>
             </div>
 
             {/* Main Info */}
-            <div className="grid grid-cols-2 gap-8 print:gap-12 mb-8 print:mb-auto">
-               <div className="space-y-6 print:space-y-12">
-                   <div className="border-2 print:border-4 border-black p-4 print:p-8">
-                      <label className="block text-xs print:text-xl uppercase font-bold text-gray-500 mb-2">PO Number</label>
-                      <div className="text-4xl print:text-9xl font-black leading-none">{job.poNumber}</div>
+            <div className="grid grid-cols-2 gap-8 mb-8 flex-1">
+               <div className="space-y-6 flex flex-col">
+                   <div className="border-4 border-black p-6">
+                      <label className="block text-sm uppercase font-bold text-gray-500 mb-2">PO Number</label>
+                      <div className="text-6xl font-black leading-none break-all">{job.poNumber}</div>
                    </div>
-                   <div className="grid grid-cols-2 gap-4 print:gap-8">
-                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
-                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Part</label>
-                         <div className="text-xl print:text-5xl font-bold break-words">{job.partNumber}</div>
+                   <div className="grid grid-cols-2 gap-6">
+                      <div className="border-4 border-gray-300 p-4">
+                         <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Part</label>
+                         <div className="text-3xl font-bold break-words">{job.partNumber}</div>
                       </div>
-                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
-                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Qty</label>
-                         <div className="text-xl print:text-5xl font-bold">{job.quantity}</div>
+                      <div className="border-4 border-gray-300 p-4">
+                         <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Qty</label>
+                         <div className="text-3xl font-bold">{job.quantity}</div>
                       </div>
-                      {/* NEW FIELDS */}
-                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
-                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Received</label>
-                         <div className="text-xl print:text-4xl font-bold">{job.dateReceived || '-'}</div>
+                      <div className="border-4 border-gray-300 p-4">
+                         <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Received</label>
+                         <div className="text-xl font-bold">{job.dateReceived || '-'}</div>
                       </div>
-                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
-                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Due Date</label>
-                         <div className="text-xl print:text-4xl font-bold text-red-600">{job.dueDate || '-'}</div>
+                      <div className="border-4 border-gray-300 p-4">
+                         <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label>
+                         <div className="text-2xl font-bold text-red-600">{job.dueDate || '-'}</div>
                       </div>
                    </div>
-                   <div>
-                     <label className="block text-xs print:text-2xl uppercase font-bold text-gray-500 mb-2">Notes</label>
-                     <div className="text-sm print:text-2xl border-l-4 print:border-l-8 border-black pl-4 py-2 print:py-4 bg-gray-50 min-h-[4rem] print:min-h-[8rem]">
+                   <div className="flex-1">
+                     <label className="block text-sm uppercase font-bold text-gray-500 mb-2">Notes</label>
+                     <div className="text-lg border-l-8 border-black pl-6 py-4 bg-gray-50 min-h-[6rem]">
                        {job.info || "No notes."}
                      </div>
                    </div>
                </div>
                
-               <div className="flex flex-col items-center justify-center border-2 print:border-4 border-black p-4 print:p-8 bg-gray-50 h-full">
-                  <img src={qrUrl} alt="QR Code" className="w-full max-w-[400px] print:max-w-none h-auto mix-blend-multiply" />
-                  <p className="font-mono text-xs print:text-xl mt-4 text-gray-500 text-center break-all">{job.id}</p>
-                  <p className="font-bold uppercase tracking-widest text-sm print:text-3xl mt-2">SCAN JOB ID</p>
+               <div className="flex flex-col items-center justify-center border-4 border-black p-8 bg-gray-50 h-full">
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[80%]" />
+                  <p className="font-mono text-lg mt-6 text-gray-500 text-center break-all">{job.id}</p>
+                  <p className="font-bold uppercase tracking-widest text-2xl mt-2">SCAN JOB ID</p>
                </div>
             </div>
 
@@ -1350,16 +1369,15 @@ export default function App() {
        <PrintStyles /><PrintableJobSheet job={printable} onClose={() => setPrintable(null)} /><ConfirmationModal isOpen={!!confirm} {...confirm} onCancel={() => setConfirm(null)} />
        {user.role === 'admin' && (
           <aside className="w-64 border-r border-white/5 bg-zinc-950 flex flex-col fixed h-full z-20">
-             <div className="p-6 font-bold text-white flex gap-2 items-center"><Sparkles className="text-blue-500"/> SC DEBURRING</div>
+             <div className="p-6 font-bold text-white flex gap-2 items-center"><Sparkles className="text-blue-500"/> NEXUS</div>
              <nav className="px-4 space-y-1">
-                {[{id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard}, {id: 'admin-scan', l: 'My Tracker', i: ScanLine}, {id: 'admin-jobs', l: 'Jobs', i: Briefcase}, {id: 'admin-logs', l: 'Logs', i: Calendar}, {id: 'admin-team', l: 'Team', i: Users}, {id: 'admin-settings', l: 'Settings', i: Settings}].map(x => <button key={x.id} onClick={() => setView(x.id as any)} className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white'}`}><x.i className="w-4 h-4" /> {x.l}</button>)}
+                {[{id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard}, {id: 'admin-jobs', l: 'Jobs', i: Briefcase}, {id: 'admin-logs', l: 'Logs', i: Calendar}, {id: 'admin-team', l: 'Team', i: Users}, {id: 'admin-settings', l: 'Settings', i: Settings}].map(x => <button key={x.id} onClick={() => setView(x.id as any)} className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white'}`}><x.i className="w-4 h-4" /> {x.l}</button>)}
              </nav>
              <button onClick={() => setUser(null)} className="mt-auto m-6 flex items-center gap-3 text-zinc-500 hover:text-white text-sm font-bold"><LogOut className="w-4 h-4" /> Sign Out</button>
           </aside>
        )}
        <main className={`flex-1 p-8 ${user.role === 'admin' ? 'ml-64' : ''}`}>
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} />}
-          {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} />}
           {view === 'admin-jobs' && <JobsView addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
           {view === 'admin-logs' && <LogsView />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
