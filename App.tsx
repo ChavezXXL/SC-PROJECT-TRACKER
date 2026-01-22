@@ -228,10 +228,14 @@ const EmployeeDashboard = ({
   user, 
   addToast, 
   onLogout,
+  initialJobId,
+  onConsumeInitialId
 }: { 
   user: User, 
   addToast: any, 
   onLogout: () => void,
+  initialJobId?: string | null,
+  onConsumeInitialId?: () => void
 }) => {
   const [tab, setTab] = useState<'jobs' | 'history' | 'scan'>('jobs');
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
@@ -239,6 +243,16 @@ const EmployeeDashboard = ({
   const [jobs, setJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
+
+  // Deep Link Handling
+  useEffect(() => {
+    if (initialJobId) {
+        setSearch(initialJobId);
+        setTab('jobs');
+        addToast('success', 'Job Loaded from Scan');
+        if (onConsumeInitialId) onConsumeInitialId();
+    }
+  }, [initialJobId, onConsumeInitialId, addToast]);
 
   // Use DB subscriptions to get real-time updates
   useEffect(() => {
@@ -268,6 +282,7 @@ const EmployeeDashboard = ({
         addToast('success', 'Timer Started');
     } catch (e: any) {
         console.error("Timer Start Error:", e);
+        // More descriptive error for the user
         addToast('error', 'Failed to start: ' + (e.message || "Unknown Error"));
     }
   };
@@ -286,9 +301,18 @@ const EmployeeDashboard = ({
   const handleScan = (e: any) => {
       if (e.key === 'Enter') {
           let val = e.currentTarget.value.trim();
-          // Fallback regex if scanning a deep link url
-          const match = val.match(/[?&]jobId=([^&]+)/);
-          if (match) val = match[1];
+          // Handle deep link URLs from scan
+          if (val.includes('jobId=')) {
+              try {
+                  const url = new URL(val);
+                  const id = url.searchParams.get('jobId');
+                  if (id) val = id;
+              } catch (e) {
+                  // Fallback regex if not full valid url
+                  const match = val.match(/[?&]jobId=([^&]+)/);
+                  if (match) val = match[1];
+              }
+          }
           
           setSearch(val); 
           setTab('jobs'); 
@@ -319,7 +343,7 @@ const EmployeeDashboard = ({
              <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow' : 'bg-zinc-800 text-blue-400 hover:bg-blue-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
              
              {/* PROMINENT EXIT BUTTON */}
-             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> {user.role === 'admin' ? 'Close Tracker' : 'Exit'}</button>
+             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
          </div>
       </div>
 
