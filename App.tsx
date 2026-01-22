@@ -290,7 +290,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                     <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-700" />
                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="FILTER_BATCHES..." className="pl-14 pr-6 py-4 bg-zinc-900 border border-white/5 rounded-[24px] text-[10px] font-black uppercase tracking-[0.3em] text-white w-full lg:w-80 outline-none backdrop-blur-xl" />
                 </div>
-                <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 px-8 py-4 rounded-[24px] text-[10px] font-black uppercase tracking-[0.4em] text-white flex items-center gap-3 hover:bg-blue-500 shadow-2xl transition-all"><Plus className="w-5 h-5"/> New Batch</button>
+                <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 px-8 py-4 rounded-[24px] text-[10px] font-black uppercase tracking-[0.4em] text-white flex items-center gap-3 hover:bg-blue-500 shadow-2xl transition-all active:scale-95"><Plus className="w-5 h-5"/> New Batch</button>
             </div>
          </div>
 
@@ -348,7 +348,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    );
 };
 
-// --- ADMIN: LOGS (INDIVIDUALIZED JOB BOXES) ---
+// --- ADMIN: LOGS (COMPACT INDIVIDUALIZED JOB BOXES WITH BIG FONTS) ---
 const LogsView = ({ addToast }: { addToast: any }) => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
    const [jobs, setJobs] = useState<Job[]>([]);
@@ -395,8 +395,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    };
 
    return (
-      <div className="space-y-10 animate-fade-in">
-         <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-8">
+      <div className="space-y-6 animate-fade-in">
+         <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-6">
             <div>
                <h2 className="text-5xl font-black uppercase tracking-tighter text-white leading-none mb-4">Batch Archives</h2>
                <div className="flex gap-4 p-1.5 bg-zinc-900/60 border border-white/5 rounded-2xl w-fit backdrop-blur-xl shadow-lg">
@@ -409,59 +409,58 @@ const LogsView = ({ addToast }: { addToast: any }) => {
             </div>
          </div>
 
-         <div className="space-y-12">
+         <div className="space-y-8">
             {groupedLogs.map(([jobId, data]) => (
-               <div key={jobId} className="bg-zinc-900/40 border border-white/10 rounded-[56px] overflow-hidden shadow-[0_32px_64px_-16px_rgba(0,0,0,0.6)] backdrop-blur-xl border-t-[10px] border-t-blue-500/30">
-                  {/* Job Box Header - Full Details */}
-                  <div className="p-10 md:p-12 border-b border-white/5 bg-zinc-950/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-10">
-                     <div className="flex-1 w-full space-y-4">
-                        <div className="flex items-center gap-4">
-                           <span className="text-[10px] font-black text-blue-500 uppercase tracking-[0.3em] bg-blue-500/10 px-4 py-1.5 rounded-full border border-blue-500/20 shadow-[0_0_15px_#3b82f611]">Job Sequence</span>
-                           <span className="text-[10px] font-black text-zinc-700 uppercase tracking-widest">Ref Index: {jobId}</span>
+               <div key={jobId} className="bg-zinc-900/40 border border-white/10 rounded-[48px] overflow-hidden shadow-2xl backdrop-blur-xl border-t-[8px] border-t-blue-500/20">
+                  {/* Job Box Header - Compact but Big Font */}
+                  <div className="p-8 md:p-10 border-b border-white/5 bg-zinc-950/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+                     <div className="flex-1 w-full">
+                        <div className="flex items-center gap-3 mb-3">
+                           <span className="text-[9px] font-black text-blue-400 uppercase tracking-[0.3em] bg-blue-500/5 px-3 py-1 rounded-full border border-blue-500/20">Archived Record</span>
+                           <span className="text-[9px] font-black text-zinc-800 uppercase tracking-widest">SEQ_{jobId}</span>
                         </div>
-                        <h3 className="text-4xl md:text-6xl font-black text-white uppercase tracking-tighter break-all leading-none">{data.job?.poNumber || 'DATA_NOT_FOUND'}</h3>
-                        <div className="flex flex-wrap gap-x-10 gap-y-4 pt-4 border-t border-white/5">
-                           <div><p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mb-1">Technical Part Index</p><p className="text-xl font-black text-zinc-300 uppercase tracking-tighter leading-none">{data.job?.partNumber || '---'}</p></div>
-                           <div><p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mb-1">Batch Load Units</p><p className="text-xl font-black text-zinc-400 font-mono leading-none">{data.job?.quantity || '0'} PCS</p></div>
-                           <div><p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mb-1">Job Status State</p><p className="text-xl font-black text-zinc-500 uppercase tracking-tighter leading-none">{data.job?.status || 'N/A'}</p></div>
+                        <h3 className="text-5xl md:text-7xl font-black text-white uppercase tracking-tighter break-all leading-none mb-6">{data.job?.poNumber || 'DATA_NULL'}</h3>
+                        <div className="flex flex-wrap gap-x-12 gap-y-4 pt-6 border-t border-white/5">
+                           <div><p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.3em] mb-2">Technical Index</p><p className="text-2xl md:text-3xl font-black text-zinc-100 uppercase tracking-tighter leading-none">{data.job?.partNumber || '---'}</p></div>
+                           <div><p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.3em] mb-2">Units Processed</p><p className="text-2xl md:text-3xl font-black text-blue-500 font-mono leading-none">{data.job?.quantity || '0'} PCS</p></div>
                         </div>
                      </div>
-                     <div className="text-right w-full md:w-auto bg-black/40 p-8 rounded-[40px] border border-white/5 shadow-inner flex flex-col items-center md:items-end">
-                        <p className="text-[10px] font-black text-blue-500 uppercase tracking-[0.5em] mb-3 opacity-60">Total Cumulative Hours</p>
-                        <div className="text-5xl md:text-7xl font-black text-white font-mono leading-none tracking-widest">{formatDuration(data.totalMins)}</div>
+                     <div className="text-right w-full md:w-auto bg-black/40 p-6 rounded-[32px] border border-white/5 shadow-inner flex flex-col items-center md:items-end min-w-[200px]">
+                        <p className="text-[10px] font-black text-blue-400 uppercase tracking-[0.5em] mb-2 opacity-50">Total Time</p>
+                        <div className="text-5xl md:text-6xl font-black text-white font-mono leading-none tracking-widest">{formatDuration(data.totalMins)}</div>
                      </div>
                   </div>
 
-                  {/* Individual Logs List for this Job Box */}
+                  {/* Individual Logs List - Compact Rows */}
                   <div className="overflow-x-auto custom-scrollbar">
                      <table className="w-full text-left border-collapse">
-                        <thead className="bg-zinc-950/20 text-zinc-600 font-black uppercase tracking-[0.4em] text-[10px]">
+                        <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.4em] text-[10px]">
                            <tr>
-                              <th className="p-10">Production Date</th>
-                              <th className="p-10">Floor Operator</th>
-                              <th className="p-10">Workflow Phase</th>
-                              <th className="p-10">Shift Duration</th>
-                              <th className="p-10 text-right">Audit</th>
+                              <th className="px-10 py-5">Shift Date</th>
+                              <th className="px-10 py-5">Floor Staff</th>
+                              <th className="px-10 py-5">Phase</th>
+                              <th className="px-10 py-5">Duration</th>
+                              <th className="px-10 py-5 text-right">Audit</th>
                            </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
                            {data.logs.map(l => (
                               <tr key={l.id} className="hover:bg-white/[0.03] transition-all group">
-                                 <td className="p-10 text-zinc-500 font-black text-sm uppercase whitespace-nowrap">{new Date(l.startTime).toLocaleDateString()}</td>
-                                 <td className="p-10">
-                                    <div className="flex items-center gap-5">
-                                       <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center font-black text-zinc-600 border border-white/5 text-xs shadow-inner uppercase group-hover:border-blue-500/50 transition-colors">{l.userName.charAt(0)}</div>
-                                       <span className="text-white font-black uppercase tracking-tight text-lg leading-none">{l.userName}</span>
+                                 <td className="px-10 py-5 text-zinc-600 font-black text-xs uppercase whitespace-nowrap">{new Date(l.startTime).toLocaleDateString()}</td>
+                                 <td className="px-10 py-5">
+                                    <div className="flex items-center gap-4">
+                                       <div className="w-10 h-10 rounded-xl bg-zinc-800 flex items-center justify-center font-black text-zinc-700 border border-white/5 text-[10px] shadow-inner uppercase group-hover:border-blue-500/50 transition-colors">{l.userName.charAt(0)}</div>
+                                       <span className="text-zinc-200 font-black uppercase tracking-tight text-base leading-none">{l.userName}</span>
                                     </div>
                                  </td>
-                                 <td className="p-10 text-blue-500 font-black uppercase text-xs tracking-[0.2em]">{l.operation}</td>
-                                 <td className="p-10">
-                                    <div className="text-zinc-300 font-black font-mono text-xl leading-none">{formatDuration(l.durationMinutes)}</div>
-                                    <p className="text-[9px] text-zinc-700 font-black uppercase mt-2 tracking-widest">
-                                       {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'ACTIVE'}
+                                 <td className="px-10 py-5 text-blue-400 font-black uppercase text-[10px] tracking-[0.2em]">{l.operation}</td>
+                                 <td className="px-10 py-5">
+                                    <div className="text-zinc-400 font-black font-mono text-lg leading-none">{formatDuration(l.durationMinutes)}</div>
+                                    <p className="text-[9px] text-zinc-800 font-black uppercase mt-1.5 tracking-widest">
+                                       {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'LIVE'}
                                     </p>
                                  </td>
-                                 <td className="p-10 text-right"><button onClick={() => setEditingLog({...l})} className="p-5 bg-zinc-800 rounded-[24px] text-zinc-600 hover:text-white transition-all shadow-xl hover:bg-zinc-700"><Edit2 className="w-5 h-5"/></button></td>
+                                 <td className="px-10 py-5 text-right"><button onClick={() => setEditingLog({...l})} className="p-4 bg-zinc-800/50 rounded-2xl text-zinc-700 hover:text-white transition-all shadow-xl hover:bg-zinc-700 border border-white/5"><Edit2 className="w-4 h-4"/></button></td>
                               </tr>
                            ))}
                         </tbody>
@@ -469,13 +468,13 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                   </div>
                </div>
             ))}
-            {groupedLogs.length === 0 && <div className="py-32 text-center text-zinc-800 text-sm font-black uppercase tracking-[0.6em] opacity-40">System archive is empty for this period</div>}
+            {groupedLogs.length === 0 && <div className="py-24 text-center text-zinc-800 text-sm font-black uppercase tracking-[0.6em] opacity-30">Archive section null</div>}
          </div>
 
          {/* Log Editing Modal */}
          {editingLog && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
-               <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[64px] shadow-[0_64px_128px_-32px_rgba(0,0,0,0.8)] p-10 overflow-hidden">
+               <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[64px] shadow-2xl p-10 overflow-hidden">
                   <div className="flex justify-between items-center mb-10"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Modify Archive Entry</h3><button onClick={() => setEditingLog(null)} className="p-4 bg-white/5 rounded-2xl text-zinc-600 hover:text-white"><X className="w-6 h-6" /></button></div>
                   <div className="space-y-8">
                      <div className="grid grid-cols-2 gap-8">
