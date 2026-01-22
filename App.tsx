@@ -27,75 +27,52 @@ const formatDurationDecimal = (mins: number | undefined) => {
     return (mins / 60).toFixed(2);
 };
 
-// --- PRINT STYLES (ROBUST) ---
+// --- PRINT STYLES (FAILSAFE) ---
 const PrintStyles = () => (
   <style>{`
     @media print {
-      /* Reset page */
-      @page {
-        size: auto;
-        margin: 0.5cm;
+      /* HIDE EVERYTHING BY DEFAULT */
+      body {
+        visibility: hidden !important;
+        background-color: white !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
       }
 
-      /* Hide the main app UI */
-      body > div:not(#root), 
+      /* HIDE SPECIFIC APP ELEMENTS TO BE SAFE */
       #root > div > aside, 
       #root > div > main,
-      .no-print,
       .toast-container {
         display: none !important;
       }
 
-      /* Reset body to allow full page print */
-      body, #root {
-        background: white !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        overflow: visible !important;
-      }
-
-      /* Force the print overlay to be the only visible thing */
-      .print-overlay {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        z-index: 9999 !important;
-        background: white !important;
-        display: flex !important;
-        flex-direction: column !important;
-        padding: 0 !important;
-        margin: 0 !important;
-      }
-
-      /* The actual content container */
-      .print-content {
-        width: 100% !important;
-        height: 100% !important;
-        max-width: none !important;
-        box-shadow: none !important;
-        border: none !important;
-        display: flex !important;
-        flex-direction: column !important;
-      }
-
-      /* Ensure print area fills space */
+      /* SHOW THE PRINT AREA */
       #printable-area {
-        flex: 1;
-        display: flex !important;
-        flex-direction: column !important;
-        padding: 1cm !important;
+        visibility: visible !important;
+        display: block !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: white !important;
+        z-index: 2147483647 !important;
       }
-
-      /* Color resets */
-      * {
-        color: black !important;
-        border-color: black !important;
+      
+      /* SHOW ALL CHILDREN OF PRINT AREA */
+      #printable-area * {
+        visibility: visible !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
+      }
+
+      /* PAGE SETUP */
+      @page {
+        size: auto;
+        margin: 0.5cm;
       }
     }
   `}</style>
@@ -595,7 +572,7 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
 };
 
 // --- ADMIN DASHBOARD ---
-const AdminDashboard = ({ confirmAction, setView }: any) => {
+const AdminDashboard = ({ user, confirmAction, setView }: any) => {
    const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
    const [jobs, setJobs] = useState<Job[]>([]);
    const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -611,8 +588,22 @@ const AdminDashboard = ({ confirmAction, setView }: any) => {
    const wipJobsCount = jobs.filter(j => j.status === 'in-progress').length;
    const activeWorkersCount = new Set(activeLogs.map(l => l.userId)).size;
 
+   // Check if admin is working
+   const myActiveLog = activeLogs.find(l => l.userId === user.id);
+   const myActiveJob = myActiveLog ? jobs.find(j => j.id === myActiveLog.jobId) : null;
+
    return (
       <div className="space-y-6 animate-fade-in">
+         
+         {/* ADMIN ACTIVE JOB PANEL - Restored for personal tracking */}
+         {myActiveLog && (
+            <ActiveJobPanel 
+               job={myActiveJob || null} 
+               log={myActiveLog} 
+               onStop={(id) => DB.stopTimeLog(id)} 
+            />
+         )}
+
          {/* Top Stats Cards */}
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Card 1: Live Jobs */}
@@ -703,7 +694,7 @@ const AdminDashboard = ({ confirmAction, setView }: any) => {
 };
 
 // --- ADMIN: JOBS (REVAMPED) ---
-const JobsView = ({ addToast, setPrintable, confirm }: any) => {
+const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [jobs, setJobs] = useState<Job[]>([]);
    const [showModal, setShowModal] = useState(false);
    const [editingJob, setEditingJob] = useState<Partial<Job>>({});
@@ -711,6 +702,8 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    const [isSaving, setIsSaving] = useState(false);
    const [search, setSearch] = useState('');
    const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
+   // NEW: State for starting job as admin
+   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
 
    useEffect(() => {
        const u1 = DB.subscribeJobs(setJobs);
@@ -720,6 +713,18 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    const handleDelete = (id: string) => confirm({ title: "Delete", message: "Delete job?", onConfirm: () => DB.deleteJob(id) });
    const handleComplete = (id: string) => confirm({ title: "Complete Job", message: "Mark as done?", onConfirm: () => DB.completeJob(id) });
    const handleReopen = (id: string) => confirm({ title: "Reopen Job", message: "Move back to active?", onConfirm: () => DB.reopenJob(id) });
+
+   // NEW: Start Job Logic for Admin
+   const handleAdminStartJob = async (operation: string) => {
+      if (!startJobModal) return;
+      try {
+          await DB.startTimeLog(startJobModal.id, user.id, user.name, operation);
+          addToast('success', 'Operation Started');
+          setStartJobModal(null);
+      } catch (e: any) {
+          addToast('error', 'Failed to start: ' + e.message);
+      }
+   };
 
    const handleSave = async () => {
     if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Missing fields');
@@ -852,6 +857,9 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                               </td>
                               <td className="p-4 text-zinc-400">{j.dueDate || '-'}</td>
                               <td className="p-4 text-right flex justify-end gap-2">
+                                 {/* NEW: Play/Start Button for Admin */}
+                                 <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
+                                 
                                  <button onClick={() => handleComplete(j.id)} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors" title="Complete"><CheckCircle className="w-4 h-4"/></button>
                                  <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700" title="Print"><Printer className="w-4 h-4"/></button>
                                  <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-zinc-800 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600" title="Edit"><Edit2 className="w-4 h-4"/></button>
@@ -967,6 +975,30 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
               <button disabled={isSaving} onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-medium disabled:opacity-50">{isSaving ? 'Saving...' : 'Save Job'}</button>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* NEW: ADMIN START JOB MODAL */}
+      {startJobModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
+             <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
+             <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong>{startJobModal.jobIdsDisplay}</strong> ({startJobModal.partNumber})</p>
+             <div className="grid grid-cols-2 gap-2">
+               {['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'].map(op => (
+                 <button
+                   key={op}
+                   onClick={() => handleAdminStartJob(op)}
+                   className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors"
+                 >
+                   {op}
+                 </button>
+               ))}
+             </div>
+             <div className="mt-4 flex justify-end">
+               <button onClick={() => setStartJobModal(null)} className="text-zinc-500 hover:text-white text-sm">Cancel</button>
+             </div>
           </div>
         </div>
       )}
@@ -1377,8 +1409,8 @@ export default function App() {
           </aside>
        )}
        <main className={`flex-1 p-8 ${user.role === 'admin' ? 'ml-64' : ''}`}>
-          {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} />}
-          {view === 'admin-jobs' && <JobsView addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
+          {view === 'admin-dashboard' && <AdminDashboard user={user} confirmAction={setConfirm} setView={setView} />}
+          {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
           {view === 'admin-logs' && <LogsView />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
