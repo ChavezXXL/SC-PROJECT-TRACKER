@@ -63,7 +63,6 @@ const groupLogsByJob = (logs: TimeLog[], jobs: Job[]) => {
 const PrintStyles = () => (
   <style>{`
     @media print {
-      /* HIDE EVERYTHING BY DEFAULT */
       body {
         visibility: hidden !important;
         background-color: white !important;
@@ -71,15 +70,11 @@ const PrintStyles = () => (
         padding: 0 !important;
         overflow: visible !important;
       }
-
-      /* HIDE SPECIFIC APP ELEMENTS TO BE SAFE */
       #root > div > aside, 
       #root > div > main,
       .toast-container {
         display: none !important;
       }
-
-      /* SHOW THE PRINT AREA */
       #printable-area {
         visibility: visible !important;
         display: block !important;
@@ -93,15 +88,11 @@ const PrintStyles = () => (
         background: white !important;
         z-index: 2147483647 !important;
       }
-      
-      /* SHOW ALL CHILDREN OF PRINT AREA */
       #printable-area * {
         visibility: visible !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
-
-      /* PAGE SETUP */
       @page {
         size: auto;
         margin: 0.5cm;
@@ -155,12 +146,10 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
 
   return (
     <div className="bg-zinc-900 border border-blue-500/30 rounded-3xl p-6 shadow-2xl relative overflow-hidden animate-fade-in mb-8 no-print">
-      {/* Background Pulse/Gradient */}
       <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Briefcase className="w-64 h-64 text-blue-500" /></div>
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 opacity-50 animate-pulse"></div>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
-        {/* Left: Timer & Control */}
         <div className="flex flex-col justify-center">
            <div className="flex items-center gap-2 mb-4">
               <span className="animate-pulse w-3 h-3 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"></span>
@@ -189,7 +178,6 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
            </button>
         </div>
 
-        {/* Right: Details Grid */}
         <div className="bg-white/5 rounded-2xl p-6 border border-white/5 flex flex-col h-full opacity-90">
            <h3 className="text-zinc-400 font-bold uppercase text-sm mb-6 flex items-center gap-2">
              <Info className="w-4 h-4" /> Job Details
@@ -307,7 +295,6 @@ const EmployeeDashboard = ({
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
 
-  // Deep Link Handling
   useEffect(() => {
     if (initialJobId) {
         setSearch(initialJobId);
@@ -317,9 +304,7 @@ const EmployeeDashboard = ({
     }
   }, [initialJobId, onConsumeInitialId, addToast]);
 
-  // Use DB subscriptions to get real-time updates
   useEffect(() => {
-    // Get settings once on mount
     const settings = DB.getSettings();
     setOps(settings.customOperations || []);
 
@@ -348,8 +333,6 @@ const EmployeeDashboard = ({
         await DB.startTimeLog(jobId, user.id, user.name, operation);
         addToast('success', 'Timer Started');
     } catch (e: any) {
-        console.error("Timer Start Error:", e);
-        // More descriptive error for the user
         addToast('error', 'Failed to start: ' + (e.message || "Unknown Error"));
     }
   };
@@ -359,19 +342,15 @@ const EmployeeDashboard = ({
       await DB.stopTimeLog(logId);
       addToast('success', 'Job Stopped');
     } catch (e) {
-      console.error("Stop failed", e);
       addToast('error', 'Failed to stop. Please try again.');
-      throw e; // Re-throw to inform UI
     }
   };
 
   const handleScan = (e: any) => {
       if (e.key === 'Enter') {
           let val = e.currentTarget.value.trim();
-          // Fallback regex if scanning a deep link url
           const match = val.match(/[?&]jobId=([^&]+)/);
           if (match) val = match[1];
-          
           setSearch(val); 
           setTab('jobs'); 
           addToast('success', 'Scanned');
@@ -386,12 +365,10 @@ const EmployeeDashboard = ({
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto h-full flex flex-col pb-20">
-      {/* 1. ACTIVE JOB PANEL */}
       {activeLog && (
         <ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob} />
       )}
 
-      {/* 2. NAVIGATION TABS */}
       <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
          <div className="flex gap-2">
            <button onClick={() => setTab('jobs')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
@@ -399,13 +376,10 @@ const EmployeeDashboard = ({
          </div>
          <div className="flex items-center gap-2">
              <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow' : 'bg-zinc-800 text-blue-400 hover:bg-blue-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
-             
-             {/* PROMINENT EXIT BUTTON */}
              <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> {user.role === 'admin' ? 'Close Tracker' : 'Exit'}</button>
          </div>
       </div>
 
-      {/* 3. CONTENT AREA */}
       {tab === 'scan' ? (
          <div className="flex-1 flex items-center justify-center animate-fade-in py-12">
             <div className="bg-zinc-900 p-8 rounded-3xl border border-white/10 text-center max-w-sm w-full shadow-2xl">
@@ -481,7 +455,6 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
 const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => void }) => {
   if (!job) return null;
   
-  // Generates a deep link QR code to open this specific job
   const currentBaseUrl = window.location.href.split('?')[0];
   const deepLinkData = `${currentBaseUrl}?jobId=${job.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
@@ -490,7 +463,6 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto print-overlay">
       <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content">
          
-         {/* Toolbar (Hidden when printing) */}
          <div className="bg-zinc-900 text-white p-4 flex justify-between items-center no-print shrink-0 border-b border-zinc-700">
              <div>
                <h3 className="font-bold flex items-center gap-2 text-lg"><Printer className="w-5 h-5 text-blue-500"/> Print Preview</h3>
@@ -502,9 +474,7 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
              </div>
          </div>
 
-         {/* Printable Content */}
          <div id="printable-area" className="flex-1 p-8 bg-white overflow-auto">
-            {/* Header */}
             <div className="flex justify-between items-center border-b-4 border-black pb-4 mb-6">
               <div>
                  <h1 className="text-4xl font-black tracking-tighter">SC DEBURRING</h1>
@@ -516,7 +486,6 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
               </div>
             </div>
 
-            {/* Main Info */}
             <div className="grid grid-cols-2 gap-8 mb-8 flex-1">
                <div className="space-y-6 flex flex-col">
                    <div className="border-4 border-black p-6">
@@ -550,12 +519,11 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
                </div>
                
                <div className="flex flex-col items-center justify-center border-4 border-black p-8 bg-gray-50 h-full">
-                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[80%]" />
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[80%]" crossOrigin="anonymous" />
                   <p className="font-mono text-lg mt-6 text-gray-500 text-center break-all">{job.id}</p>
                   <p className="font-bold uppercase tracking-widest text-2xl mt-2">SCAN JOB ID</p>
                </div>
             </div>
-
          </div>
       </div>
     </div>
@@ -618,7 +586,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
    useEffect(() => {
      const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
      const unsub2 = DB.subscribeJobs(setJobs);
-     const unsub3 = DB.subscribeLogs((all) => setLogs(all.slice(0, 5))); // Get last 5 logs
+     const unsub3 = DB.subscribeLogs((all) => setLogs(all.slice(0, 5)));
      return () => { unsub1(); unsub2(); unsub3(); };
    }, []);
 
@@ -626,25 +594,16 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
    const wipJobsCount = jobs.filter(j => j.status === 'in-progress').length;
    const activeWorkersCount = new Set(activeLogs.map(l => l.userId)).size;
 
-   // Check if admin is working
    const myActiveLog = activeLogs.find(l => l.userId === user.id);
    const myActiveJob = myActiveLog ? jobs.find(j => j.id === myActiveLog.jobId) : null;
 
    return (
       <div className="space-y-6 animate-fade-in">
-         
-         {/* ADMIN ACTIVE JOB PANEL - Restored for personal tracking */}
          {myActiveLog && (
-            <ActiveJobPanel 
-               job={myActiveJob || null} 
-               log={myActiveLog} 
-               onStop={(id) => DB.stopTimeLog(id)} 
-            />
+            <ActiveJobPanel job={myActiveJob || null} log={myActiveLog} onStop={(id) => DB.stopTimeLog(id)} />
          )}
 
-         {/* Top Stats Cards */}
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Card 1: Live Jobs */}
             <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center relative overflow-hidden">
                <div className="relative z-10">
                    <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Live Activity</p>
@@ -654,7 +613,6 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
                <Activity className={`w-10 h-10 text-blue-500 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
             </div>
 
-            {/* Card 2: WIP */}
             <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
                <div>
                    <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">In Progress</p>
@@ -664,7 +622,6 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
                <Briefcase className="text-zinc-600 w-10 h-10" />
             </div>
 
-            {/* Card 3: Staff */}
             <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
                <div>
                    <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p>
@@ -675,9 +632,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
             </div>
          </div>
          
-         {/* Live Activity & Recent Feed Split */}
          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-             {/* Left: Live Floor Status */}
              <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col h-full">
                 <div className="p-6 border-b border-white/5"><h3 className="font-bold text-white flex items-center gap-2"><Activity className="w-4 h-4 text-emerald-500"/> Live Operations</h3></div>
                 <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[400px]">
@@ -700,7 +655,6 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
                 </div>
              </div>
 
-             {/* Right: Recent Activity Feed */}
              <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col h-full">
                 <div className="p-6 border-b border-white/5 flex justify-between items-center">
                     <h3 className="font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-blue-500"/> Recent Activity</h3>
@@ -740,7 +694,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [isSaving, setIsSaving] = useState(false);
    const [search, setSearch] = useState('');
    const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
-   // NEW: State for starting job as admin
    const [startJobModal, setStartJobModal] = useState<Job | null>(null);
    const [ops, setOps] = useState<string[]>([]);
 
@@ -754,7 +707,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const handleComplete = (id: string) => confirm({ title: "Complete Job", message: "Mark as done?", onConfirm: () => DB.completeJob(id) });
    const handleReopen = (id: string) => confirm({ title: "Reopen Job", message: "Move back to active?", onConfirm: () => DB.reopenJob(id) });
 
-   // NEW: Start Job Logic for Admin
    const handleAdminStartJob = async (operation: string) => {
       if (!startJobModal) return;
       try {
@@ -801,7 +753,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
     } catch (e) { addToast('error', 'Parse Error'); } finally { setAiLoading(false); }
    };
 
-   // Filtering Logic
    const getFilterDate = (type: 'week' | 'month' | 'year' | 'all') => {
        const now = new Date();
        if (type === 'all') return 0;
@@ -810,7 +761,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
        d.setHours(0,0,0,0);
        
        if (type === 'week') {
-           // Start of current week (Monday)
            const day = now.getDay() || 7; 
            if (day !== 1) d.setDate(d.getDate() - (day - 1));
        } else if (type === 'month') {
@@ -827,7 +777,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
            if (j.status === 'completed') return false;
            return JSON.stringify(j).toLowerCase().includes(term);
        }).sort((a,b) => {
-           // Priority: In-Progress > Pending, then by Due Date
            if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
            if (a.status !== 'in-progress' && b.status === 'in-progress') return 1;
            return (a.dueDate || '').localeCompare(b.dueDate || '');
@@ -852,7 +801,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
 
    return (
       <div className="space-y-6">
-         {/* MAIN HEADER */}
          <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
             <h2 className="text-2xl font-bold flex items-center gap-2"><Briefcase className="w-6 h-6 text-blue-500"/> Job Management</h2>
             <div className="flex gap-2">
@@ -864,7 +812,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
             </div>
          </div>
          
-         {/* ACTIVE SECTION */}
          <div className="space-y-4">
              <h3 className="text-sm font-bold uppercase text-blue-400 flex items-center gap-2 tracking-wider">
                  <Activity className="w-4 h-4" /> Active Production
@@ -897,9 +844,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
                               </td>
                               <td className="p-4 text-zinc-400">{j.dueDate || '-'}</td>
                               <td className="p-4 text-right flex justify-end gap-2">
-                                 {/* NEW: Play/Start Button for Admin */}
                                  <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
-                                 
                                  <button onClick={() => handleComplete(j.id)} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors" title="Complete"><CheckCircle className="w-4 h-4"/></button>
                                  <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700" title="Print"><Printer className="w-4 h-4"/></button>
                                  <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-zinc-800 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600" title="Edit"><Edit2 className="w-4 h-4"/></button>
@@ -911,71 +856,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
                     </tbody>
                 </table>
              </div>
-         </div>
-
-         {/* HISTORY SECTION HEADER */}
-         <div className="flex flex-col md:flex-row justify-between md:items-end gap-4 mt-12 border-b border-white/5 pb-4">
-             <div>
-                <h3 className="text-lg font-bold text-zinc-400 flex items-center gap-2"><History className="w-5 h-5" /> Job History</h3>
-                <p className="text-xs text-zinc-500 mt-1">Completed production runs</p>
-             </div>
-             
-             <div className="flex gap-2 bg-zinc-900 border border-white/10 p-1 rounded-xl">
-                 {(['week', 'month', 'year', 'all'] as const).map((t) => (
-                     <button 
-                        key={t}
-                        onClick={() => setTimeFilter(t)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}
-                     >
-                         {t === 'all' ? 'All' : `This ${t}`}
-                     </button>
-                 ))}
-             </div>
-         </div>
-         
-         {/* HISTORY STATS */}
-         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-zinc-900/50 p-4 rounded-xl border border-white/5">
-                <p className="text-xs text-zinc-500 uppercase font-bold mb-1">Jobs Completed</p>
-                <p className="text-2xl font-bold text-white">{historyStats.count}</p>
-            </div>
-            <div className="bg-zinc-900/50 p-4 rounded-xl border border-white/5">
-                <p className="text-xs text-zinc-500 uppercase font-bold mb-1">Units Processed</p>
-                <p className="text-2xl font-bold text-white">{historyStats.qty}</p>
-            </div>
-         </div>
-
-         {/* HISTORY TABLE */}
-         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
-            <table className="w-full text-sm text-left">
-                <thead className="bg-white/5 text-zinc-500">
-                    <tr>
-                        <th className="p-4">PO</th>
-                        <th className="p-4">Job</th>
-                        <th className="p-4">Part</th>
-                        <th className="p-4">Qty</th>
-                        <th className="p-4">Completed On</th>
-                        <th className="p-4 text-right">Actions</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                    {historyJobs.map(j => (
-                       <tr key={j.id} className="hover:bg-white/5 transition-colors">
-                          <td className="p-4 text-zinc-400 font-bold">{j.poNumber}</td>
-                          <td className="p-4 text-zinc-500 font-mono">{j.jobIdsDisplay}</td>
-                          <td className="p-4 text-zinc-500">{j.partNumber}</td>
-                          <td className="p-4 text-zinc-400 font-mono">{j.quantity}</td>
-                          <td className="p-4 text-zinc-400">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
-                          <td className="p-4 text-right flex justify-end gap-2">
-                             <button onClick={() => handleReopen(j.id)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Reopen"><RotateCcw className="w-4 h-4"/></button>
-                             <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700" title="Print"><Printer className="w-4 h-4"/></button>
-                             <button onClick={() => handleDelete(j.id)} className="p-2 bg-zinc-800 rounded-lg text-red-400 hover:text-white hover:bg-red-600" title="Delete"><Trash2 className="w-4 h-4"/></button>
-                          </td>
-                       </tr>
-                    ))}
-                    {historyJobs.length === 0 && <tr><td colSpan={6} className="p-12 text-center text-zinc-500">No completed jobs found in this period.</td></tr>}
-                </tbody>
-            </table>
          </div>
 
          {showModal && (
@@ -1019,7 +899,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
         </div>
       )}
       
-      {/* NEW: ADMIN START JOB MODAL */}
       {startJobModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
@@ -1050,80 +929,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
 // --- ADMIN: LOGS ---
 const LogsView = ({ addToast }: { addToast: any }) => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
-   const [jobs, setJobs] = useState<Job[]>([]);
    const [users, setUsers] = useState<User[]>([]);
-   const [search, setSearch] = useState('');
-   const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('week');
    const [refreshKey, setRefreshKey] = useState(0);
-   
-   // Edit Modal State
    const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
    const [showEditModal, setShowEditModal] = useState(false);
    const [ops, setOps] = useState<string[]>([]);
 
    useEffect(() => {
      const unsub1 = DB.subscribeLogs(setLogs);
-     const unsub2 = DB.subscribeJobs(setJobs);
      const unsub3 = DB.subscribeUsers(setUsers);
      setOps(DB.getSettings().customOperations);
-     return () => { unsub1(); unsub2(); unsub3(); };
+     return () => { unsub1(); unsub3(); };
    }, [refreshKey]);
-
-   const getFilterDate = (type: 'week' | 'month' | 'year' | 'all') => {
-       const now = new Date();
-       if (type === 'all') return 0;
-       
-       const d = new Date();
-       if (type === 'week') {
-           const day = now.getDay() || 7; 
-           if (day !== 1) d.setHours(-24 * (day - 1));
-           else d.setHours(0,0,0,0);
-       } else if (type === 'month') {
-           d.setDate(1);
-       } else if (type === 'year') {
-           d.setMonth(0, 1);
-       }
-       d.setHours(0,0,0,0);
-       return d.getTime();
-   };
-
-   // 1. ACTIVE OPERATIONS GROUPING
-   const activeGroups = useMemo(() => {
-       const running = logs.filter(l => !l.endTime);
-       const term = search.toLowerCase();
-       const filtered = running.filter(l => {
-           if (!term) return true;
-           const job = jobs.find(j => j.id === l.jobId);
-           const jobStr = job ? JSON.stringify(job).toLowerCase() : '';
-           return (l.jobId.toLowerCase().includes(term) || l.userName.toLowerCase().includes(term) || l.operation.toLowerCase().includes(term) || jobStr.includes(term));
-       });
-       return groupLogsByJob(filtered, jobs);
-   }, [logs, jobs, search]);
-
-   // 2. HISTORY GROUPING
-   const historyGroups = useMemo(() => {
-       const minDate = getFilterDate(timeFilter);
-       const term = search.toLowerCase();
-       const completed = logs.filter(l => l.endTime && l.startTime >= minDate);
-       const filtered = completed.filter(l => {
-           if (!term) return true;
-           const job = jobs.find(j => j.id === l.jobId);
-           const jobStr = job ? JSON.stringify(job).toLowerCase() : '';
-           return (
-               l.jobId.toLowerCase().includes(term) ||
-               l.userName.toLowerCase().includes(term) ||
-               l.operation.toLowerCase().includes(term) ||
-               jobStr.includes(term)
-           );
-       });
-       return groupLogsByJob(filtered, jobs);
-   }, [logs, jobs, search, timeFilter]);
-
-   const stats = useMemo(() => {
-       const totalMinutes = historyGroups.reduce((acc, g) => acc + g.totalMins, 0);
-       const totalRecords = historyGroups.reduce((acc, g) => acc + g.logs.length, 0);
-       return { totalMinutes, uniqueJobs: historyGroups.length, count: totalRecords };
-   }, [historyGroups]);
 
    const handleEditLog = (log: TimeLog) => {
        setEditingLog({...log});
@@ -1133,7 +950,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    const handleSaveLog = async () => {
        if (!editingLog) return;
        try {
-           // Ensure end time is valid
            if (editingLog.endTime && editingLog.endTime < editingLog.startTime) {
                addToast('error', 'End time cannot be before Start time');
                return;
@@ -1162,197 +978,31 @@ const LogsView = ({ addToast }: { addToast: any }) => {
 
    return (
       <div className="space-y-6">
-         {/* HEADER */}
-         <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+         <div className="flex justify-between items-center">
              <h2 className="text-2xl font-bold flex items-center gap-2"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
-             
-             <div className="flex gap-2 bg-zinc-900 border border-white/10 p-1 rounded-xl">
-                 {(['week', 'month', 'year', 'all'] as const).map((t) => (
-                     <button 
-                        key={t}
-                        onClick={() => setTimeFilter(t)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}
-                     >
-                         {t === 'all' ? 'All Time' : `This ${t}`}
-                     </button>
-                 ))}
-             </div>
+             <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
          </div>
 
-         {/* CONTROLS & SEARCH */}
-         <div className="flex gap-2">
-            <div className="relative flex-1">
-                <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                <input 
-                    value={search} 
-                    onChange={e => setSearch(e.target.value)} 
-                    placeholder="Filter by Job ID, PO, Part, or Employee..." 
-                    className="w-full pl-9 pr-4 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder-zinc-600" 
-                />
-            </div>
-            <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh">
-                <RefreshCw className="w-4 h-4" />
-            </button>
+         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
+             <table className="w-full text-sm text-left">
+                <thead className="bg-white/5 text-zinc-500"><tr><th className="p-4">Date</th><th className="p-4">Start</th><th className="p-4">End</th><th className="p-4">User</th><th className="p-4">Op</th><th className="p-4 text-right">Actions</th></tr></thead>
+                <tbody className="divide-y divide-white/5">
+                   {logs.map(l => (
+                      <tr key={l.id} className="hover:bg-white/5 transition-colors">
+                         <td className="p-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
+                         <td className="p-4 font-mono text-zinc-300">{new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+                         <td className="p-4 font-mono text-zinc-300">{l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-500 font-bold text-xs">ACTIVE</span>}</td>
+                         <td className="p-4 text-white font-medium">{l.userName}</td>
+                         <td className="p-4 text-blue-400">{l.operation}</td>
+                         <td className="p-4 text-right">
+                             <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white"><Edit2 className="w-4 h-4"/></button>
+                         </td>
+                      </tr>
+                   ))}
+                </tbody>
+             </table>
          </div>
 
-         {/* SUMMARY AGGREGATION */}
-         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-             <div className="bg-blue-600/10 border border-blue-600/20 p-4 rounded-2xl">
-                 <p className="text-xs text-blue-400 font-bold uppercase mb-1 flex items-center gap-2"><Clock className="w-3 h-3"/> Total Hours</p>
-                 <p className="text-2xl font-bold text-white">{formatDurationDecimal(stats.totalMinutes)} <span className="text-sm font-normal text-blue-300">hrs</span></p>
-             </div>
-             <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
-                 <p className="text-xs text-zinc-500 font-bold uppercase mb-1">Total Records</p>
-                 <p className="text-2xl font-bold text-white">{stats.count}</p>
-             </div>
-             <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
-                 <p className="text-xs text-zinc-500 font-bold uppercase mb-1">Unique Jobs</p>
-                 <p className="text-2xl font-bold text-white">{stats.uniqueJobs}</p>
-             </div>
-         </div>
-
-         {/* SECTION 1: ACTIVE OPERATIONS */}
-         {activeGroups.length > 0 && (
-            <div className="space-y-4 animate-fade-in">
-               <h3 className="text-sm font-bold uppercase text-emerald-400 flex items-center gap-2 tracking-wider">
-                   <Activity className="w-4 h-4 animate-pulse" /> Live Operations
-               </h3>
-               {activeGroups.map(group => (
-                 <div key={'active-' + (group.job?.id || Math.random())} className="bg-zinc-900/80 border border-emerald-500/30 rounded-2xl overflow-hidden shadow-[0_0_20px_rgba(16,185,129,0.1)] relative">
-                     <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
-                     <div className="p-4 flex flex-col md:flex-row justify-between md:items-center gap-4 bg-emerald-500/5">
-                         <div className="flex items-center gap-4">
-                             <div className="bg-zinc-900 p-3 rounded-xl border border-white/5">
-                                 <Briefcase className="w-6 h-6 text-emerald-400" />
-                             </div>
-                             <div>
-                                 <h3 className="font-bold text-lg text-white">{group.job?.jobIdsDisplay || 'Unknown Job'}</h3>
-                                 <div className="flex gap-3 text-xs text-zinc-400">
-                                     <span className="font-mono bg-black/30 px-2 py-0.5 rounded">PO: {group.job?.poNumber || 'N/A'}</span>
-                                     <span>Part: {group.job?.partNumber || 'N/A'}</span>
-                                 </div>
-                             </div>
-                         </div>
-                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30 text-xs font-bold uppercase tracking-wide">
-                             <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span> Live
-                         </div>
-                     </div>
-                     <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                           <tbody className="divide-y divide-white/5">
-                               {group.logs.map(l => (
-                                   <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                                       <td className="px-6 py-4 text-zinc-400 w-32">{new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                                       <td className="px-6 py-4 text-zinc-300">
-                                           <div className="flex items-center gap-2">
-                                              <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold border border-white/5">{l.userName.charAt(0)}</div>
-                                              <span className="font-bold text-white">{l.userName}</span>
-                                           </div>
-                                       </td>
-                                       <td className="px-6 py-4"><span className="bg-zinc-800 text-zinc-300 px-2 py-1 rounded text-xs border border-white/5 uppercase tracking-wide">{l.operation}</span></td>
-                                       <td className="px-6 py-4 text-right font-mono text-xl font-bold text-emerald-400">
-                                           <LiveTimer startTime={l.startTime} />
-                                       </td>
-                                       <td className="px-4 py-4 text-right">
-                                            <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white"><Edit2 className="w-4 h-4"/></button>
-                                       </td>
-                                   </tr>
-                               ))}
-                           </tbody>
-                        </table>
-                     </div>
-                 </div>
-               ))}
-            </div>
-         )}
-
-         {/* SECTION 2: COMPLETED HISTORY */}
-         <div className="space-y-4">
-             <h3 className="text-sm font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-wider mt-8">
-                 <History className="w-4 h-4" /> Completed History
-             </h3>
-             
-             {historyGroups.length === 0 && (
-                <div className="p-12 text-center text-zinc-500 flex flex-col items-center justify-center bg-zinc-900/30 rounded-2xl border border-white/5">
-                   <Search className="w-10 h-10 mb-2 opacity-20" />
-                   No completed logs found matching your criteria.
-                </div>
-             )}
-
-             {historyGroups.map(group => (
-                 <div key={'hist-' + (group.job?.id || Math.random())} className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm hover:border-white/10 transition-colors">
-                     <div className="bg-zinc-800/50 p-4 flex flex-col md:flex-row justify-between md:items-center gap-4 border-b border-white/5">
-                         <div className="flex items-center gap-4">
-                             <div className="bg-blue-500/20 p-3 rounded-xl">
-                                 <Briefcase className="w-6 h-6 text-blue-400" />
-                             </div>
-                             <div>
-                                 <h3 className="font-bold text-lg text-white">{group.job?.jobIdsDisplay || 'Unknown Job'}</h3>
-                                 <div className="flex gap-3 text-xs text-zinc-400">
-                                     <span className="font-mono bg-black/30 px-2 py-0.5 rounded">PO: {group.job?.poNumber || 'N/A'}</span>
-                                     <span>Part: {group.job?.partNumber || 'N/A'}</span>
-                                 </div>
-                             </div>
-                         </div>
-                         <div className="flex items-center gap-4">
-                             <div className="text-right">
-                                 <p className="text-xs text-zinc-500 uppercase font-bold">Total Time</p>
-                                 <p className="text-xl font-bold text-white font-mono">{formatDuration(group.totalMins)}</p>
-                             </div>
-                             <div className="h-8 w-[1px] bg-white/10"></div>
-                             <div className="text-right">
-                                <p className="text-xs text-zinc-500 uppercase font-bold">Records</p>
-                                <p className="text-xl font-bold text-white">{group.logs.length}</p>
-                             </div>
-                         </div>
-                     </div>
-
-                     <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                           <thead className="bg-white/5 text-zinc-500 text-xs uppercase font-bold tracking-wider">
-                               <tr>
-                                   <th className="px-6 py-3">Date</th>
-                                   <th className="px-6 py-3">Time Range</th>
-                                   <th className="px-6 py-3">Employee</th>
-                                   <th className="px-6 py-3">Operation</th>
-                                   <th className="px-6 py-3 text-right">Duration</th>
-                                   <th className="px-4 py-3"></th>
-                               </tr>
-                           </thead>
-                           <tbody className="divide-y divide-white/5">
-                               {group.logs.sort((a,b) => b.startTime - a.startTime).map(l => (
-                                   <tr key={l.id} className="hover:bg-white/5 transition-colors group">
-                                       <td className="px-6 py-3 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                                       <td className="px-6 py-3 font-mono text-zinc-500 text-xs">
-                                           {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-                                           <span className="mx-2 text-zinc-700">-</span>
-                                           {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
-                                       </td>
-                                       <td className="px-6 py-3 text-zinc-300">
-                                           <div className="flex items-center gap-2">
-                                              <div className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold">{l.userName.charAt(0)}</div>
-                                              {l.userName}
-                                           </div>
-                                       </td>
-                                       <td className="px-6 py-3">
-                                           <span className="bg-zinc-800 text-zinc-300 px-2 py-1 rounded text-xs border border-white/5 group-hover:bg-zinc-700 transition-colors">{l.operation}</span>
-                                       </td>
-                                       <td className="px-6 py-3 text-right font-mono text-zinc-300">
-                                            {formatDuration(l.durationMinutes)}
-                                       </td>
-                                       <td className="px-4 py-3 text-right">
-                                            <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4"/></button>
-                                       </td>
-                                   </tr>
-                               ))}
-                           </tbody>
-                        </table>
-                     </div>
-                 </div>
-             ))}
-         </div>
-
-         {/* EDIT LOG MODAL */}
          {showEditModal && editingLog && (
              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
                  <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
@@ -1361,7 +1011,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                          <button onClick={() => setShowEditModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
                      </div>
                      <div className="p-6 space-y-5">
-                         {/* User Selection */}
                          <div>
                              <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Employee</label>
                              <select 
@@ -1375,8 +1024,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                                  {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                              </select>
                          </div>
-
-                         {/* Operation Selection */}
                          <div>
                              <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Operation</label>
                              <select 
@@ -1388,8 +1035,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                                  {!ops.includes(editingLog.operation) && <option value={editingLog.operation}>{editingLog.operation} (Legacy)</option>}
                              </select>
                          </div>
-
-                         {/* Time Adjustments */}
                          <div className="grid grid-cols-2 gap-4">
                              <div>
                                  <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Start Time</label>
@@ -1549,7 +1194,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
 };
 
 // --- APP ROOT ---
-export default function App() {
+export function App() {
   const [user, setUser] = useState<User | null>(() => { try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); } catch(e) { return null; } });
   const [view, setView] = useState<AppView>('login');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -1566,7 +1211,7 @@ export default function App() {
        <PrintStyles /><PrintableJobSheet job={printable} onClose={() => setPrintable(null)} /><ConfirmationModal isOpen={!!confirm} {...confirm} onCancel={() => setConfirm(null)} />
        {user.role === 'admin' && (
           <aside className="w-64 border-r border-white/5 bg-zinc-950 flex flex-col fixed h-full z-20">
-             <div className="p-6 font-bold text-white flex gap-2 items-center"><Sparkles className="text-blue-500"/> SC DEBURRING</div>
+             <div className="p-6 font-bold text-white flex gap-2 items-center"><Sparkles className="text-blue-500"/> NEXUS</div>
              <nav className="px-4 space-y-1">
                 {[{id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard}, {id: 'admin-jobs', l: 'Jobs', i: Briefcase}, {id: 'admin-logs', l: 'Logs', i: Calendar}, {id: 'admin-team', l: 'Team', i: Users}, {id: 'admin-settings', l: 'Settings', i: Settings}, {id: 'admin-scan', l: 'Work Station', i: ScanLine}].map(x => <button key={x.id} onClick={() => setView(x.id as any)} className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white'}`}><x.i className="w-4 h-4" /> {x.l}</button>)}
              </nav>
@@ -1574,7 +1219,7 @@ export default function App() {
           </aside>
        )}
        <main className={`flex-1 p-8 ${user.role === 'admin' ? 'ml-64' : ''}`}>
-          {view === 'admin-dashboard' && <AdminDashboard user={user} confirmAction={setConfirm} setView={setView} />}
+          {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
           {view === 'admin-logs' && <LogsView addToast={addToast} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
