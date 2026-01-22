@@ -27,7 +27,7 @@ const formatDurationDecimal = (mins: number | undefined) => {
     return (mins / 60).toFixed(2);
 };
 
-// --- PRINT STYLES (FIXED) ---
+// --- PRINT STYLES (FIXED & SCALED) ---
 const PrintStyles = () => (
   <style>{`
     @media print {
@@ -47,8 +47,8 @@ const PrintStyles = () => (
         position: absolute !important;
         left: 0 !important;
         top: 0 !important;
-        width: 100% !important;
-        height: auto !important;
+        width: 100vw !important; /* Force full width */
+        height: 100vh !important; /* Force full height */
         margin: 0 !important;
         padding: 0 !important;
         background: white !important;
@@ -66,15 +66,16 @@ const PrintStyles = () => (
       }
 
       /* HIDE PARENT WRAPPERS FROM INTERFERING */
-      /* Use visibility hidden for parents so they don't block the absolute positioned print area */
       #root, aside, nav, button, .toast-container, .no-print, .print-overlay {
         visibility: hidden !important; 
-        /* Do NOT use display:none on #root or .print-overlay as it destroys the render tree including the print area */
       }
       
-      /* HIDE INTERFACE ELEMENTS */
-      .no-print {
-         display: none !important;
+      .no-print { display: none !important; }
+
+      /* Set page margins to small to maximize content area */
+      @page {
+        size: auto;
+        margin: 5mm; 
       }
     }
   `}</style>
@@ -448,11 +449,11 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
   // Generates a deep link QR code to open this specific job
   const currentBaseUrl = window.location.href.split('?')[0];
   const deepLinkData = `${currentBaseUrl}?jobId=${job.id}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(deepLinkData)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto print-overlay">
-      <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content">
+      <div className="bg-white text-black w-full max-w-3xl rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-full print-content print:max-w-none print:shadow-none print:w-full print:h-full">
          
          {/* Toolbar (Hidden when printing) */}
          <div className="bg-zinc-900 text-white p-4 flex justify-between items-center no-print shrink-0 border-b border-zinc-700">
@@ -467,61 +468,60 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
          </div>
 
          {/* Printable Content */}
-         <div id="printable-area" className="flex-1 p-8 bg-white overflow-auto">
+         <div id="printable-area" className="flex-1 p-8 print:p-8 bg-white overflow-auto flex flex-col h-full justify-between">
             {/* Header */}
-            <div className="flex justify-between items-center border-b-4 border-black pb-4 mb-6">
+            <div className="flex justify-between items-center border-b-4 print:border-b-8 border-black pb-4 mb-6 print:mb-12">
               <div>
-                 <h1 className="text-4xl font-black tracking-tighter">SC DEBURRING</h1>
-                 <p className="text-sm font-bold uppercase tracking-widest text-gray-500">Production Traveler</p>
+                 <h1 className="text-4xl print:text-7xl font-black tracking-tighter">SC DEBURRING</h1>
+                 <p className="text-sm print:text-2xl font-bold uppercase tracking-widest text-gray-500 mt-2">Production Traveler</p>
               </div>
               <div className="text-right">
-                 <h2 className="text-2xl font-bold">{new Date().toLocaleDateString()}</h2>
-                 <p className="text-xs text-gray-400">Printed On</p>
+                 <h2 className="text-2xl print:text-5xl font-bold">{new Date().toLocaleDateString()}</h2>
+                 <p className="text-xs print:text-xl text-gray-400 mt-1">Printed On</p>
               </div>
             </div>
 
             {/* Main Info */}
-            <div className="grid grid-cols-2 gap-8 mb-8">
-               <div className="space-y-6">
-                   <div className="border-2 border-black p-4">
-                      <label className="block text-xs uppercase font-bold text-gray-500">PO Number</label>
-                      <div className="text-4xl font-black">{job.poNumber}</div>
+            <div className="grid grid-cols-2 gap-8 print:gap-12 mb-8 print:mb-auto">
+               <div className="space-y-6 print:space-y-12">
+                   <div className="border-2 print:border-4 border-black p-4 print:p-8">
+                      <label className="block text-xs print:text-xl uppercase font-bold text-gray-500 mb-2">PO Number</label>
+                      <div className="text-4xl print:text-9xl font-black leading-none">{job.poNumber}</div>
                    </div>
-                   <div className="grid grid-cols-2 gap-4">
-                      <div className="border border-gray-300 p-2">
-                         <label className="block text-xs uppercase font-bold text-gray-500">Part</label>
-                         <div className="text-xl font-bold">{job.partNumber}</div>
+                   <div className="grid grid-cols-2 gap-4 print:gap-8">
+                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
+                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Part</label>
+                         <div className="text-xl print:text-5xl font-bold break-words">{job.partNumber}</div>
                       </div>
-                      <div className="border border-gray-300 p-2">
-                         <label className="block text-xs uppercase font-bold text-gray-500">Qty</label>
-                         <div className="text-xl font-bold">{job.quantity}</div>
+                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
+                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Qty</label>
+                         <div className="text-xl print:text-5xl font-bold">{job.quantity}</div>
                       </div>
                       {/* NEW FIELDS */}
-                      <div className="border border-gray-300 p-2">
-                         <label className="block text-xs uppercase font-bold text-gray-500">Received</label>
-                         <div className="text-xl font-bold">{job.dateReceived || '-'}</div>
+                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
+                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Received</label>
+                         <div className="text-xl print:text-4xl font-bold">{job.dateReceived || '-'}</div>
                       </div>
-                      <div className="border border-gray-300 p-2">
-                         <label className="block text-xs uppercase font-bold text-gray-500">Due Date</label>
-                         <div className="text-xl font-bold text-red-600">{job.dueDate || '-'}</div>
+                      <div className="border border-gray-300 print:border-4 p-2 print:p-6">
+                         <label className="block text-xs print:text-lg uppercase font-bold text-gray-500 mb-1">Due Date</label>
+                         <div className="text-xl print:text-4xl font-bold text-red-600">{job.dueDate || '-'}</div>
                       </div>
                    </div>
                    <div>
-                     <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Notes</label>
-                     <div className="text-sm border-l-4 border-black pl-4 py-2 bg-gray-50 min-h-[4rem]">
+                     <label className="block text-xs print:text-2xl uppercase font-bold text-gray-500 mb-2">Notes</label>
+                     <div className="text-sm print:text-2xl border-l-4 print:border-l-8 border-black pl-4 py-2 print:py-4 bg-gray-50 min-h-[4rem] print:min-h-[8rem]">
                        {job.info || "No notes."}
                      </div>
                    </div>
                </div>
                
-               <div className="flex flex-col items-center justify-center border-2 border-black p-4 bg-gray-50">
-                  <img src={qrUrl} alt="QR Code" className="w-full max-w-[400px] h-auto mix-blend-multiply" />
-                  <p className="font-mono text-xs mt-2 text-gray-500">{job.id}</p>
-                  <p className="font-bold uppercase tracking-widest text-sm mt-1">SCAN JOB ID</p>
+               <div className="flex flex-col items-center justify-center border-2 print:border-4 border-black p-4 print:p-8 bg-gray-50 h-full">
+                  <img src={qrUrl} alt="QR Code" className="w-full max-w-[400px] print:max-w-none h-auto mix-blend-multiply" />
+                  <p className="font-mono text-xs print:text-xl mt-4 text-gray-500 text-center break-all">{job.id}</p>
+                  <p className="font-bold uppercase tracking-widest text-sm print:text-3xl mt-2">SCAN JOB ID</p>
                </div>
             </div>
 
-            {/* REMOVED Operations Checklist */}
          </div>
       </div>
     </div>
