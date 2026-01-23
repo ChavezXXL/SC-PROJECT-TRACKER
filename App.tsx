@@ -33,11 +33,10 @@ const checkOverdue = (dueDateStr: string | undefined | null) => {
   if (!dueDateStr) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const due = new Date(dueDateStr + 'T00:00:00'); // Ensure local time parsing
+  const due = new Date(dueDateStr + 'T00:00:00'); 
   return due < today;
 };
 
-// Helper for MM/DD/YYYY
 const formatToMDY = (dateStr: string | undefined | null) => {
   if (!dateStr) return 'N/A';
   try {
@@ -67,7 +66,7 @@ const PrintStyles = () => (
         width: 8.5in !important;
         height: 11in !important;
         margin: 0 !important;
-        padding: 0.5in !important;
+        padding: 0.4in !important;
         background: white !important;
         color: black !important;
         z-index: 9999999 !important;
@@ -310,7 +309,6 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
 // --- ADMIN: JOBS ---
 const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    const [jobs, setJobs] = useState<Job[]>([]);
-   const [timeFilter, setTimeFilter] = useState<'week' | 'month' | 'year' | 'all'>('week');
    const [showModal, setShowModal] = useState(false);
    const [editingJob, setEditingJob] = useState<Partial<Job>>({});
    const [isSaving, setIsSaving] = useState(false);
@@ -318,7 +316,6 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
    useEffect(() => DB.subscribeJobs(setJobs), []);
 
-   // Precise Field Search
    const matchesSearch = (j: Job) => {
        if (!search) return true;
        const t = search.toLowerCase();
@@ -341,7 +338,6 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
    return (
       <div className="space-y-6 animate-fade-in">
-         {/* Top Stats Bar */}
          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
              <div className="bg-zinc-900 border border-white/5 p-4 rounded-2xl">
                  <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Total Batches</p>
@@ -361,7 +357,6 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              </div>
          </div>
 
-         {/* Header */}
          <div className="flex flex-col md:flex-row justify-between items-center gap-4 pt-4 border-t border-white/5">
              <h2 className="text-2xl font-bold text-white">Active Production</h2>
              <div className="flex gap-2 w-full md:w-auto">
@@ -374,7 +369,6 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              </div>
          </div>
 
-         {/* Active Jobs Table */}
          <div className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
              <div className="overflow-x-auto">
              <table className="w-full text-left text-sm">
@@ -419,57 +413,8 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                             </tr>
                          );
                      })}
-                     {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Production Queue Empty</td></tr>}
                  </tbody>
              </table>
-             </div>
-         </div>
-
-         {/* History Section */}
-         <div className="space-y-4 pt-12 border-t border-white/5">
-             <div className="flex justify-between items-center">
-                 <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                     <History className="w-4 h-4" /> Finished Batch History
-                 </h3>
-                 <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
-                     {['week', 'month', 'year', 'all'].map(t => (
-                         <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-3 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-zinc-400'}`}>{t}</button>
-                     ))}
-                 </div>
-             </div>
-             
-             <div className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
-                 <div className="overflow-x-auto">
-                 <table className="w-full text-left text-sm">
-                     <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold">
-                        <tr>
-                            <th className="px-6 py-4">Purchase Order (PO)</th>
-                            <th className="px-6 py-4">Batch ID</th>
-                            <th className="px-6 py-4">Part Index</th>
-                            <th className="px-6 py-4">Units</th>
-                            <th className="px-6 py-4">Completed On</th>
-                            <th className="px-6 py-4 text-right">Actions</th>
-                        </tr>
-                     </thead>
-                     <tbody className="divide-y divide-white/5">
-                        {completedJobs.map(j => (
-                            <tr key={j.id} className="hover:bg-white/5 transition-colors">
-                                <td className="px-6 py-4 font-bold text-white opacity-50 whitespace-nowrap">{j.poNumber}</td>
-                                <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase whitespace-nowrap">{j.jobIdsDisplay}</td>
-                                <td className="px-6 py-4 text-zinc-500 whitespace-nowrap">{j.partNumber}</td>
-                                <td className="px-6 py-4 text-zinc-500">{j.quantity}</td>
-                                <td className="px-6 py-4 text-zinc-500 whitespace-nowrap">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
-                                <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                     <button onClick={() => confirm({ title: "Reactivate", message: "Move this job back to production?", onConfirm: () => DB.reopenJob(j.id) })} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg border border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all"><RotateCcw className="w-4 h-4" /></button>
-                                     <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-500 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
-                                     <button onClick={() => confirm({ title: "Delete Record", message: "Permanently erase this record?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-zinc-800 text-red-500 rounded-lg border border-white/5 hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
-                                </td>
-                            </tr>
-                        ))}
-                        {completedJobs.length === 0 && <div className="col-span-6 py-12 text-center text-zinc-600 text-xs font-bold uppercase tracking-widest">History Empty</div>}
-                     </tbody>
-                 </table>
-                 </div>
              </div>
          </div>
 
@@ -513,20 +458,6 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
      return () => { u1(); u2(); };
    }, []);
 
-   const currentLogs = useMemo(() => {
-     return logs.filter(l => {
-       const job = jobs.find(j => j.id === l.jobId);
-       return job && job.status !== 'completed';
-     });
-   }, [logs, jobs]);
-
-   const archiveLogs = useMemo(() => {
-     return logs.filter(l => {
-       const job = jobs.find(j => j.id === l.jobId);
-       return job && job.status === 'completed';
-     });
-   }, [logs, jobs]);
-
    const getGroupedLogs = (source: TimeLog[]) => {
      const now = Date.now();
      const groups: Record<string, { job: Job | null, logs: TimeLog[], totalMins: number }> = {};
@@ -539,28 +470,14 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
         if (log.durationMinutes) groups[log.jobId].totalMins += log.durationMinutes;
      });
 
-     const result = Object.entries(groups).filter(([jobId, data]) => {
+     return Object.entries(groups).filter(([jobId, data]) => {
         if (search) {
             const t = search.toLowerCase();
             const poMatch = data.job?.poNumber.toLowerCase().includes(t);
-            const jobMatch = data.job?.jobIdsDisplay.toLowerCase().includes(t);
             const userMatch = data.logs.some(l => l.userName.toLowerCase().includes(t));
-            if (!poMatch && !jobMatch && !userMatch) return false;
-        }
-
-        if (timeFilter !== 'all') {
-            const latestLogTime = data.logs.length > 0 ? Math.max(...data.logs.map(l => l.startTime)) : 0;
-            const diff = now - latestLogTime;
-            const limits = { week: 7, month: 30, year: 365 };
-            if (diff > (limits[timeFilter as keyof typeof limits] * 24 * 60 * 60 * 1000)) return false;
+            if (!poMatch && !userMatch) return false;
         }
         return true;
-     });
-     
-     return result.sort((a,b) => {
-         const timeA = a[1].logs.length > 0 ? Math.max(...a[1].logs.map(l => l.startTime)) : 0;
-         const timeB = b[1].logs.length > 0 ? Math.max(...b[1].logs.map(l => l.startTime)) : 0;
-         return timeB - timeA;
      });
    };
 
@@ -568,128 +485,39 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
        if (editingLog) { await DB.updateTimeLog(editingLog); addToast('success', 'Records Sync Successful'); setEditingLog(null); }
    };
 
-   const handleDeleteLog = (id: string) => {
-      confirm({
-         title: "Delete Work Record",
-         message: "Permanently erase this specific time entry? This cannot be undone.",
-         onConfirm: async () => {
-            await DB.deleteTimeLog(id);
-            addToast('success', 'Entry Erased');
-            setEditingLog(null);
-         }
-      });
-   };
-
-   const totalHours = (tab === 'current' ? currentLogs : archiveLogs).reduce((acc, l) => acc + (l.durationMinutes || 0), 0) / 60;
-   const uniqueJobsCount = new Set((tab === 'current' ? currentLogs : archiveLogs).map(l => l.jobId)).size;
-
    return (
       <div className="space-y-8 animate-fade-in">
-         <div className="flex flex-col gap-6">
-             <div className="flex justify-between items-center">
-                 <h2 className="text-2xl font-bold text-white flex items-center gap-2 uppercase tracking-tighter"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
-                 <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
-                     {['week', 'month', 'year', 'all'].map(t => (
-                         <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-4 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-white'}`}>This {t}</button>
-                     ))}
-                 </div>
-             </div>
-
-             <div className="flex gap-3">
-                 <div className="relative flex-1">
-                     <Search className="absolute left-3 top-3 w-4 h-4 text-zinc-500" />
-                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by PO, Job, or Personnel..." className="w-full bg-zinc-900 border border-white/10 rounded-xl pl-10 pr-10 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
-                     {search && <button onClick={() => setSearch('')} className="absolute right-3 top-3.5 text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button>}
-                 </div>
-                 <button className="px-4 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"><RefreshCw className="w-4 h-4"/></button>
-             </div>
+         <div className="flex justify-between items-center">
+             <h2 className="text-2xl font-bold text-white flex items-center gap-2 uppercase tracking-tighter"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
          </div>
-
-         <div className="flex gap-4 border-b border-white/5 pb-1">
-             <button onClick={() => setTab('current')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'current' ? 'text-blue-500' : 'text-zinc-600 hover:text-white'}`}>
-                 Current Production
-                 {tab === 'current' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-500 rounded-t-full shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>}
-             </button>
-             <button onClick={() => setTab('archive')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'archive' ? 'text-zinc-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
-                 Completed Archive
-                 {tab === 'archive' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-t-full"></div>}
-             </button>
-         </div>
-
-         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-             <div className="bg-blue-900/10 border border-blue-500/20 p-6 rounded-2xl">
-                 <div className="flex items-center gap-2 text-blue-400 mb-1"><Clock className="w-4 h-4"/><p className="text-xs font-bold uppercase tracking-wider">Filtered Period Time</p></div>
-                 <p className="text-3xl font-black text-blue-100">{totalHours.toFixed(2)} <span className="text-lg font-medium text-blue-500">HRS</span></p>
-             </div>
-             <div className="bg-zinc-900/40 border border-white/5 p-6 rounded-2xl">
-                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Total Log Entries</p>
-                 <p className="text-3xl font-black text-white">{tab === 'current' ? currentLogs.length : archiveLogs.length}</p>
-             </div>
-             <div className="bg-zinc-900/40 border border-white/5 p-6 rounded-2xl">
-                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Active Batch Count</p>
-                 <p className="text-3xl font-black text-white">{uniqueJobsCount}</p>
-             </div>
-         </div>
-
          <div className="space-y-6 pb-20">
-             {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).map(([jobId, data]) => (
+             {getGroupedLogs(logs).map(([jobId, data]) => (
                  <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden shadow-xl animate-fade-in mb-6">
                      <div className="p-4 md:p-6 bg-zinc-900/60 border-b border-white/5 flex flex-col md:flex-row justify-between md:items-center gap-4">
                          <div className="flex items-center gap-4">
-                             <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${tab === 'current' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
+                             <div className="w-12 h-12 rounded-xl flex items-center justify-center border bg-blue-500/10 text-blue-500 border-blue-500/20">
                                  <Briefcase className="w-6 h-6" />
                              </div>
                              <div>
                                  <h3 className="text-xl font-black text-white">{data.job?.poNumber || 'Legacy Batch'}</h3>
-                                 <p className="text-[10px] font-bold text-zinc-500 uppercase mt-1 tracking-wider">
-                                     Batch: <span className="text-zinc-300">{data.job?.jobIdsDisplay || jobId}</span> <span className="mx-2 text-zinc-700">|</span> Catalog: <span className="text-zinc-300">{data.job?.partNumber || 'N/A'}</span>
-                                 </p>
                              </div>
                          </div>
                          <div className="flex items-center gap-8 text-right bg-zinc-950/50 p-3 rounded-xl border border-white/5 shadow-inner">
-                             <div>
-                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Job Period Time</p>
-                                 <p className="text-lg font-bold text-white tabular-nums">{formatDuration(data.totalMins)}</p>
-                             </div>
-                             <div className="border-l border-white/10 pl-6">
-                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Record Count</p>
-                                 <p className="text-lg font-bold text-white tabular-nums">{data.logs.length}</p>
-                             </div>
+                             <div><p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Total Time</p><p className="text-lg font-bold text-white tabular-nums">{formatDuration(data.totalMins)}</p></div>
                          </div>
                      </div>
-                     
                      <div className="overflow-x-auto">
                          <table className="w-full text-left text-sm">
                              <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold tracking-wider">
-                                 <tr>
-                                     <th className="px-6 py-3">Date</th>
-                                     <th className="px-6 py-3">Time Range</th>
-                                     <th className="px-6 py-3">Personnel</th>
-                                     <th className="px-6 py-3">Step</th>
-                                     <th className="px-6 py-3 text-right">Duration</th>
-                                     <th className="w-12"></th>
-                                 </tr>
+                                 <tr><th className="px-6 py-3">Date</th><th className="px-6 py-3">User</th><th className="px-6 py-3">Step</th><th className="px-6 py-3 text-right">Duration</th></tr>
                              </thead>
                              <tbody className="divide-y divide-white/5">
                                  {data.logs.map(l => (
                                      <tr key={l.id} className="hover:bg-white/5 transition-colors group">
                                          <td className="px-6 py-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                                         <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase whitespace-nowrap">
-                                             {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-400 font-bold">Active</span>}
-                                         </td>
-                                         <td className="px-6 py-4 whitespace-nowrap">
-                                             <div className="flex items-center gap-2">
-                                                 <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-400 border border-white/5 uppercase shadow-inner">{l.userName.charAt(0)}</div>
-                                                 <span className="text-white font-bold text-xs uppercase">{l.userName}</span>
-                                             </div>
-                                         </td>
-                                         <td className="px-6 py-4">
-                                             <span className="bg-zinc-800 text-zinc-400 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border border-white/5">{l.operation}</span>
-                                         </td>
+                                         <td className="px-6 py-4 text-white font-bold text-xs uppercase">{l.userName}</td>
+                                         <td className="px-6 py-4"><span className="bg-zinc-800 text-zinc-400 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border border-white/5">{l.operation}</span></td>
                                          <td className="px-6 py-4 text-right text-white font-bold font-mono text-xs tabular-nums">{formatDuration(l.durationMinutes)}</td>
-                                         <td className="px-4 text-right">
-                                             <button onClick={() => setEditingLog(l)} className="text-zinc-600 hover:text-white opacity-0 group-hover:opacity-100 transition-all bg-zinc-800 p-1.5 rounded-lg border border-white/5"><Edit2 className="w-3 h-3"/></button>
-                                         </td>
                                      </tr>
                                  ))}
                              </tbody>
@@ -697,33 +525,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
                      </div>
                  </div>
              ))}
-             {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).length === 0 && (
-                 <div className="py-20 text-center text-zinc-700 text-xs font-black uppercase tracking-[0.5em] bg-zinc-900/20 border-2 border-dashed border-white/5 rounded-[40px]">
-                     Filtered archive contains no records
-                 </div>
-             )}
          </div>
-
-         {editingLog && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
-               <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[40px] shadow-2xl p-8 overflow-hidden">
-                  <div className="flex justify-between items-center mb-8"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Modify Entry</h3><button onClick={() => setEditingLog(null)} className="p-3 bg-white/5 rounded-xl text-zinc-600 hover:text-white"><X className="w-5 h-5" /></button></div>
-                  <div className="space-y-6">
-                     <div className="grid grid-cols-2 gap-6">
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Phase In</label><input type="datetime-local" className="w-full bg-black/50 border border-white/5 rounded-2xl p-4 text-white text-[10px] font-black uppercase tracking-widest shadow-inner outline-none focus:border-blue-600 transition-all" value={toDateTimeLocal(editingLog.startTime)} onChange={e => setEditingLog({...editingLog, startTime: new Date(e.target.value).getTime()})} /></div>
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Phase Out</label><input type="datetime-local" className="w-full bg-black/50 border border-white/5 rounded-2xl p-4 text-white text-[10px] font-black uppercase tracking-widest shadow-inner outline-none focus:border-blue-600 transition-all" value={toDateTimeLocal(editingLog.endTime)} onChange={e => setEditingLog({...editingLog, endTime: e.target.value ? new Date(e.target.value).getTime() : null})} /></div>
-                     </div>
-                  </div>
-                  <div className="mt-10 flex justify-between gap-4">
-                     <button onClick={() => handleDeleteLog(editingLog.id)} className="flex items-center gap-2 px-6 py-3 text-red-500 hover:text-white hover:bg-red-500/10 rounded-2xl text-[9px] font-black uppercase tracking-[0.3em] transition-all"><Trash2 className="w-4 h-4" /> Erase Entry</button>
-                     <div className="flex gap-4">
-                        <button onClick={() => setEditingLog(null)} className="px-6 py-3 text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all">Abort</button>
-                        <button onClick={handleSaveLog} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] shadow-2xl transition-all active:scale-95">Commit Sync</button>
-                     </div>
-                  </div>
-               </div>
-            </div>
-         )}
       </div>
    )
 }
@@ -756,20 +558,6 @@ const AdminEmployees = ({ addToast, confirm }: any) => {
             </div>
           ))}
         </div>
-        {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4">
-             <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[48px] shadow-2xl p-8">
-                <div className="flex justify-between items-center mb-8 leading-none"><h3 className="font-bold text-white text-lg uppercase tracking-tight">Personnel Form</h3><button onClick={() => setShowModal(false)} className="p-2.5 bg-white/5 rounded-xl text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button></div>
-                <div className="space-y-5">
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Full Name</label><input className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all uppercase" value={editingUser.name || ''} onChange={e => setEditingUser({...editingUser, name: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Username</label><input className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all" value={editingUser.username || ''} onChange={e => setEditingUser({...editingUser, username: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Cipher (PIN)</label><input type="text" className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all tracking-[0.4em]" value={editingUser.pin || ''} onChange={e => setEditingUser({...editingUser, pin: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Access Level</label><select className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold outline-none" value={editingUser.role || 'employee'} onChange={e => setEditingUser({...editingUser, role: e.target.value as any})}><option value="employee">Employee</option><option value="admin">Admin</option></select></div>
-                </div>
-                <div className="p-8 border-t border-white/5 bg-zinc-950/40 flex justify-end gap-3 mt-8"><button onClick={() => setShowModal(false)} className="text-zinc-500 hover:text-white text-[9px] font-black uppercase tracking-widest">Abort</button><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-[0.2em] transition-all active:scale-95">Commit Sync</button></div>
-             </div>
-          </div>
-        )}
      </div>
    );
 };
@@ -784,46 +572,21 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
    return (
      <div className="max-w-xl space-y-10 animate-fade-in">
         <h2 className="text-3xl font-black uppercase tracking-tighter text-white leading-none">Settings</h2>
-        
         <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] p-8 space-y-10 shadow-2xl backdrop-blur-xl">
-           <div className="flex items-center gap-5 border-b border-white/10 pb-8">
-               <div className="bg-orange-600/10 p-4 rounded-2xl text-orange-500 border border-orange-500/20">
-                   <Clock className="w-8 h-8" />
-               </div>
-               <div>
-                   <h3 className="font-black text-white uppercase text-lg tracking-tight">Auto-Termination</h3>
-                   <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Shift cleanup rules</p>
-               </div>
-           </div>
+           <div className="flex items-center gap-5 border-b border-white/10 pb-8"><div className="bg-orange-600/10 p-4 rounded-2xl text-orange-500 border border-orange-500/20"><Clock className="w-8 h-8" /></div><div><h3 className="font-black text-white uppercase text-lg tracking-tight">Auto-Termination</h3></div></div>
            <div className="space-y-6">
                <div className="flex items-center justify-between p-4 bg-zinc-950/50 rounded-2xl border border-white/5 shadow-inner">
                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Enable Auto-Stop</label>
-                   <div className="relative inline-block w-12 h-6 transition duration-200 ease-in-out">
-                       <input 
-                           type="checkbox" 
-                           id="auto-stop-toggle"
-                           className="peer absolute opacity-0 w-full h-full cursor-pointer z-10"
-                           checked={settings.autoClockOutEnabled} 
-                           onChange={e => setSettings({...settings, autoClockOutEnabled: e.target.checked})}
-                       />
-                       <label htmlFor="auto-stop-toggle" className={`block overflow-hidden h-6 rounded-full cursor-pointer transition-colors duration-200 border border-white/5 ${settings.autoClockOutEnabled ? 'bg-blue-600' : 'bg-zinc-800'}`}></label>
-                       <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform duration-200 ${settings.autoClockOutEnabled ? 'translate-x-6' : 'translate-x-0'}`}></div>
-                   </div>
+                   <input type="checkbox" checked={settings.autoClockOutEnabled} onChange={e => setSettings({...settings, autoClockOutEnabled: e.target.checked})} className="w-6 h-6" />
                </div>
                <div className="space-y-2">
                    <label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Trigger Time</label>
-                   <input 
-                       type="time" 
-                       value={settings.autoClockOutTime} 
-                       onChange={e => setSettings({...settings, autoClockOutTime: e.target.value})} 
-                       className="w-full bg-black/50 border border-white/5 rounded-2xl px-6 py-4 text-white text-sm font-black shadow-inner outline-none focus:border-blue-600 transition-all uppercase placeholder-zinc-800" 
-                   />
+                   <input type="time" value={settings.autoClockOutTime} onChange={e => setSettings({...settings, autoClockOutTime: e.target.value})} className="w-full bg-black/50 border border-white/5 rounded-2xl px-6 py-4 text-white text-sm font-black shadow-inner" />
                </div>
            </div>
         </div>
-
         <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] p-8 space-y-10 shadow-2xl backdrop-blur-xl">
-            <div className="flex items-center gap-5 border-b border-white/10 pb-8"><div className="bg-blue-600/10 p-4 rounded-2xl text-blue-500 border border-blue-500/20"><Activity className="w-8 h-8" /></div><div><h3 className="font-black text-white uppercase text-lg tracking-tight">Work Steps</h3><p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Operational flow control</p></div></div>
+            <div className="flex items-center gap-5 border-b border-white/10 pb-8"><div className="bg-blue-600/10 p-4 rounded-2xl text-blue-500 border border-blue-500/20"><Activity className="w-8 h-8" /></div><div><h3 className="font-black text-white uppercase text-lg tracking-tight">Work Steps</h3></div></div>
             <div className="space-y-6">
                 <div className="flex gap-3"><input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="New step..." className="flex-1 bg-black/50 border border-white/5 rounded-2xl px-6 py-4 text-white text-sm font-black shadow-inner outline-none focus:border-blue-600 transition-all uppercase placeholder-zinc-800" onKeyDown={e => e.key === 'Enter' && handleAddOp()} /><button onClick={handleAddOp} className="bg-blue-600 px-6 rounded-2xl text-white font-black hover:bg-blue-500 transition-all active:scale-95 shadow-2xl"><Plus className="w-6 h-6" /></button></div>
                 <div className="flex flex-wrap gap-3">{(settings.customOperations || []).map(op => <div key={op} className="bg-zinc-950 border border-white/5 px-4 py-2.5 rounded-xl flex items-center gap-4 group hover:border-blue-500/50 transition-all shadow-inner"><span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 group-hover:text-white transition-colors">{op}</span><button onClick={() => handleDeleteOp(op)} className="text-zinc-800 hover:text-red-500 transition-colors"><X className="w-4 h-4" /></button></div>)}</div>
@@ -854,51 +617,18 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
 // --- HELPER: JOB SELECTION CARD ---
 const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[] }> = ({ job, onStart, disabled, operations }) => {
   const [expanded, setExpanded] = useState(false);
-  const isOverdue = checkOverdue(job.dueDate);
-
   return (
     <div className={`bg-zinc-900/40 border border-white/5 rounded-3xl overflow-hidden transition-all duration-300 ${expanded ? 'border-blue-500/50 bg-zinc-900/80 shadow-2xl' : 'hover:bg-zinc-900/60'} ${disabled ? 'opacity-30 pointer-events-none grayscale' : ''} shadow-2xl backdrop-blur-xl`}>
       <div className="p-6 cursor-pointer group" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-3">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-                <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Purchase Order (PO)</p>
-                {isOverdue && <span className="bg-red-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full animate-pulse">OVERDUE</span>}
-            </div>
-            <h3 className={`text-2xl font-black tracking-tighter uppercase leading-none ${isOverdue ? 'text-red-500' : 'text-white'}`}>{job.poNumber}</h3>
-          </div>
+          <div><h3 className="text-2xl font-black tracking-tighter uppercase leading-none text-white">{job.poNumber}</h3></div>
           <span className="bg-black/40 border border-white/5 text-blue-500 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-inner">{job.quantity} PCS</span>
         </div>
-        <div className="space-y-1.5 border-t border-white/5 pt-3">
-          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Part Index: <span className="text-zinc-400">{job.partNumber}</span></p>
-          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Batch ID: <span className="text-zinc-500">{job.jobIdsDisplay}</span></p>
-        </div>
-        
-        {!expanded && (
-          <div className={`mt-4 flex items-center text-[10px] font-black uppercase tracking-[0.3em] opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0 ${isOverdue ? 'text-red-500' : 'text-blue-500'}`}>
-            Initialize Work <ArrowRight className="w-3 h-3 ml-1.5" />
-          </div>
-        )}
       </div>
-
       {expanded && (
         <div className="p-6 bg-black/40 border-t border-white/5 animate-fade-in">
-          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-1.5"><Settings className="w-4 h-4 text-blue-500"/> Choose Step</p>
           <div className="grid grid-cols-1 gap-3">
-            {operations.map(op => (
-              <button
-                key={op}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onStart(job.id, op);
-                }}
-                className={`bg-zinc-800/80 hover:text-white border border-white/10 py-8 px-6 rounded-2xl text-2xl font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op ${isOverdue ? 'hover:bg-red-600' : 'hover:bg-blue-600'}`}
-              >
-                {op}
-                <Play className="w-8 h-8 opacity-0 group-hover/op:opacity-100 transition-opacity" />
-              </button>
-            ))}
-             {operations.length === 0 && <p className="text-[10px] text-zinc-700 font-black uppercase text-center py-2 tracking-widest">Logic null</p>}
+            {operations.map(op => <button key={op} onClick={(e) => { e.stopPropagation(); onStart(job.id, op); }} className="bg-zinc-800/80 hover:bg-blue-600 hover:text-white border border-white/10 py-4 px-6 rounded-2xl text-xl font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op">{op}<Play className="w-5 h-5 opacity-0 group-hover/op:opacity-100 transition-opacity" /></button>)}
           </div>
         </div>
       )}
@@ -913,172 +643,47 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
-  const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
 
   useEffect(() => {
-    const settings = DB.getSettings();
-    setOps(settings.customOperations || []);
-
+    setOps(DB.getSettings().customOperations || []);
     const unsubLogs = DB.subscribeLogs((allLogs) => {
        const myActive = allLogs.find(l => l.userId === user.id && !l.endTime);
-       const history = allLogs.filter(l => l.userId === user.id).sort((a,b) => b.startTime - a.startTime);
        setActiveLog(myActive || null);
-       setMyHistory(history);
-       
-       if (myActive) {
-          DB.getJobById(myActive.jobId).then(j => setActiveJob(j || null));
-       } else {
-          setActiveJob(null);
-       }
+       if (myActive) DB.getJobById(myActive.jobId).then(j => setActiveJob(j || null));
+       else setActiveJob(null);
     });
-
-    const unsubJobs = DB.subscribeJobs((allJobs) => {
-        setJobs(allJobs.filter(j => j.status !== 'completed').reverse());
-    });
-
+    const unsubJobs = DB.subscribeJobs((allJobs) => setJobs(allJobs.filter(j => j.status !== 'completed').reverse()));
     return () => { unsubLogs(); unsubJobs(); };
   }, [user.id]);
 
   const handleStartJob = async (jobId: string, operation: string) => {
-    try {
-        await DB.startTimeLog(jobId, user.id, user.name, operation);
-        addToast('success', 'PHASE_INITIALIZED');
-    } catch (e) {
-        addToast('error', 'FAILED_TO_START');
-    }
+    try { await DB.startTimeLog(jobId, user.id, user.name, operation); addToast('success', 'PHASE_INITIALIZED'); } catch (e) { addToast('error', 'FAILED_TO_START'); }
   };
 
   const handleStopJob = async (logId: string) => {
-    try {
-      await DB.stopTimeLog(logId);
-      addToast('success', 'PHASE_TERMINATED');
-    } catch (e) {
-      addToast('error', 'SYNC_ERROR');
-    }
+    try { await DB.stopTimeLog(logId); addToast('success', 'PHASE_TERMINATED'); } catch (e) { addToast('error', 'SYNC_ERROR'); }
   };
 
-  const handleScan = (e: any) => {
-      if (e.key === 'Enter') {
-          let val = e.currentTarget.value.trim();
-          const match = val.match(/[?&]jobId=([^&]+)/);
-          if (match) val = match[1];
-          setSearch(val); 
-          setTab('jobs'); 
-          addToast('success', 'CAPTURED');
-      }
-  }
-
-  // Group history by date
-  const groupedHistory = useMemo(() => {
-      const groups: Record<string, TimeLog[]> = {};
-      myHistory.forEach(log => {
-          const d = new Date(log.startTime).toLocaleDateString();
-          if (!groups[d]) groups[d] = [];
-          groups[d].push(log);
-      });
-      return Object.entries(groups).sort((a,b) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
-  }, [myHistory]);
-
-  const filteredJobs = jobs.filter(j => {
-    if (!search) return true;
-    const t = search.toLowerCase();
-    return (
-        j.poNumber.toLowerCase().includes(t) ||
-        j.jobIdsDisplay.toLowerCase().includes(t) ||
-        j.partNumber.toLowerCase().includes(t)
-    );
-  });
+  const filteredJobs = jobs.filter(j => j.poNumber.toLowerCase().includes(search.toLowerCase()) || j.jobIdsDisplay.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto h-full flex flex-col pb-20 animate-fade-in">
-      {activeLog && (
-        <ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob} />
-      )}
-
+      {activeLog && <ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob} />}
       <div className="flex flex-wrap gap-3 justify-between items-center bg-zinc-900/60 backdrop-blur-2xl p-3 rounded-[28px] border border-white/5 shadow-2xl no-print">
          <div className="flex gap-3 p-1 bg-black/40 rounded-xl border border-white/5 shadow-inner">
            <button onClick={() => setTab('jobs')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Active Queue</button>
-           <button onClick={() => setTab('history')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}><History className="w-3.5 h-3.5" /> Work Logs</button>
          </div>
          <div className="flex items-center gap-3">
-             <button onClick={() => setTab('scan')} className={`px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-xl' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-xl'}`}><ScanLine className="w-4 h-4" /> Scanner</button>
              <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all shadow-xl border border-red-500/20"><LogOut className="w-4 h-4" /> Exit</button>
          </div>
       </div>
-
-      {tab === 'scan' ? (
-         <div className="flex-1 flex items-center justify-center py-12">
-            <div className="bg-zinc-900/80 p-10 rounded-[48px] border border-white/10 text-center max-w-sm w-full shadow-2xl backdrop-blur-xl">
-               <div className="w-20 h-20 bg-blue-600/10 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-blue-500/20 shadow-lg">
-                  <QrCode className="w-10 h-10 text-blue-500" />
-               </div>
-               <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-3">Work Station</h2>
-               <p className="text-zinc-600 text-[9px] font-black uppercase tracking-[0.4em] mb-8 opacity-60">Scan Batch Traveler</p>
-               <input autoFocus onKeyDown={handleScan} className="bg-black/60 border-2 border-blue-600/50 rounded-2xl px-6 py-5 text-white text-center w-full text-xl font-black tracking-widest focus:border-blue-500 outline-none shadow-inner" placeholder="WAITING..." />
-            </div>
-         </div>
-      ) : tab === 'history' ? (
-        <div className="space-y-6">
-           {groupedHistory.map(([date, logs]) => (
-               <div key={date} className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden shadow-2xl backdrop-blur-xl">
-                 <div className="p-5 border-b border-white/5 bg-zinc-950/40 flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                        <Calendar className="w-4 h-4 text-blue-500"/>
-                        <h3 className="font-black text-white uppercase text-[10px] tracking-[0.3em]">{date}</h3>
-                    </div>
-                    <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest bg-black/40 px-3 py-1 rounded-full border border-white/5 shadow-inner">{logs.length} Entries</span>
-                 </div>
-                 <div className="overflow-x-auto custom-scrollbar">
-                   <table className="w-full text-left">
-                     <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Purchase Order (PO)</th><th className="px-6 py-4">Work Step</th><th className="px-6 py-4">Time Range</th><th className="px-6 py-4 text-right">Elapsed</th></tr></thead>
-                     <tbody className="divide-y divide-white/5">
-                       {logs.map(log => (
-                         <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
-                           <td className="px-6 py-4">
-                                <p className="text-white font-black uppercase tracking-tight text-base leading-none mb-1">{log.jobId}</p>
-                                <p className="text-[8px] text-zinc-600 font-black uppercase tracking-widest">Entry ID: {log.id}</p>
-                           </td>
-                           <td className="px-6 py-4 text-blue-500 font-black uppercase tracking-widest text-[9px]">{log.operation}</td>
-                           <td className="px-6 py-4 text-zinc-500 font-mono text-[10px] uppercase">
-                                {new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {log.endTime ? new Date(log.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
-                           </td>
-                           <td className="px-6 py-4 text-right text-zinc-400 font-black font-mono text-base leading-none">{formatDuration(log.durationMinutes)}</td>
-                         </tr>
-                       ))}
-                     </tbody>
-                   </table>
-                 </div>
-               </div>
-           ))}
-           {groupedHistory.length === 0 && <div className="p-20 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px] border-2 border-dashed border-white/5 rounded-[48px]">Log null</div>}
+      <div className="flex-1 flex flex-col space-y-8">
+        <div className="relative"><Search className="absolute left-5 top-4 w-5 h-5 text-zinc-700" /><input type="text" placeholder="FILTER_BATCHES..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[28px] pl-14 pr-12 py-4 text-white font-black uppercase tracking-[0.2em] text-[10px] focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner"/></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredJobs.map(job => <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} operations={ops} />)}
         </div>
-      ) : (
-        <div className="flex-1 flex flex-col space-y-8 animate-fade-in">
-          <div className="relative">
-            <Search className="absolute left-5 top-4 w-5 h-5 text-zinc-700" />
-            <input type="text" placeholder="FILTER_BATCHES (PO, ID, PART)..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[28px] pl-14 pr-12 py-4 text-white font-black uppercase tracking-[0.2em] text-[10px] focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner placeholder:text-zinc-800"/>
-            {search && (
-                <button onClick={() => setSearch('')} className="absolute right-5 top-4.5 text-zinc-600 hover:text-white transition-colors">
-                    <X className="w-5 h-5" />
-                </button>
-            )}
-          </div>
-          
-          {activeLog && (
-            <div className="p-4 rounded-2xl bg-red-500/5 border border-red-500/20 text-red-500 text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 animate-pulse shadow-xl">
-              <AlertCircle className="w-4 h-4" /> Timer active. End current phase to begin another.
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredJobs.map(job => (
-              <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} operations={ops} />
-            ))}
-            {filteredJobs.length === 0 && <div className="col-span-full py-20 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px]">Queue null</div>}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -1086,116 +691,103 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
 // --- COMPONENT: PRINTABLE JOB SHEET ---
 const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => void }) => {
   if (!job) return null;
-  
   const currentBaseUrl = window.location.href.split('?')[0];
-  const deepLinkData = `${currentBaseUrl}?jobId=${job.id}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=1000x1000&data=${encodeURIComponent(currentBaseUrl + "?jobId=" + job.id)}`;
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto">
       <div className="bg-white text-black w-full max-w-4xl rounded-[32px] shadow-2xl relative overflow-hidden flex flex-col max-h-full" id="printable-area-root">
          
          <div className="bg-zinc-950 text-white p-6 flex justify-between items-center no-print shrink-0 border-b border-white/10">
-             <div className="flex items-center gap-5">
-               <Printer className="w-5 h-5 text-blue-500"/>
-               <div>
-                 <h3 className="font-black uppercase text-base tracking-tight leading-none">TRAVELER</h3>
-                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mt-1.5">Print Hub</p>
-               </div>
-             </div>
+             <div className="flex items-center gap-5"><Printer className="w-5 h-5 text-blue-500"/><div><h3 className="font-black uppercase text-base tracking-tight leading-none">TRAVELER HUB</h3></div></div>
              <div className="flex gap-5 items-center">
                  <button onClick={onClose} className="text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all">Abort</button>
-                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl text-xs font-black uppercase tracking-[0.3em] flex items-center gap-2 shadow-2xl transition-all active:scale-95">Print Job Traveler</button>
+                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl text-xs font-black uppercase tracking-[0.3em] flex items-center gap-2 shadow-2xl transition-all active:scale-95">Print Sheet</button>
              </div>
          </div>
 
-         <div className="flex-1 p-10 bg-white flex flex-col justify-between">
+         <div className="flex-1 p-8 bg-white flex flex-col justify-between overflow-hidden">
             <div className="w-full">
-              {/* Header */}
-              <div className="flex justify-between items-end border-b-[6px] border-black pb-6 mb-10">
+              {/* Header - Scaled down for height economy */}
+              <div className="flex justify-between items-end border-b-[4px] border-black pb-4 mb-8">
                 <div className="flex-1">
-                  <h1 className="text-6xl font-black tracking-tighter leading-none mb-2 uppercase">SC DEBURRING</h1>
-                  <div className="h-1.5 w-64 bg-black mb-3"></div>
-                  <p className="text-xl font-black uppercase tracking-[0.5em] text-gray-500">MANUFACTURING TRAVELER</p>
+                  <h1 className="text-4xl font-black tracking-tighter leading-none mb-1 uppercase">SC DEBURRING</h1>
+                  <p className="text-sm font-black uppercase tracking-[0.4em] text-gray-500">MANUFACTURING TRAVELER</p>
                 </div>
                 <div className="text-right flex flex-col items-end">
-                  <h2 className="text-4xl font-black tracking-tighter leading-none">{new Date().toLocaleDateString()}</h2>
-                  <p className="text-[10px] font-black text-gray-400 mt-2 uppercase tracking-[0.4em] border-t border-gray-100 pt-2 w-full text-right">PRINTED ON</p>
+                  <h2 className="text-2xl font-black tracking-tighter leading-none">{new Date().toLocaleDateString()}</h2>
+                  <p className="text-[8px] font-black text-gray-400 mt-1 uppercase tracking-[0.3em] border-t border-gray-100 pt-1">DATE PRINTED</p>
                 </div>
               </div>
 
-              {/* Symmetric Grid Layout */}
-              <div className="grid grid-cols-12 gap-8 items-stretch">
-                {/* Left Side: Major Details */}
-                <div className="col-span-7 flex flex-col space-y-8">
-                  {/* Huge PO & QTY Box */}
-                  <div className="border-[8px] border-black p-8 bg-gray-50/50 shadow-sm relative flex flex-col justify-center min-h-[220px]">
-                    <div className="absolute -top-4 left-6 bg-white px-4 text-[11px] font-black tracking-[0.6em] text-gray-500 uppercase">ORDER IDENTITY</div>
-                    <div className="flex flex-col gap-4">
-                      <div>
-                        <label className="block text-[10px] uppercase font-black text-gray-400 mb-1 tracking-[0.3em]">PO NUMBER</label>
-                        <div className="text-7xl font-black leading-none break-all tracking-tight uppercase">{job.poNumber}</div>
-                      </div>
-                      <div className="mt-4 pt-4 border-t border-gray-200">
-                        <div className="flex items-baseline gap-4">
-                           <span className="text-3xl font-black text-gray-400 uppercase tracking-widest">QTY:</span>
-                           <span className="text-8xl font-black leading-none">{job.quantity}</span>
-                           <span className="text-2xl font-bold text-gray-300 ml-2 uppercase">UNITS</span>
-                        </div>
-                      </div>
+              {/* Main Content Split: Data (60%) / QR (40%) */}
+              <div className="grid grid-cols-12 gap-8 items-start">
+                <div className="col-span-7 flex flex-col space-y-6">
+                  
+                  {/* PO & QTY Unified Block - HIGH VISIBILITY */}
+                  <div className="border-[6px] border-black p-6 bg-gray-50 flex flex-col justify-between min-h-[180px]">
+                    <div>
+                        <label className="block text-[10px] font-black text-gray-500 mb-1 tracking-[0.3em] uppercase">PURCHASE ORDER (PO)</label>
+                        <div className="text-5xl font-black leading-none uppercase tracking-tight break-all">{job.poNumber}</div>
+                    </div>
+                    <div className="mt-4 pt-4 border-t-2 border-black flex items-center gap-4">
+                        <span className="text-3xl font-black text-gray-900 tracking-tighter">QTY:</span>
+                        <span className="text-7xl font-black leading-none">{job.quantity}</span>
+                        <span className="text-xl font-bold text-gray-500 uppercase ml-auto">UNITS</span>
                     </div>
                   </div>
                   
-                  {/* 2x2 Detail Grid */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="border-[4px] border-gray-200 p-6 bg-white shadow-sm flex flex-col justify-between">
-                      <label className="block text-[10px] font-black text-gray-400 mb-2 tracking-[0.3em] uppercase">PART CATALOG</label>
-                      <div className="text-3xl font-black break-words leading-none uppercase tracking-tight">{job.partNumber}</div>
+                  {/* Job Detail List - Concise for 3-4 feet reading */}
+                  <div className="space-y-4 pt-2">
+                    <div className="border-l-[10px] border-gray-200 pl-6 py-1">
+                        <label className="block text-[10px] font-black text-gray-400 tracking-[0.3em] uppercase">PART INDEX / CATALOG</label>
+                        <div className="text-3xl font-black tracking-tight uppercase">{job.partNumber}</div>
                     </div>
-                    <div className="border-[4px] border-gray-200 p-6 bg-white shadow-sm flex flex-col justify-between">
-                      <label className="block text-[10px] font-black text-gray-400 mb-2 tracking-[0.3em] uppercase">REFERENCE ID</label>
-                      <div className="text-2xl font-black break-words leading-none text-gray-600 font-mono tracking-tighter uppercase">{job.jobIdsDisplay}</div>
+                    <div className="border-l-[10px] border-gray-200 pl-6 py-1">
+                        <label className="block text-[10px] font-black text-gray-400 tracking-[0.3em] uppercase">BATCH REFERENCE ID</label>
+                        <div className="text-xl font-black font-mono text-gray-600 tracking-widest">{job.jobIdsDisplay}</div>
                     </div>
-                    <div className="border-[4px] border-gray-200 p-6 bg-white shadow-sm flex flex-col justify-between">
-                      <label className="block text-[10px] font-black text-gray-400 mb-2 tracking-[0.3em] uppercase">DATE RECEIVED</label>
-                      <div className="text-3xl font-black leading-none tracking-tight">{formatToMDY(job.dateReceived)}</div>
-                    </div>
-                    <div className="border-[4px] border-black p-6 bg-white shadow-sm flex flex-col justify-between border-l-[16px] border-l-red-600">
-                      <label className="block text-[10px] font-black text-red-500 mb-2 tracking-[0.3em] uppercase">FLOOR DEADLINE</label>
-                      <div className="text-4xl font-black text-red-600 leading-none tracking-tight">{formatToMDY(job.dueDate) || 'PRIORITY'}</div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="border-l-[10px] border-gray-200 pl-6 py-1">
+                            <label className="block text-[10px] font-black text-gray-400 tracking-[0.3em] uppercase">RECEIVED</label>
+                            <div className="text-xl font-bold">{formatToMDY(job.dateReceived)}</div>
+                        </div>
+                        <div className="border-l-[10px] border-red-600 pl-6 py-1">
+                            <label className="block text-[10px] font-black text-red-400 tracking-[0.3em] uppercase">DEADLINE</label>
+                            <div className="text-3xl font-black text-red-600">{formatToMDY(job.dueDate) || 'PRIORITY'}</div>
+                        </div>
                     </div>
                   </div>
                 </div>
                 
-                {/* Right Side: QR Code Area */}
-                <div className="col-span-5 flex flex-col items-center justify-center border-[8px] border-black p-8 bg-gray-50 shadow-inner">
-                   <p className="text-[12px] font-black text-gray-900 uppercase tracking-[0.8em] mb-8 text-center">SCAN TO UPDATE TRACKING</p>
-                  <div className="bg-white p-6 shadow-2xl border-4 border-gray-200 flex items-center justify-center w-full aspect-square mb-8">
-                    <img src={qrUrl} alt="QR Code" className="w-full h-auto block object-contain mix-blend-multiply" crossOrigin="anonymous" />
+                {/* QR Code Container - MASSIVE (Doubled in scale) */}
+                <div className="col-span-5 flex flex-col items-center justify-start border-[6px] border-black p-4 bg-gray-50 h-full min-h-[450px]">
+                  <div className="text-center w-full border-b-[4px] border-black pb-4 mb-6">
+                    <p className="text-[12px] font-black text-gray-900 uppercase tracking-[0.6em]">SCAN TO TRACK</p>
                   </div>
-                  <div className="text-center w-full border-t-[4px] border-black pt-8">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.5em] mb-4">SYSTEM BATCH ID</p>
-                    <p className="font-mono text-2xl font-black break-all text-gray-800 leading-none tracking-widest">{job.id}</p>
+                  <div className="bg-white p-4 shadow-xl border-2 border-gray-100 flex items-center justify-center w-full aspect-square">
+                    <img src={qrUrl} alt="QR Code" className="w-full h-full block object-contain mix-blend-multiply" crossOrigin="anonymous" />
+                  </div>
+                  <div className="text-center w-full mt-6 opacity-40">
+                    <p className="text-[8px] font-black uppercase tracking-[0.5em] mb-2">SYSTEM BATCH UID</p>
+                    <p className="font-mono text-sm font-bold break-all">{job.id}</p>
                   </div>
                 </div>
               </div>
 
-              {/* Logic / Instructions - Extra Large */}
-              <div className="mt-10">
-                <div className="bg-black text-white py-2 px-8 inline-block text-[11px] font-black uppercase tracking-[0.6em] mb-4 shadow-lg">FLOOR MATRIX LOGIC & INSTRUCTIONS</div>
-                <div className="text-3xl border-l-[24px] border-black pl-10 py-10 bg-gray-50 min-h-[14rem] font-bold italic leading-tight text-gray-800 uppercase shadow-inner border-y border-r border-gray-100">
-                  {job.info || "FOLLOW STANDARD SHOP PROCEDURES. VERIFY ALL TOLERANCES BEFORE PROCEEDING TO NEXT STATION."}
+              {/* Instructions - Balanced font size to prevent 2-page spill */}
+              <div className="mt-8">
+                <div className="bg-black text-white py-1 px-6 inline-block text-[10px] font-black uppercase tracking-[0.5em] mb-2 shadow-md">FLOOR LOGIC & SPECIAL INSTRUCTIONS</div>
+                <div className="text-2xl border-[4px] border-black pl-8 py-8 bg-gray-100 min-h-[10rem] font-bold italic leading-tight text-gray-800 uppercase shadow-inner">
+                  {job.info || "FOLLOW STANDARD SHOP PROCEDURES. VERIFY TOLERANCES BEFORE NEXT STATION."}
                 </div>
               </div>
             </div>
 
-            {/* Verification Footer */}
-            <div className="mt-8 border-t-[6px] border-black pt-8 flex justify-between items-center text-sm font-black text-gray-400 uppercase tracking-[0.6em]">
-               <div className="flex items-center gap-6">
-                  <div className="w-6 h-6 bg-black rounded-full shadow-lg"></div>
-                  <span>SC DEBURRING OPERATIONAL TRAVELER</span>
-               </div>
-               <span className="text-gray-900 border-2 border-black px-4 py-2">BATCH VERIFICATION REQUIRED</span>
+            {/* Footer - Minimalist */}
+            <div className="mt-6 border-t-[4px] border-black pt-4 flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-[0.6em]">
+               <div className="flex items-center gap-4"><div className="w-4 h-4 bg-black rounded-full"></div><span>SC DEBURRING TRAVELER</span></div>
+               <span className="text-gray-900">VERIFICATION REQUIRED</span>
             </div>
          </div>
       </div>
