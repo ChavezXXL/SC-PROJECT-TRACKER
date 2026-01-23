@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   LayoutDashboard, Briefcase, Users, Settings, LogOut, Menu,
@@ -43,10 +42,10 @@ const PrintStyles = () => (
         position: fixed !important;
         left: 0 !important;
         top: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
+        width: 100% !important;
+        height: auto !important;
         margin: 0 !important;
-        padding: 20px !important;
+        padding: 0 !important;
         background: white !important;
         color: black !important;
         z-index: 9999999 !important;
@@ -57,7 +56,7 @@ const PrintStyles = () => (
       }
       @page {
         size: portrait;
-        margin: 0;
+        margin: 10mm;
       }
     }
   `}</style>
@@ -329,7 +328,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                              <td className="px-6 py-4 text-zinc-300">{j.quantity} Units</td>
                              <td className="px-6 py-4">
                                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
-                                     {j.status === 'in-progress' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>}
+                                     {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>}
                                      {j.status}
                                  </span>
                              </td>
@@ -405,7 +404,10 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                      </div>
                      <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Batch Load</label><input type="number" className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-base font-black text-blue-500 shadow-inner" value={editingJob.quantity || ''} onChange={e => setEditingJob({...editingJob, quantity: Number(e.target.value)})} /></div>
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Production Target</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dueDate || ''} onChange={e => setEditingJob({...editingJob, dueDate: e.target.value})} /></div>
+                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Received Date</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dateReceived || ''} onChange={e => setEditingJob({...editingJob, dateReceived: e.target.value})} /></div>
+                     </div>
+                     <div className="grid grid-cols-1 gap-4">
+                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Production Due Date</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dueDate || ''} onChange={e => setEditingJob({...editingJob, dueDate: e.target.value})} /></div>
                      </div>
                      <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Instructions</label><textarea className="w-full bg-black/30 border border-white/5 rounded-2xl p-4 text-[10px] text-zinc-400 italic shadow-inner" rows={3} placeholder="..." value={editingJob.info || ''} onChange={e => setEditingJob({...editingJob, info: e.target.value})} /></div>
                   </div>
@@ -448,7 +450,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
 
    const activeLogsList = logs.filter(l => !l.endTime).sort((a,b) => b.startTime - a.startTime);
 
-   const groupedLogs = (source: TimeLog[]) => {
+   const getGroupedLogs = (source: TimeLog[]) => {
      const now = Date.now();
      const groups: Record<string, { job: Job | null, logs: TimeLog[], totalMins: number }> = {};
      
@@ -537,8 +539,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
 
          {/* Log History Grouped by Job */}
          <div className="space-y-6">
-             {groupedLogs(tab === 'current' ? currentLogs : archiveLogs).map(([jobId, data]) => (
-                 <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden shadow-xl animate-fade-in">
+             {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).map(([jobId, data]) => (
+                 <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden shadow-xl animate-fade-in mb-6">
                      {/* Group Header */}
                      <div className="p-4 md:p-6 bg-zinc-900/60 border-b border-white/5 flex flex-col md:flex-row justify-between md:items-center gap-4">
                          <div className="flex items-center gap-4">
@@ -604,7 +606,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                      </div>
                  </div>
              ))}
-             {groupedLogs(tab === 'current' ? currentLogs : archiveLogs).length === 0 && (
+             {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).length === 0 && (
                  <div className="py-20 text-center text-zinc-700 text-xs font-black uppercase tracking-[0.5em] bg-zinc-900/20 border-2 border-dashed border-white/5 rounded-[40px]">
                      No records found in this category
                  </div>
@@ -680,7 +682,7 @@ const AdminEmployees = ({ addToast, confirm }: any) => {
 const SettingsView = ({ addToast }: { addToast: any }) => {
    const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
    const [newOp, setNewOp] = useState('');
-   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Core Synced'); };
+   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Saved'); };
    const handleAddOp = () => { if(!newOp.trim()) return; setSettings({...settings, customOperations: [...(settings.customOperations || []), newOp.trim()]}); setNewOp(''); };
    const handleDeleteOp = (op: string) => { setSettings({...settings, customOperations: (settings.customOperations || []).filter(o => o !== op)}); };
    return (
@@ -733,7 +735,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 <div className="flex flex-wrap gap-3">{(settings.customOperations || []).map(op => <div key={op} className="bg-zinc-950 border border-white/5 px-4 py-2.5 rounded-xl flex items-center gap-4 group hover:border-blue-500/50 transition-all shadow-inner"><span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 group-hover:text-white transition-colors">{op}</span><button onClick={() => handleDeleteOp(op)} className="text-zinc-800 hover:text-red-500 transition-colors"><X className="w-4 h-4" /></button></div>)}</div>
             </div>
         </div>
-        <div className="flex justify-end"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-10 py-5 rounded-[28px] font-black uppercase tracking-[0.4em] shadow-2xl flex items-center gap-3 transition-all active:scale-95 text-[10px]"><Save className="w-6 h-6" /> Save Settings</button></div>
+        <div className="flex justify-end"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-10 py-5 rounded-[28px] font-black uppercase tracking-[0.4em] shadow-2xl flex items-center gap-3 transition-all active:scale-95 text-[10px]"><Save className="w-6 h-6" /> Save Changes</button></div>
      </div>
    );
 };
@@ -764,7 +766,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
       <div className="p-6 cursor-pointer group" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-3">
           <h3 className="text-xl font-black text-white tracking-tighter uppercase">{job.jobIdsDisplay}</h3>
-          <span className="bg-black/40 border border-white/5 text-blue-500 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-inner">{job.quantity} UNITS</span>
+          <span className="bg-black/40 border border-white/5 text-blue-500 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-inner">{job.quantity} PCS</span>
         </div>
         <div className="space-y-1.5">
           <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Part: <span className="text-zinc-400">{job.partNumber}</span></p>
@@ -772,16 +774,16 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
         </div>
         
         {!expanded && (
-          <div className="mt-4 flex items-center text-blue-500 text-[8px] font-black uppercase tracking-[0.3em] opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">
-            Select Work Step <ArrowRight className="w-2.5 h-2.5 ml-1.5" />
+          <div className="mt-4 flex items-center text-blue-500 text-[10px] font-black uppercase tracking-[0.3em] opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">
+            Initialize <ArrowRight className="w-3 h-3 ml-1.5" />
           </div>
         )}
       </div>
 
       {expanded && (
         <div className="p-6 bg-black/40 border-t border-white/5 animate-fade-in">
-          <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-1.5"><Settings className="w-3 h-3 text-blue-500"/> Select Work Step</p>
-          <div className="grid grid-cols-2 gap-3">
+          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-1.5"><Settings className="w-4 h-4 text-blue-500"/> Select Step</p>
+          <div className="grid grid-cols-1 gap-3">
             {operations.map(op => (
               <button
                 key={op}
@@ -789,12 +791,13 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                   e.stopPropagation();
                   onStart(job.id, op);
                 }}
-                className="bg-zinc-800/50 hover:bg-blue-600 text-zinc-400 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shadow-inner active:scale-95"
+                className="bg-zinc-800/50 hover:bg-blue-600 text-zinc-300 hover:text-white border border-white/5 py-5 px-4 rounded-2xl text-base font-black uppercase tracking-widest transition-all shadow-inner active:scale-95 text-left flex justify-between items-center group/btn"
               >
                 {op}
+                <Play className="w-5 h-5 opacity-0 group-hover/btn:opacity-100 transition-opacity" />
               </button>
             ))}
-             {operations.length === 0 && <p className="col-span-2 text-[9px] text-zinc-700 font-black uppercase text-center py-2 tracking-widest">Settings null</p>}
+             {operations.length === 0 && <p className="text-[10px] text-zinc-700 font-black uppercase text-center py-2 tracking-widest">Protocol null</p>}
           </div>
         </div>
       )}
@@ -839,18 +842,18 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   const handleStartJob = async (jobId: string, operation: string) => {
     try {
         await DB.startTimeLog(jobId, user.id, user.name, operation);
-        addToast('success', 'Timer Started');
+        addToast('success', 'PHASE STARTED');
     } catch (e) {
-        addToast('error', 'Sync Failed');
+        addToast('error', 'FAILED TO START');
     }
   };
 
   const handleStopJob = async (logId: string) => {
     try {
       await DB.stopTimeLog(logId);
-      addToast('success', 'Timer Stopped');
+      addToast('success', 'PHASE ENDED');
     } catch (e) {
-      addToast('error', 'Sync Failed');
+      addToast('error', 'ERROR');
     }
   };
 
@@ -861,7 +864,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           if (match) val = match[1];
           setSearch(val); 
           setTab('jobs'); 
-          addToast('success', 'Scanned');
+          addToast('success', 'BATCH CAPTURED');
       }
   }
 
@@ -877,12 +880,12 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
 
       <div className="flex flex-wrap gap-3 justify-between items-center bg-zinc-900/60 backdrop-blur-2xl p-3 rounded-[28px] border border-white/5 shadow-2xl no-print">
          <div className="flex gap-3 p-1 bg-black/40 rounded-xl border border-white/5 shadow-inner">
-           <button onClick={() => setTab('jobs')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Open Queue</button>
-           <button onClick={() => setTab('history')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}><History className="w-3.5 h-3.5" /> Recent Work</button>
+           <button onClick={() => setTab('jobs')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Queue</button>
+           <button onClick={() => setTab('history')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}><History className="w-3.5 h-3.5" /> Logs</button>
          </div>
          <div className="flex items-center gap-3">
-             <button onClick={() => setTab('scan')} className={`px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-xl' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-xl'}`}><ScanLine className="w-4 h-4" /> Scan Node</button>
-             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all shadow-xl border border-red-500/20"><LogOut className="w-4 h-4" /> Sign Out</button>
+             <button onClick={() => setTab('scan')} className={`px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-xl' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-xl'}`}><ScanLine className="w-4 h-4" /> Scan</button>
+             <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all shadow-xl border border-red-500/20"><LogOut className="w-4 h-4" /> Exit</button>
          </div>
       </div>
 
@@ -892,8 +895,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
                <div className="w-20 h-20 bg-blue-600/10 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-blue-500/20 shadow-lg">
                   <QrCode className="w-10 h-10 text-blue-500" />
                </div>
-               <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-3">Work Station</h2>
-               <p className="text-zinc-600 text-[9px] font-black uppercase tracking-[0.4em] mb-8 opacity-60">Scan Traveler QR</p>
+               <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-3">Optical Input</h2>
+               <p className="text-zinc-600 text-[9px] font-black uppercase tracking-[0.4em] mb-8 opacity-60">Scan Batch QR</p>
                <input autoFocus onKeyDown={handleScan} className="bg-black/60 border-2 border-blue-600/50 rounded-2xl px-6 py-5 text-white text-center w-full text-xl font-black tracking-widest focus:border-blue-500 outline-none shadow-inner" placeholder="WAITING..." />
             </div>
          </div>
@@ -901,11 +904,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
         <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden shadow-2xl backdrop-blur-xl">
           <div className="p-6 border-b border-white/5 bg-zinc-950/40 flex items-center gap-3">
              <History className="w-4.5 h-4.5 text-blue-500"/>
-             <h3 className="font-black text-white uppercase text-[10px] tracking-[0.3em]">Work History</h3>
+             <h3 className="font-black text-white uppercase text-[10px] tracking-[0.3em]">Production Log</h3>
           </div>
           <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full text-left">
-              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Batch ID</th><th className="px-6 py-4">Work Step</th><th className="px-6 py-4 text-right">Elapsed</th></tr></thead>
+              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Batch</th><th className="px-6 py-4">Step</th><th className="px-6 py-4 text-right">Time</th></tr></thead>
               <tbody className="divide-y divide-white/5">
                 {myHistory.map(log => (
                   <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
@@ -915,7 +918,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
                     <td className="px-6 py-4 text-right text-zinc-400 font-black font-mono text-base leading-none">{formatDuration(log.durationMinutes)}</td>
                   </tr>
                 ))}
-                {myHistory.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px]">History Empty</td></tr>}
+                {myHistory.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px]">Log null</td></tr>}
               </tbody>
             </table>
           </div>
@@ -924,12 +927,12 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
         <div className="flex-1 flex flex-col space-y-8 animate-fade-in">
           <div className="relative">
             <Search className="absolute left-5 top-4 w-5 h-5 text-zinc-700" />
-            <input type="text" placeholder="Filter jobs..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[28px] pl-14 pr-6 py-4 text-white font-black uppercase tracking-[0.2em] text-[10px] focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner placeholder:text-zinc-800"/>
+            <input type="text" placeholder="FILTER_QUEUE..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[28px] pl-14 pr-6 py-4 text-white font-black uppercase tracking-[0.2em] text-[10px] focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner placeholder:text-zinc-800"/>
           </div>
           
           {activeLog && (
-            <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/20 text-blue-500 text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-xl">
-              <Info className="w-4 h-4" /> Timer active. Stop current step to start another.
+            <div className="p-4 rounded-2xl bg-red-500/5 border border-red-500/20 text-red-500 text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 animate-pulse shadow-xl">
+              <AlertCircle className="w-4 h-4" /> Timer active. Stop work to proceed.
             </div>
           )}
 
@@ -937,7 +940,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
             {filteredJobs.map(job => (
               <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} operations={ops} />
             ))}
-            {filteredJobs.length === 0 && <div className="col-span-full py-20 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px]">Queue Empty</div>}
+            {filteredJobs.length === 0 && <div className="col-span-full py-20 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px]">Queue null</div>}
           </div>
         </div>
       )}
@@ -961,12 +964,12 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
              <div className="flex items-center gap-5">
                <Printer className="w-5 h-5 text-blue-500"/>
                <div>
-                 <h3 className="font-black uppercase text-base tracking-tight leading-none">Job Traveler</h3>
-                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mt-1.5">Print Preview</p>
+                 <h3 className="font-black uppercase text-base tracking-tight leading-none">Batch Traveler</h3>
+                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mt-1.5">Documentation Preview</p>
                </div>
              </div>
              <div className="flex gap-5 items-center">
-                 <button onClick={onClose} className="text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all">Cancel</button>
+                 <button onClick={onClose} className="text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all">Abort</button>
                  <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 shadow-2xl transition-all active:scale-95">Print</button>
              </div>
          </div>
@@ -975,7 +978,7 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
             <div className="flex justify-between items-center border-b-[6px] border-black pb-6 mb-10">
               <div>
                  <h1 className="text-5xl font-black tracking-tighter">SC DEBURRING</h1>
-                 <p className="text-xs font-black uppercase tracking-[0.5em] text-gray-400 mt-3">Production Batch Traveler</p>
+                 <p className="text-xs font-black uppercase tracking-[0.5em] text-gray-400 mt-3">Production Matrix Traveler</p>
               </div>
               <div className="text-right">
                  <h2 className="text-2xl font-black tracking-tighter">{new Date().toLocaleDateString()}</h2>
@@ -996,10 +999,10 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
                       </div>
                       <div className="border-[3px] border-gray-100 p-5">
                          <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Lot Size</label>
-                         <div className="text-2xl font-black leading-none">{job.quantity} UNITS</div>
+                         <div className="text-2xl font-black leading-none">{job.quantity} PCS</div>
                       </div>
                       <div className="border-[3px] border-gray-100 p-5">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Received</label>
+                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Ingress</label>
                          <div className="text-lg font-black leading-none">{job.dateReceived || 'N/A'}</div>
                       </div>
                       <div className="border-[3px] border-gray-100 p-5">
@@ -1008,22 +1011,17 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
                       </div>
                    </div>
                    <div className="flex-1">
-                     <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Notes</label>
+                     <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Production Logic</label>
                      <div className="text-lg border-l-[10px] border-black pl-6 py-4 bg-gray-50 min-h-[6rem] font-bold italic leading-relaxed">
-                       {job.info || "Follow standard floor procedures."}
+                       {job.info || "Follow standard deburring procedures."}
                      </div>
                    </div>
                </div>
                
                <div className="flex flex-col items-center justify-center border-[5px] border-black p-8 bg-gray-50 h-full">
-                  <img 
-                    src={qrUrl} 
-                    alt="QR Code" 
-                    className="w-full h-auto max-w-[85%] block object-contain mix-blend-multiply" 
-                    crossOrigin="anonymous" 
-                  />
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[85%]" crossOrigin="anonymous" />
                   <p className="font-mono text-lg mt-8 text-gray-400 text-center break-all font-bold tracking-tight uppercase leading-none">{job.id}</p>
-                  <p className="font-black uppercase tracking-[0.4em] text-2xl mt-4 border-t border-gray-200 pt-4 w-full text-center">SCAN TO START</p>
+                  <p className="font-black uppercase tracking-[0.4em] text-2xl mt-4 border-t border-gray-200 pt-4 w-full text-center">SCAN_NODE</p>
                </div>
             </div>
          </div>
@@ -1061,8 +1059,8 @@ export function App() {
             </div>
             <aside className={`fixed lg:sticky top-0 inset-y-0 left-0 w-72 border-r border-white/5 bg-zinc-950 flex flex-col z-50 transform transition-transform duration-500 ease-in-out shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
                <div className="p-10 hidden lg:flex flex-col gap-1 border-b border-white/5 mb-8"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-[20px] bg-gradient-to-tr from-blue-600 to-indigo-700 flex items-center justify-center shadow-2xl border border-blue-500/20"><Sparkles className="w-6 h-6 text-white"/></div><h2 className="font-black text-xl tracking-tighter text-white uppercase leading-none">SC DEBURRING</h2></div></div>
-               <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-10 lg:py-0 custom-scrollbar"><NavItem id="admin-dashboard" l="Dashboard" i={LayoutDashboard} /><NavItem id="admin-jobs" l="Production" i={Briefcase} /><NavItem id="admin-logs" l="Logs" i={Calendar} /><NavItem id="admin-team" l="Team" i={Users} /><NavItem id="admin-settings" l="Settings" i={Settings} /><NavItem id="admin-scan" l="Scanner" i={ScanLine} /></nav>
-               <div className="p-6 border-t border-white/5 bg-zinc-900/30"><button onClick={() => setUser(null)} className="w-full flex items-center gap-4 px-6 py-4 text-zinc-700 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.3em] transition-all rounded-2xl hover:bg-red-500/5 group"><LogOut className="w-5 h-5 group-hover:scale-110 transition-all" /> Sign Out</button></div>
+               <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-10 lg:py-0 custom-scrollbar"><NavItem id="admin-dashboard" l="Dashboard" i={LayoutDashboard} /><NavItem id="admin-jobs" l="Production" i={Briefcase} /><NavItem id="admin-logs" l="Work Logs" i={Calendar} /><NavItem id="admin-team" l="Team" i={Users} /><NavItem id="admin-settings" l="Settings" i={Settings} /><NavItem id="admin-scan" l="Terminal" i={ScanLine} /></nav>
+               <div className="p-6 border-t border-white/5 bg-zinc-900/30"><button onClick={() => setUser(null)} className="w-full flex items-center gap-4 px-6 py-4 text-zinc-700 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.3em] transition-all rounded-2xl hover:bg-red-500/5 group"><LogOut className="w-5 h-5 group-hover:scale-110 transition-all" /> EXIT_SESSION</button></div>
             </aside>
             {isMobileMenuOpen && <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-40 lg:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
           </>
