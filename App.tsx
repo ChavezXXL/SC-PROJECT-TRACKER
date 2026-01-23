@@ -42,10 +42,10 @@ const PrintStyles = () => (
         position: fixed !important;
         left: 0 !important;
         top: 0 !important;
-        width: 100% !important;
-        height: auto !important;
+        width: 100vw !important;
+        height: 100vh !important;
         margin: 0 !important;
-        padding: 0 !important;
+        padding: 20px !important;
         background: white !important;
         color: black !important;
         z-index: 9999999 !important;
@@ -56,7 +56,7 @@ const PrintStyles = () => (
       }
       @page {
         size: portrait;
-        margin: 10mm;
+        margin: 0;
       }
     }
   `}</style>
@@ -144,7 +144,7 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
           </div>
         </div>
         <h1 className="text-3xl font-black text-center text-white tracking-tighter mb-1 uppercase">SC DEBURRING</h1>
-        <p className="text-center text-zinc-600 text-[10px] font-black uppercase tracking-[0.5em] mb-10 opacity-60">Log In</p>
+        <p className="text-center text-zinc-600 text-[10px] font-black uppercase tracking-[0.5em] mb-10 opacity-60">Management Portal</p>
         
         <form onSubmit={handleLogin} className="space-y-6">
           <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full bg-black/40 border-2 border-white/5 rounded-[24px] px-8 py-5 text-white font-black uppercase tracking-[0.2em] focus:border-blue-600 outline-none placeholder:text-zinc-800" placeholder="Username" autoFocus />
@@ -194,7 +194,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
             </div>
             <div className="bg-zinc-900/40 border border-white/10 p-6 rounded-3xl flex justify-between items-center shadow-2xl backdrop-blur-xl">
                <div>
-                   <p className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.3em] mb-1">Employees Active</p>
+                   <p className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.3em] mb-1">Personnel Live</p>
                    <h3 className="text-4xl font-black text-white leading-none tracking-tighter">{activeWorkersCount}</h3>
                </div>
                <Users className="text-emerald-500/50 w-10 h-10" />
@@ -204,7 +204,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden flex flex-col h-full shadow-2xl backdrop-blur-xl">
                 <div className="p-6 border-b border-white/5 bg-zinc-950/40 flex items-center justify-between">
-                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><Activity className="w-4 h-4 text-emerald-500"/> Current Operations</h3>
+                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><Activity className="w-4 h-4 text-emerald-500"/> Live Operations</h3>
                 </div>
                 <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[350px] custom-scrollbar">
                    {activeLogs.map(l => (
@@ -227,8 +227,8 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
              </div>
              <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden flex flex-col h-full shadow-2xl backdrop-blur-xl">
                 <div className="p-6 border-b border-white/5 bg-zinc-950/40 flex justify-between items-center">
-                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><History className="w-4 h-4 text-blue-500"/> Recent Activity</h3>
-                    <button onClick={() => setView('admin-logs')} className="text-[8px] font-black text-blue-500 uppercase tracking-widest hover:text-white transition-colors">View All</button>
+                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><History className="w-4 h-4 text-blue-500"/> Recent History</h3>
+                    <button onClick={() => setView('admin-logs')} className="text-[8px] font-black text-blue-500 uppercase tracking-widest hover:text-white transition-colors">Archive</button>
                 </div>
                 <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[350px] custom-scrollbar">
                    {logs.map(l => (
@@ -242,7 +242,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
                            </div>
                        </div>
                    ))}
-                   {logs.length === 0 && <div className="p-10 text-center text-zinc-700 text-[10px] font-black uppercase tracking-widest">No recent data</div>}
+                   {logs.length === 0 && <div className="p-10 text-center text-zinc-700 text-[10px] font-black uppercase tracking-widest">No recent logs</div>}
                 </div>
              </div>
          </div>
@@ -265,10 +265,10 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    const completedJobs = jobs.filter(j => j.status === 'completed' && JSON.stringify(j).toLowerCase().includes(search.toLowerCase()));
 
    const handleSave = async () => {
-    if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Required fields missing');
+    if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Required fields are missing');
     setIsSaving(true);
     await DB.saveJob({ id: editingJob.id || Date.now().toString(), jobIdsDisplay: editingJob.jobIdsDisplay, poNumber: editingJob.poNumber || '', partNumber: editingJob.partNumber, quantity: editingJob.quantity || 0, dueDate: editingJob.dueDate || '', info: editingJob.info || '', status: editingJob.status || 'pending', dateReceived: editingJob.dateReceived || new Date().toISOString().split('T')[0], createdAt: editingJob.createdAt || Date.now() } as Job);
-    addToast('success', 'Job Updated'); setShowModal(false); setIsSaving(false);
+    addToast('success', 'Batch Records Updated'); setShowModal(false); setIsSaving(false);
    };
 
    return (
@@ -295,11 +295,11 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
          {/* Header */}
          <div className="flex flex-col md:flex-row justify-between items-center gap-4 pt-4 border-t border-white/5">
-             <h2 className="text-2xl font-bold text-white">Active Production</h2>
+             <h2 className="text-2xl font-bold text-white uppercase tracking-tighter">Production Jobs</h2>
              <div className="flex gap-2 w-full md:w-auto">
                  <div className="relative flex-1 md:flex-initial">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter Production..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search Jobs..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
                  </div>
                  <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-900/20"><Plus className="w-4 h-4"/> Add Job</button>
              </div>
@@ -310,10 +310,10 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              <table className="w-full text-left text-sm">
                  <thead className="bg-white/5 text-zinc-400 font-bold uppercase text-[10px]">
                      <tr>
-                         <th className="px-6 py-4">Order Ref (PO)</th>
+                         <th className="px-6 py-4">PO Ref</th>
                          <th className="px-6 py-4">Job ID</th>
                          <th className="px-6 py-4">Part Index</th>
-                         <th className="px-6 py-4">Lot Size</th>
+                         <th className="px-6 py-4">Qty</th>
                          <th className="px-6 py-4">Status</th>
                          <th className="px-6 py-4">Floor Deadline</th>
                          <th className="px-6 py-4 text-right">Actions</th>
@@ -323,9 +323,9 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                      {activeJobs.map(j => (
                          <tr key={j.id} className="hover:bg-white/5 transition-colors group">
                              <td className="px-6 py-4 font-bold text-white">{j.poNumber}</td>
-                             <td className="px-6 py-4 text-zinc-300 font-mono text-xs">{j.jobIdsDisplay}</td>
+                             <td className="px-6 py-4 text-zinc-300 font-mono text-xs uppercase">{j.jobIdsDisplay}</td>
                              <td className="px-6 py-4 text-zinc-400">{j.partNumber}</td>
-                             <td className="px-6 py-4 text-zinc-300">{j.quantity} Units</td>
+                             <td className="px-6 py-4 text-zinc-300 font-bold">{j.quantity} UNITS</td>
                              <td className="px-6 py-4">
                                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
                                      {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>}
@@ -334,14 +334,14 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                              </td>
                              <td className="px-6 py-4 text-zinc-400">{j.dueDate || '-'}</td>
                              <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                 <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
+                                 <button onClick={() => confirm({ title: "Complete Job", message: "Mark this batch as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
                                  <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
                                  <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all"><Edit2 className="w-4 h-4" /></button>
-                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
+                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently erase this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
                              </td>
                          </tr>
                      ))}
-                     {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Production Queue Empty</td></tr>}
+                     {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Queue is clear</td></tr>}
                  </tbody>
              </table>
          </div>
@@ -350,7 +350,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
          <div className="space-y-4 pt-12 border-t border-white/5">
              <div className="flex justify-between items-center">
                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                     <History className="w-4 h-4" /> Finished Batch History
+                     <History className="w-4 h-4" /> Batch History
                  </h3>
                  <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
                      {['week', 'month', 'year', 'all'].map(t => (
@@ -363,7 +363,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                  <table className="w-full text-left text-sm">
                      <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold">
                         <tr>
-                            <th className="px-6 py-4">PO #</th>
+                            <th className="px-6 py-4">PO Ref</th>
                             <th className="px-6 py-4">Job ID</th>
                             <th className="px-6 py-4">Part Index</th>
                             <th className="px-6 py-4">Units</th>
@@ -375,18 +375,18 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                         {completedJobs.map(j => (
                             <tr key={j.id} className="hover:bg-white/5 transition-colors">
                                 <td className="px-6 py-4 font-bold text-white opacity-50">{j.poNumber}</td>
-                                <td className="px-6 py-4 text-zinc-500 font-mono text-xs">{j.jobIdsDisplay}</td>
+                                <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase">{j.jobIdsDisplay}</td>
                                 <td className="px-6 py-4 text-zinc-500">{j.partNumber}</td>
                                 <td className="px-6 py-4 text-zinc-500">{j.quantity}</td>
                                 <td className="px-6 py-4 text-zinc-500">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                     <button onClick={() => confirm({ title: "Reactivate", message: "Move this job back to production?", onConfirm: () => DB.reopenJob(j.id) })} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg border border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all"><RotateCcw className="w-4 h-4" /></button>
+                                     <button onClick={() => confirm({ title: "Reactivate", message: "Move back to production queue?", onConfirm: () => DB.reopenJob(j.id) })} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg border border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all"><RotateCcw className="w-4 h-4" /></button>
                                      <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-500 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
                                      <button onClick={() => confirm({ title: "Delete Record", message: "Permanently erase this record?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-zinc-800 text-red-500 rounded-lg border border-white/5 hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
                                 </td>
                             </tr>
                         ))}
-                        {completedJobs.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">History Empty</td></tr>}
+                        {completedJobs.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">History is empty</td></tr>}
                      </tbody>
                  </table>
              </div>
@@ -395,23 +395,21 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
          {showModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
                <div className="bg-zinc-900 border border-white/10 w-full max-w-xl rounded-[40px] shadow-2xl p-8">
-                  <div className="flex justify-between items-center mb-8"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Job Form</h3><button onClick={() => setShowModal(false)} className="p-3 bg-white/5 rounded-xl text-zinc-600 hover:text-white"><X className="w-5 h-5" /></button></div>
+                  <div className="flex justify-between items-center mb-8"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Job Matrix</h3><button onClick={() => setShowModal(false)} className="p-3 bg-white/5 rounded-xl text-zinc-600 hover:text-white"><X className="w-5 h-5" /></button></div>
                   <div className="space-y-6 max-h-[60vh] overflow-y-auto custom-scrollbar pr-3">
                      <div className="space-y-2"><label className="text-[9px] text-blue-500 font-black uppercase tracking-[0.3em] ml-2">Order Reference (PO)</label><input className="w-full bg-black/60 border border-white/5 rounded-2xl p-4 text-white text-2xl font-black outline-none tracking-tight uppercase focus:border-blue-600 transition-all shadow-inner" placeholder="PO-" value={editingJob.poNumber || ''} onChange={e => setEditingJob({...editingJob, poNumber: e.target.value})} /></div>
                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Job Index</label><input className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-xs font-black text-white shadow-inner uppercase tracking-widest" value={editingJob.jobIdsDisplay || ''} onChange={e => setEditingJob({...editingJob, jobIdsDisplay: e.target.value})} /></div>
+                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Batch ID</label><input className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-xs font-black text-white shadow-inner uppercase tracking-widest" value={editingJob.jobIdsDisplay || ''} onChange={e => setEditingJob({...editingJob, jobIdsDisplay: e.target.value})} /></div>
                         <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Part Catalog #</label><input className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-xs font-black text-white shadow-inner uppercase tracking-widest" value={editingJob.partNumber || ''} onChange={e => setEditingJob({...editingJob, partNumber: e.target.value})} /></div>
                      </div>
-                     <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Batch Load</label><input type="number" className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-base font-black text-blue-500 shadow-inner" value={editingJob.quantity || ''} onChange={e => setEditingJob({...editingJob, quantity: Number(e.target.value)})} /></div>
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Received Date</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dateReceived || ''} onChange={e => setEditingJob({...editingJob, dateReceived: e.target.value})} /></div>
+                     <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Lot Units</label><input type="number" className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-base font-black text-blue-500 shadow-inner" value={editingJob.quantity || ''} onChange={e => setEditingJob({...editingJob, quantity: Number(e.target.value)})} /></div>
+                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Received</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dateReceived || ''} onChange={e => setEditingJob({...editingJob, dateReceived: e.target.value})} /></div>
+                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Target Date</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dueDate || ''} onChange={e => setEditingJob({...editingJob, dueDate: e.target.value})} /></div>
                      </div>
-                     <div className="grid grid-cols-1 gap-4">
-                        <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Production Due Date</label><input type="date" className="w-full bg-zinc-800 border border-white/5 rounded-2xl p-3.5 text-white text-[10px] font-black uppercase shadow-inner" value={editingJob.dueDate || ''} onChange={e => setEditingJob({...editingJob, dueDate: e.target.value})} /></div>
-                     </div>
-                     <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Instructions</label><textarea className="w-full bg-black/30 border border-white/5 rounded-2xl p-4 text-[10px] text-zinc-400 italic shadow-inner" rows={3} placeholder="..." value={editingJob.info || ''} onChange={e => setEditingJob({...editingJob, info: e.target.value})} /></div>
+                     <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Floor Logic</label><textarea className="w-full bg-black/30 border border-white/5 rounded-2xl p-4 text-[10px] text-zinc-400 italic shadow-inner" rows={3} placeholder="..." value={editingJob.info || ''} onChange={e => setEditingJob({...editingJob, info: e.target.value})} /></div>
                   </div>
-                  <div className="mt-8 flex justify-end gap-4"><button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all">Discard</button><button disabled={isSaving} onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] shadow-2xl transition-all active:scale-95">{isSaving ? 'Saving...' : 'Sync Job'}</button></div>
+                  <div className="mt-8 flex justify-end gap-4"><button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all">Discard</button><button disabled={isSaving} onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] shadow-2xl transition-all active:scale-95">{isSaving ? 'Syncing...' : 'Commit Batch'}</button></div>
                </div>
             </div>
          )}
@@ -448,9 +446,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
      });
    }, [logs, jobs]);
 
-   const activeLogsList = logs.filter(l => !l.endTime).sort((a,b) => b.startTime - a.startTime);
-
-   const getGroupedLogs = (source: TimeLog[]) => {
+   const groupedLogs = (source: TimeLog[]) => {
      const now = Date.now();
      const groups: Record<string, { job: Job | null, logs: TimeLog[], totalMins: number }> = {};
      
@@ -481,18 +477,17 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    };
 
    const totalHours = logs.reduce((acc, l) => acc + (l.durationMinutes || 0), 0) / 60;
-   const uniqueJobs = new Set(logs.map(l => l.jobId)).size;
+   const uniqueJobsCount = new Set(logs.map(l => l.jobId)).size;
 
    const handleSaveLog = async () => {
-       if (editingLog) { await DB.updateTimeLog(editingLog); addToast('success', 'Records updated'); setEditingLog(null); }
+       if (editingLog) { await DB.updateTimeLog(editingLog); addToast('success', 'Records Sync Successful'); setEditingLog(null); }
    };
 
    return (
       <div className="space-y-8 animate-fade-in">
-         {/* Header & Controls */}
          <div className="flex flex-col gap-6">
              <div className="flex justify-between items-center">
-                 <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
+                 <h2 className="text-2xl font-bold text-white flex items-center gap-2 uppercase tracking-tighter"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
                  <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
                      {['week', 'month', 'year', 'all'].map(t => (
                          <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-4 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-zinc-400'}`}>This {t}</button>
@@ -503,77 +498,72 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              <div className="flex gap-3">
                  <div className="relative flex-1">
                      <Search className="absolute left-3 top-3 w-4 h-4 text-zinc-500" />
-                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter logs..." className="w-full bg-zinc-900 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by PO, ID, or Personnel..." className="w-full bg-zinc-900 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
                  </div>
                  <button className="px-4 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"><RefreshCw className="w-4 h-4"/></button>
              </div>
          </div>
 
-         {/* View Selector */}
          <div className="flex gap-4 border-b border-white/5 pb-1">
              <button onClick={() => setTab('current')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'current' ? 'text-blue-500' : 'text-zinc-600 hover:text-zinc-400'}`}>
                  Current Production
                  {tab === 'current' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-500 rounded-t-full shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>}
              </button>
              <button onClick={() => setTab('archive')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'archive' ? 'text-zinc-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
-                 Finished Archives
+                 Completed Archive
                  {tab === 'archive' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-t-full"></div>}
              </button>
          </div>
 
-         {/* Metrics Bar */}
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
              <div className="bg-blue-900/10 border border-blue-500/20 p-6 rounded-2xl">
-                 <div className="flex items-center gap-2 text-blue-400 mb-1"><Clock className="w-4 h-4"/><p className="text-xs font-bold uppercase tracking-wider">Total Time Recorded</p></div>
+                 <div className="flex items-center gap-2 text-blue-400 mb-1"><Clock className="w-4 h-4"/><p className="text-xs font-bold uppercase tracking-wider">Time Recorded</p></div>
                  <p className="text-3xl font-black text-blue-100">{totalHours.toFixed(2)} <span className="text-lg font-medium text-blue-500">HRS</span></p>
              </div>
              <div className="bg-zinc-900/40 border border-white/5 p-6 rounded-2xl">
-                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Total Work Logs</p>
+                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Log Records</p>
                  <p className="text-3xl font-black text-white">{tab === 'current' ? currentLogs.length : archiveLogs.length}</p>
              </div>
              <div className="bg-zinc-900/40 border border-white/5 p-6 rounded-2xl">
-                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Tracked Jobs</p>
-                 <p className="text-3xl font-black text-white">{uniqueJobs}</p>
+                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Unique Batches</p>
+                 <p className="text-3xl font-black text-white">{uniqueJobsCount}</p>
              </div>
          </div>
 
-         {/* Log History Grouped by Job */}
          <div className="space-y-6">
-             {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).map(([jobId, data]) => (
+             {groupedLogs(tab === 'current' ? currentLogs : archiveLogs).map(([jobId, data]) => (
                  <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden shadow-xl animate-fade-in mb-6">
-                     {/* Group Header */}
                      <div className="p-4 md:p-6 bg-zinc-900/60 border-b border-white/5 flex flex-col md:flex-row justify-between md:items-center gap-4">
                          <div className="flex items-center gap-4">
                              <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${tab === 'current' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
                                  <Briefcase className="w-6 h-6" />
                              </div>
                              <div>
-                                 <h3 className="text-xl font-black text-white">{data.job?.poNumber || 'Legacy Batch'}</h3>
+                                 <h3 className="text-xl font-black text-white">{data.job?.poNumber || 'Unknown Ref'}</h3>
                                  <p className="text-[10px] font-bold text-zinc-500 uppercase mt-1 tracking-wider">
-                                     Job Index: <span className="text-zinc-300">{data.job?.jobIdsDisplay || jobId}</span> <span className="mx-2 text-zinc-700">|</span> Part Catalog: <span className="text-zinc-300">{data.job?.partNumber || 'N/A'}</span>
+                                     Batch: <span className="text-zinc-300">{data.job?.jobIdsDisplay || jobId}</span> <span className="mx-2 text-zinc-700">|</span> Catalog: <span className="text-zinc-300">{data.job?.partNumber || 'N/A'}</span>
                                  </p>
                              </div>
                          </div>
                          <div className="flex items-center gap-8 text-right bg-zinc-950/50 p-3 rounded-xl border border-white/5 shadow-inner">
                              <div>
-                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Total Phase Time</p>
+                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Logged Time</p>
                                  <p className="text-lg font-bold text-white tabular-nums">{formatDuration(data.totalMins)}</p>
                              </div>
                              <div className="border-l border-white/10 pl-6">
-                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Log Records</p>
+                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Entry Count</p>
                                  <p className="text-lg font-bold text-white tabular-nums">{data.logs.length}</p>
                              </div>
                          </div>
                      </div>
                      
-                     {/* Logs Table */}
                      <div className="overflow-x-auto">
                          <table className="w-full text-left text-sm">
                              <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold tracking-wider">
                                  <tr>
-                                     <th className="px-6 py-3">Work Date</th>
-                                     <th className="px-6 py-3">Time Range</th>
-                                     <th className="px-6 py-3">Operator</th>
+                                     <th className="px-6 py-3">Date</th>
+                                     <th className="px-6 py-3">Range</th>
+                                     <th className="px-6 py-3">Personnel</th>
                                      <th className="px-6 py-3">Work Step</th>
                                      <th className="px-6 py-3 text-right">Duration</th>
                                      <th className="w-12"></th>
@@ -584,7 +574,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                                      <tr key={l.id} className="hover:bg-white/5 transition-colors group">
                                          <td className="px-6 py-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
                                          <td className="px-6 py-4 text-zinc-500 font-mono text-xs">
-                                             {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-400 font-bold">In-Progress</span>}
+                                             {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-400 font-bold">Active</span>}
                                          </td>
                                          <td className="px-6 py-4">
                                              <div className="flex items-center gap-2">
@@ -606,18 +596,17 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                      </div>
                  </div>
              ))}
-             {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).length === 0 && (
+             {groupedLogs(tab === 'current' ? currentLogs : archiveLogs).length === 0 && (
                  <div className="py-20 text-center text-zinc-700 text-xs font-black uppercase tracking-[0.5em] bg-zinc-900/20 border-2 border-dashed border-white/5 rounded-[40px]">
-                     No records found in this category
+                     No records in this view
                  </div>
              )}
          </div>
 
-         {/* Edit Log Modal */}
          {editingLog && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
                <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[40px] shadow-2xl p-8 overflow-hidden">
-                  <div className="flex justify-between items-center mb-8"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Modify Record</h3><button onClick={() => setEditingLog(null)} className="p-3 bg-white/5 rounded-xl text-zinc-600 hover:text-white"><X className="w-5 h-5" /></button></div>
+                  <div className="flex justify-between items-center mb-8"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Modify Log</h3><button onClick={() => setEditingLog(null)} className="p-3 bg-white/5 rounded-xl text-zinc-600 hover:text-white"><X className="w-5 h-5" /></button></div>
                   <div className="space-y-6">
                      <div className="grid grid-cols-2 gap-6">
                         <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Phase In</label><input type="datetime-local" className="w-full bg-black/50 border border-white/5 rounded-2xl p-4 text-white text-[10px] font-black uppercase tracking-widest shadow-inner outline-none focus:border-blue-600 transition-all" value={toDateTimeLocal(editingLog.startTime)} onChange={e => setEditingLog({...editingLog, startTime: new Date(e.target.value).getTime()})} /></div>
@@ -639,13 +628,13 @@ const AdminEmployees = ({ addToast, confirm }: any) => {
    const [showModal, setShowModal] = useState(false);
    useEffect(() => DB.subscribeUsers(setUsers), []);
    const handleSave = () => {
-     if (!editingUser.name || !editingUser.username || !editingUser.pin) return addToast('error', 'Profile data missing');
+     if (!editingUser.name || !editingUser.username || !editingUser.pin) return addToast('error', 'Profile data is missing');
      DB.saveUser({ id: editingUser.id || Date.now().toString(), name: editingUser.name, username: editingUser.username, pin: editingUser.pin, role: editingUser.role || 'employee', isActive: true });
-     setShowModal(false); addToast('success', 'Profile Synced');
+     setShowModal(false); addToast('success', 'Member Access Configured');
    };
    return (
      <div className="space-y-8 animate-fade-in">
-        <div className="flex justify-between items-center"><h2 className="text-3xl font-black uppercase tracking-tighter text-white leading-none">Employees</h2><button onClick={() => { setEditingUser({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl flex items-center gap-2.5 text-[9px] font-black uppercase tracking-[0.3em] shadow-2xl transition-all active:scale-95"><Plus className="w-4 h-4" /> Add Member</button></div>
+        <div className="flex justify-between items-center"><h2 className="text-3xl font-black uppercase tracking-tighter text-white leading-none">Global Personnel</h2><button onClick={() => { setEditingUser({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl flex items-center gap-2.5 text-[9px] font-black uppercase tracking-[0.3em] shadow-2xl transition-all active:scale-95"><Plus className="w-4 h-4" /> Add Member</button></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {users.map(u => (
             <div key={u.id} className="bg-zinc-900/40 border border-white/10 p-6 rounded-[32px] flex items-center justify-between shadow-2xl backdrop-blur-xl group hover:border-blue-500/30 transition-all">
@@ -654,7 +643,7 @@ const AdminEmployees = ({ addToast, confirm }: any) => {
                 <div><p className="font-black text-white text-base tracking-tight leading-none mb-1 uppercase">{u.name}</p><p className="text-[9px] text-zinc-600 font-black uppercase tracking-widest">@{u.username} • {u.role}</p></div>
               </div>
               <div className="flex gap-1.5">
-                 <button onClick={() => confirm({ title: "Remove Access", message: "Permanently delete this user?", onConfirm: () => DB.deleteUser(u.id) })} className="p-3 hover:bg-red-500/10 text-zinc-700 hover:text-red-500 transition-all rounded-xl"><Trash2 className="w-4.5 h-4.5" /></button>
+                 <button onClick={() => confirm({ title: "Revoke Access", message: "Permanently delete this user profile?", onConfirm: () => DB.deleteUser(u.id) })} className="p-3 hover:bg-red-500/10 text-zinc-700 hover:text-red-500 transition-all rounded-xl"><Trash2 className="w-4.5 h-4.5" /></button>
                  <button onClick={() => { setEditingUser(u); setShowModal(true); }} className="p-3 hover:bg-white/5 text-zinc-600 hover:text-white transition-all rounded-xl"><Edit2 className="w-4.5 h-4.5" /></button>
               </div>
             </div>
@@ -663,14 +652,14 @@ const AdminEmployees = ({ addToast, confirm }: any) => {
         {showModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4">
              <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[48px] shadow-2xl p-8">
-                <div className="flex justify-between items-center mb-8 leading-none"><h3 className="font-bold text-white text-lg uppercase tracking-tight">Profile Matrix</h3><button onClick={() => setShowModal(false)} className="p-2.5 bg-white/5 rounded-xl text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button></div>
+                <div className="flex justify-between items-center mb-8 leading-none"><h3 className="font-bold text-white text-lg uppercase tracking-tight">Identity Matrix</h3><button onClick={() => setShowModal(false)} className="p-2.5 bg-white/5 rounded-xl text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button></div>
                 <div className="space-y-5">
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Full Name</label><input className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all uppercase" value={editingUser.name || ''} onChange={e => setEditingUser({...editingUser, name: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">User Handle</label><input className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all" value={editingUser.username || ''} onChange={e => setEditingUser({...editingUser, username: e.target.value})} /></div>
+                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Legal Name</label><input className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all uppercase" value={editingUser.name || ''} onChange={e => setEditingUser({...editingUser, name: e.target.value})} /></div>
+                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Username</label><input className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all" value={editingUser.username || ''} onChange={e => setEditingUser({...editingUser, username: e.target.value})} /></div>
                   <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Cipher (PIN)</label><input type="text" className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold shadow-inner outline-none focus:border-blue-600 transition-all tracking-[0.4em]" value={editingUser.pin || ''} onChange={e => setEditingUser({...editingUser, pin: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Access Level</label><select className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold outline-none" value={editingUser.role || 'employee'} onChange={e => setEditingUser({...editingUser, role: e.target.value as any})}><option value="employee">Employee</option><option value="admin">Admin</option></select></div>
+                  <div className="space-y-1.5"><label className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] ml-1 block">Security Role</label><select className="w-full bg-black/40 border border-white/5 rounded-xl p-3.5 text-white text-sm font-bold outline-none" value={editingUser.role || 'employee'} onChange={e => setEditingUser({...editingUser, role: e.target.value as any})}><option value="employee">Employee</option><option value="admin">Admin</option></select></div>
                 </div>
-                <div className="p-8 border-t border-white/5 bg-zinc-950/40 flex justify-end gap-3 mt-8"><button onClick={() => setShowModal(false)} className="text-zinc-500 hover:text-white text-[9px] font-black uppercase tracking-widest">Abort</button><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-[0.2em] transition-all active:scale-95">Commit Sync</button></div>
+                <div className="p-8 border-t border-white/5 bg-zinc-950/40 flex justify-end gap-3 mt-8"><button onClick={() => setShowModal(false)} className="text-zinc-500 hover:text-white text-[9px] font-black uppercase tracking-widest">Abort</button><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-[0.2em] transition-all active:scale-95">Commit Matrix</button></div>
              </div>
           </div>
         )}
@@ -682,14 +671,13 @@ const AdminEmployees = ({ addToast, confirm }: any) => {
 const SettingsView = ({ addToast }: { addToast: any }) => {
    const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
    const [newOp, setNewOp] = useState('');
-   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Saved'); };
+   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'System Core Synced'); };
    const handleAddOp = () => { if(!newOp.trim()) return; setSettings({...settings, customOperations: [...(settings.customOperations || []), newOp.trim()]}); setNewOp(''); };
    const handleDeleteOp = (op: string) => { setSettings({...settings, customOperations: (settings.customOperations || []).filter(o => o !== op)}); };
    return (
      <div className="max-w-xl space-y-10 animate-fade-in">
         <h2 className="text-3xl font-black uppercase tracking-tighter text-white leading-none">Settings</h2>
         
-        {/* Auto Stopper Section */}
         <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] p-8 space-y-10 shadow-2xl backdrop-blur-xl">
            <div className="flex items-center gap-5 border-b border-white/10 pb-8">
                <div className="bg-orange-600/10 p-4 rounded-2xl text-orange-500 border border-orange-500/20">
@@ -697,7 +685,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                </div>
                <div>
                    <h3 className="font-black text-white uppercase text-lg tracking-tight">Auto-Termination</h3>
-                   <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Batch cleanup rules</p>
+                   <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Shift cleanup rules</p>
                </div>
            </div>
            <div className="space-y-6">
@@ -716,7 +704,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                    </div>
                </div>
                <div className="space-y-2">
-                   <label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Stop Time</label>
+                   <label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Trigger Time</label>
                    <input 
                        type="time" 
                        value={settings.autoClockOutTime} 
@@ -727,15 +715,14 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
            </div>
         </div>
 
-        {/* Phase Matrix Section */}
         <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] p-8 space-y-10 shadow-2xl backdrop-blur-xl">
             <div className="flex items-center gap-5 border-b border-white/10 pb-8"><div className="bg-blue-600/10 p-4 rounded-2xl text-blue-500 border border-blue-500/20"><Activity className="w-8 h-8" /></div><div><h3 className="font-black text-white uppercase text-lg tracking-tight">Work Steps</h3><p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Operational flow control</p></div></div>
             <div className="space-y-6">
-                <div className="flex gap-3"><input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="New step..." className="flex-1 bg-black/50 border border-white/5 rounded-2xl px-6 py-4 text-white text-sm font-black shadow-inner outline-none focus:border-blue-600 transition-all uppercase placeholder-zinc-800" onKeyDown={e => e.key === 'Enter' && handleAddOp()} /><button onClick={handleAddOp} className="bg-blue-600 px-6 rounded-2xl text-white font-black hover:bg-blue-500 transition-all active:scale-95 shadow-2xl"><Plus className="w-6 h-6" /></button></div>
+                <div className="flex gap-3"><input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="New Step..." className="flex-1 bg-black/50 border border-white/5 rounded-2xl px-6 py-4 text-white text-sm font-black shadow-inner outline-none focus:border-blue-600 transition-all uppercase placeholder-zinc-800" onKeyDown={e => e.key === 'Enter' && handleAddOp()} /><button onClick={handleAddOp} className="bg-blue-600 px-6 rounded-2xl text-white font-black hover:bg-blue-500 transition-all active:scale-95 shadow-2xl"><Plus className="w-6 h-6" /></button></div>
                 <div className="flex flex-wrap gap-3">{(settings.customOperations || []).map(op => <div key={op} className="bg-zinc-950 border border-white/5 px-4 py-2.5 rounded-xl flex items-center gap-4 group hover:border-blue-500/50 transition-all shadow-inner"><span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 group-hover:text-white transition-colors">{op}</span><button onClick={() => handleDeleteOp(op)} className="text-zinc-800 hover:text-red-500 transition-colors"><X className="w-4 h-4" /></button></div>)}</div>
             </div>
         </div>
-        <div className="flex justify-end"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-10 py-5 rounded-[28px] font-black uppercase tracking-[0.4em] shadow-2xl flex items-center gap-3 transition-all active:scale-95 text-[10px]"><Save className="w-6 h-6" /> Save Changes</button></div>
+        <div className="flex justify-end"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-10 py-5 rounded-[28px] font-black uppercase tracking-[0.4em] shadow-2xl flex items-center gap-3 transition-all active:scale-95 text-[10px]"><Save className="w-6 h-6" /> Save Settings</button></div>
      </div>
    );
 };
@@ -775,14 +762,14 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
         
         {!expanded && (
           <div className="mt-4 flex items-center text-blue-500 text-[10px] font-black uppercase tracking-[0.3em] opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">
-            Initialize <ArrowRight className="w-3 h-3 ml-1.5" />
+            Tap to Initialize <ArrowRight className="w-3 h-3 ml-1.5" />
           </div>
         )}
       </div>
 
       {expanded && (
         <div className="p-6 bg-black/40 border-t border-white/5 animate-fade-in">
-          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-1.5"><Settings className="w-4 h-4 text-blue-500"/> Select Step</p>
+          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-1.5"><Settings className="w-4 h-4 text-blue-500"/> Choose Work Step</p>
           <div className="grid grid-cols-1 gap-3">
             {operations.map(op => (
               <button
@@ -791,13 +778,13 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                   e.stopPropagation();
                   onStart(job.id, op);
                 }}
-                className="bg-zinc-800/50 hover:bg-blue-600 text-zinc-300 hover:text-white border border-white/5 py-5 px-4 rounded-2xl text-base font-black uppercase tracking-widest transition-all shadow-inner active:scale-95 text-left flex justify-between items-center group/btn"
+                className="bg-zinc-800/80 hover:bg-blue-600 text-zinc-200 hover:text-white border border-white/10 py-5 px-6 rounded-2xl text-lg font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op"
               >
                 {op}
-                <Play className="w-5 h-5 opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                <Play className="w-5 h-5 opacity-0 group-hover/op:opacity-100 transition-opacity" />
               </button>
             ))}
-             {operations.length === 0 && <p className="text-[10px] text-zinc-700 font-black uppercase text-center py-2 tracking-widest">Protocol null</p>}
+             {operations.length === 0 && <p className="text-[10px] text-zinc-700 font-black uppercase text-center py-2 tracking-widest">Logic null</p>}
           </div>
         </div>
       )}
@@ -842,16 +829,16 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   const handleStartJob = async (jobId: string, operation: string) => {
     try {
         await DB.startTimeLog(jobId, user.id, user.name, operation);
-        addToast('success', 'PHASE STARTED');
+        addToast('success', 'PHASE_INITIALIZED');
     } catch (e) {
-        addToast('error', 'FAILED TO START');
+        addToast('error', 'INIT_FAILED');
     }
   };
 
   const handleStopJob = async (logId: string) => {
     try {
       await DB.stopTimeLog(logId);
-      addToast('success', 'PHASE ENDED');
+      addToast('success', 'PHASE_TERMINATED');
     } catch (e) {
       addToast('error', 'ERROR');
     }
@@ -864,7 +851,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           if (match) val = match[1];
           setSearch(val); 
           setTab('jobs'); 
-          addToast('success', 'BATCH CAPTURED');
+          addToast('success', 'CAPTURED');
       }
   }
 
@@ -880,11 +867,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
 
       <div className="flex flex-wrap gap-3 justify-between items-center bg-zinc-900/60 backdrop-blur-2xl p-3 rounded-[28px] border border-white/5 shadow-2xl no-print">
          <div className="flex gap-3 p-1 bg-black/40 rounded-xl border border-white/5 shadow-inner">
-           <button onClick={() => setTab('jobs')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Queue</button>
+           <button onClick={() => setTab('jobs')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all ${tab === 'jobs' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}>Active Queue</button>
            <button onClick={() => setTab('history')} className={`px-6 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-600 hover:text-white'}`}><History className="w-3.5 h-3.5" /> Logs</button>
          </div>
          <div className="flex items-center gap-3">
-             <button onClick={() => setTab('scan')} className={`px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-xl' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-xl'}`}><ScanLine className="w-4 h-4" /> Scan</button>
+             <button onClick={() => setTab('scan')} className={`px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow-xl' : 'bg-zinc-800 text-blue-500 hover:bg-blue-600 hover:text-white shadow-xl'}`}><ScanLine className="w-4 h-4" /> Scanner</button>
              <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-5 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.3em] flex items-center gap-2 transition-all shadow-xl border border-red-500/20"><LogOut className="w-4 h-4" /> Exit</button>
          </div>
       </div>
@@ -895,8 +882,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
                <div className="w-20 h-20 bg-blue-600/10 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-blue-500/20 shadow-lg">
                   <QrCode className="w-10 h-10 text-blue-500" />
                </div>
-               <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-3">Optical Input</h2>
-               <p className="text-zinc-600 text-[9px] font-black uppercase tracking-[0.4em] mb-8 opacity-60">Scan Batch QR</p>
+               <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-3">Optical Node</h2>
+               <p className="text-zinc-600 text-[9px] font-black uppercase tracking-[0.4em] mb-8 opacity-60">Scan Batch Traveler</p>
                <input autoFocus onKeyDown={handleScan} className="bg-black/60 border-2 border-blue-600/50 rounded-2xl px-6 py-5 text-white text-center w-full text-xl font-black tracking-widest focus:border-blue-500 outline-none shadow-inner" placeholder="WAITING..." />
             </div>
          </div>
@@ -908,11 +895,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           </div>
           <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full text-left">
-              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Batch</th><th className="px-6 py-4">Step</th><th className="px-6 py-4 text-right">Time</th></tr></thead>
+              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Timestamp</th><th className="px-6 py-4">Batch</th><th className="px-6 py-4">Step</th><th className="px-6 py-4 text-right">Time</th></tr></thead>
               <tbody className="divide-y divide-white/5">
                 {myHistory.map(log => (
                   <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
-                    <td className="px-6 py-4 text-zinc-500 font-black text-[10px] uppercase whitespace-nowrap">{new Date(log.startTime).toLocaleDateString()}</td>
+                    <td className="px-6 py-4 text-zinc-500 font-black text-[10px] uppercase whitespace-nowrap">{new Date(log.startTime).toLocaleDateString()} • {new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
                     <td className="px-6 py-4 text-white font-black uppercase tracking-tight text-base leading-none">{log.jobId}</td>
                     <td className="px-6 py-4 text-blue-500 font-black uppercase tracking-widest text-[9px]">{log.operation}</td>
                     <td className="px-6 py-4 text-right text-zinc-400 font-black font-mono text-base leading-none">{formatDuration(log.durationMinutes)}</td>
@@ -932,7 +919,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           
           {activeLog && (
             <div className="p-4 rounded-2xl bg-red-500/5 border border-red-500/20 text-red-500 text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 animate-pulse shadow-xl">
-              <AlertCircle className="w-4 h-4" /> Timer active. Stop work to proceed.
+              <AlertCircle className="w-4 h-4" /> Timer active. Stop current step to proceed.
             </div>
           )}
 
@@ -957,14 +944,14 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto no-print">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto">
       <div className="bg-white text-black w-full max-w-3xl rounded-[32px] shadow-2xl relative overflow-hidden flex flex-col max-h-full" id="printable-area-root">
          
          <div className="bg-zinc-950 text-white p-6 flex justify-between items-center no-print shrink-0 border-b border-white/10">
              <div className="flex items-center gap-5">
                <Printer className="w-5 h-5 text-blue-500"/>
                <div>
-                 <h3 className="font-black uppercase text-base tracking-tight leading-none">Batch Traveler</h3>
+                 <h3 className="font-black uppercase text-base tracking-tight leading-none">Traveler Matrix</h3>
                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mt-1.5">Documentation Preview</p>
                </div>
              </div>
@@ -1011,15 +998,15 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
                       </div>
                    </div>
                    <div className="flex-1">
-                     <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Production Logic</label>
+                     <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Floor Operations</label>
                      <div className="text-lg border-l-[10px] border-black pl-6 py-4 bg-gray-50 min-h-[6rem] font-bold italic leading-relaxed">
-                       {job.info || "Follow standard deburring procedures."}
+                       {job.info || "No specialized instructions logged."}
                      </div>
                    </div>
                </div>
                
                <div className="flex flex-col items-center justify-center border-[5px] border-black p-8 bg-gray-50 h-full">
-                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[85%]" crossOrigin="anonymous" />
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto max-w-[85%] block object-contain" crossOrigin="anonymous" />
                   <p className="font-mono text-lg mt-8 text-gray-400 text-center break-all font-bold tracking-tight uppercase leading-none">{job.id}</p>
                   <p className="font-black uppercase tracking-[0.4em] text-2xl mt-4 border-t border-gray-200 pt-4 w-full text-center">SCAN_NODE</p>
                </div>
@@ -1059,8 +1046,8 @@ export function App() {
             </div>
             <aside className={`fixed lg:sticky top-0 inset-y-0 left-0 w-72 border-r border-white/5 bg-zinc-950 flex flex-col z-50 transform transition-transform duration-500 ease-in-out shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
                <div className="p-10 hidden lg:flex flex-col gap-1 border-b border-white/5 mb-8"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-[20px] bg-gradient-to-tr from-blue-600 to-indigo-700 flex items-center justify-center shadow-2xl border border-blue-500/20"><Sparkles className="w-6 h-6 text-white"/></div><h2 className="font-black text-xl tracking-tighter text-white uppercase leading-none">SC DEBURRING</h2></div></div>
-               <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-10 lg:py-0 custom-scrollbar"><NavItem id="admin-dashboard" l="Dashboard" i={LayoutDashboard} /><NavItem id="admin-jobs" l="Production" i={Briefcase} /><NavItem id="admin-logs" l="Work Logs" i={Calendar} /><NavItem id="admin-team" l="Team" i={Users} /><NavItem id="admin-settings" l="Settings" i={Settings} /><NavItem id="admin-scan" l="Terminal" i={ScanLine} /></nav>
-               <div className="p-6 border-t border-white/5 bg-zinc-900/30"><button onClick={() => setUser(null)} className="w-full flex items-center gap-4 px-6 py-4 text-zinc-700 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.3em] transition-all rounded-2xl hover:bg-red-500/5 group"><LogOut className="w-5 h-5 group-hover:scale-110 transition-all" /> EXIT_SESSION</button></div>
+               <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-10 lg:py-0 custom-scrollbar"><NavItem id="admin-dashboard" l="Overview" i={LayoutDashboard} /><NavItem id="admin-jobs" l="Production" i={Briefcase} /><NavItem id="admin-logs" l="Work Logs" i={Calendar} /><NavItem id="admin-team" l="Personnel" i={Users} /><NavItem id="admin-settings" l="Core Settings" i={Settings} /><NavItem id="admin-scan" l="Terminal" i={ScanLine} /></nav>
+               <div className="p-6 border-t border-white/5 bg-zinc-900/30"><button onClick={() => setUser(null)} className="w-full flex items-center gap-4 px-6 py-4 text-zinc-700 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.3em] transition-all rounded-2xl hover:bg-red-500/5 group"><LogOut className="w-5 h-5 group-hover:scale-110 transition-all" /> Sign Out</button></div>
             </aside>
             {isMobileMenuOpen && <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-40 lg:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
           </>
