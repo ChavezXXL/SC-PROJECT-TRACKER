@@ -6,7 +6,7 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play, Archive, ClipboardList
+  Play, Archive, ClipboardList, Bell
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
@@ -27,6 +27,14 @@ const toDateTimeLocal = (ts: number | undefined | null) => {
   const d = new Date(ts);
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const checkOverdue = (dueDateStr: string | undefined | null) => {
+  if (!dueDateStr) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueDateStr + 'T00:00:00'); // Ensure local time parsing
+  return due < today;
 };
 
 const PrintStyles = () => (
@@ -81,15 +89,18 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
     setIsStopping(true);
     try { await onStop(log.id); } catch (e) { setIsStopping(false); }
   };
+  
+  const isOverdue = job && checkOverdue(job.dueDate);
+
   return (
     <div className="bg-zinc-900 border border-blue-500/30 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden animate-fade-in mb-6 no-print">
       <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Briefcase className="w-64 h-64 text-blue-500" /></div>
-      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 via-purple-500 to-blue-600 opacity-50 animate-pulse"></div>
+      <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isOverdue ? 'from-red-600 via-orange-500 to-red-600' : 'from-blue-600 via-purple-500 to-blue-600'} opacity-50 animate-pulse`}></div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
         <div className="flex flex-col justify-center">
-           <div className="flex items-center gap-2 mb-3">
-              <span className="animate-pulse w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.7)]"></span>
-              <span className="text-red-400 font-black uppercase tracking-[0.2em] text-[10px]">Timer Active</span>
+           <div className="flex items-center gap-3 mb-3">
+              <span className={`animate-pulse w-2.5 h-2.5 rounded-full ${isOverdue ? 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,1)]' : 'bg-blue-500'}`}></span>
+              <span className={`${isOverdue ? 'text-red-500' : 'text-zinc-500'} font-black uppercase tracking-[0.2em] text-[10px]`}>{isOverdue ? 'CRITICAL: OVERDUE' : 'Timer Active'}</span>
            </div>
            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-1">Purchase Order (PO)</p>
            <h2 className="text-3xl md:text-5xl font-black text-white mb-2 tracking-tighter leading-none uppercase break-all">{job ? job.poNumber : 'N/A'}</h2>
@@ -112,7 +123,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Part Index</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.partNumber}</div></div>
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Batch ID</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.jobIdsDisplay}</div></div>
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Batch Size</label><div className="text-lg md:text-xl font-black text-blue-500 mt-1 leading-none">{job.quantity} <span className="text-[10px] font-bold text-zinc-600 ml-0.5">UNITS</span></div></div>
-               <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Due Date</label><div className="text-lg md:text-xl font-black text-red-500 mt-1 leading-none">{job.dueDate || 'N/A'}</div></div>
+               <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Due Date</label><div className={`text-lg md:text-xl font-black mt-1 leading-none ${isOverdue ? 'text-red-500 underline underline-offset-4 decoration-wavy' : 'text-white'}`}>{job.dueDate || 'N/A'}</div></div>
              </div>
            ) : <p className="text-zinc-500 font-black uppercase tracking-widest">Data Unavailable</p>}
         </div>
@@ -176,8 +187,35 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
    const wipJobsCount = jobs.filter(j => j.status === 'in-progress').length;
    const activeWorkersCount = new Set(activeLogs.map(l => l.userId)).size;
 
+   // Notification Logic: Past Due Jobs
+   const overdueActiveJobs = useMemo(() => {
+     return jobs.filter(j => j.status !== 'completed' && checkOverdue(j.dueDate));
+   }, [jobs]);
+
    return (
       <div className="space-y-6 animate-fade-in">
+         {/* Overdue Alert Bar */}
+         {overdueActiveJobs.length > 0 && (
+            <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-[28px] flex flex-col md:flex-row justify-between items-center gap-4 animate-pulse shadow-2xl">
+               <div className="flex items-center gap-4">
+                  <div className="bg-red-600 p-2.5 rounded-2xl text-white shadow-lg shadow-red-900/30">
+                    <Bell className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-red-500 font-black uppercase text-xs tracking-widest leading-none">Critical Priority Notification</h4>
+                    <p className="text-[10px] text-red-400/70 font-bold uppercase mt-1 tracking-widest">{overdueActiveJobs.length} Job(s) are past their target deadlines</p>
+                  </div>
+               </div>
+               <div className="flex gap-2">
+                  {overdueActiveJobs.slice(0, 3).map(j => (
+                    <span key={j.id} className="bg-red-950/40 border border-red-500/30 text-red-400 px-3 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-widest">{j.poNumber}</span>
+                  ))}
+                  {overdueActiveJobs.length > 3 && <span className="bg-red-950/40 border border-red-500/30 text-red-400 px-3 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-widest">+{overdueActiveJobs.length - 3} MORE</span>}
+                  <button onClick={() => setView('admin-jobs')} className="ml-4 bg-red-600 hover:bg-red-500 text-white px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-xl transition-all active:scale-95">Address Now</button>
+               </div>
+            </div>
+         )}
+
          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <div className="bg-zinc-900/40 border border-white/10 p-6 rounded-3xl flex justify-between items-center shadow-2xl backdrop-blur-xl">
                <div>
@@ -262,7 +300,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
    useEffect(() => DB.subscribeJobs(setJobs), []);
 
-   // Optimized Search Logic
+   // Precise Field Search
    const matchesSearch = (j: Job) => {
        if (!search) return true;
        const t = search.toLowerCase();
@@ -301,7 +339,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              </div>
              <div className="bg-red-500/5 border border-red-500/10 p-4 rounded-2xl">
                  <p className="text-[8px] font-black text-red-500 uppercase tracking-widest mb-1">Priority Due</p>
-                 <p className="text-2xl font-black text-red-400">{activeJobs.filter(j => j.dueDate).length}</p>
+                 <p className="text-2xl font-black text-red-400">{activeJobs.filter(j => j.dueDate && checkOverdue(j.dueDate)).length}</p>
              </div>
          </div>
 
@@ -311,12 +349,8 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              <div className="flex gap-2 w-full md:w-auto">
                  <div className="relative flex-1 md:flex-initial">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by PO, ID, or Part..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-8 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
-                    {search && (
-                        <button onClick={() => setSearch('')} className="absolute right-3 top-2.5 text-zinc-500 hover:text-white">
-                            <X className="w-4 h-4" />
-                        </button>
-                    )}
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter Production..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    {search && <button onClick={() => setSearch('')} className="absolute right-3 top-2.5 text-zinc-600 hover:text-white"><X className="w-4 h-4" /></button>}
                  </div>
                  <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-900/20"><Plus className="w-4 h-4"/> Add Job</button>
              </div>
@@ -338,27 +372,35 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                      </tr>
                  </thead>
                  <tbody className="divide-y divide-white/5">
-                     {activeJobs.map(j => (
-                         <tr key={j.id} className="hover:bg-white/5 transition-colors group">
-                             <td className="px-6 py-4 font-bold text-white whitespace-nowrap">{j.poNumber}</td>
-                             <td className="px-6 py-4 text-zinc-300 font-mono text-xs uppercase whitespace-nowrap">{j.jobIdsDisplay}</td>
-                             <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">{j.partNumber}</td>
-                             <td className="px-6 py-4 text-zinc-300 font-bold">{j.quantity} Units</td>
-                             <td className="px-6 py-4">
-                                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
-                                     {j.status === 'in-progress' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>}
-                                     {j.status}
-                                 </span>
-                             </td>
-                             <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">{j.dueDate || '-'}</td>
-                             <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                 <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all" title="Finish Job"><CheckCircle className="w-4 h-4" /></button>
-                                 <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all" title="Print Sheet"><Printer className="w-4 h-4" /></button>
-                                 <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 className="w-4 h-4" /></button>
-                             </td>
-                         </tr>
-                     ))}
+                     {activeJobs.map(j => {
+                         const isOverdue = checkOverdue(j.dueDate);
+                         return (
+                            <tr key={j.id} className={`hover:bg-white/5 transition-colors group ${isOverdue ? 'bg-red-500/[0.03]' : ''}`}>
+                                <td className="px-6 py-4 font-bold text-white whitespace-nowrap">
+                                    <div className="flex items-center gap-2">
+                                        {j.poNumber}
+                                        {isOverdue && <span className="bg-red-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full animate-pulse shadow-lg shadow-red-900/40">OVERDUE</span>}
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4 text-zinc-300 font-mono text-xs uppercase whitespace-nowrap">{j.jobIdsDisplay}</td>
+                                <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">{j.partNumber}</td>
+                                <td className="px-6 py-4 text-zinc-300 font-bold">{j.quantity} Units</td>
+                                <td className="px-6 py-4">
+                                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
+                                        {j.status === 'in-progress' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>}
+                                        {j.status}
+                                    </span>
+                                </td>
+                                <td className={`px-6 py-4 whitespace-nowrap font-black text-xs ${isOverdue ? 'text-red-500' : 'text-zinc-400'}`}>{j.dueDate || '-'}</td>
+                                <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                    <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
+                                    <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
+                                    <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all"><Edit2 className="w-4 h-4" /></button>
+                                    <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
+                                </td>
+                            </tr>
+                         );
+                     })}
                      {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Production Queue Empty</td></tr>}
                  </tbody>
              </table>
@@ -480,7 +522,6 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
      });
 
      const result = Object.entries(groups).filter(([jobId, data]) => {
-        // Precise Search logic for Logs
         if (search) {
             const t = search.toLowerCase();
             const poMatch = data.job?.poNumber.toLowerCase().includes(t);
@@ -526,13 +567,12 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
 
    return (
       <div className="space-y-8 animate-fade-in">
-         {/* Header & Filter Controls */}
          <div className="flex flex-col gap-6">
              <div className="flex justify-between items-center">
                  <h2 className="text-2xl font-bold text-white flex items-center gap-2 uppercase tracking-tighter"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
                  <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
                      {['week', 'month', 'year', 'all'].map(t => (
-                         <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-4 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-zinc-400'}`}>This {t}</button>
+                         <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-4 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-white'}`}>This {t}</button>
                      ))}
                  </div>
              </div>
@@ -547,7 +587,6 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
              </div>
          </div>
 
-         {/* View Selector Tabs */}
          <div className="flex gap-4 border-b border-white/5 pb-1">
              <button onClick={() => setTab('current')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'current' ? 'text-blue-500' : 'text-zinc-600 hover:text-white'}`}>
                  Current Production
@@ -559,7 +598,6 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
              </button>
          </div>
 
-         {/* Metrics Summary */}
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
              <div className="bg-blue-900/10 border border-blue-500/20 p-6 rounded-2xl">
                  <div className="flex items-center gap-2 text-blue-400 mb-1"><Clock className="w-4 h-4"/><p className="text-xs font-bold uppercase tracking-wider">Filtered Period Time</p></div>
@@ -575,7 +613,6 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
              </div>
          </div>
 
-         {/* List Grouped by Job */}
          <div className="space-y-6 pb-20">
              {getGroupedLogs(tab === 'current' ? currentLogs : archiveLogs).map(([jobId, data]) => (
                  <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden shadow-xl animate-fade-in mb-6">
@@ -649,7 +686,6 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
              )}
          </div>
 
-         {/* Edit Log Modal */}
          {editingLog && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-3xl p-4 animate-fade-in">
                <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[40px] shadow-2xl p-8 overflow-hidden">
@@ -800,14 +836,18 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
 // --- HELPER: JOB SELECTION CARD ---
 const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[] }> = ({ job, onStart, disabled, operations }) => {
   const [expanded, setExpanded] = useState(false);
+  const isOverdue = checkOverdue(job.dueDate);
 
   return (
     <div className={`bg-zinc-900/40 border border-white/5 rounded-3xl overflow-hidden transition-all duration-300 ${expanded ? 'border-blue-500/50 bg-zinc-900/80 shadow-2xl' : 'hover:bg-zinc-900/60'} ${disabled ? 'opacity-30 pointer-events-none grayscale' : ''} shadow-2xl backdrop-blur-xl`}>
       <div className="p-6 cursor-pointer group" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-3">
           <div>
-            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Purchase Order (PO)</p>
-            <h3 className="text-2xl font-black text-white tracking-tighter uppercase leading-none">{job.poNumber}</h3>
+            <div className="flex items-center gap-2 mb-1">
+                <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Purchase Order (PO)</p>
+                {isOverdue && <span className="bg-red-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full animate-pulse">OVERDUE</span>}
+            </div>
+            <h3 className={`text-2xl font-black tracking-tighter uppercase leading-none ${isOverdue ? 'text-red-500' : 'text-white'}`}>{job.poNumber}</h3>
           </div>
           <span className="bg-black/40 border border-white/5 text-blue-500 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-inner">{job.quantity} PCS</span>
         </div>
@@ -817,7 +857,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
         </div>
         
         {!expanded && (
-          <div className="mt-4 flex items-center text-blue-500 text-[10px] font-black uppercase tracking-[0.3em] opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">
+          <div className={`mt-4 flex items-center text-[10px] font-black uppercase tracking-[0.3em] opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0 ${isOverdue ? 'text-red-500' : 'text-blue-500'}`}>
             Initialize Work <ArrowRight className="w-3 h-3 ml-1.5" />
           </div>
         )}
@@ -834,7 +874,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                   e.stopPropagation();
                   onStart(job.id, op);
                 }}
-                className="bg-zinc-800/80 hover:bg-blue-600 text-zinc-200 hover:text-white border border-white/10 py-8 px-6 rounded-2xl text-2xl font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op"
+                className={`bg-zinc-800/80 hover:text-white border border-white/10 py-8 px-6 rounded-2xl text-2xl font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op ${isOverdue ? 'hover:bg-red-600' : 'hover:bg-blue-600'}`}
               >
                 {op}
                 <Play className="w-8 h-8 opacity-0 group-hover/op:opacity-100 transition-opacity" />
