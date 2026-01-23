@@ -91,7 +91,8 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
               <span className="animate-pulse w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.7)]"></span>
               <span className="text-red-400 font-black uppercase tracking-[0.2em] text-[10px]">Timer Active</span>
            </div>
-           <h2 className="text-3xl md:text-5xl font-black text-white mb-2 tracking-tighter leading-none uppercase break-all">{job ? job.jobIdsDisplay : 'Unknown Job'}</h2>
+           <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-1">Purchase Order (PO)</p>
+           <h2 className="text-3xl md:text-5xl font-black text-white mb-2 tracking-tighter leading-none uppercase break-all">{job ? job.poNumber : 'N/A'}</h2>
            <div className="text-lg md:text-2xl text-blue-400 font-black mb-6"><span className="px-4 py-1 bg-blue-500/10 rounded-xl border border-blue-500/20">{log.operation}</span></div>
            <div className="bg-black/60 rounded-2xl p-5 md:p-6 border border-white/10 mb-6 w-full max-w-sm flex items-center justify-between shadow-inner">
               <div>
@@ -109,7 +110,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
            {job ? (
              <div className="grid grid-cols-2 gap-y-6 gap-x-6">
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Part Index</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.partNumber}</div></div>
-               <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Order Ref</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.poNumber}</div></div>
+               <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Batch ID</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.jobIdsDisplay}</div></div>
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Batch Size</label><div className="text-lg md:text-xl font-black text-blue-500 mt-1 leading-none">{job.quantity} <span className="text-[10px] font-bold text-zinc-600 ml-0.5">UNITS</span></div></div>
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Due Date</label><div className="text-lg md:text-xl font-black text-red-500 mt-1 leading-none">{job.dueDate || 'N/A'}</div></div>
              </div>
@@ -327,8 +328,8 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              <table className="w-full text-left text-sm">
                  <thead className="bg-white/5 text-zinc-400 font-bold uppercase text-[10px]">
                      <tr>
-                         <th className="px-6 py-4">Order Ref (PO)</th>
-                         <th className="px-6 py-4">Job ID</th>
+                         <th className="px-6 py-4">Purchase Order (PO)</th>
+                         <th className="px-6 py-4">Batch ID</th>
                          <th className="px-6 py-4">Part Index</th>
                          <th className="px-6 py-4">Lot Size</th>
                          <th className="px-6 py-4">Status</th>
@@ -382,8 +383,8 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                  <table className="w-full text-left text-sm">
                      <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold">
                         <tr>
-                            <th className="px-6 py-4">PO #</th>
-                            <th className="px-6 py-4">Job ID</th>
+                            <th className="px-6 py-4">Purchase Order (PO)</th>
+                            <th className="px-6 py-4">Batch ID</th>
                             <th className="px-6 py-4">Part Index</th>
                             <th className="px-6 py-4">Units</th>
                             <th className="px-6 py-4">Completed On</th>
@@ -417,7 +418,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                <div className="bg-zinc-900 border border-white/10 w-full max-w-xl rounded-[40px] shadow-2xl p-8">
                   <div className="flex justify-between items-center mb-8"><h3 className="font-black text-white uppercase text-xl tracking-tight leading-none">Job Matrix</h3><button onClick={() => setShowModal(false)} className="p-3 bg-white/5 rounded-xl text-zinc-600 hover:text-white"><X className="w-5 h-5" /></button></div>
                   <div className="space-y-6 max-h-[60vh] overflow-y-auto custom-scrollbar pr-3">
-                     <div className="space-y-2"><label className="text-[9px] text-blue-500 font-black uppercase tracking-[0.3em] ml-2">Order Reference (PO)</label><input className="w-full bg-black/60 border border-white/5 rounded-2xl p-4 text-white text-2xl font-black outline-none tracking-tight uppercase focus:border-blue-600 transition-all shadow-inner" placeholder="PO-" value={editingJob.poNumber || ''} onChange={e => setEditingJob({...editingJob, poNumber: e.target.value})} /></div>
+                     <div className="space-y-2"><label className="text-[9px] text-blue-500 font-black uppercase tracking-[0.3em] ml-2">Purchase Order (PO)</label><input className="w-full bg-black/60 border border-white/5 rounded-2xl p-4 text-white text-2xl font-black outline-none tracking-tight uppercase focus:border-blue-600 transition-all shadow-inner" placeholder="PO-" value={editingJob.poNumber || ''} onChange={e => setEditingJob({...editingJob, poNumber: e.target.value})} /></div>
                      <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Batch ID</label><input className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-xs font-black text-white shadow-inner uppercase tracking-widest" value={editingJob.jobIdsDisplay || ''} onChange={e => setEditingJob({...editingJob, jobIdsDisplay: e.target.value})} /></div>
                         <div className="space-y-2"><label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2">Part Catalog #</label><input className="w-full bg-black/30 border border-white/5 rounded-2xl p-3.5 text-xs font-black text-white shadow-inner uppercase tracking-widest" value={editingJob.partNumber || ''} onChange={e => setEditingJob({...editingJob, partNumber: e.target.value})} /></div>
@@ -548,7 +549,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
 
          {/* View Selector Tabs */}
          <div className="flex gap-4 border-b border-white/5 pb-1">
-             <button onClick={() => setTab('current')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'current' ? 'text-blue-500' : 'text-zinc-600 hover:text-zinc-400'}`}>
+             <button onClick={() => setTab('current')} className={`pb-4 px-4 text-xs font-black uppercase tracking-widest transition-all relative ${tab === 'current' ? 'text-blue-500' : 'text-zinc-600 hover:text-white'}`}>
                  Current Production
                  {tab === 'current' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-500 rounded-t-full shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>}
              </button>
@@ -804,12 +805,15 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
     <div className={`bg-zinc-900/40 border border-white/5 rounded-3xl overflow-hidden transition-all duration-300 ${expanded ? 'border-blue-500/50 bg-zinc-900/80 shadow-2xl' : 'hover:bg-zinc-900/60'} ${disabled ? 'opacity-30 pointer-events-none grayscale' : ''} shadow-2xl backdrop-blur-xl`}>
       <div className="p-6 cursor-pointer group" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-3">
-          <h3 className="text-xl font-black text-white tracking-tighter uppercase">{job.jobIdsDisplay}</h3>
+          <div>
+            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Purchase Order (PO)</p>
+            <h3 className="text-2xl font-black text-white tracking-tighter uppercase leading-none">{job.poNumber}</h3>
+          </div>
           <span className="bg-black/40 border border-white/5 text-blue-500 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-inner">{job.quantity} PCS</span>
         </div>
-        <div className="space-y-1.5">
-          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Part: <span className="text-zinc-400">{job.partNumber}</span></p>
-          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Order: <span className="text-zinc-500">{job.poNumber}</span></p>
+        <div className="space-y-1.5 border-t border-white/5 pt-3">
+          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Part Index: <span className="text-zinc-400">{job.partNumber}</span></p>
+          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Batch ID: <span className="text-zinc-500">{job.jobIdsDisplay}</span></p>
         </div>
         
         {!expanded && (
@@ -907,7 +911,17 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
       }
   }
 
-  // Precise search logic for Employee Dashboard
+  // Group history by date
+  const groupedHistory = useMemo(() => {
+      const groups: Record<string, TimeLog[]> = {};
+      myHistory.forEach(log => {
+          const d = new Date(log.startTime).toLocaleDateString();
+          if (!groups[d]) groups[d] = [];
+          groups[d].push(log);
+      });
+      return Object.entries(groups).sort((a,b) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
+  }, [myHistory]);
+
   const filteredJobs = jobs.filter(j => {
     if (!search) return true;
     const t = search.toLowerCase();
@@ -947,27 +961,39 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
             </div>
          </div>
       ) : tab === 'history' ? (
-        <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden shadow-2xl backdrop-blur-xl">
-          <div className="p-6 border-b border-white/5 bg-zinc-950/40 flex items-center gap-3">
-             <History className="w-4.5 h-4.5 text-blue-500"/>
-             <h3 className="font-black text-white uppercase text-[10px] tracking-[0.3em]">Production Matrix Log</h3>
-          </div>
-          <div className="overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left">
-              <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Batch</th><th className="px-6 py-4">Work Step</th><th className="px-6 py-4 text-right">Elapsed</th></tr></thead>
-              <tbody className="divide-y divide-white/5">
-                {myHistory.map(log => (
-                  <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
-                    <td className="px-6 py-4 text-zinc-500 font-black text-[10px] uppercase whitespace-nowrap">{new Date(log.startTime).toLocaleDateString()} • {new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                    <td className="px-6 py-4 text-white font-black uppercase tracking-tight text-base leading-none">{log.jobId}</td>
-                    <td className="px-6 py-4 text-blue-500 font-black uppercase tracking-widest text-[9px]">{log.operation}</td>
-                    <td className="px-6 py-4 text-right text-zinc-400 font-black font-mono text-base leading-none">{formatDuration(log.durationMinutes)}</td>
-                  </tr>
-                ))}
-                {myHistory.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px]">Log null</td></tr>}
-              </tbody>
-            </table>
-          </div>
+        <div className="space-y-6">
+           {groupedHistory.map(([date, logs]) => (
+               <div key={date} className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden shadow-2xl backdrop-blur-xl">
+                 <div className="p-5 border-b border-white/5 bg-zinc-950/40 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <Calendar className="w-4 h-4 text-blue-500"/>
+                        <h3 className="font-black text-white uppercase text-[10px] tracking-[0.3em]">{date}</h3>
+                    </div>
+                    <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest bg-black/40 px-3 py-1 rounded-full border border-white/5 shadow-inner">{logs.length} Entries</span>
+                 </div>
+                 <div className="overflow-x-auto custom-scrollbar">
+                   <table className="w-full text-left">
+                     <thead className="bg-zinc-950/20 text-zinc-700 font-black uppercase tracking-[0.3em] text-[8px]"><tr><th className="px-6 py-4">Purchase Order (PO)</th><th className="px-6 py-4">Work Step</th><th className="px-6 py-4">Time Range</th><th className="px-6 py-4 text-right">Elapsed</th></tr></thead>
+                     <tbody className="divide-y divide-white/5">
+                       {logs.map(log => (
+                         <tr key={log.id} className="hover:bg-white/[0.02] transition-colors group">
+                           <td className="px-6 py-4">
+                                <p className="text-white font-black uppercase tracking-tight text-base leading-none mb-1">{log.jobId}</p>
+                                <p className="text-[8px] text-zinc-600 font-black uppercase tracking-widest">Entry ID: {log.id}</p>
+                           </td>
+                           <td className="px-6 py-4 text-blue-500 font-black uppercase tracking-widest text-[9px]">{log.operation}</td>
+                           <td className="px-6 py-4 text-zinc-500 font-mono text-[10px] uppercase">
+                                {new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {log.endTime ? new Date(log.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
+                           </td>
+                           <td className="px-6 py-4 text-right text-zinc-400 font-black font-mono text-base leading-none">{formatDuration(log.durationMinutes)}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+               </div>
+           ))}
+           {groupedHistory.length === 0 && <div className="p-20 text-center text-zinc-800 font-black uppercase tracking-[0.5em] text-[10px] border-2 border-dashed border-white/5 rounded-[48px]">Log null</div>}
         </div>
       ) : (
         <div className="flex-1 flex flex-col space-y-8 animate-fade-in">
@@ -1040,7 +1066,7 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
             <div className="grid grid-cols-2 gap-10 mb-10">
                <div className="space-y-8 flex flex-col">
                    <div className="border-[5px] border-black p-6">
-                      <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Order Ref (PO)</label>
+                      <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Purchase Order (PO)</label>
                       <div className="text-6xl font-black leading-none break-all tracking-tighter uppercase">{job.poNumber}</div>
                    </div>
                    <div className="grid grid-cols-2 gap-6">
