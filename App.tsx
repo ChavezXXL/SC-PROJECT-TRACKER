@@ -261,8 +261,19 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
    useEffect(() => DB.subscribeJobs(setJobs), []);
 
-   const activeJobs = jobs.filter(j => j.status !== 'completed' && JSON.stringify(j).toLowerCase().includes(search.toLowerCase()));
-   const completedJobs = jobs.filter(j => j.status === 'completed' && JSON.stringify(j).toLowerCase().includes(search.toLowerCase()));
+   // Optimized Search Logic
+   const matchesSearch = (j: Job) => {
+       if (!search) return true;
+       const t = search.toLowerCase();
+       return (
+           j.poNumber.toLowerCase().includes(t) ||
+           j.jobIdsDisplay.toLowerCase().includes(t) ||
+           j.partNumber.toLowerCase().includes(t)
+       );
+   };
+
+   const activeJobs = jobs.filter(j => j.status !== 'completed' && matchesSearch(j));
+   const completedJobs = jobs.filter(j => j.status === 'completed' && matchesSearch(j));
 
    const handleSave = async () => {
     if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Required fields missing');
@@ -299,7 +310,12 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              <div className="flex gap-2 w-full md:w-auto">
                  <div className="relative flex-1 md:flex-initial">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter Production..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by PO, ID, or Part..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-8 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    {search && (
+                        <button onClick={() => setSearch('')} className="absolute right-3 top-2.5 text-zinc-500 hover:text-white">
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
                  </div>
                  <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-900/20"><Plus className="w-4 h-4"/> Add Job</button>
              </div>
@@ -307,6 +323,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
          {/* Active Jobs Table */}
          <div className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
+             <div className="overflow-x-auto">
              <table className="w-full text-left text-sm">
                  <thead className="bg-white/5 text-zinc-400 font-bold uppercase text-[10px]">
                      <tr>
@@ -322,9 +339,9 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                  <tbody className="divide-y divide-white/5">
                      {activeJobs.map(j => (
                          <tr key={j.id} className="hover:bg-white/5 transition-colors group">
-                             <td className="px-6 py-4 font-bold text-white">{j.poNumber}</td>
-                             <td className="px-6 py-4 text-zinc-300 font-mono text-xs uppercase">{j.jobIdsDisplay}</td>
-                             <td className="px-6 py-4 text-zinc-400">{j.partNumber}</td>
+                             <td className="px-6 py-4 font-bold text-white whitespace-nowrap">{j.poNumber}</td>
+                             <td className="px-6 py-4 text-zinc-300 font-mono text-xs uppercase whitespace-nowrap">{j.jobIdsDisplay}</td>
+                             <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">{j.partNumber}</td>
                              <td className="px-6 py-4 text-zinc-300 font-bold">{j.quantity} Units</td>
                              <td className="px-6 py-4">
                                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
@@ -332,18 +349,19 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                                      {j.status}
                                  </span>
                              </td>
-                             <td className="px-6 py-4 text-zinc-400">{j.dueDate || '-'}</td>
+                             <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">{j.dueDate || '-'}</td>
                              <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                 <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
-                                 <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
-                                 <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all"><Edit2 className="w-4 h-4" /></button>
-                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
+                                 <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all" title="Finish Job"><CheckCircle className="w-4 h-4" /></button>
+                                 <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all" title="Print Sheet"><Printer className="w-4 h-4" /></button>
+                                 <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 className="w-4 h-4" /></button>
                              </td>
                          </tr>
                      ))}
                      {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Production Queue Empty</td></tr>}
                  </tbody>
              </table>
+             </div>
          </div>
 
          {/* History Section */}
@@ -360,6 +378,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              </div>
              
              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
+                 <div className="overflow-x-auto">
                  <table className="w-full text-left text-sm">
                      <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold">
                         <tr>
@@ -374,11 +393,11 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                      <tbody className="divide-y divide-white/5">
                         {completedJobs.map(j => (
                             <tr key={j.id} className="hover:bg-white/5 transition-colors">
-                                <td className="px-6 py-4 font-bold text-white opacity-50">{j.poNumber}</td>
-                                <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase">{j.jobIdsDisplay}</td>
-                                <td className="px-6 py-4 text-zinc-500">{j.partNumber}</td>
+                                <td className="px-6 py-4 font-bold text-white opacity-50 whitespace-nowrap">{j.poNumber}</td>
+                                <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase whitespace-nowrap">{j.jobIdsDisplay}</td>
+                                <td className="px-6 py-4 text-zinc-500 whitespace-nowrap">{j.partNumber}</td>
                                 <td className="px-6 py-4 text-zinc-500">{j.quantity}</td>
-                                <td className="px-6 py-4 text-zinc-500">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
+                                <td className="px-6 py-4 text-zinc-500 whitespace-nowrap">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
                                      <button onClick={() => confirm({ title: "Reactivate", message: "Move this job back to production?", onConfirm: () => DB.reopenJob(j.id) })} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg border border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all"><RotateCcw className="w-4 h-4" /></button>
                                      <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-500 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
@@ -389,6 +408,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                         {completedJobs.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">History Empty</td></tr>}
                      </tbody>
                  </table>
+                 </div>
              </div>
          </div>
 
@@ -459,7 +479,15 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
      });
 
      const result = Object.entries(groups).filter(([jobId, data]) => {
-        if (search && !JSON.stringify(data).toLowerCase().includes(search.toLowerCase())) return false;
+        // Precise Search logic for Logs
+        if (search) {
+            const t = search.toLowerCase();
+            const poMatch = data.job?.poNumber.toLowerCase().includes(t);
+            const jobMatch = data.job?.jobIdsDisplay.toLowerCase().includes(t);
+            const userMatch = data.logs.some(l => l.userName.toLowerCase().includes(t));
+            if (!poMatch && !jobMatch && !userMatch) return false;
+        }
+
         if (timeFilter !== 'all') {
             const latestLogTime = data.logs.length > 0 ? Math.max(...data.logs.map(l => l.startTime)) : 0;
             const diff = now - latestLogTime;
@@ -511,7 +539,8 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
              <div className="flex gap-3">
                  <div className="relative flex-1">
                      <Search className="absolute left-3 top-3 w-4 h-4 text-zinc-500" />
-                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by Job, PO, or Operator..." className="w-full bg-zinc-900 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by PO, Job, or Personnel..." className="w-full bg-zinc-900 border border-white/10 rounded-xl pl-10 pr-10 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                     {search && <button onClick={() => setSearch('')} className="absolute right-3 top-3.5 text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button>}
                  </div>
                  <button className="px-4 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"><RefreshCw className="w-4 h-4"/></button>
              </div>
@@ -589,10 +618,10 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
                                  {data.logs.map(l => (
                                      <tr key={l.id} className="hover:bg-white/5 transition-colors group">
                                          <td className="px-6 py-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                                         <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase">
+                                         <td className="px-6 py-4 text-zinc-500 font-mono text-xs uppercase whitespace-nowrap">
                                              {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-400 font-bold">Active</span>}
                                          </td>
-                                         <td className="px-6 py-4">
+                                         <td className="px-6 py-4 whitespace-nowrap">
                                              <div className="flex items-center gap-2">
                                                  <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-400 border border-white/5 uppercase shadow-inner">{l.userName.charAt(0)}</div>
                                                  <span className="text-white font-bold text-xs uppercase">{l.userName}</span>
@@ -878,9 +907,16 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
       }
   }
 
-  const filteredJobs = jobs.filter(j => 
-    JSON.stringify(j).toLowerCase().includes(search.toLowerCase())
-  );
+  // Precise search logic for Employee Dashboard
+  const filteredJobs = jobs.filter(j => {
+    if (!search) return true;
+    const t = search.toLowerCase();
+    return (
+        j.poNumber.toLowerCase().includes(t) ||
+        j.jobIdsDisplay.toLowerCase().includes(t) ||
+        j.partNumber.toLowerCase().includes(t)
+    );
+  });
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto h-full flex flex-col pb-20 animate-fade-in">
@@ -937,7 +973,12 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
         <div className="flex-1 flex flex-col space-y-8 animate-fade-in">
           <div className="relative">
             <Search className="absolute left-5 top-4 w-5 h-5 text-zinc-700" />
-            <input type="text" placeholder="FILTER_BATCHES..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[28px] pl-14 pr-6 py-4 text-white font-black uppercase tracking-[0.2em] text-[10px] focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner placeholder:text-zinc-800"/>
+            <input type="text" placeholder="FILTER_BATCHES (PO, ID, PART)..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-[28px] pl-14 pr-12 py-4 text-white font-black uppercase tracking-[0.2em] text-[10px] focus:border-blue-600 outline-none backdrop-blur-xl shadow-inner placeholder:text-zinc-800"/>
+            {search && (
+                <button onClick={() => setSearch('')} className="absolute right-5 top-4.5 text-zinc-600 hover:text-white transition-colors">
+                    <X className="w-5 h-5" />
+                </button>
+            )}
           </div>
           
           {activeLog && (
