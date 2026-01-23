@@ -7,7 +7,7 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play
+  Play, Archive
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
@@ -33,17 +33,32 @@ const toDateTimeLocal = (ts: number | undefined | null) => {
 const PrintStyles = () => (
   <style>{`
     @media print {
-      body * { visibility: hidden !important; }
-      #printable-area-root, #printable-area-root * { visibility: visible !important; }
-      #printable-area-root {
-        position: absolute !important;
-        left: 0 !important; top: 0 !important;
-        width: 100% !important; height: auto !important;
-        background: white !important; z-index: 9999999 !important;
-        color: black !important; display: block !important;
+      body * {
+        visibility: hidden;
       }
-      .no-print { display: none !important; }
-      @page { size: portrait; margin: 10mm; }
+      #printable-area-root, #printable-area-root * {
+        visibility: visible;
+      }
+      #printable-area-root {
+        position: fixed !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        margin: 0 !important;
+        padding: 20px !important;
+        background: white !important;
+        z-index: 999999 !important;
+        overflow: visible !important;
+        display: block !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      @page {
+        size: portrait;
+        margin: 0;
+      }
     }
   `}</style>
 );
@@ -406,6 +421,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
    const [timeFilter, setTimeFilter] = useState<'week' | 'month' | 'year' | 'all'>('week');
    const [search, setSearch] = useState('');
+   const [tab, setTab] = useState<'active' | 'completed'>('completed');
 
    useEffect(() => {
      const u1 = DB.subscribeLogs(setLogs);
@@ -470,6 +486,22 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              </div>
          </div>
 
+         {/* View Toggle Tabs */}
+         <div className="flex bg-zinc-900/50 border border-white/5 p-1 rounded-2xl w-full max-w-md mx-auto">
+             <button 
+                onClick={() => setTab('active')} 
+                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${tab === 'active' ? 'bg-blue-600 text-white shadow-xl' : 'text-zinc-500 hover:text-white'}`}
+             >
+                <Activity className="w-3 h-3" /> Active Operations
+             </button>
+             <button 
+                onClick={() => setTab('completed')} 
+                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${tab === 'completed' ? 'bg-zinc-800 text-white shadow-xl' : 'text-zinc-500 hover:text-white'}`}
+             >
+                <Archive className="w-3 h-3" /> Archived History
+             </button>
+         </div>
+
          {/* Metrics Cards */}
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
              <div className="bg-blue-900/10 border border-blue-500/20 p-6 rounded-2xl">
@@ -487,8 +519,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
          </div>
 
          {/* Active Logs Section */}
-         {activeLogsList.length > 0 && (
-            <div className="space-y-4">
+         {tab === 'active' && (
+            <div className="space-y-4 animate-fade-in">
                <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
                  <Activity className="w-4 h-4" /> Live Operations
                </h3>
@@ -513,6 +545,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                                  <td className="px-6 py-4 text-right font-mono text-white font-bold"><LiveTimer startTime={l.startTime} /></td>
                              </tr>
                          ))}
+                         {activeLogsList.length === 0 && <tr><td colSpan={5} className="p-12 text-center text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em]">No Active Operations</td></tr>}
                      </tbody>
                   </table>
                </div>
@@ -520,78 +553,80 @@ const LogsView = ({ addToast }: { addToast: any }) => {
          )}
 
          {/* History Section */}
-         <div className="space-y-6">
-             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2"><History className="w-3 h-3"/> Completed History</p>
-             
-             {groupedLogs.map(([jobId, data]) => (
-                 <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
-                     {/* Group Header */}
-                     <div className="p-4 md:p-6 bg-zinc-900/60 border-b border-white/5 flex flex-col md:flex-row justify-between md:items-center gap-4">
-                         <div className="flex items-center gap-4">
-                             <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center border border-blue-500/20 text-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]">
-                                 <Briefcase className="w-6 h-6" />
-                             </div>
-                             <div>
-                                 <h3 className="text-xl font-black text-white">{data.job?.poNumber || 'Unknown PO'}</h3>
-                                 <p className="text-[10px] font-bold text-zinc-500 uppercase mt-1 tracking-wider">
-                                     PO: <span className="text-zinc-300">{data.job?.poNumber}</span> <span className="mx-2 text-zinc-700">|</span> Part: <span className="text-zinc-300">{data.job?.partNumber}</span>
-                                 </p>
-                             </div>
-                         </div>
-                         <div className="flex items-center gap-8 text-right bg-zinc-950/50 p-3 rounded-xl border border-white/5">
-                             <div>
-                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Total Time</p>
-                                 <p className="text-lg font-bold text-white tabular-nums">{formatDuration(data.totalMins)}</p>
-                             </div>
-                             <div className="border-l border-white/10 pl-6">
-                                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Records</p>
-                                 <p className="text-lg font-bold text-white tabular-nums">{data.logs.length}</p>
-                             </div>
-                         </div>
-                     </div>
-                     
-                     {/* Logs Table */}
-                     <div className="overflow-x-auto">
-                         <table className="w-full text-left text-sm">
-                             <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold tracking-wider">
-                                 <tr>
-                                     <th className="px-6 py-3">Date</th>
-                                     <th className="px-6 py-3">Time Range</th>
-                                     <th className="px-6 py-3">Employee</th>
-                                     <th className="px-6 py-3">Operation</th>
-                                     <th className="px-6 py-3 text-right">Duration</th>
-                                     <th className="w-12"></th>
-                                 </tr>
-                             </thead>
-                             <tbody className="divide-y divide-white/5">
-                                 {data.logs.map(l => (
-                                     <tr key={l.id} className="hover:bg-white/5 transition-colors group">
-                                         <td className="px-6 py-4 text-zinc-400 font-medium">{new Date(l.startTime).toLocaleDateString()}</td>
-                                         <td className="px-6 py-4 text-zinc-500 font-mono text-xs">
-                                             {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-blue-400 font-bold">Active</span>}
-                                         </td>
-                                         <td className="px-6 py-4">
-                                             <div className="flex items-center gap-2">
-                                                 <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-400 border border-white/5 uppercase">{l.userName.charAt(0)}</div>
-                                                 <span className="text-white font-bold text-xs uppercase">{l.userName}</span>
-                                             </div>
-                                         </td>
-                                         <td className="px-6 py-4">
-                                             <span className="bg-zinc-800 text-zinc-400 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border border-white/5">{l.operation}</span>
-                                         </td>
-                                         <td className="px-6 py-4 text-right text-white font-bold font-mono text-xs tabular-nums">{formatDuration(l.durationMinutes)}</td>
-                                         <td className="px-4 text-right">
-                                             <button onClick={() => setEditingLog(l)} className="text-zinc-600 hover:text-white opacity-0 group-hover:opacity-100 transition-all bg-zinc-800 p-1.5 rounded-lg border border-white/5"><Edit2 className="w-3 h-3"/></button>
-                                         </td>
-                                     </tr>
-                                 ))}
-                             </tbody>
-                         </table>
-                     </div>
-                 </div>
-             ))}
-             {groupedLogs.length === 0 && <div className="py-20 text-center text-zinc-700 text-xs font-black uppercase tracking-[0.5em]">No logs found</div>}
-         </div>
+         {tab === 'completed' && (
+            <div className="space-y-6 animate-fade-in">
+                <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2"><History className="w-3 h-3"/> Completed History</p>
+                
+                {groupedLogs.map(([jobId, data]) => (
+                    <div key={jobId} className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
+                        {/* Group Header */}
+                        <div className="p-4 md:p-6 bg-zinc-900/60 border-b border-white/5 flex flex-col md:flex-row justify-between md:items-center gap-4">
+                            <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center border border-blue-500/20 text-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]">
+                                    <Briefcase className="w-6 h-6" />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-white">{data.job?.poNumber || 'Unknown PO'}</h3>
+                                    <p className="text-[10px] font-bold text-zinc-500 uppercase mt-1 tracking-wider">
+                                        PO: <span className="text-zinc-300">{data.job?.poNumber}</span> <span className="mx-2 text-zinc-700">|</span> Part: <span className="text-zinc-300">{data.job?.partNumber}</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-8 text-right bg-zinc-950/50 p-3 rounded-xl border border-white/5">
+                                <div>
+                                    <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Total Time</p>
+                                    <p className="text-lg font-bold text-white tabular-nums">{formatDuration(data.totalMins)}</p>
+                                </div>
+                                <div className="border-l border-white/10 pl-6">
+                                    <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Records</p>
+                                    <p className="text-lg font-bold text-white tabular-nums">{data.logs.length}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Logs Table */}
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold tracking-wider">
+                                    <tr>
+                                        <th className="px-6 py-3">Date</th>
+                                        <th className="px-6 py-3">Time Range</th>
+                                        <th className="px-6 py-3">Employee</th>
+                                        <th className="px-6 py-3">Operation</th>
+                                        <th className="px-6 py-3 text-right">Duration</th>
+                                        <th className="w-12"></th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {data.logs.map(l => (
+                                        <tr key={l.id} className="hover:bg-white/5 transition-colors group">
+                                            <td className="px-6 py-4 text-zinc-400 font-medium">{new Date(l.startTime).toLocaleDateString()}</td>
+                                            <td className="px-6 py-4 text-zinc-500 font-mono text-xs">
+                                                {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-blue-400 font-bold">Active</span>}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-400 border border-white/5 uppercase">{l.userName.charAt(0)}</div>
+                                                    <span className="text-white font-bold text-xs uppercase">{l.userName}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className="bg-zinc-800 text-zinc-400 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border border-white/5">{l.operation}</span>
+                                            </td>
+                                            <td className="px-6 py-4 text-right text-white font-bold font-mono text-xs tabular-nums">{formatDuration(l.durationMinutes)}</td>
+                                            <td className="px-4 text-right">
+                                                <button onClick={() => setEditingLog(l)} className="text-zinc-600 hover:text-white opacity-0 group-hover:opacity-100 transition-all bg-zinc-800 p-1.5 rounded-lg border border-white/5"><Edit2 className="w-3 h-3"/></button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ))}
+                {groupedLogs.length === 0 && <div className="py-20 text-center text-zinc-700 text-xs font-black uppercase tracking-[0.5em]">No logs found</div>}
+            </div>
+         )}
 
          {/* Edit Log Modal */}
          {editingLog && (
@@ -998,7 +1033,7 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
                </div>
                
                <div className="flex flex-col items-center justify-center border-[5px] border-black p-8 bg-gray-50 h-full">
-                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[85%]" crossOrigin="anonymous" />
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto max-w-[85%] block object-contain" crossOrigin="anonymous" />
                   <p className="font-mono text-lg mt-8 text-gray-400 text-center break-all font-bold tracking-tight uppercase leading-none">{job.id}</p>
                   <p className="font-black uppercase tracking-[0.4em] text-2xl mt-4 border-t border-gray-200 pt-4 w-full text-center">SCAN_NODE</p>
                </div>
