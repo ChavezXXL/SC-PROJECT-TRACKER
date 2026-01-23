@@ -45,7 +45,7 @@ const PrintStyles = () => (
         width: 100vw !important;
         height: 100vh !important;
         margin: 0 !important;
-        padding: 20px !important;
+        padding: 40px !important;
         background: white !important;
         color: black !important;
         z-index: 9999999 !important;
@@ -144,7 +144,7 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
           </div>
         </div>
         <h1 className="text-3xl font-black text-center text-white tracking-tighter mb-1 uppercase">SC DEBURRING</h1>
-        <p className="text-center text-zinc-600 text-[10px] font-black uppercase tracking-[0.5em] mb-10 opacity-60">Management Portal</p>
+        <p className="text-center text-zinc-600 text-[10px] font-black uppercase tracking-[0.5em] mb-10 opacity-60">Log In</p>
         
         <form onSubmit={handleLogin} className="space-y-6">
           <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full bg-black/40 border-2 border-white/5 rounded-[24px] px-8 py-5 text-white font-black uppercase tracking-[0.2em] focus:border-blue-600 outline-none placeholder:text-zinc-800" placeholder="Username" autoFocus />
@@ -204,7 +204,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden flex flex-col h-full shadow-2xl backdrop-blur-xl">
                 <div className="p-6 border-b border-white/5 bg-zinc-950/40 flex items-center justify-between">
-                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><Activity className="w-4 h-4 text-emerald-500"/> Live Operations</h3>
+                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><Activity className="w-4 h-4 text-emerald-500"/> Current Operations</h3>
                 </div>
                 <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[350px] custom-scrollbar">
                    {activeLogs.map(l => (
@@ -227,8 +227,8 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
              </div>
              <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] overflow-hidden flex flex-col h-full shadow-2xl backdrop-blur-xl">
                 <div className="p-6 border-b border-white/5 bg-zinc-950/40 flex justify-between items-center">
-                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><History className="w-4 h-4 text-blue-500"/> Recent History</h3>
-                    <button onClick={() => setView('admin-logs')} className="text-[8px] font-black text-blue-500 uppercase tracking-widest hover:text-white transition-colors">Archive</button>
+                    <h3 className="font-black text-white flex items-center gap-3 uppercase text-xs tracking-[0.2em]"><History className="w-4 h-4 text-blue-500"/> Recent Activity</h3>
+                    <button onClick={() => setView('admin-logs')} className="text-[8px] font-black text-blue-500 uppercase tracking-widest hover:text-white transition-colors">View All</button>
                 </div>
                 <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[350px] custom-scrollbar">
                    {logs.map(l => (
@@ -242,7 +242,7 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
                            </div>
                        </div>
                    ))}
-                   {logs.length === 0 && <div className="p-10 text-center text-zinc-700 text-[10px] font-black uppercase tracking-widest">No recent logs</div>}
+                   {logs.length === 0 && <div className="p-10 text-center text-zinc-700 text-[10px] font-black uppercase tracking-widest">No recent data</div>}
                 </div>
              </div>
          </div>
@@ -265,10 +265,10 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
    const completedJobs = jobs.filter(j => j.status === 'completed' && JSON.stringify(j).toLowerCase().includes(search.toLowerCase()));
 
    const handleSave = async () => {
-    if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Required fields are missing');
+    if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Required fields missing');
     setIsSaving(true);
     await DB.saveJob({ id: editingJob.id || Date.now().toString(), jobIdsDisplay: editingJob.jobIdsDisplay, poNumber: editingJob.poNumber || '', partNumber: editingJob.partNumber, quantity: editingJob.quantity || 0, dueDate: editingJob.dueDate || '', info: editingJob.info || '', status: editingJob.status || 'pending', dateReceived: editingJob.dateReceived || new Date().toISOString().split('T')[0], createdAt: editingJob.createdAt || Date.now() } as Job);
-    addToast('success', 'Batch Records Updated'); setShowModal(false); setIsSaving(false);
+    addToast('success', 'Job Updated'); setShowModal(false); setIsSaving(false);
    };
 
    return (
@@ -295,11 +295,11 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
 
          {/* Header */}
          <div className="flex flex-col md:flex-row justify-between items-center gap-4 pt-4 border-t border-white/5">
-             <h2 className="text-2xl font-bold text-white uppercase tracking-tighter">Production Jobs</h2>
+             <h2 className="text-2xl font-bold text-white">Active Production</h2>
              <div className="flex gap-2 w-full md:w-auto">
                  <div className="relative flex-1 md:flex-initial">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search Jobs..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter Production..." className="w-full md:w-64 bg-zinc-900 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
                  </div>
                  <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-900/20"><Plus className="w-4 h-4"/> Add Job</button>
              </div>
@@ -310,10 +310,10 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
              <table className="w-full text-left text-sm">
                  <thead className="bg-white/5 text-zinc-400 font-bold uppercase text-[10px]">
                      <tr>
-                         <th className="px-6 py-4">PO Ref</th>
+                         <th className="px-6 py-4">Order Ref (PO)</th>
                          <th className="px-6 py-4">Job ID</th>
                          <th className="px-6 py-4">Part Index</th>
-                         <th className="px-6 py-4">Qty</th>
+                         <th className="px-6 py-4">Lot Size</th>
                          <th className="px-6 py-4">Status</th>
                          <th className="px-6 py-4">Floor Deadline</th>
                          <th className="px-6 py-4 text-right">Actions</th>
@@ -325,23 +325,23 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                              <td className="px-6 py-4 font-bold text-white">{j.poNumber}</td>
                              <td className="px-6 py-4 text-zinc-300 font-mono text-xs uppercase">{j.jobIdsDisplay}</td>
                              <td className="px-6 py-4 text-zinc-400">{j.partNumber}</td>
-                             <td className="px-6 py-4 text-zinc-300 font-bold">{j.quantity} UNITS</td>
+                             <td className="px-6 py-4 text-zinc-300">{j.quantity} Units</td>
                              <td className="px-6 py-4">
                                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border-white/5'}`}>
-                                     {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>}
+                                     {j.status === 'in-progress' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>}
                                      {j.status}
                                  </span>
                              </td>
                              <td className="px-6 py-4 text-zinc-400">{j.dueDate || '-'}</td>
                              <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                 <button onClick={() => confirm({ title: "Complete Job", message: "Mark this batch as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
+                                 <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
                                  <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
                                  <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all"><Edit2 className="w-4 h-4" /></button>
-                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently erase this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
+                                 <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
                              </td>
                          </tr>
                      ))}
-                     {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Queue is clear</td></tr>}
+                     {activeJobs.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">Production Queue Empty</td></tr>}
                  </tbody>
              </table>
          </div>
@@ -350,7 +350,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
          <div className="space-y-4 pt-12 border-t border-white/5">
              <div className="flex justify-between items-center">
                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                     <History className="w-4 h-4" /> Batch History
+                     <History className="w-4 h-4" /> Finished Batch History
                  </h3>
                  <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
                      {['week', 'month', 'year', 'all'].map(t => (
@@ -363,7 +363,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                  <table className="w-full text-left text-sm">
                      <thead className="bg-white/5 text-zinc-500 uppercase text-[10px] font-bold">
                         <tr>
-                            <th className="px-6 py-4">PO Ref</th>
+                            <th className="px-6 py-4">PO #</th>
                             <th className="px-6 py-4">Job ID</th>
                             <th className="px-6 py-4">Part Index</th>
                             <th className="px-6 py-4">Units</th>
@@ -380,13 +380,13 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                                 <td className="px-6 py-4 text-zinc-500">{j.quantity}</td>
                                 <td className="px-6 py-4 text-zinc-500">{j.completedAt ? new Date(j.completedAt).toLocaleDateString() : '-'}</td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                     <button onClick={() => confirm({ title: "Reactivate", message: "Move back to production queue?", onConfirm: () => DB.reopenJob(j.id) })} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg border border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all"><RotateCcw className="w-4 h-4" /></button>
+                                     <button onClick={() => confirm({ title: "Reactivate", message: "Move this job back to production?", onConfirm: () => DB.reopenJob(j.id) })} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg border border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all"><RotateCcw className="w-4 h-4" /></button>
                                      <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-500 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
                                      <button onClick={() => confirm({ title: "Delete Record", message: "Permanently erase this record?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-zinc-800 text-red-500 rounded-lg border border-white/5 hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
                                 </td>
                             </tr>
                         ))}
-                        {completedJobs.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">History is empty</td></tr>}
+                        {completedJobs.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">History Empty</td></tr>}
                      </tbody>
                  </table>
              </div>
@@ -778,10 +778,10 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                   e.stopPropagation();
                   onStart(job.id, op);
                 }}
-                className="bg-zinc-800/80 hover:bg-blue-600 text-zinc-200 hover:text-white border border-white/10 py-5 px-6 rounded-2xl text-lg font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op"
+                className="bg-zinc-800/80 hover:bg-blue-600 text-zinc-200 hover:text-white border border-white/10 py-8 px-6 rounded-2xl text-2xl font-black uppercase tracking-[0.1em] transition-all shadow-2xl active:scale-95 text-left flex justify-between items-center group/op"
               >
                 {op}
-                <Play className="w-5 h-5 opacity-0 group-hover/op:opacity-100 transition-opacity" />
+                <Play className="w-8 h-8 opacity-0 group-hover/op:opacity-100 transition-opacity" />
               </button>
             ))}
              {operations.length === 0 && <p className="text-[10px] text-zinc-700 font-black uppercase text-center py-2 tracking-widest">Logic null</p>}
