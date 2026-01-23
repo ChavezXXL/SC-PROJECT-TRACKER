@@ -37,6 +37,20 @@ const checkOverdue = (dueDateStr: string | undefined | null) => {
   return due < today;
 };
 
+// Helper for MM/DD/YYYY
+const formatToMDY = (dateStr: string | undefined | null) => {
+  if (!dateStr) return 'N/A';
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[1]}/${parts[2]}/${parts[0]}`;
+    }
+    return dateStr;
+  } catch {
+    return dateStr;
+  }
+};
+
 const PrintStyles = () => (
   <style>{`
     @media print {
@@ -51,20 +65,21 @@ const PrintStyles = () => (
         left: 0 !important;
         top: 0 !important;
         width: 100% !important;
-        height: auto !important;
+        height: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
         background: white !important;
         color: black !important;
         z-index: 9999999 !important;
         display: block !important;
+        border: none !important;
       }
       .no-print {
         display: none !important;
       }
       @page {
         size: portrait;
-        margin: 10mm;
+        margin: 5mm;
       }
     }
   `}</style>
@@ -123,7 +138,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Part Index</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.partNumber}</div></div>
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Batch ID</label><div className="text-lg md:text-xl font-black text-white mt-1 break-words leading-none tracking-tight">{job.jobIdsDisplay}</div></div>
                <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Batch Size</label><div className="text-lg md:text-xl font-black text-blue-500 mt-1 leading-none">{job.quantity} <span className="text-[10px] font-bold text-zinc-600 ml-0.5">UNITS</span></div></div>
-               <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Due Date</label><div className={`text-lg md:text-xl font-black mt-1 leading-none ${isOverdue ? 'text-red-500 underline underline-offset-4 decoration-wavy' : 'text-white'}`}>{job.dueDate || 'N/A'}</div></div>
+               <div><label className="text-[9px] text-zinc-600 uppercase font-black tracking-widest">Due Date</label><div className={`text-lg md:text-xl font-black mt-1 leading-none ${isOverdue ? 'text-red-500 underline underline-offset-4 decoration-wavy' : 'text-white'}`}>{formatToMDY(job.dueDate) || 'N/A'}</div></div>
              </div>
            ) : <p className="text-zinc-500 font-black uppercase tracking-widest">Data Unavailable</p>}
         </div>
@@ -367,7 +382,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                          <th className="px-6 py-4">Part Index</th>
                          <th className="px-6 py-4">Lot Size</th>
                          <th className="px-6 py-4">Status</th>
-                         <th className="px-6 py-4">Floor Deadline</th>
+                         <th className="px-6 py-4">Due Date</th>
                          <th className="px-6 py-4 text-right">Actions</th>
                      </tr>
                  </thead>
@@ -391,12 +406,12 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                                         {j.status}
                                     </span>
                                 </td>
-                                <td className={`px-6 py-4 whitespace-nowrap font-black text-xs ${isOverdue ? 'text-red-500' : 'text-zinc-400'}`}>{j.dueDate || '-'}</td>
+                                <td className={`px-6 py-4 whitespace-nowrap font-black text-xs ${isOverdue ? 'text-red-500' : 'text-zinc-400'}`}>{formatToMDY(j.dueDate) || '-'}</td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                    <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all"><CheckCircle className="w-4 h-4" /></button>
-                                    <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all"><Printer className="w-4 h-4" /></button>
-                                    <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all"><Edit2 className="w-4 h-4" /></button>
-                                    <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
+                                    <button onClick={() => confirm({ title: "Complete Job", message: "Move this job to finished history?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all" title="Finish Job"><CheckCircle className="w-4 h-4" /></button>
+                                    <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 text-zinc-400 rounded-lg border border-white/5 hover:text-white hover:bg-zinc-700 transition-all" title="Print Sheet"><Printer className="w-4 h-4" /></button>
+                                    <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 hover:text-white hover:bg-blue-500 transition-all" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                                    <button onClick={() => confirm({ title: "Delete", message: "Permanently delete this job?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 className="w-4 h-4" /></button>
                                 </td>
                             </tr>
                          );
@@ -1081,8 +1096,8 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
              <div className="flex items-center gap-5">
                <Printer className="w-5 h-5 text-blue-500"/>
                <div>
-                 <h3 className="font-black uppercase text-base tracking-tight leading-none">Job Traveler</h3>
-                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mt-1.5">Matrix Preview</p>
+                 <h3 className="font-black uppercase text-base tracking-tight leading-none">TRAVELER</h3>
+                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em] mt-1.5">Print Hub</p>
                </div>
              </div>
              <div className="flex gap-5 items-center">
@@ -1091,54 +1106,53 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
              </div>
          </div>
 
-         <div className="flex-1 p-10 bg-white overflow-auto">
-            <div className="flex justify-between items-center border-b-[6px] border-black pb-6 mb-10">
+         <div className="flex-1 p-8 bg-white overflow-hidden">
+            <div className="flex justify-between items-center border-b-[4px] border-black pb-4 mb-8">
               <div>
-                 <h1 className="text-5xl font-black tracking-tighter">SC DEBURRING</h1>
-                 <p className="text-xs font-black uppercase tracking-[0.5em] text-gray-400 mt-3">Production Matrix Traveler</p>
+                 <h1 className="text-4xl font-black tracking-tighter">SC DEBURRING</h1>
+                 <p className="text-[10px] font-black uppercase tracking-[0.5em] text-gray-500 mt-2">TRAVELER</p>
               </div>
               <div className="text-right">
-                 <h2 className="text-2xl font-black tracking-tighter">{new Date().toLocaleDateString()}</h2>
-                 <p className="text-[9px] font-black text-gray-400 mt-1 uppercase tracking-widest">Printed On</p>
+                 <h2 className="text-xl font-black tracking-tighter">{new Date().toLocaleDateString()}</h2>
+                 <p className="text-[8px] font-black text-gray-400 mt-0.5 uppercase tracking-widest">PRINTED ON</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-10 mb-10">
-               <div className="space-y-8 flex flex-col">
-                   <div className="border-[5px] border-black p-6">
-                      <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Purchase Order (PO)</label>
-                      <div className="text-6xl font-black leading-none break-all tracking-tighter uppercase">{job.poNumber}</div>
+            <div className="grid grid-cols-2 gap-8 mb-8">
+               <div className="space-y-6 flex flex-col">
+                   <div className="border-[4px] border-black p-4">
+                      <label className="block text-[8px] uppercase font-black text-gray-400 mb-2 tracking-widest">PURCHASE ORDER (PO)</label>
+                      <div className="text-5xl font-black leading-none break-all tracking-tighter uppercase">{job.poNumber}</div>
                    </div>
-                   <div className="grid grid-cols-2 gap-6">
-                      <div className="border-[3px] border-gray-100 p-5">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Part Index</label>
-                         <div className="text-2xl font-black break-words leading-none uppercase tracking-tighter">{job.partNumber}</div>
+                   <div className="grid grid-cols-2 gap-4">
+                      <div className="border-[2px] border-gray-100 p-4">
+                         <label className="block text-[8px] uppercase font-black text-gray-400 mb-1 tracking-widest">PART INDEX</label>
+                         <div className="text-xl font-black break-words leading-none uppercase tracking-tighter">{job.partNumber}</div>
                       </div>
-                      <div className="border-[3px] border-gray-100 p-5">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Lot Size</label>
-                         <div className="text-2xl font-black leading-none">{job.quantity} PCS</div>
+                      <div className="border-[2px] border-gray-100 p-4">
+                         <label className="block text-[8px] uppercase font-black text-gray-400 mb-1 tracking-widest">LOT SIZE</label>
+                         <div className="text-xl font-black leading-none">{job.quantity} PCS</div>
                       </div>
-                      <div className="border-[3px] border-gray-100 p-5">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Ingress</label>
-                         <div className="text-lg font-black leading-none">{job.dateReceived || 'N/A'}</div>
+                      <div className="border-[2px] border-gray-100 p-4">
+                         <label className="block text-[8px] uppercase font-black text-gray-400 mb-1 tracking-widest">DATE RECEIVED</label>
+                         <div className="text-base font-black leading-none">{formatToMDY(job.dateReceived) || 'N/A'}</div>
                       </div>
-                      <div className="border-[3px] border-gray-100 p-5">
-                         <label className="block text-[9px] uppercase font-black text-gray-400 mb-2 tracking-widest">Deadline</label>
-                         <div className="text-xl font-black text-red-600 leading-none">{job.dueDate || 'PRIORITY'}</div>
+                      <div className="border-[2px] border-gray-100 p-4">
+                         <label className="block text-[8px] uppercase font-black text-gray-400 mb-1 tracking-widest">DUE DATE</label>
+                         <div className="text-lg font-black text-red-600 leading-none">{formatToMDY(job.dueDate) || 'PRIORITY'}</div>
                       </div>
                    </div>
                    <div className="flex-1">
-                     <label className="block text-[9px] uppercase font-black text-gray-400 mb-3 tracking-widest">Floor Matrix Logic</label>
-                     <div className="text-lg border-l-[10px] border-black pl-6 py-4 bg-gray-50 min-h-[6rem] font-bold italic leading-relaxed">
+                     <label className="block text-[8px] uppercase font-black text-gray-400 mb-2 tracking-widest">FLOOR LOGIC</label>
+                     <div className="text-base border-l-[8px] border-black pl-4 py-2 bg-gray-50 min-h-[4rem] font-bold italic leading-relaxed">
                        {job.info || "Follow standard deburring procedures."}
                      </div>
                    </div>
                </div>
                
-               <div className="flex flex-col items-center justify-center border-[5px] border-black p-8 bg-gray-50 h-full">
-                  <img src={qrUrl} alt="QR Code" className="w-full h-auto max-w-[85%] block object-contain" crossOrigin="anonymous" />
-                  <p className="font-mono text-lg mt-8 text-gray-400 text-center break-all font-bold tracking-tight uppercase leading-none">{job.id}</p>
-                  <p className="font-black uppercase tracking-[0.4em] text-2xl mt-4 border-t border-gray-200 pt-4 w-full text-center">SCAN_NODE</p>
+               <div className="flex flex-col items-center justify-center border-[4px] border-black p-6 bg-gray-50 max-h-[450px]">
+                  <img src={qrUrl} alt="QR Code" className="w-full h-auto max-w-[75%] block object-contain" crossOrigin="anonymous" />
+                  <p className="font-mono text-sm mt-6 text-gray-400 text-center break-all font-bold tracking-tight uppercase leading-none">{job.id}</p>
                </div>
             </div>
          </div>
