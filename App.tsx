@@ -413,10 +413,13 @@ const LogsView = ({ addToast }: { addToast: any }) => {
      return () => { u1(); u2(); };
    }, []);
 
+   const activeLogsList = logs.filter(l => !l.endTime).sort((a,b) => b.startTime - a.startTime);
+   const completedLogs = logs.filter(l => l.endTime);
+
    const groupedLogs = useMemo(() => {
      const now = Date.now();
      const groups: Record<string, { job: Job | null, logs: TimeLog[], totalMins: number }> = {};
-     logs.forEach(log => {
+     completedLogs.forEach(log => {
         if (!groups[log.jobId]) {
            groups[log.jobId] = { job: jobs.find(j => j.id === log.jobId) || null, logs: [], totalMins: 0 };
         }
@@ -436,7 +439,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
      });
      
      return result.sort((a,b) => Math.max(...b[1].logs.map(l => l.startTime)) - Math.max(...a[1].logs.map(l => l.startTime)));
-   }, [logs, jobs, timeFilter, search]);
+   }, [completedLogs, jobs, timeFilter, search]);
 
    const totalHours = logs.reduce((acc, l) => acc + (l.durationMinutes || 0), 0) / 60;
    const uniqueJobs = new Set(logs.map(l => l.jobId)).size;
@@ -483,6 +486,40 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              </div>
          </div>
 
+         {/* Active Logs Section */}
+         {activeLogsList.length > 0 && (
+            <div className="space-y-4">
+               <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                 <Activity className="w-4 h-4" /> Live Operations
+               </h3>
+               <div className="bg-zinc-900/40 border border-emerald-500/20 rounded-2xl overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                     <thead className="bg-emerald-500/5 text-emerald-500 uppercase text-[10px] font-bold tracking-wider">
+                         <tr>
+                             <th className="px-6 py-3">Start Time</th>
+                             <th className="px-6 py-3">Employee</th>
+                             <th className="px-6 py-3">Batch</th>
+                             <th className="px-6 py-3">Phase</th>
+                             <th className="px-6 py-3 text-right">Elapsed</th>
+                         </tr>
+                     </thead>
+                     <tbody className="divide-y divide-white/5">
+                         {activeLogsList.map(l => (
+                             <tr key={l.id} className="hover:bg-white/5 transition-colors">
+                                 <td className="px-6 py-4 text-zinc-400 font-mono text-xs">{new Date(l.startTime).toLocaleTimeString()}</td>
+                                 <td className="px-6 py-4 font-bold text-white uppercase text-xs">{l.userName}</td>
+                                 <td className="px-6 py-4 text-zinc-300 font-mono text-xs">{l.jobId}</td>
+                                 <td className="px-6 py-4"><span className="text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 text-[10px] font-black uppercase">{l.operation}</span></td>
+                                 <td className="px-6 py-4 text-right font-mono text-white font-bold"><LiveTimer startTime={l.startTime} /></td>
+                             </tr>
+                         ))}
+                     </tbody>
+                  </table>
+               </div>
+            </div>
+         )}
+
+         {/* History Section */}
          <div className="space-y-6">
              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2"><History className="w-3 h-3"/> Completed History</p>
              
@@ -631,6 +668,46 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
    return (
      <div className="max-w-xl space-y-10 animate-fade-in">
         <h2 className="text-3xl font-black uppercase tracking-tighter text-white leading-none">Settings</h2>
+        
+        {/* Auto Stopper Section */}
+        <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] p-8 space-y-10 shadow-2xl backdrop-blur-xl">
+           <div className="flex items-center gap-5 border-b border-white/10 pb-8">
+               <div className="bg-orange-600/10 p-4 rounded-2xl text-orange-500 border border-orange-500/20">
+                   <Clock className="w-8 h-8" />
+               </div>
+               <div>
+                   <h3 className="font-black text-white uppercase text-lg tracking-tight">Auto-Termination</h3>
+                   <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Shift cleanup protocol</p>
+               </div>
+           </div>
+           <div className="space-y-6">
+               <div className="flex items-center justify-between p-4 bg-zinc-950/50 rounded-2xl border border-white/5 shadow-inner">
+                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Enable Auto-Stop</label>
+                   <div className="relative inline-block w-12 h-6 transition duration-200 ease-in-out">
+                       <input 
+                           type="checkbox" 
+                           id="auto-stop-toggle"
+                           className="peer absolute opacity-0 w-full h-full cursor-pointer z-10"
+                           checked={settings.autoClockOutEnabled} 
+                           onChange={e => setSettings({...settings, autoClockOutEnabled: e.target.checked})}
+                       />
+                       <label htmlFor="auto-stop-toggle" className={`block overflow-hidden h-6 rounded-full cursor-pointer transition-colors duration-200 border border-white/5 ${settings.autoClockOutEnabled ? 'bg-blue-600' : 'bg-zinc-800'}`}></label>
+                       <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform duration-200 ${settings.autoClockOutEnabled ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                   </div>
+               </div>
+               <div className="space-y-2">
+                   <label className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] ml-2 block">Trigger Time</label>
+                   <input 
+                       type="time" 
+                       value={settings.autoClockOutTime} 
+                       onChange={e => setSettings({...settings, autoClockOutTime: e.target.value})} 
+                       className="w-full bg-black/50 border border-white/5 rounded-2xl px-6 py-4 text-white text-sm font-black shadow-inner outline-none focus:border-blue-600 transition-all uppercase placeholder-zinc-800" 
+                   />
+               </div>
+           </div>
+        </div>
+
+        {/* Phase Matrix Section */}
         <div className="bg-zinc-900/40 border border-white/10 rounded-[32px] p-8 space-y-10 shadow-2xl backdrop-blur-xl">
             <div className="flex items-center gap-5 border-b border-white/10 pb-8"><div className="bg-blue-600/10 p-4 rounded-2xl text-blue-500 border border-blue-500/20"><Activity className="w-8 h-8" /></div><div><h3 className="font-black text-white uppercase text-lg tracking-tight">Phase Matrix</h3><p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-1.5">Workflow sequence control</p></div></div>
             <div className="space-y-6">
@@ -859,7 +936,7 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto no-print">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/98 backdrop-blur-3xl p-4 animate-fade-in overflow-y-auto">
       <div className="bg-white text-black w-full max-w-3xl rounded-[32px] shadow-2xl relative overflow-hidden flex flex-col max-h-full" id="printable-area-root">
          
          <div className="bg-zinc-950 text-white p-6 flex justify-between items-center no-print shrink-0 border-b border-white/10">
@@ -961,7 +1038,7 @@ export function App() {
             </div>
             <aside className={`fixed lg:sticky top-0 inset-y-0 left-0 w-72 border-r border-white/5 bg-zinc-950 flex flex-col z-50 transform transition-transform duration-500 ease-in-out shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
                <div className="p-10 hidden lg:flex flex-col gap-1 border-b border-white/5 mb-8"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-[20px] bg-gradient-to-tr from-blue-600 to-indigo-700 flex items-center justify-center shadow-2xl border border-blue-500/20"><Sparkles className="w-6 h-6 text-white"/></div><h2 className="font-black text-xl tracking-tighter text-white uppercase leading-none">SC DEBURRING</h2></div><p className="text-[9px] font-black text-zinc-700 uppercase tracking-[0.5em] mt-3.5 opacity-60">System Core_v3.2</p></div>
-               <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-10 lg:py-0 custom-scrollbar"><NavItem id="admin-dashboard" l="Overview" i={LayoutDashboard} /><NavItem id="admin-jobs" l="Production" i={Briefcase} /><NavItem id="admin-logs" l="Archives" i={Calendar} /><NavItem id="admin-team" l="Personnel" i={Users} /><NavItem id="admin-settings" l="Protocols" i={Settings} /><NavItem id="admin-scan" l="Terminal" i={ScanLine} /></nav>
+               <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-10 lg:py-0 custom-scrollbar"><NavItem id="admin-dashboard" l="Overview" i={LayoutDashboard} /><NavItem id="admin-jobs" l="Production" i={Briefcase} /><NavItem id="admin-logs" l="Logs" i={Calendar} /><NavItem id="admin-team" l="Personnel" i={Users} /><NavItem id="admin-settings" l="Protocols" i={Settings} /><NavItem id="admin-scan" l="Terminal" i={ScanLine} /></nav>
                <div className="p-6 border-t border-white/5 bg-zinc-900/30"><button onClick={() => setUser(null)} className="w-full flex items-center gap-4 px-6 py-4 text-zinc-700 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.3em] transition-all rounded-2xl hover:bg-red-500/5 group"><LogOut className="w-5 h-5 group-hover:scale-110 transition-all" /> EXIT_CORE</button></div>
             </aside>
             {isMobileMenuOpen && <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-40 lg:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
