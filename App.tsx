@@ -64,22 +64,24 @@ const PrintStyles = () => (
         position: fixed !important;
         left: 0 !important;
         top: 0 !important;
-        width: 210mm !important;
-        height: 297mm !important;
+        width: 8.5in !important;
+        height: 11in !important;
         margin: 0 !important;
-        padding: 15mm !important;
+        padding: 0.5in !important;
         background: white !important;
         color: black !important;
         z-index: 9999999 !important;
         display: flex !important;
         flex-direction: column !important;
         box-sizing: border-box !important;
+        overflow: hidden !important;
+        border: none !important;
       }
       .no-print {
         display: none !important;
       }
       @page {
-        size: portrait;
+        size: letter portrait;
         margin: 0;
       }
     }
@@ -464,7 +466,7 @@ const JobsView = ({ addToast, setPrintable, confirm }: any) => {
                                 </td>
                             </tr>
                         ))}
-                        {completedJobs.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-widest">History Empty</td></tr>}
+                        {completedJobs.length === 0 && <div className="col-span-6 py-12 text-center text-zinc-600 text-xs font-bold uppercase tracking-widest">History Empty</div>}
                      </tbody>
                  </table>
                  </div>
@@ -588,7 +590,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
                  <h2 className="text-2xl font-bold text-white flex items-center gap-2 uppercase tracking-tighter"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
                  <div className="flex bg-zinc-900 border border-white/5 rounded-lg p-1">
                      {['week', 'month', 'year', 'all'].map(t => (
-                         <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-4 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-zinc-400'}`}>This {t}</button>
+                         <button key={t} onClick={() => setTimeFilter(t as any)} className={`px-4 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${timeFilter === t ? 'bg-zinc-800 text-white shadow' : 'text-zinc-600 hover:text-white'}`}>This {t}</button>
                      ))}
                  </div>
              </div>
@@ -1107,78 +1109,93 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
              </div>
          </div>
 
-         <div className="flex-1 p-12 bg-white flex flex-col justify-between">
-            <div>
+         <div className="flex-1 p-10 bg-white flex flex-col justify-between">
+            <div className="w-full">
               {/* Header */}
-              <div className="flex justify-between items-end border-b-[8px] border-black pb-8 mb-12">
+              <div className="flex justify-between items-end border-b-[6px] border-black pb-6 mb-10">
                 <div className="flex-1">
-                  <h1 className="text-7xl font-black tracking-tighter leading-none mb-3">SC DEBURRING</h1>
-                  <div className="h-1.5 w-48 bg-black mb-3"></div>
-                  <p className="text-2xl font-black uppercase tracking-[0.4em] text-gray-400">TRAVELER</p>
+                  <h1 className="text-6xl font-black tracking-tighter leading-none mb-2 uppercase">SC DEBURRING</h1>
+                  <div className="h-1.5 w-64 bg-black mb-3"></div>
+                  <p className="text-xl font-black uppercase tracking-[0.5em] text-gray-500">MANUFACTURING TRAVELER</p>
                 </div>
                 <div className="text-right flex flex-col items-end">
-                  <h2 className="text-5xl font-black tracking-tighter leading-none">{new Date().toLocaleDateString()}</h2>
-                  <p className="text-xs font-black text-gray-400 mt-3 uppercase tracking-[0.4em] border-t border-gray-100 pt-2 w-full text-right">PRINTED ON</p>
+                  <h2 className="text-4xl font-black tracking-tighter leading-none">{new Date().toLocaleDateString()}</h2>
+                  <p className="text-[10px] font-black text-gray-400 mt-2 uppercase tracking-[0.4em] border-t border-gray-100 pt-2 w-full text-right">PRINTED ON</p>
                 </div>
               </div>
 
               {/* Symmetric Grid Layout */}
-              <div className="grid grid-cols-12 gap-10">
+              <div className="grid grid-cols-12 gap-8 items-stretch">
                 {/* Left Side: Major Details */}
-                <div className="col-span-8 flex flex-col space-y-10">
-                  <div className="border-[8px] border-black p-10 bg-gray-50/50 shadow-sm relative">
-                    <div className="absolute -top-4 left-6 bg-white px-4 text-[10px] font-black tracking-[0.5em] text-gray-400">PURCHASE ORDER (PO)</div>
-                    <div className="text-9xl font-black leading-none break-all tracking-tighter uppercase">{job.poNumber}</div>
+                <div className="col-span-7 flex flex-col space-y-8">
+                  {/* Huge PO & QTY Box */}
+                  <div className="border-[8px] border-black p-8 bg-gray-50/50 shadow-sm relative flex flex-col justify-center min-h-[220px]">
+                    <div className="absolute -top-4 left-6 bg-white px-4 text-[11px] font-black tracking-[0.6em] text-gray-500 uppercase">ORDER IDENTITY</div>
+                    <div className="flex flex-col gap-4">
+                      <div>
+                        <label className="block text-[10px] uppercase font-black text-gray-400 mb-1 tracking-[0.3em]">PO NUMBER</label>
+                        <div className="text-7xl font-black leading-none break-all tracking-tight uppercase">{job.poNumber}</div>
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <div className="flex items-baseline gap-4">
+                           <span className="text-3xl font-black text-gray-400 uppercase tracking-widest">QTY:</span>
+                           <span className="text-8xl font-black leading-none">{job.quantity}</span>
+                           <span className="text-2xl font-bold text-gray-300 ml-2 uppercase">UNITS</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-10">
-                    <div className="border-[4px] border-gray-200 p-8 bg-white shadow-sm flex flex-col justify-between">
-                      <label className="block text-xs font-black text-gray-400 mb-4 tracking-[0.3em] uppercase">PART INDEX</label>
-                      <div className="text-4xl font-black break-words leading-none uppercase tracking-tighter">{job.partNumber}</div>
+                  {/* 2x2 Detail Grid */}
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="border-[4px] border-gray-200 p-6 bg-white shadow-sm flex flex-col justify-between">
+                      <label className="block text-[10px] font-black text-gray-400 mb-2 tracking-[0.3em] uppercase">PART CATALOG</label>
+                      <div className="text-3xl font-black break-words leading-none uppercase tracking-tight">{job.partNumber}</div>
                     </div>
-                    <div className="border-[4px] border-gray-200 p-8 bg-white shadow-sm flex flex-col justify-between">
-                      <label className="block text-xs font-black text-gray-400 mb-4 tracking-[0.3em] uppercase">LOT SIZE</label>
-                      <div className="text-5xl font-black leading-none flex items-baseline gap-2">{job.quantity} <span className="text-2xl font-bold text-gray-300">PCS</span></div>
+                    <div className="border-[4px] border-gray-200 p-6 bg-white shadow-sm flex flex-col justify-between">
+                      <label className="block text-[10px] font-black text-gray-400 mb-2 tracking-[0.3em] uppercase">REFERENCE ID</label>
+                      <div className="text-2xl font-black break-words leading-none text-gray-600 font-mono tracking-tighter uppercase">{job.jobIdsDisplay}</div>
                     </div>
-                    <div className="border-[4px] border-gray-200 p-8 bg-white shadow-sm flex flex-col justify-between">
-                      <label className="block text-xs font-black text-gray-400 mb-4 tracking-[0.3em] uppercase">DATE RECEIVED</label>
-                      <div className="text-3xl font-black leading-none">{formatToMDY(job.dateReceived) || 'N/A'}</div>
+                    <div className="border-[4px] border-gray-200 p-6 bg-white shadow-sm flex flex-col justify-between">
+                      <label className="block text-[10px] font-black text-gray-400 mb-2 tracking-[0.3em] uppercase">DATE RECEIVED</label>
+                      <div className="text-3xl font-black leading-none tracking-tight">{formatToMDY(job.dateReceived)}</div>
                     </div>
-                    <div className="border-[4px] border-gray-200 p-8 bg-white shadow-sm flex flex-col justify-between border-l-[12px] border-l-red-600">
-                      <label className="block text-xs font-black text-red-500/50 mb-4 tracking-[0.3em] uppercase">DUE DATE</label>
-                      <div className="text-4xl font-black text-red-600 leading-none">{formatToMDY(job.dueDate) || 'PRIORITY'}</div>
+                    <div className="border-[4px] border-black p-6 bg-white shadow-sm flex flex-col justify-between border-l-[16px] border-l-red-600">
+                      <label className="block text-[10px] font-black text-red-500 mb-2 tracking-[0.3em] uppercase">FLOOR DEADLINE</label>
+                      <div className="text-4xl font-black text-red-600 leading-none tracking-tight">{formatToMDY(job.dueDate) || 'PRIORITY'}</div>
                     </div>
                   </div>
                 </div>
                 
                 {/* Right Side: QR Code Area */}
-                <div className="col-span-4 flex flex-col items-center justify-center border-[8px] border-black p-8 bg-gray-50 shadow-inner">
-                  <div className="bg-white p-6 shadow-2xl border-4 border-gray-100 flex items-center justify-center w-full aspect-square mb-10">
+                <div className="col-span-5 flex flex-col items-center justify-center border-[8px] border-black p-8 bg-gray-50 shadow-inner">
+                   <p className="text-[12px] font-black text-gray-900 uppercase tracking-[0.8em] mb-8 text-center">SCAN TO UPDATE TRACKING</p>
+                  <div className="bg-white p-6 shadow-2xl border-4 border-gray-200 flex items-center justify-center w-full aspect-square mb-8">
                     <img src={qrUrl} alt="QR Code" className="w-full h-auto block object-contain mix-blend-multiply" crossOrigin="anonymous" />
                   </div>
-                  <div className="text-center w-full border-t-2 border-gray-200 pt-8">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.5em] mb-4">BATCH ID</p>
+                  <div className="text-center w-full border-t-[4px] border-black pt-8">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.5em] mb-4">SYSTEM BATCH ID</p>
                     <p className="font-mono text-2xl font-black break-all text-gray-800 leading-none tracking-widest">{job.id}</p>
                   </div>
                 </div>
               </div>
 
               {/* Logic / Instructions - Extra Large */}
-              <div className="mt-12">
-                <div className="bg-black text-white py-2 px-6 inline-block text-[10px] font-black uppercase tracking-[0.5em] mb-4">FLOOR LOGIC / INSTRUCTIONS</div>
-                <div className="text-3xl border-l-[20px] border-black pl-10 py-10 bg-gray-50 min-h-[12rem] font-bold italic leading-tight text-gray-800 uppercase shadow-inner">
-                  {job.info || "FOLLOW STANDARD DEBURRING PROCEDURES. VERIFY TOLERANCES BEFORE INITIALIZING NEXT PHASE."}
+              <div className="mt-10">
+                <div className="bg-black text-white py-2 px-8 inline-block text-[11px] font-black uppercase tracking-[0.6em] mb-4 shadow-lg">FLOOR MATRIX LOGIC & INSTRUCTIONS</div>
+                <div className="text-3xl border-l-[24px] border-black pl-10 py-10 bg-gray-50 min-h-[14rem] font-bold italic leading-tight text-gray-800 uppercase shadow-inner border-y border-r border-gray-100">
+                  {job.info || "FOLLOW STANDARD SHOP PROCEDURES. VERIFY ALL TOLERANCES BEFORE PROCEEDING TO NEXT STATION."}
                 </div>
               </div>
             </div>
 
             {/* Verification Footer */}
-            <div className="mt-12 border-t-[4px] border-gray-100 pt-8 flex justify-between items-center text-xs font-black text-gray-300 uppercase tracking-[0.6em]">
-               <div className="flex items-center gap-4">
-                  <div className="w-4 h-4 bg-gray-200 rounded-full"></div>
+            <div className="mt-8 border-t-[6px] border-black pt-8 flex justify-between items-center text-sm font-black text-gray-400 uppercase tracking-[0.6em]">
+               <div className="flex items-center gap-6">
+                  <div className="w-6 h-6 bg-black rounded-full shadow-lg"></div>
                   <span>SC DEBURRING OPERATIONAL TRAVELER</span>
                </div>
-               <span>VERIFICATION REQUIRED</span>
+               <span className="text-gray-900 border-2 border-black px-4 py-2">BATCH VERIFICATION REQUIRED</span>
             </div>
          </div>
       </div>
