@@ -49,7 +49,7 @@ const PrintStyles = () => (
         left: 0;
         top: 0;
         width: 100%;
-        height: 100%;
+        min-height: 100%;
         margin: 0;
         padding: 0;
         background: white;
@@ -60,7 +60,10 @@ const PrintStyles = () => (
       }
       @page {
         size: auto;
-        margin: 0mm;
+        margin: 5mm;
+      }
+      .print-break-inside-avoid {
+        page-break-inside: avoid;
       }
     }
   `}</style>
@@ -465,8 +468,8 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
                    </div>
                </div>
                
-               <div className="flex flex-col items-center justify-center border-4 border-black p-8 bg-gray-50 h-full">
-                  <img src={qrUrl} alt="QR Code" className="w-full h-auto mix-blend-multiply max-w-[80%]" crossOrigin="anonymous" />
+               <div className="flex flex-col items-center justify-center border-4 border-black p-8 bg-gray-50 h-full print-break-inside-avoid">
+                  <img src={qrUrl} alt="QR Code" className="w-48 h-48 object-contain mix-blend-multiply" crossOrigin="anonymous" style={{maxWidth:'100%', maxHeight:'250px'}} />
                   <p className="font-mono text-lg mt-6 text-gray-500 text-center break-all">{job.id}</p>
                   <p className="font-bold uppercase tracking-widest text-2xl mt-2">SCAN JOB ID</p>
                </div>
@@ -645,6 +648,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [ops, setOps] = useState<string[]>([]);
    const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'priority'>('date-desc');
    const [historyRange, setHistoryRange] = useState<'week'|'month'|'year'|'all'>('week');
+   // New Custom Date Range for History
+   const [customStart, setCustomStart] = useState('');
+   const [customEnd, setCustomEnd] = useState('');
 
    useEffect(() => {
        const u1 = DB.subscribeJobs(setJobs);
@@ -723,9 +729,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    
    // Completed Jobs with range filter
    const inRange = (dateStr?: string) => {
-     if (!dateStr || historyRange === 'all') return true;
+     if (!dateStr) return false;
      const d = new Date(dateStr).getTime();
      const now = Date.now();
+     
+     // Custom Date Range Override
+     if (customStart && customEnd) {
+         const start = new Date(customStart).getTime();
+         const end = new Date(customEnd).getTime() + 86400000; // End of day
+         return d >= start && d <= end;
+     }
+
+     if (historyRange === 'all') return true;
      const day = 24 * 60 * 60 * 1000;
      if (historyRange === 'week') return d >= now - 7 * day;
      if (historyRange === 'month') return d >= now - 30 * day;
@@ -736,16 +751,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    // Prefer completedAt timestamp, fallback to dateReceived
    const completedJobsRaw = filtered.filter(j => j.status === 'completed');
    const completedInRange = completedJobsRaw.filter(j => {
-       if (j.completedAt) {
-           const now = Date.now();
-           const day = 24 * 60 * 60 * 1000;
-           if (historyRange === 'all') return true;
-           if (historyRange === 'week') return j.completedAt >= now - 7 * day;
-           if (historyRange === 'month') return j.completedAt >= now - 30 * day;
-           if (historyRange === 'year') return j.completedAt >= now - 365 * day;
-           return true;
-       }
-       return inRange(j.dateReceived);
+       const dStr = j.completedAt ? new Date(j.completedAt).toISOString().split('T')[0] : j.dateReceived;
+       return inRange(dStr);
    });
 
    const jobsCompletedCount = completedInRange.length;
@@ -853,7 +860,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
 
          {/* JOB HISTORY SECTION */}
          <section className="space-y-4 mt-10">
-            <div className="flex items-end justify-between">
+            <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4">
                 <div>
                 <h3 className="text-xl font-bold flex items-center gap-2">
                     <History className="w-5 h-5 text-zinc-400" /> Job History
@@ -861,22 +868,34 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
                 <p className="text-sm text-zinc-500">Completed production runs</p>
                 </div>
 
-                <div className="inline-flex rounded-xl bg-zinc-900/60 border border-white/5 p-1">
-                {[
-                    {k:'week', label:'THIS WEEK'},
-                    {k:'month', label:'THIS MONTH'},
-                    {k:'year', label:'THIS YEAR'},
-                    {k:'all', label:'ALL'},
-                ].map(x => (
-                    <button
-                    key={x.k}
-                    onClick={() => setHistoryRange(x.k as any)}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors
-                        ${historyRange === x.k ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}
-                    >
-                    {x.label}
-                    </button>
-                ))}
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2 bg-zinc-900 border border-white/10 rounded-xl p-1 px-3">
+                        <span className="text-xs text-zinc-500 font-bold uppercase mr-1">Range:</span>
+                        <input type="date" value={customStart} onChange={e => { setCustomStart(e.target.value); setHistoryRange('all'); }} className="bg-transparent text-white text-xs outline-none" />
+                        <span className="text-zinc-500">-</span>
+                        <input type="date" value={customEnd} onChange={e => { setCustomEnd(e.target.value); setHistoryRange('all'); }} className="bg-transparent text-white text-xs outline-none" />
+                        {(customStart || customEnd) && (
+                            <button onClick={() => { setCustomStart(''); setCustomEnd(''); }} className="ml-2 text-zinc-500 hover:text-white"><X className="w-3 h-3"/></button>
+                        )}
+                    </div>
+
+                    <div className="inline-flex rounded-xl bg-zinc-900/60 border border-white/5 p-1">
+                    {[
+                        {k:'week', label:'WEEK'},
+                        {k:'month', label:'MONTH'},
+                        {k:'year', label:'YEAR'},
+                        {k:'all', label:'ALL'},
+                    ].map(x => (
+                        <button
+                        key={x.k}
+                        onClick={() => { setHistoryRange(x.k as any); setCustomStart(''); setCustomEnd(''); }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors
+                            ${historyRange === x.k && !customStart ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}
+                        >
+                        {x.label}
+                        </button>
+                    ))}
+                    </div>
                 </div>
             </div>
 
@@ -934,7 +953,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
                     {completedInRange.length === 0 && (
                         <tr>
                         <td colSpan={6} className="p-10 text-center text-zinc-500">
-                            No completed jobs in this range.
+                            No completed jobs found for this range.
                         </td>
                         </tr>
                     )}
@@ -1023,9 +1042,13 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    const [showEditModal, setShowEditModal] = useState(false);
    const [ops, setOps] = useState<string[]>([]);
    
-   // New state for filters
-   const [range, setRange] = useState<'week'|'month'|'year'|'all'>('week');
+   // COMPLEX FILTERS
    const [filter, setFilter] = useState('');
+   const [filterUser, setFilterUser] = useState('');
+   const [filterOp, setFilterOp] = useState('');
+   const [customStart, setCustomStart] = useState('');
+   const [customEnd, setCustomEnd] = useState('');
+   const [range, setRange] = useState<'week'|'month'|'year'|'all'>('week');
 
    useEffect(() => {
      const unsub1 = DB.subscribeLogs(setLogs);
@@ -1035,8 +1058,14 @@ const LogsView = ({ addToast }: { addToast: any }) => {
      return () => { unsub1(); unsub2(); unsub3(); };
    }, [refreshKey]);
 
-   // Helper for Range
-   const inRangeTs = (ts: number) => {
+   // Filter Logic
+   const inDateRange = (ts: number) => {
+      // Custom Range Overrides
+      if (customStart && customEnd) {
+          const s = new Date(customStart).getTime();
+          const e = new Date(customEnd).getTime() + 86400000;
+          return ts >= s && ts <= e;
+      }
       if (range === 'all') return true;
       const now = Date.now();
       const day = 24 * 60 * 60 * 1000;
@@ -1049,20 +1078,35 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    const filteredLogs = useMemo(() => {
       const term = filter.toLowerCase();
       return logs
-        .filter(l => inRangeTs(l.startTime))
+        .filter(l => inDateRange(l.startTime))
         .filter(l => {
+             // Text Search
              const job = jobs.find(j => j.id === l.jobId);
              const searchStr = `${l.userName} ${l.operation} ${l.jobId} ${job?.poNumber || ''} ${job?.partNumber || ''} ${job?.jobIdsDisplay || ''}`.toLowerCase();
-             return searchStr.includes(term);
+             if (!searchStr.includes(term)) return false;
+             
+             // Dropdown Filters
+             if (filterUser && l.userId !== filterUser) return false;
+             if (filterOp && l.operation !== filterOp) return false;
+             
+             return true;
         });
-   }, [logs, range, filter, jobs]);
+   }, [logs, range, filter, filterUser, filterOp, customStart, customEnd, jobs]);
 
-   const logsByJob = useMemo(() => {
-     return filteredLogs.reduce((acc, log) => {
-       (acc[log.jobId] ||= []).push(log);
-       return acc;
-     }, {} as Record<string, TimeLog[]>);
-   }, [filteredLogs]);
+   // SPLIT INTO ACTIVE JOB LOGS vs COMPLETED JOB LOGS
+   const { activeJobLogs, completedJobLogs } = useMemo(() => {
+       const active: Record<string, TimeLog[]> = {};
+       const completed: Record<string, TimeLog[]> = {};
+
+       filteredLogs.forEach(log => {
+           const job = jobs.find(j => j.id === log.jobId);
+           const isCompleted = job?.status === 'completed';
+           const target = isCompleted ? completed : active;
+           (target[log.jobId] ||= []).push(log);
+       });
+
+       return { activeJobLogs: active, completedJobLogs: completed };
+   }, [filteredLogs, jobs]);
 
    // Stats
    const totalRecords = filteredLogs.length;
@@ -1104,6 +1148,79 @@ const LogsView = ({ addToast }: { addToast: any }) => {
        }
    };
 
+   const renderGroup = (groups: Record<string, TimeLog[]>, title: string, icon: any) => {
+       if (Object.keys(groups).length === 0) return null;
+       return (
+           <div className="space-y-4 mb-8">
+               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-zinc-500 border-b border-white/5 pb-2">
+                   {icon} {title} ({Object.keys(groups).length})
+               </div>
+               {Object.entries(groups).map(([jobId, entries]) => {
+                    const job = jobs.find(j => j.id === jobId);
+                    const po = job?.poNumber || '—';
+                    const part = job?.partNumber || '—';
+                    const jobLabel = job?.jobIdsDisplay || jobId;
+                    const totalMins = entries.reduce((s, e) => s + (e.durationMinutes || 0), 0);
+
+                    return (
+                        <div key={jobId} className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
+                            <div className="bg-white/5 px-6 py-4 border-b border-white/5 flex justify-between items-center">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                                        <Briefcase className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <div className="text-lg font-bold text-white">{jobLabel}</div>
+                                        <div className="text-xs text-zinc-500 flex gap-2">
+                                            <span className="bg-zinc-950 px-2 py-1 rounded-md border border-white/5">PO: {po}</span>
+                                            <span className="bg-zinc-950 px-2 py-1 rounded-md border border-white/5">Part: {part}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-xs text-zinc-500 font-bold uppercase">Total Time</div>
+                                    <div className="text-white font-black">{formatDuration(totalMins)}</div>
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-zinc-950/60 text-zinc-500">
+                                        <tr>
+                                            <th className="p-4">Date</th>
+                                            <th className="p-4">Time Range</th>
+                                            <th className="p-4">Employee</th>
+                                            <th className="p-4">Operation</th>
+                                            <th className="p-4 text-right">Duration</th>
+                                            <th className="p-4 text-right"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {entries.sort((a,b) => b.startTime - a.startTime).map(l => (
+                                            <tr key={l.id} className="hover:bg-white/5 transition-colors">
+                                                <td className="p-4 text-zinc-300">{new Date(l.startTime).toLocaleDateString()}</td>
+                                                <td className="p-4 font-mono text-zinc-300">
+                                                    {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                                    <span className="text-zinc-600 mx-2">—</span>
+                                                    {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-400 font-bold text-xs">ACTIVE</span>}
+                                                </td>
+                                                <td className="p-4 text-white font-medium">{l.userName}</td>
+                                                <td className="p-4"><span className="px-3 py-1 bg-zinc-800 border border-white/5 rounded-lg text-xs font-bold text-zinc-200">{l.operation}</span></td>
+                                                <td className="p-4 text-right font-mono text-zinc-300">{formatDuration(l.durationMinutes)}</td>
+                                                <td className="p-4 text-right">
+                                                    <button onClick={() => handleEditLog(l)} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800"><Edit2 className="w-4 h-4" /></button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    );
+               })}
+           </div>
+       );
+   };
+
    return (
       <div className="space-y-6">
          {/* HEADER */}
@@ -1111,41 +1228,43 @@ const LogsView = ({ addToast }: { addToast: any }) => {
             <h2 className="text-2xl font-bold flex items-center gap-2">
                 <Calendar className="w-6 h-6 text-blue-500" /> Work Logs
             </h2>
-
-            <div className="flex items-center gap-2">
-                <div className="inline-flex rounded-xl bg-zinc-900/60 border border-white/5 p-1">
-                {[
-                    {k:'week', label:'THIS WEEK'},
-                    {k:'month', label:'THIS MONTH'},
-                    {k:'year', label:'THIS YEAR'},
-                    {k:'all', label:'ALL TIME'},
-                ].map(x => (
-                    <button
-                    key={x.k}
-                    onClick={() => setRange(x.k as any)}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors
-                        ${range === x.k ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}
-                    >
-                    {x.label}
-                    </button>
-                ))}
-                </div>
-
-                <button onClick={() => setRefreshKey(k => k + 1)} className="p-2 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800" title="Refresh">
-                   <RefreshCw className="w-4 h-4" />
-                </button>
-            </div>
+            <button onClick={() => setRefreshKey(k => k + 1)} className="p-2 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 self-end md:self-auto" title="Refresh">
+               <RefreshCw className="w-4 h-4" />
+            </button>
          </div>
 
-         {/* SEARCH */}
-         <div className="relative">
-            <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-500" />
-            <input
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter by Job ID, PO, Part, or Employee..."
-                className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
-            />
+         {/* COMPLEX FILTER BAR */}
+         <div className="bg-zinc-900/50 border border-white/10 p-4 rounded-2xl space-y-4">
+             <div className="flex flex-col md:flex-row gap-4">
+                 <div className="flex-1 relative">
+                    <Search className="absolute left-3 top-3 w-4 h-4 text-zinc-500" />
+                    <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search Logs..." className="w-full pl-9 pr-4 py-2.5 bg-black/40 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-blue-500" />
+                 </div>
+                 <div className="flex gap-2 w-full md:w-auto">
+                     <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="flex-1 md:w-40 bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none">
+                         <option value="">All Employees</option>
+                         {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                     </select>
+                     <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="flex-1 md:w-40 bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none">
+                         <option value="">All Operations</option>
+                         {ops.map(o => <option key={o} value={o}>{o}</option>)}
+                     </select>
+                 </div>
+             </div>
+             
+             <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5">
+                 <span className="text-xs font-bold text-zinc-500 uppercase">Date Range:</span>
+                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1">
+                     <input type="date" value={customStart} onChange={e => { setCustomStart(e.target.value); setRange('all'); }} className="bg-transparent text-white text-xs p-1 outline-none" />
+                     <span className="text-zinc-600">-</span>
+                     <input type="date" value={customEnd} onChange={e => { setCustomEnd(e.target.value); setRange('all'); }} className="bg-transparent text-white text-xs p-1 outline-none" />
+                 </div>
+                 <div className="flex gap-1">
+                     {['week', 'month', 'year', 'all'].map((r: any) => (
+                         <button key={r} onClick={() => { setRange(r); setCustomStart(''); setCustomEnd(''); }} className={`px-3 py-1 rounded-md text-xs font-bold uppercase ${range === r && !customStart ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white bg-zinc-800'}`}>{r}</button>
+                     ))}
+                 </div>
+             </div>
          </div>
 
          {/* KPI CARDS */}
@@ -1164,94 +1283,17 @@ const LogsView = ({ addToast }: { addToast: any }) => {
             </div>
          </div>
 
-         {/* CONTENT */}
-         <div className="space-y-6">
-            <div className="text-xs font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2 mt-2">
-                <History className="w-4 h-4" /> COMPLETED HISTORY
-            </div>
-            
-            {Object.keys(logsByJob).length === 0 && <div className="text-center p-12 text-zinc-500 border border-dashed border-white/10 rounded-2xl">No logs found matching your criteria.</div>}
+         {/* CONTENT SPLIT */}
+         {totalRecords === 0 ? (
+             <div className="text-center p-12 text-zinc-500 border border-dashed border-white/10 rounded-2xl">No logs found matching your criteria.</div>
+         ) : (
+             <>
+                 {renderGroup(activeJobLogs, "Active Jobs Logs", <Activity className="w-4 h-4 text-blue-400"/>)}
+                 {renderGroup(completedJobLogs, "Completed Jobs Logs", <CheckCircle className="w-4 h-4 text-emerald-500"/>)}
+             </>
+         )}
 
-            {Object.entries(logsByJob).map(([jobId, entries]) => {
-                const job = jobs.find(j => j.id === jobId);
-                const po = job?.poNumber || '—';
-                const part = job?.partNumber || '—';
-                const jobLabel = job?.jobIdsDisplay || jobId;
-
-                const totalMins = entries.reduce((s, e) => s + (e.durationMinutes || 0), 0);
-                const records = entries.length;
-
-                return (
-                    <div key={jobId} className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
-                        <div className="bg-white/5 px-6 py-4 border-b border-white/5 flex justify-between items-center">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                                    <Briefcase className="w-5 h-5" />
-                                </div>
-                                <div>
-                                    <div className="text-lg font-bold text-white">{jobLabel}</div>
-                                    <div className="text-xs text-zinc-500 flex gap-2">
-                                        <span className="bg-zinc-950 px-2 py-1 rounded-md border border-white/5">PO: {po}</span>
-                                        <span className="bg-zinc-950 px-2 py-1 rounded-md border border-white/5">Part: {part}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="text-right">
-                                <div className="text-xs text-zinc-500 font-bold uppercase">Total Time</div>
-                                <div className="text-white font-black">{formatDuration(totalMins)}</div>
-                            </div>
-                        </div>
-
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-sm">
-                                <thead className="bg-zinc-950/60 text-zinc-500">
-                                    <tr>
-                                        <th className="p-4">Date</th>
-                                        <th className="p-4">Time Range</th>
-                                        <th className="p-4">Employee</th>
-                                        <th className="p-4">Operation</th>
-                                        <th className="p-4 text-right">Duration</th>
-                                        <th className="p-4 text-right"></th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-white/5">
-                                    {entries
-                                    .sort((a,b) => (b.startTime - a.startTime))
-                                    .map(l => (
-                                        <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                                            <td className="p-4 text-zinc-300">{new Date(l.startTime).toLocaleDateString()}</td>
-                                            <td className="p-4 font-mono text-zinc-300">
-                                                {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-                                                <span className="text-zinc-600 mx-2">—</span>
-                                                {l.endTime
-                                                ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
-                                                : <span className="text-emerald-400 font-bold text-xs">ACTIVE</span>}
-                                            </td>
-                                            <td className="p-4 text-white font-medium">{l.userName}</td>
-                                            <td className="p-4">
-                                                <span className="px-3 py-1 bg-zinc-800 border border-white/5 rounded-lg text-xs font-bold text-zinc-200">
-                                                {l.operation}
-                                                </span>
-                                            </td>
-                                            <td className="p-4 text-right font-mono text-zinc-300">
-                                                {formatDuration(l.durationMinutes)}
-                                            </td>
-                                            <td className="p-4 text-right">
-                                                <button onClick={() => handleEditLog(l)} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800">
-                                                <Edit2 className="w-4 h-4" />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                );
-            })}
-         </div>
-
+         {/* EDIT MODAL */}
          {showEditModal && editingLog && (
              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
                  <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
@@ -1443,7 +1485,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
 };
 
 // --- APP ROOT ---
-export default function App() {
+export function App() {
   const [user, setUser] = useState<User | null>(() => { try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); } catch(e) { return null; } });
   const [view, setView] = useState<AppView>('login');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
