@@ -697,6 +697,58 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
    );
 };
 
+// --- HELPER FOR ADMIN JOBS ---
+const JobAdminCard = ({ job, onStart, onComplete, onReopen, onPrint, onEdit, onDelete }: any) => (
+  <div className="bg-zinc-900 border border-white/10 rounded-2xl p-5 flex flex-col gap-4 shadow-sm hover:border-blue-500/50 transition-all group">
+    <div className="flex justify-between items-start">
+      <div>
+        <h4 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors">{job.jobIdsDisplay}</h4>
+        <p className="text-xs text-zinc-500 font-mono tracking-wide">{job.poNumber}</p>
+      </div>
+      <div className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider border ${
+        job.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
+        job.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+        'bg-zinc-800 text-zinc-500 border-white/5'
+      }`}>
+        {job.status}
+      </div>
+    </div>
+    
+    <div className="grid grid-cols-2 gap-y-3 gap-x-2 text-sm">
+      <div>
+         <span className="text-[10px] uppercase text-zinc-600 font-bold block">Part Number</span>
+         <span className="text-zinc-300 font-mono">{job.partNumber}</span>
+      </div>
+      <div>
+         <span className="text-[10px] uppercase text-zinc-600 font-bold block">Quantity</span>
+         <span className="text-zinc-300 font-mono">{job.quantity}</span>
+      </div>
+      <div>
+         <span className="text-[10px] uppercase text-zinc-600 font-bold block">Due Date</span>
+         <span className={`font-mono ${job.dueDate ? 'text-zinc-300' : 'text-zinc-700'}`}>{job.dueDate || 'N/A'}</span>
+      </div>
+      <div>
+         <span className="text-[10px] uppercase text-zinc-600 font-bold block">Received</span>
+         <span className="text-zinc-500">{job.dateReceived || '-'}</span>
+      </div>
+    </div>
+
+    <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between gap-2">
+      <button onClick={() => onPrint(job)} className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors" title="Print Traveler"><Printer className="w-4 h-4"/></button>
+      <div className="flex gap-1">
+         <button onClick={() => onStart(job)} className="p-2 text-blue-500 hover:bg-blue-500/10 rounded-lg transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
+         <button onClick={() => onEdit(job)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors" title="Edit"><Edit2 className="w-4 h-4"/></button>
+         {job.status === 'completed' ? (
+           <button onClick={() => onReopen(job.id)} className="p-2 text-orange-400 hover:bg-orange-500/10 rounded-lg transition-colors" title="Reopen"><RotateCcw className="w-4 h-4"/></button>
+         ) : (
+           <button onClick={() => onComplete(job.id)} className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors" title="Complete"><CheckCircle className="w-4 h-4"/></button>
+         )}
+         <button onClick={() => onDelete(job.id)} className="p-2 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete"><Trash2 className="w-4 h-4"/></button>
+      </div>
+    </div>
+  </div>
+);
+
 // --- ADMIN: JOBS (REVAMPED) ---
 const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [jobs, setJobs] = useState<Job[]>([]);
@@ -707,6 +759,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [search, setSearch] = useState('');
    const [startJobModal, setStartJobModal] = useState<Job | null>(null);
    const [ops, setOps] = useState<string[]>([]);
+   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'priority'>('date-desc');
 
    useEffect(() => {
        const u1 = DB.subscribeJobs(setJobs);
@@ -764,77 +817,99 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
     } catch (e) { addToast('error', 'Parse Error'); } finally { setAiLoading(false); }
    };
 
-   const activeJobs = useMemo(() => {
+   // Sort & Filter
+   const filtered = useMemo(() => {
        const term = search.toLowerCase();
-       return jobs.filter(j => {
-           if (j.status === 'completed') return false;
-           return JSON.stringify(j).toLowerCase().includes(term);
-       }).sort((a,b) => {
-           if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
-           if (a.status !== 'in-progress' && b.status === 'in-progress') return 1;
-           return (a.dueDate || '').localeCompare(b.dueDate || '');
+       return jobs.filter(j => 
+           JSON.stringify(j).toLowerCase().includes(term)
+       ).sort((a,b) => {
+           if (sortBy === 'date-desc') return (b.createdAt || 0) - (a.createdAt || 0);
+           if (sortBy === 'date-asc') return (a.createdAt || 0) - (b.createdAt || 0);
+           if (sortBy === 'priority') {
+              if (a.status === 'in-progress') return -1;
+              if (b.status === 'in-progress') return 1;
+              return (a.dueDate || '').localeCompare(b.dueDate || '');
+           }
+           return 0;
        });
-   }, [jobs, search]);
+   }, [jobs, search, sortBy]);
+
+   const activeJobs = filtered.filter(j => j.status !== 'completed');
+   const completedJobs = filtered.filter(j => j.status === 'completed');
 
    return (
       <div className="space-y-6">
          <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
             <h2 className="text-2xl font-bold flex items-center gap-2"><Briefcase className="w-6 h-6 text-blue-500"/> Job Management</h2>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
                 <div className="relative">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search Jobs..." className="pl-9 pr-4 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white w-64 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search Jobs..." className="pl-9 pr-4 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white w-48 md:w-64 focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="relative">
+                  <select value={sortBy} onChange={(e:any) => setSortBy(e.target.value)} className="appearance-none pl-4 pr-8 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white focus:outline-none cursor-pointer">
+                     <option value="date-desc">Newest</option>
+                     <option value="date-asc">Oldest</option>
+                     <option value="priority">Priority</option>
+                  </select>
+                  <Filter className="absolute right-3 top-2.5 w-3 h-3 text-zinc-500 pointer-events-none" />
                 </div>
                 <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold text-white flex items-center gap-2 hover:bg-blue-500 shadow-lg shadow-blue-600/20"><Plus className="w-4 h-4"/> New Job</button>
             </div>
          </div>
          
-         <div className="space-y-4">
-             <h3 className="text-sm font-bold uppercase text-blue-400 flex items-center gap-2 tracking-wider">
-                 <Activity className="w-4 h-4" /> Active Production
-             </h3>
-             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-white/5 text-zinc-500">
-                        <tr>
-                            <th className="p-4">PO</th>
-                            <th className="p-4">Job</th>
-                            <th className="p-4">Part</th>
-                            <th className="p-4">Qty</th>
-                            <th className="p-4">Status</th>
-                            <th className="p-4">Due Date</th>
-                            <th className="p-4 text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                        {activeJobs.map(j => (
-                           <tr key={j.id} className="hover:bg-white/5 transition-colors">
-                              <td className="p-4 text-white font-bold">{j.poNumber}</td>
-                              <td className="p-4 text-zinc-300 font-mono">{j.jobIdsDisplay}</td>
-                              <td className="p-4 text-zinc-400">{j.partNumber}</td>
-                              <td className="p-4 text-zinc-300 font-mono">{j.quantity}</td>
-                              <td className="p-4">
-                                  <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide flex w-fit items-center gap-2 ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
-                                      {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"/>}
-                                      {j.status}
-                                  </span>
-                              </td>
-                              <td className="p-4 text-zinc-400">{j.dueDate || '-'}</td>
-                              <td className="p-4 text-right flex justify-end gap-2">
-                                 <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
-                                 <button onClick={() => handleComplete(j.id)} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors" title="Complete"><CheckCircle className="w-4 h-4"/></button>
-                                 <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700" title="Print"><Printer className="w-4 h-4"/></button>
-                                 <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-zinc-800 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600" title="Edit"><Edit2 className="w-4 h-4"/></button>
-                                 <button onClick={() => handleDelete(j.id)} className="p-2 bg-zinc-800 rounded-lg text-red-400 hover:text-white hover:bg-red-600" title="Delete"><Trash2 className="w-4 h-4"/></button>
-                              </td>
-                           </tr>
-                        ))}
-                        {activeJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-zinc-500">No active jobs found.</td></tr>}
-                    </tbody>
-                </table>
-             </div>
-         </div>
+         <section className="space-y-4">
+            <div className="flex items-end justify-between border-b border-white/5 pb-2">
+               <h3 className="text-sm font-bold uppercase text-blue-400 flex items-center gap-2 tracking-wider">
+                  <Activity className="w-4 h-4" /> Active Jobs
+               </h3>
+               <span className="text-xs text-zinc-500 font-mono">{activeJobs.length} active</span>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+               {activeJobs.map(j => (
+                  <JobAdminCard 
+                    key={j.id} 
+                    job={j} 
+                    onStart={setStartJobModal} 
+                    onComplete={handleComplete} 
+                    onPrint={setPrintable} 
+                    onEdit={(job: Job) => { setEditingJob(job); setShowModal(true); }}
+                    onDelete={handleDelete}
+                  />
+               ))}
+               {activeJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500 border border-dashed border-white/10 rounded-2xl">No active jobs found.</div>}
+            </div>
+         </section>
 
+         <section className="mt-8">
+            <details className="group">
+               <summary className="list-none cursor-pointer">
+                  <div className="flex items-center justify-between p-4 bg-zinc-900/50 border border-white/5 rounded-xl hover:bg-zinc-800/50 transition-colors">
+                      <div className="flex items-center gap-2 font-bold text-zinc-400 group-open:text-white">
+                         <ChevronRight className="w-4 h-4 group-open:rotate-90 transition-transform" />
+                         Completed Jobs
+                      </div>
+                      <span className="text-xs text-zinc-500 bg-zinc-950 px-2 py-1 rounded-md">{completedJobs.length}</span>
+                  </div>
+               </summary>
+               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-fade-in">
+                  {completedJobs.map(j => (
+                     <JobAdminCard 
+                       key={j.id} 
+                       job={j} 
+                       onStart={setStartJobModal} 
+                       onReopen={handleReopen}
+                       onPrint={setPrintable} 
+                       onEdit={(job: Job) => { setEditingJob(job); setShowModal(true); }}
+                       onDelete={handleDelete}
+                     />
+                  ))}
+               </div>
+            </details>
+         </section>
+
+         {/* Modals remain the same */}
          {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
@@ -903,10 +978,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    )
 }
 
-// --- ADMIN: LOGS ---
+// --- ADMIN: LOGS (REVAMPED) ---
 const LogsView = ({ addToast }: { addToast: any }) => {
    const [logs, setLogs] = useState<TimeLog[]>([]);
    const [users, setUsers] = useState<User[]>([]);
+   const [jobs, setJobs] = useState<Job[]>([]);
    const [refreshKey, setRefreshKey] = useState(0);
    const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
    const [showEditModal, setShowEditModal] = useState(false);
@@ -914,10 +990,23 @@ const LogsView = ({ addToast }: { addToast: any }) => {
 
    useEffect(() => {
      const unsub1 = DB.subscribeLogs(setLogs);
+     const unsub2 = DB.subscribeJobs(setJobs);
      const unsub3 = DB.subscribeUsers(setUsers);
      setOps(DB.getSettings().customOperations);
-     return () => { unsub1(); unsub3(); };
+     return () => { unsub1(); unsub2(); unsub3(); };
    }, [refreshKey]);
+
+   const logsByJob = useMemo(() => {
+     return logs.reduce((acc, log) => {
+       (acc[log.jobId] ||= []).push(log);
+       return acc;
+     }, {} as Record<string, TimeLog[]>);
+   }, [logs]);
+
+   const getJobName = (id: string) => {
+      const j = jobs.find(x => x.id === id);
+      return j ? `${j.jobIdsDisplay} (${j.partNumber})` : id;
+   };
 
    const handleEditLog = (log: TimeLog) => {
        setEditingLog({...log});
@@ -960,24 +1049,49 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
          </div>
 
-         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white/5 text-zinc-500"><tr><th className="p-4">Date</th><th className="p-4">Start</th><th className="p-4">End</th><th className="p-4">User</th><th className="p-4">Op</th><th className="p-4 text-right">Actions</th></tr></thead>
-                <tbody className="divide-y divide-white/5">
-                   {logs.map(l => (
-                      <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                         <td className="p-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                         <td className="p-4 font-mono text-zinc-300">{new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                         <td className="p-4 font-mono text-zinc-300">{l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-500 font-bold text-xs">ACTIVE</span>}</td>
-                         <td className="p-4 text-white font-medium">{l.userName}</td>
-                         <td className="p-4 text-blue-400">{l.operation}</td>
-                         <td className="p-4 text-right">
-                             <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white"><Edit2 className="w-4 h-4"/></button>
-                         </td>
-                      </tr>
-                   ))}
-                </tbody>
-             </table>
+         <div className="space-y-6">
+            {Object.keys(logsByJob).length === 0 && <div className="text-center p-12 text-zinc-500 border border-dashed border-white/10 rounded-2xl">No logs found.</div>}
+            
+            {Object.entries(logsByJob).map(([jobId, entries]) => (
+               <div key={jobId} className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="bg-white/5 px-6 py-4 border-b border-white/5 flex justify-between items-center">
+                     <div>
+                        <h3 className="font-bold text-white text-lg">{getJobName(jobId)}</h3>
+                        <p className="text-xs text-zinc-500 font-mono">ID: {jobId}</p>
+                     </div>
+                     <span className="bg-zinc-950 text-zinc-400 text-xs px-3 py-1 rounded-full border border-white/5">{entries.length} entries</span>
+                  </div>
+                  <div className="divide-y divide-white/5">
+                     {entries.map(l => (
+                        <div key={l.id} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors group">
+                           <div className="flex items-center gap-4">
+                              <div className="flex flex-col">
+                                 <div className="text-sm font-bold text-white">{l.userName}</div>
+                                 <div className="text-xs text-zinc-500">{new Date(l.startTime).toLocaleDateString()}</div>
+                              </div>
+                              <div className="px-3 py-1 bg-blue-500/10 text-blue-400 rounded-lg text-xs font-bold uppercase tracking-wide border border-blue-500/20">
+                                {l.operation}
+                              </div>
+                           </div>
+                           
+                           <div className="flex items-center gap-6">
+                              <div className="text-right">
+                                 <div className="text-sm font-mono text-white">
+                                   {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} 
+                                   <span className="text-zinc-500 mx-2">→</span>
+                                   {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-500 font-bold text-xs">ACTIVE</span>}
+                                 </div>
+                                 {l.durationMinutes !== undefined && l.durationMinutes !== null && (
+                                   <div className="text-xs text-zinc-500 mt-1 font-mono">{formatDuration(l.durationMinutes)}</div>
+                                 )}
+                              </div>
+                              <button onClick={() => handleEditLog(l)} className="p-2 text-zinc-600 hover:text-white hover:bg-zinc-700 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Edit2 className="w-4 h-4"/></button>
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+            ))}
          </div>
 
          {showEditModal && editingLog && (
