@@ -35,27 +35,21 @@ const PrintStyles = () => (
     @media print {
       body { margin: 0; padding: 0; background: white !important; }
       body * { visibility: hidden !important; }
-      #printable-modal, #printable-modal * { visibility: visible !important; }
-      #printable-modal {
+      #printable-area, #printable-area * { visibility: visible !important; }
+      #printable-area {
         position: absolute !important;
         left: 0 !important;
         top: 0 !important;
         width: 100% !important;
-        height: 100% !important;
+        height: auto !important;
+        min-height: 100% !important;
         margin: 0 !important;
-        padding: 40px !important;
+        padding: 10mm !important;
         background: white !important;
         z-index: 9999 !important;
-        box-shadow: none !important;
-        display: flex !important;
-        flex-direction: column !important;
       }
       .no-print { display: none !important; }
-      @page { size: auto; margin: 0mm; }
-      
-      /* High density layout for print */
-      .print-box { border: 4px solid black !important; }
-      .print-label { color: #666 !important; font-weight: 800 !important; text-transform: uppercase !important; }
+      @page { size: portrait; margin: 0; }
     }
   `}</style>
 );
@@ -121,94 +115,99 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
 // --- PRINTABLE JOB TRAVELER (Optimized Layout) ---
 const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => void }) => {
   if (!job) return null;
-  // Use ultra-high resolution QR code for crisp printing
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=1000x1000&data=${encodeURIComponent(window.location.href.split('?')[0] + '?jobId=' + job.id)}`;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto print-overlay">
-      <div className="bg-white text-black w-full max-w-[900px] rounded-xl shadow-2xl relative overflow-hidden flex flex-col" id="printable-modal">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto">
+      <div className="bg-white text-black w-full max-w-[950px] rounded-xl shadow-2xl relative overflow-hidden flex flex-col max-h-[95vh]">
          
+         {/* Toolbar Area (RESTORED) */}
          <div className="bg-zinc-900 text-white p-4 flex justify-between items-center no-print shrink-0 border-b border-zinc-700">
              <div>
                <h3 className="font-bold flex items-center gap-2 text-lg"><Printer className="w-5 h-5 text-blue-500"/> Print Preview</h3>
-               <p className="text-xs text-zinc-400">Review details before printing.</p>
+               <p className="text-xs text-zinc-400">Review details before sending to printer.</p>
              </div>
              <div className="flex gap-3">
-                 <button onClick={onClose} className="px-4 py-2 text-zinc-400 hover:text-white text-sm font-medium">Cancel</button>
-                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-all"><Printer className="w-4 h-4"/> Print Traveler</button>
+                 <button onClick={onClose} className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-sm font-bold flex items-center gap-2 transition-all">
+                    <X className="w-4 h-4" /> Cancel
+                 </button>
+                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-900/40 transition-all active:scale-95">
+                    <Printer className="w-5 h-5"/> Print Traveler
+                 </button>
              </div>
          </div>
 
-         <div id="printable-area" className="flex-1 p-12 bg-white flex flex-col">
-            {/* Header section as seen in screenshot */}
-            <div className="flex justify-between items-end border-b-8 border-black pb-6 mb-8">
+         {/* The Printable Container */}
+         <div id="printable-area" className="flex-1 p-12 bg-white overflow-y-auto flex flex-col">
+            {/* Header section */}
+            <div className="flex justify-between items-end border-b-8 border-black pb-6 mb-10">
               <div>
-                 <h1 className="text-6xl font-black tracking-tighter uppercase leading-none">SC DEBURRING</h1>
-                 <p className="text-sm font-black uppercase tracking-[0.3em] text-gray-500 mt-2">Production Traveler</p>
+                 <h1 className="text-7xl font-black tracking-tighter uppercase leading-none">SC DEBURRING</h1>
+                 <p className="text-base font-black uppercase tracking-[0.4em] text-gray-500 mt-2">Production Traveler</p>
               </div>
               <div className="text-right">
                  <h2 className="text-4xl font-black">{new Date().toLocaleDateString()}</h2>
-                 <p className="text-xs font-black uppercase text-gray-400 mt-1">Printed On</p>
+                 <p className="text-xs font-black uppercase text-gray-400 mt-1 tracking-widest">Printed On</p>
               </div>
             </div>
 
             {/* Main content grid - matching the user layout exactly */}
             <div className="grid grid-cols-5 gap-0 border-8 border-black flex-1 overflow-hidden">
                {/* Left Column (Data) */}
-               <div className="col-span-3 border-r-8 border-black p-10 space-y-10 flex flex-col h-full bg-white">
-                   <div className="border-b-4 border-gray-100 pb-8">
-                      <label className="block text-xs uppercase font-black text-gray-400 mb-2 tracking-[0.2em]">PO Number</label>
-                      <div className="text-8xl font-black leading-none break-all">{job.poNumber}</div>
+               <div className="col-span-3 border-r-8 border-black p-12 space-y-12 flex flex-col h-full bg-white">
+                   <div className="border-b-4 border-gray-100 pb-10">
+                      <label className="block text-xs uppercase font-black text-gray-400 mb-2 tracking-[0.3em]">PO Number</label>
+                      <div className="text-9xl font-black leading-none break-all">{job.poNumber}</div>
                    </div>
 
-                   <div className="grid grid-cols-2 gap-10">
+                   <div className="grid grid-cols-2 gap-12">
                       <div>
-                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.2em]">Part Number</label>
-                         <div className="text-4xl font-bold break-words leading-tight">{job.partNumber}</div>
+                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.3em]">Part Number</label>
+                         <div className="text-5xl font-bold break-words leading-tight">{job.partNumber}</div>
                       </div>
                       <div>
-                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.2em]">Quantity</label>
-                         <div className="text-5xl font-black">{job.quantity} UNITS</div>
+                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.3em]">Quantity</label>
+                         <div className="text-6xl font-black">{job.quantity} UNITS</div>
                       </div>
                       <div>
-                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.2em]">Date Received</label>
+                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.3em]">Date Received</label>
                          <div className="text-3xl font-bold">{job.dateReceived || '-'}</div>
                       </div>
                       <div>
-                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.2em]">Due Date</label>
-                         <div className="text-3xl font-bold text-red-600 underline decoration-4 underline-offset-4">{job.dueDate || '-'}</div>
+                         <label className="block text-xs uppercase font-black text-gray-400 mb-1 tracking-[0.3em]">Due Date</label>
+                         <div className="text-4xl font-black text-red-600 underline decoration-8 underline-offset-8">{job.dueDate || '-'}</div>
                       </div>
                    </div>
 
-                   <div className="flex-1 flex flex-col pt-4">
-                     <label className="block text-xs uppercase font-black text-gray-400 mb-3 tracking-[0.2em]">Job Notes / Instructions</label>
-                     <div className="flex-1 text-2xl font-medium leading-relaxed italic border-l-8 border-black pl-8 bg-gray-50 py-4">
+                   <div className="flex-1 flex flex-col pt-8">
+                     <label className="block text-xs uppercase font-black text-gray-400 mb-4 tracking-[0.3em]">Job Notes / Instructions</label>
+                     <div className="flex-1 text-3xl font-medium leading-relaxed italic border-l-[12px] border-black pl-10 bg-gray-50 py-8 min-h-[200px]">
                        {job.info || "No notes provided for this job."}
                      </div>
                    </div>
                </div>
                
                {/* Right Column (QR & Visual Scan Area) */}
-               <div className="col-span-2 flex flex-col items-center justify-center p-10 bg-gray-50 h-full relative">
+               <div className="col-span-2 flex flex-col items-center justify-center p-12 bg-gray-50 h-full relative">
                   <div className="w-full flex-1 flex items-center justify-center">
                     <img 
                       src={qrUrl} 
                       alt="QR Code" 
                       className="w-full h-auto object-contain mix-blend-multiply" 
                       crossOrigin="anonymous" 
-                      style={{ maxWidth: '100%', maxHeight: '450px' }}
+                      style={{ maxWidth: '100%', maxHeight: '550px' }}
                     />
                   </div>
-                  <div className="text-center mt-8 w-full">
-                    <p className="font-mono text-lg text-gray-400 break-all mb-2 opacity-60 font-bold">{job.id}</p>
-                    <div className="h-2 w-full bg-black mb-4"/>
-                    <p className="font-black uppercase tracking-[0.25em] text-4xl">SCAN JOB ID</p>
+                  <div className="text-center mt-12 w-full">
+                    <p className="font-mono text-xl text-gray-400 break-all mb-4 opacity-70 font-bold">{job.id}</p>
+                    <div className="h-4 w-full bg-black mb-6"/>
+                    <p className="font-black uppercase tracking-[0.3em] text-5xl">SCAN JOB ID</p>
                   </div>
                </div>
             </div>
             
-            <div className="mt-8 text-center no-print">
-               <p className="text-gray-400 text-xs italic">Ensure printer is set to "Portrait" and "Fill Page" for best results.</p>
+            <div className="mt-10 text-center no-print pb-4">
+               <p className="text-zinc-500 text-sm italic font-medium">Tip: Use browser print settings to scale to "100%" or "Fit to page" for full coverage.</p>
             </div>
          </div>
       </div>
