@@ -79,9 +79,14 @@ function handleError(e: any) {
 // --------------------
 // Removes undefined fields to prevent Firestore crashes ("Function DocumentReference.set() called with invalid data. Unsupported field value: undefined")
 function sanitize(obj: any): any {
-  return Object.fromEntries(
-    Object.entries(obj).filter(([_, v]) => v !== undefined)
-  );
+  if (obj === null || typeof obj !== 'object') return obj;
+  const clean: any = {};
+  Object.keys(obj).forEach(key => {
+    if (obj[key] !== undefined) {
+      clean[key] = obj[key];
+    }
+  });
+  return clean;
 }
 
 // --------------------
@@ -321,20 +326,30 @@ export async function startTimeLog(
     durationMinutes: null, 
     status: 'in_progress',
     createdAt: startTime,
-    updatedAt: startTime
+    updatedAt: startTime,
+    machineId: machineId ?? undefined, // Explicitly handle if passed
+    notes: notes ?? undefined
   };
 
-  // Add optional fields only if they exist
-  if (machineId) log.machineId = machineId;
-  if (notes) log.notes = notes;
-  if (partNumber) log.partNumber = partNumber;
-  if (customer) log.customer = customer;
+  // Add optional fields only if they exist and are not undefined
+  if (partNumber !== undefined) log.partNumber = partNumber;
+  if (customer !== undefined) log.customer = customer;
+  if (machineId !== undefined) log.machineId = machineId;
+  if (notes !== undefined) log.notes = notes;
 
   if (dbInstance) {
     try {
         // Sanitize ensures no undefined values are sent to Firestore
-        await setDoc(doc(dbInstance, COL.logs, id), sanitize(log), { merge: true });
-        await updateDoc(doc(dbInstance, COL.jobs, jobId), { status: "in-progress" } as any).catch(() => {});
+        const cleanLog = sanitize(log);
+        await setDoc(doc(dbInstance, COL.logs, id), cleanLog, { merge: true });
+        
+        // Update job status safely
+        try {
+            await updateDoc(doc(dbInstance, COL.jobs, jobId), { status: "in-progress" } as any);
+        } catch(e) {
+            // Ignore job update error, log is more important
+        }
+        
         firebaseStatus = { connected: true };
     } catch (e) {
         throw handleError(e);
