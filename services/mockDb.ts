@@ -75,6 +75,16 @@ function handleError(e: any) {
 }
 
 // --------------------
+// HELPER: Sanitize for Firestore
+// --------------------
+// Removes undefined fields to prevent Firestore crashes ("Function DocumentReference.set() called with invalid data. Unsupported field value: undefined")
+function sanitize(obj: any): any {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([_, v]) => v !== undefined)
+  );
+}
+
+// --------------------
 // PUBLIC API
 // --------------------
 
@@ -192,7 +202,7 @@ export async function getJobById(id: string): Promise<Job | null> {
 export async function saveJob(job: Job) {
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.jobs, job.id), job, { merge: true });
+        await setDoc(doc(dbInstance, COL.jobs, job.id), sanitize(job), { merge: true });
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -298,6 +308,8 @@ export async function startTimeLog(
 ) {
   const id = Date.now().toString();
   const startTime = Date.now();
+  
+  // Construct log object carefully
   const log: TimeLog = {
     id, 
     jobId, 
@@ -307,18 +319,21 @@ export async function startTimeLog(
     startTime,
     endTime: null, 
     durationMinutes: null, 
-    machineId, 
-    notes,
-    partNumber, // Snapshot
-    customer,   // Snapshot
     status: 'in_progress',
     createdAt: startTime,
     updatedAt: startTime
   };
 
+  // Add optional fields only if they exist
+  if (machineId) log.machineId = machineId;
+  if (notes) log.notes = notes;
+  if (partNumber) log.partNumber = partNumber;
+  if (customer) log.customer = customer;
+
   if (dbInstance) {
     try {
-        await setDoc(doc(dbInstance, COL.logs, id), log, { merge: true });
+        // Sanitize ensures no undefined values are sent to Firestore
+        await setDoc(doc(dbInstance, COL.logs, id), sanitize(log), { merge: true });
         await updateDoc(doc(dbInstance, COL.jobs, jobId), { status: "in-progress" } as any).catch(() => {});
         firebaseStatus = { connected: true };
     } catch (e) {
@@ -362,7 +377,8 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         if (sessionQty !== undefined) updates.sessionQty = sessionQty;
         if (notes !== undefined) updates.notes = notes;
 
-        await updateDoc(ref, updates);
+        // Use sanitize here as well to be safe
+        await updateDoc(ref, sanitize(updates));
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -406,7 +422,7 @@ export async function updateTimeLog(log: TimeLog) {
 
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.logs, log.id), log, { merge: true });
+        await setDoc(doc(dbInstance, COL.logs, log.id), sanitize(log), { merge: true });
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -462,7 +478,7 @@ export function subscribeUsers(cb: (users: User[]) => void) {
 export async function saveUser(user: User) {
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.users, user.id), user, { merge: true });
+        await setDoc(doc(dbInstance, COL.users, user.id), sanitize(user), { merge: true });
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -541,7 +557,7 @@ export async function saveSettings(settings: SystemSettings) {
 
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.settings, "system"), settings, { merge: true });
+        await setDoc(doc(dbInstance, COL.settings, "system"), sanitize(settings), { merge: true });
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
