@@ -1,3 +1,4 @@
+
 import {
   collection,
   deleteDoc,
@@ -284,12 +285,12 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
   return subscribeLogs((all) => cb(all.filter((l) => !l.endTime)));
 }
 
-export async function startTimeLog(jobId: string, userId: string, userName: string, operation: string) {
+export async function startTimeLog(jobId: string, userId: string, userName: string, operation: string, machineId?: string, notes?: string) {
   const id = Date.now().toString();
   const startTime = Date.now();
   const log: TimeLog = {
     id, jobId, userId, userName, operation, startTime,
-    endTime: null, durationMinutes: null
+    endTime: null, durationMinutes: null, machineId, notes
   };
 
   if (dbInstance) {
@@ -315,7 +316,7 @@ export async function startTimeLog(jobId: string, userId: string, userName: stri
   }
 }
 
-export async function stopTimeLog(logId: string) {
+export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string) {
   const endTime = Date.now();
 
   if (dbInstance) {
@@ -327,7 +328,11 @@ export async function stopTimeLog(logId: string) {
         const existing = snap.data() as TimeLog;
         const mins = Math.max(0, Math.round((endTime - existing.startTime) / 60000));
 
-        await updateDoc(ref, { endTime, durationMinutes: mins } as any);
+        const updates: any = { endTime, durationMinutes: mins };
+        if (sessionQty !== undefined) updates.sessionQty = sessionQty;
+        if (notes !== undefined) updates.notes = notes;
+
+        await updateDoc(ref, updates);
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -340,7 +345,13 @@ export async function stopTimeLog(logId: string) {
   if (idx >= 0) {
     const l = logs[idx];
     const mins = Math.max(0, Math.round((endTime - l.startTime) / 60000));
-    logs[idx] = { ...l, endTime, durationMinutes: mins } as TimeLog;
+    logs[idx] = { 
+        ...l, 
+        endTime, 
+        durationMinutes: mins,
+        ...(sessionQty !== undefined ? { sessionQty } : {}),
+        ...(notes !== undefined ? { notes } : {})
+    } as TimeLog;
     writeLS(LS.logs, logs);
   }
 }
