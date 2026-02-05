@@ -18,8 +18,8 @@ export interface Job {
   jobIdsDisplay: string;
   poNumber: string;
   partNumber: string;
-  customer?: string; // New
-  priority?: JobPriority; // New
+  customer?: string;
+  priority?: JobPriority;
   quantity: number;
   dateReceived: string;
   dueDate: string;
@@ -27,7 +27,7 @@ export interface Job {
   status: JobStatus;
   createdAt: number;
   completedAt?: number;
-  expectedHours?: number; // Alert threshold
+  expectedHours?: number;
 }
 
 export interface TimeLog {
@@ -39,17 +39,27 @@ export interface TimeLog {
   startTime: number;
   endTime?: number | null;
   durationMinutes?: number | null;
-  isAutoClosed?: boolean; // Flag if system auto-closed it
+  // New fields for historical accuracy and reporting
+  partNumber?: string;
+  customer?: string;
+  status?: 'in_progress' | 'completed';
+  createdAt?: number;
+  updatedAt?: number;
+  durationSeconds?: number;
+  // Existing fields
+  isAutoClosed?: boolean;
   notes?: string;
+  machineId?: string;
+  sessionQty?: number;
 }
 
 export interface SystemSettings {
-  lunchStart: string; // "12:00"
-  lunchEnd: string;   // "12:30"
-  lunchDeductionMinutes: number; // 30
-  autoClockOutTime: string; // "17:00"
+  lunchStart: string;
+  lunchEnd: string;
+  lunchDeductionMinutes: number;
+  autoClockOutTime: string;
   autoClockOutEnabled: boolean;
-  customOperations: string[]; // e.g. ["Cutting", "Deburring"]
+  customOperations: string[];
 }
 
 export interface ToastMessage {

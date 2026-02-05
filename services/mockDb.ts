@@ -1,3 +1,4 @@
+
 import {
   collection,
   deleteDoc,
@@ -284,12 +285,35 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
   return subscribeLogs((all) => cb(all.filter((l) => !l.endTime)));
 }
 
-export async function startTimeLog(jobId: string, userId: string, userName: string, operation: string) {
+// UPDATED: Now accepts partNumber and customer for snapshotting
+export async function startTimeLog(
+    jobId: string, 
+    userId: string, 
+    userName: string, 
+    operation: string, 
+    partNumber?: string,
+    customer?: string,
+    machineId?: string, 
+    notes?: string
+) {
   const id = Date.now().toString();
   const startTime = Date.now();
   const log: TimeLog = {
-    id, jobId, userId, userName, operation, startTime,
-    endTime: null, durationMinutes: null
+    id, 
+    jobId, 
+    userId, 
+    userName, 
+    operation, 
+    startTime,
+    endTime: null, 
+    durationMinutes: null, 
+    machineId, 
+    notes,
+    partNumber, // Snapshot
+    customer,   // Snapshot
+    status: 'in_progress',
+    createdAt: startTime,
+    updatedAt: startTime
   };
 
   if (dbInstance) {
@@ -315,7 +339,7 @@ export async function startTimeLog(jobId: string, userId: string, userName: stri
   }
 }
 
-export async function stopTimeLog(logId: string) {
+export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string) {
   const endTime = Date.now();
 
   if (dbInstance) {
@@ -325,9 +349,20 @@ export async function stopTimeLog(logId: string) {
         if (!snap.exists()) throw new Error("Log not found.");
 
         const existing = snap.data() as TimeLog;
-        const mins = Math.max(0, Math.round((endTime - existing.startTime) / 60000));
+        const durationSeconds = Math.max(0, Math.floor((endTime - existing.startTime) / 1000));
+        const durationMinutes = Math.floor(durationSeconds / 60);
 
-        await updateDoc(ref, { endTime, durationMinutes: mins } as any);
+        const updates: any = { 
+            endTime, 
+            durationMinutes,
+            durationSeconds,
+            status: 'completed',
+            updatedAt: endTime
+        };
+        if (sessionQty !== undefined) updates.sessionQty = sessionQty;
+        if (notes !== undefined) updates.notes = notes;
+
+        await updateDoc(ref, updates);
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -339,8 +374,18 @@ export async function stopTimeLog(logId: string) {
   const idx = logs.findIndex((l) => l.id === logId);
   if (idx >= 0) {
     const l = logs[idx];
-    const mins = Math.max(0, Math.round((endTime - l.startTime) / 60000));
-    logs[idx] = { ...l, endTime, durationMinutes: mins } as TimeLog;
+    const durationSeconds = Math.max(0, Math.floor((endTime - l.startTime) / 1000));
+    const durationMinutes = Math.floor(durationSeconds / 60);
+    logs[idx] = { 
+        ...l, 
+        endTime, 
+        durationMinutes,
+        durationSeconds,
+        status: 'completed',
+        updatedAt: endTime,
+        ...(sessionQty !== undefined ? { sessionQty } : {}),
+        ...(notes !== undefined ? { notes } : {})
+    } as TimeLog;
     writeLS(LS.logs, logs);
   }
 }
@@ -348,11 +393,16 @@ export async function stopTimeLog(logId: string) {
 export async function updateTimeLog(log: TimeLog) {
   // Recalculate duration if end time exists
   if (log.endTime) {
-     log.durationMinutes = Math.max(0, Math.round((log.endTime - log.startTime) / 60000));
+     log.durationSeconds = Math.max(0, Math.floor((log.endTime - log.startTime) / 1000));
+     log.durationMinutes = Math.floor(log.durationSeconds / 60);
+     log.status = 'completed';
   } else {
      log.endTime = null;
      log.durationMinutes = null;
+     log.durationSeconds = null;
+     log.status = 'in_progress';
   }
+  log.updatedAt = Date.now();
 
   if (dbInstance) {
       try {
