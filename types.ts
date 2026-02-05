@@ -41,8 +41,6 @@ export interface TimeLog {
   durationMinutes?: number | null;
   isAutoClosed?: boolean; // Flag if system auto-closed it
   notes?: string;
-  machineId?: string; // New
-  sessionQty?: number; // New: Qty completed in this session
 }
 
 export interface SystemSettings {
