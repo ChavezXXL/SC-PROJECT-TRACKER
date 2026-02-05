@@ -11,12 +11,15 @@ export interface User {
 }
 
 export type JobStatus = 'pending' | 'in-progress' | 'completed' | 'hold';
+export type JobPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 export interface Job {
   id: string;
   jobIdsDisplay: string;
   poNumber: string;
   partNumber: string;
+  customer?: string; // New
+  priority?: JobPriority; // New
   quantity: number;
   dateReceived: string;
   dueDate: string;
@@ -62,4 +65,5 @@ export interface SmartPasteData {
   partNumber: string | null;
   quantity: number | null;
   dueDate: string | null;
+  customer?: string | null;
 }
