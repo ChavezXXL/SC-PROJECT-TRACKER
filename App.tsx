@@ -274,8 +274,19 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   }, [user.id]);
 
   const handleStartJob = async (jobId: string, operation: string) => {
+    const job = jobs.find(j => j.id === jobId);
     try {
-        await DB.startTimeLog(jobId, user.id, user.name, operation);
+        await DB.startTimeLog(
+            jobId, 
+            user.id, 
+            user.name, 
+            operation,
+            job?.partNumber,
+            job?.customer,
+            undefined,
+            undefined,
+            job?.jobIdsDisplay
+        );
         addToast('success', 'Timer Started');
     } catch (e) {
         addToast('error', 'Failed to start timer');
@@ -657,7 +668,17 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const handleAdminStartJob = async (operation: string) => {
       if (!startJobModal) return;
       try {
-          await DB.startTimeLog(startJobModal.id, user.id, user.name, operation);
+          await DB.startTimeLog(
+            startJobModal.id, 
+            user.id, 
+            user.name, 
+            operation,
+            startJobModal.partNumber,
+            startJobModal.customer,
+            undefined,
+            undefined,
+            startJobModal.jobIdsDisplay
+          );
           addToast('success', 'Operation Started');
           setStartJobModal(null);
       } catch (e: any) {
@@ -848,6 +869,20 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    const [showEditModal, setShowEditModal] = useState(false);
    const [ops, setOps] = useState<string[]>([]);
 
+   // Filter States
+   const [activeTab, setActiveTab] = useState<"all" | "completed" | "in-progress">("all");
+   const [filterSearch, setFilterSearch] = useState("");
+   
+   // Default to "Last 30 Days" approx
+   const [dateRange, setDateRange] = useState<{start: string, end: string}>(() => {
+      const now = new Date();
+      const past = new Date();
+      past.setDate(now.getDate() - 30);
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      return { start: fmt(past), end: fmt(now) };
+   });
+
    useEffect(() => {
      const unsub1 = DB.subscribeLogs(setLogs);
      const unsub3 = DB.subscribeUsers(setUsers);
@@ -864,15 +899,15 @@ const LogsView = ({ addToast }: { addToast: any }) => {
        if (!editingLog) return;
        try {
            if (editingLog.endTime && editingLog.endTime < editingLog.startTime) {
-               addToast('error', 'End time cannot be before Start time');
+               addToast("error", "End time cannot be before Start time");
                return;
            }
            await DB.updateTimeLog(editingLog);
-           addToast('success', 'Log updated successfully');
+           addToast("success", "Log updated successfully");
            setShowEditModal(false);
            setEditingLog(null);
        } catch(e) {
-           addToast('error', 'Failed to update log');
+           addToast("error", "Failed to update log");
        }
    };
 
@@ -881,43 +916,290 @@ const LogsView = ({ addToast }: { addToast: any }) => {
        if (!window.confirm("Are you sure you want to permanently delete this log record?")) return;
        try {
            await DB.deleteTimeLog(editingLog.id);
-           addToast('success', 'Log deleted');
+           addToast("success", "Log deleted");
            setShowEditModal(false);
            setEditingLog(null);
        } catch(e) {
-           addToast('error', 'Failed to delete log');
+           addToast("error", "Failed to delete log");
        }
    };
 
+   // --- HELPERS ---
+   const getStatus = (l: TimeLog) => {
+      if ((l as any).status === 'completed') return 'completed';
+      if ((l as any).status === 'in_progress' || (l as any).status === 'in-progress') return 'in-progress';
+      return l.endTime ? 'completed' : 'in-progress';
+   };
+
+   const getCompletedTs = (l: TimeLog) => {
+      const ca = (l as any).completedAt;
+      if (typeof ca === 'number') return ca;
+      return l.endTime ?? null;
+   };
+
+   const inRange = (ts: number | null, mode: 'completed' | 'start') => {
+      // Keep logs without timestamps visible in 'all' or 'in-progress' if mode is not completed
+      if (!ts) return mode !== 'completed'; 
+      
+      const [sy, sm, sd] = dateRange.start.split('-').map(Number);
+      const [ey, em, ed] = dateRange.end.split('-').map(Number);
+      
+      const s = new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime();
+      const e = new Date(ey, em - 1, ed, 23, 59, 59, 999).getTime();
+      
+      return ts >= s && ts <= e;
+   };
+
+   // --- FILTERING & GROUPING ---
+   const groupedLogs = useMemo(() => {
+       const term = filterSearch.trim().toLowerCase();
+
+       // 1. Filter
+       const filtered = logs.filter(l => {
+           const status = getStatus(l);
+           if (activeTab === 'completed' && status !== 'completed') return false;
+           if (activeTab === 'in-progress' && status !== 'in-progress') return false;
+
+           // Determine which date to filter by
+           const dateMode = activeTab === 'completed' ? 'completed' : 'start';
+           const tsToCheck = dateMode === 'completed' ? getCompletedTs(l) : l.startTime;
+           
+           if (!inRange(tsToCheck, dateMode)) return false;
+
+           if (!term) return true;
+           const hay = [
+               l.jobId,
+               l.userName,
+               l.operation,
+               l.partNumber,
+               l.customer,
+               l.jobIdsDisplay
+           ].filter(Boolean).join(' ').toLowerCase();
+           return hay.includes(term);
+       });
+
+       // 2. Group
+       const groups: Record<string, {
+           id: string;
+           displayLabel: string;
+           partNumber: string;
+           customer: string;
+           logs: TimeLog[];
+           totalDurationSeconds: number;
+           users: Set<string>;
+           lastActivity: number;
+       }> = {};
+
+       filtered.forEach(log => {
+           const key = log.jobIdsDisplay || log.jobId || log.partNumber || "Unknown Job";
+           if (!groups[key]) {
+               groups[key] = {
+                   id: key,
+                   displayLabel: log.jobIdsDisplay || (log.jobId ? `Job ${log.jobId}` : "Unknown"),
+                   partNumber: log.partNumber || "N/A",
+                   customer: log.customer || "",
+                   logs: [],
+                   totalDurationSeconds: 0,
+                   users: new Set(),
+                   lastActivity: 0
+               };
+           }
+           const g = groups[key];
+           g.logs.push(log);
+           g.users.add(log.userName);
+           
+           const end = log.endTime || Date.now();
+           const duration = Math.max(0, (end - log.startTime) / 1000);
+           if (log.endTime) g.totalDurationSeconds += duration; // Only sum finished or currently running? Usually finished. User asked for durationSeconds.
+           // Actually, let's sum durationSeconds if present, else calc
+           const storedDur = log.durationSeconds || (log.durationMinutes ? log.durationMinutes * 60 : 0);
+           g.totalDurationSeconds += storedDur;
+
+           const act = log.endTime || log.startTime;
+           if (act > g.lastActivity) g.lastActivity = act;
+       });
+
+       // 3. Sort Groups
+       return Object.values(groups).sort((a,b) => b.lastActivity - a.lastActivity).map(g => {
+           g.logs.sort((a,b) => (b.startTime || 0) - (a.startTime || 0));
+           return g;
+       });
+
+   }, [logs, activeTab, dateRange, filterSearch]);
+
+   const totalEntries = groupedLogs.reduce((acc, g) => acc + g.logs.length, 0);
+   const totalHours = groupedLogs.reduce((acc, g) => acc + g.totalDurationSeconds, 0) / 3600;
+
    return (
-      <div className="space-y-6">
-         <div className="flex justify-between items-center">
-             <h2 className="text-2xl font-bold flex items-center gap-2"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
-             <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
+      <div className="space-y-6 logs-view-print">
+         <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 no-print">
+             <div>
+                 <h2 className="text-2xl font-bold flex items-center gap-2 text-white"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
+                 <p className="text-zinc-500 text-sm mt-1">Review time tracking history and performance.</p>
+             </div>
+             <div className="flex gap-2">
+                <button onClick={() => window.print()} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors"><Printer className="w-4 h-4"/> Print Report</button>
+                <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
+             </div>
          </div>
 
-         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white/5 text-zinc-500"><tr><th className="p-4">Date</th><th className="p-4">Start</th><th className="p-4">End</th><th className="p-4">User</th><th className="p-4">Op</th><th className="p-4 text-right">Actions</th></tr></thead>
-                <tbody className="divide-y divide-white/5">
-                   {logs.map(l => (
-                      <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                         <td className="p-4 text-zinc-400">{new Date(l.startTime).toLocaleDateString()}</td>
-                         <td className="p-4 font-mono text-zinc-300">{new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                         <td className="p-4 font-mono text-zinc-300">{l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-500 font-bold text-xs">ACTIVE</span>}</td>
-                         <td className="p-4 text-white font-medium">{l.userName}</td>
-                         <td className="p-4 text-blue-400">{l.operation}</td>
-                         <td className="p-4 text-right">
-                             <button onClick={() => handleEditLog(l)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white"><Edit2 className="w-4 h-4"/></button>
-                         </td>
-                      </tr>
-                   ))}
-                </tbody>
-             </table>
+         {/* Summary Cards */}
+         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 no-print">
+            <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl">
+               <p className="text-zinc-500 text-xs uppercase font-bold">Total Entries</p>
+               <p className="text-2xl font-bold text-white">{totalEntries}</p>
+            </div>
+            <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl">
+               <p className="text-zinc-500 text-xs uppercase font-bold">Total Hours</p>
+               <p className="text-2xl font-bold text-blue-400">{totalHours.toFixed(2)} hrs</p>
+            </div>
+         </div>
+
+         {/* Filter Bar */}
+         <div className="bg-zinc-900 border border-white/10 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-end md:items-center no-print shadow-sm">
+             <div className="flex-1 w-full md:w-auto grid grid-cols-2 md:grid-cols-4 gap-2">
+                 <div className="flex flex-col gap-1">
+                     <label className="text-[10px] uppercase font-bold text-zinc-500">Start Date</label>
+                     <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white" />
+                 </div>
+                 <div className="flex flex-col gap-1">
+                     <label className="text-[10px] uppercase font-bold text-zinc-500">End Date</label>
+                     <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white" />
+                 </div>
+                 
+                 {/* Tabs as Buttons */}
+                 <div className="col-span-2 flex items-end">
+                      <div className="bg-black/30 p-1 rounded-lg flex w-full">
+                         {(['all', 'in-progress', 'completed'] as const).map(tab => (
+                             <button
+                                 key={tab}
+                                 onClick={() => setActiveTab(tab)}
+                                 className={`flex-1 py-1.5 text-xs font-bold rounded-md capitalize transition-all ${activeTab === tab ? 'bg-zinc-700 text-white shadow' : 'text-zinc-500 hover:text-zinc-300'}`}
+                             >
+                                 {tab.replace('-', ' ')}
+                             </button>
+                         ))}
+                      </div>
+                 </div>
+             </div>
+             <div className="w-full md:w-64 relative">
+                 <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5"/>
+                 <input placeholder="Filter by Job, User, Part..." value={filterSearch} onChange={e => setFilterSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-black/30 border border-white/10 rounded-xl text-sm text-white focus:ring-1 focus:ring-blue-500 outline-none" />
+             </div>
+         </div>
+
+         {/* Grouped Logs List */}
+         <div className="space-y-6">
+             {groupedLogs.length === 0 && (
+                 <div className="p-12 text-center text-zinc-500 bg-zinc-900/50 rounded-2xl border border-white/5">
+                     <div className="inline-block p-4 rounded-full bg-zinc-800 mb-4"><Filter className="w-8 h-8 text-zinc-600" /></div>
+                     <p>No logs found matching your filters.</p>
+                 </div>
+             )}
+             
+             {groupedLogs.map(group => (
+                 <div key={group.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm transition-all hover:border-white/10">
+                     {/* Group Header */}
+                     <div className="p-4 bg-zinc-900/80 border-b border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                         <div className="flex items-start gap-4">
+                             <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                                 <Briefcase className="w-5 h-5 text-blue-400" />
+                             </div>
+                             <div>
+                                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                     {group.displayLabel} 
+                                 </h3>
+                                 <p className="text-xs text-zinc-400">
+                                     Part: <span className="text-zinc-300 font-mono">{group.partNumber}</span>
+                                     {group.customer && <span className="mx-2">•</span>}
+                                     {group.customer}
+                                 </p>
+                             </div>
+                         </div>
+                         <div className="flex items-center gap-4 text-xs">
+                             <div className="text-right">
+                                 <p className="text-zinc-500 uppercase font-bold">Duration</p>
+                                 <p className="text-blue-400 font-mono font-bold">{(group.totalDurationSeconds / 3600).toFixed(2)} hrs</p>
+                             </div>
+                             <div className="w-px h-8 bg-white/10"></div>
+                             <div className="text-right">
+                                 <p className="text-zinc-500 uppercase font-bold">Team</p>
+                                 <div className="flex -space-x-2 justify-end mt-1">
+                                     {Array.from(group.users).slice(0, 3).map((u, i) => (
+                                         <div key={i} className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-900 flex items-center justify-center text-[10px] text-zinc-300 font-bold" title={u}>
+                                             {u.charAt(0)}
+                                         </div>
+                                     ))}
+                                     {group.users.size > 3 && <div className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-900 flex items-center justify-center text-[10px] text-zinc-500">+{group.users.size - 3}</div>}
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+
+                     {/* Logs Table */}
+                     <div className="overflow-x-auto">
+                         <table className="w-full text-sm text-left">
+                             <thead className="bg-white/5 text-zinc-500 text-xs uppercase">
+                                 <tr>
+                                     <th className="p-3 pl-4">Operation</th>
+                                     <th className="p-3">User</th>
+                                     <th className="p-3">Time Range</th>
+                                     <th className="p-3">Duration</th>
+                                     <th className="p-3">Status</th>
+                                     <th className="p-3">Notes</th>
+                                     <th className="p-3 text-right pr-4 no-print">Edit</th>
+                                 </tr>
+                             </thead>
+                             <tbody className="divide-y divide-white/5">
+                                 {group.logs.map(l => {
+                                     const status = getStatus(l);
+                                     const isRunning = status === 'in-progress';
+                                     return (
+                                         <tr key={l.id} className="hover:bg-white/5 transition-colors">
+                                             <td className="p-3 pl-4">
+                                                 <span className="font-medium text-zinc-300 bg-zinc-800 px-2 py-1 rounded text-xs border border-white/5">{l.operation}</span>
+                                             </td>
+                                             <td className="p-3 text-zinc-300 text-xs font-bold">{l.userName}</td>
+                                             <td className="p-3">
+                                                 <div className="flex flex-col text-xs font-mono text-zinc-400">
+                                                     <span>{new Date(l.startTime).toLocaleDateString()}</span>
+                                                     <span className="text-zinc-500">
+                                                         {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} 
+                                                         {' -> '} 
+                                                         {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
+                                                     </span>
+                                                 </div>
+                                             </td>
+                                             <td className="p-3 font-mono text-sm text-zinc-300">
+                                                 {isRunning ? <span className="text-emerald-500 animate-pulse">Running</span> : formatDuration(l.durationMinutes)}
+                                             </td>
+                                             <td className="p-3">
+                                                 {isRunning ? (
+                                                     <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
+                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Active
+                                                     </div>
+                                                 ) : (
+                                                     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+                                                         <CheckCircle className="w-3 h-3" /> Done
+                                                     </div>
+                                                 )}
+                                             </td>
+                                             <td className="p-3 text-xs text-zinc-500 italic max-w-[200px] truncate">{l.notes || '-'}</td>
+                                             <td className="p-3 pr-4 text-right no-print">
+                                                 <button onClick={() => handleEditLog(l)} className="p-1.5 hover:bg-white/10 rounded-lg text-zinc-500 hover:text-blue-400 transition-colors"><Edit2 className="w-3 h-3"/></button>
+                                             </td>
+                                         </tr>
+                                     );
+                                 })}
+                             </tbody>
+                         </table>
+                     </div>
+                 </div>
+             ))}
          </div>
 
          {showEditModal && editingLog && (
-             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in no-print">
                  <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
                      <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
                          <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
@@ -971,6 +1253,16 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                                  />
                                  <p className="text-[10px] text-zinc-500 mt-1">Clear to mark as active.</p>
                              </div>
+                         </div>
+                         <div>
+                             <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Notes</label>
+                             <textarea 
+                                 className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                 rows={3}
+                                 value={editingLog.notes || ""}
+                                 onChange={e => setEditingLog({...editingLog, notes: e.target.value})}
+                                 placeholder="Optional notes..."
+                             />
                          </div>
                      </div>
                      <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center">
