@@ -42,6 +42,7 @@ export interface TimeLog {
   // New fields for historical accuracy and reporting
   partNumber?: string;
   customer?: string;
+  jobIdsDisplay?: string; // Human readable Job ID snapshot
   status?: 'in_progress' | 'completed';
   createdAt?: number;
   updatedAt?: number;

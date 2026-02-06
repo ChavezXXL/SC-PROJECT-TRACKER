@@ -299,8 +299,19 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   }, [user.id]);
 
   const handleStartJob = async (jobId: string, operation: string) => {
+    const job = jobs.find(j => j.id === jobId);
     try {
-        await DB.startTimeLog(jobId, user.id, user.name, operation);
+        await DB.startTimeLog(
+            jobId, 
+            user.id, 
+            user.name, 
+            operation,
+            job?.partNumber,
+            job?.customer,
+            undefined,
+            undefined,
+            job?.jobIdsDisplay
+        );
         addToast('success', 'Timer Started');
     } catch (e) {
         addToast('error', 'Failed to start timer');
@@ -660,12 +671,40 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
 
 // --- ADMIN: JOBS (REVAMPED) ---
 const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
-    const [jobs, setJobs] = useState<Job[]>([]);
-    const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
-    const [search, setSearch] = useState('');
-    const [editingJob, setEditingJob] = useState<Partial<Job>>({});
-    const [showModal, setShowModal] = useState(false);
-useEffect(() => DB.subscribeJobs(setJobs), []);
+   const [jobs, setJobs] = useState<Job[]>([]);
+   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
+   const [search, setSearch] = useState('');
+   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
+   const [showModal, setShowModal] = useState(false);
+   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
+   const [ops, setOps] = useState<string[]>([]);
+
+useEffect(() => {
+    const u1 = DB.subscribeJobs(setJobs);
+    setOps(DB.getSettings().customOperations);
+    return () => u1();
+}, []);
+
+const handleAdminStartJob = async (operation: string) => {
+    if (!startJobModal) return;
+    try {
+        await DB.startTimeLog(
+            startJobModal.id, 
+            user.id, 
+            user.name, 
+            operation,
+            startJobModal.partNumber, // Snapshot
+            startJobModal.customer,   // Snapshot
+            undefined,
+            undefined,
+            startJobModal.jobIdsDisplay // Snapshot
+        );
+        addToast('success', 'Operation Started');
+        setStartJobModal(null);
+    } catch (e: any) {
+        addToast('error', 'Failed to start: ' + e.message);
+    }
+};
 
 const filteredJobs = useMemo(() => {
     return jobs.filter(j => {
@@ -783,6 +822,7 @@ return (
                             <td className="p-4"><StatusBadge status={j.status} /></td>
                             <td className="p-4 font-mono text-zinc-400">{j.dueDate || '—'}</td>
                             <td className="p-4 text-right flex justify-end gap-2">
+                                <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
                                 {activeTab === 'active' && (
                                     <button onClick={() => confirm({ title: "Complete Job", message: "Mark as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-colors" title="Complete Job"><CheckCircle className="w-4 h-4"/></button>
                                 )}
@@ -948,6 +988,30 @@ return (
                 </div>
             </div>
         )}
+
+        {startJobModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
+                 <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
+                 <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong>{startJobModal.jobIdsDisplay}</strong> ({startJobModal.partNumber})</p>
+                 <div className="grid grid-cols-2 gap-2">
+                   {ops.map(op => (
+                     <button
+                       key={op}
+                       onClick={() => handleAdminStartJob(op)}
+                       className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors"
+                     >
+                       {op}
+                     </button>
+                   ))}
+                   {ops.length === 0 && <p className="col-span-2 text-center text-sm text-zinc-500">No operations defined. Check Settings.</p>}
+                 </div>
+                 <div className="mt-4 flex justify-end">
+                   <button onClick={() => setStartJobModal(null)} className="text-zinc-500 hover:text-white text-sm">Cancel</button>
+                 </div>
+              </div>
+            </div>
+        )}
     </div>
 );
 };
@@ -1039,27 +1103,31 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    // -------------------------
    const groupedLogs = useMemo(() => {
        const startTs = new Date(dateRange.start).setHours(0,0,0,0);
-       const endTs = new Date(dateRange.end).setHours(23,59,59,999);
+       const endTs = new Date(dateRange.end).setHours(23,59,59,999); // Inclusive End of Day
        const term = filterSearch.toLowerCase();
 
        // 1. Filter raw logs
        const filtered = logs.filter(l => {
-           // Date Check
-           const timeToCheck = l.endTime || l.startTime;
-           if (timeToCheck < startTs || timeToCheck > endTs) return false;
+           const isCompleted = !!l.endTime;
+
+           // Date Check - Smart switching based on status
+           // If completed tab is active, filter by endTime (completion date).
+           // Otherwise (All/In Progress), filter by startTime (creation date).
+           const dateToCheck = (activeTab === 'completed' && isCompleted) ? l.endTime! : l.startTime;
+           
+           if (dateToCheck < startTs || dateToCheck > endTs) return false;
 
            // Search Check
            if (term && !JSON.stringify(l).toLowerCase().includes(term)) return false;
 
-           // Tab Check - FIXED: TimeLogs don't have status, only endTime matters
-           const isCompleted = !!l.endTime;
+           // Tab Check
            if (activeTab === 'completed' && !isCompleted) return false;
            if (activeTab === 'in-progress' && isCompleted) return false;
 
            return true;
        });
 
-       // 2. Group by JobId
+       // 2. Group by Job
        const groups: Record<string, {
            jobId: string;
            partNumber: string;
@@ -1073,10 +1141,13 @@ const LogsView = ({ addToast }: { addToast: any }) => {
        }> = {};
 
        filtered.forEach(log => {
-           const key = log.jobId || "Unknown Job";
+           // GROUP BY SNAPSHOTTED DISPLAY ID, FALLBACK TO INTERNAL ID
+           // This ensures the "Real Job ID" is used for grouping headers
+           const key = log.jobIdsDisplay || log.jobId || "Unknown Job";
+           
            if (!groups[key]) {
                groups[key] = {
-                   jobId: key,
+                   jobId: key, // This is now the display ID
                    partNumber: log.partNumber || "N/A",
                    customer: log.customer || "",
                    logs: [],

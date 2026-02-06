@@ -300,7 +300,7 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
   return subscribeLogs((all) => cb(all.filter((l) => !l.endTime)));
 }
 
-// UPDATED: Now accepts partNumber and customer for snapshotting
+// UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
 export async function startTimeLog(
     jobId: string, 
     userId: string, 
@@ -309,7 +309,8 @@ export async function startTimeLog(
     partNumber?: string,
     customer?: string,
     machineId?: string, 
-    notes?: string
+    notes?: string,
+    jobIdsDisplay?: string
 ) {
   const id = Date.now().toString();
   const startTime = Date.now();
@@ -336,6 +337,7 @@ export async function startTimeLog(
   if (customer !== undefined) log.customer = customer;
   if (machineId !== undefined) log.machineId = machineId;
   if (notes !== undefined) log.notes = notes;
+  if (jobIdsDisplay !== undefined) log.jobIdsDisplay = jobIdsDisplay;
 
   if (dbInstance) {
     try {
