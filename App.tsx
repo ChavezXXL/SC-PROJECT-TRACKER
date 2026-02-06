@@ -34,6 +34,14 @@ const toDateTimeLocal = (ts: number | undefined | null) => {
   return `${year}-${month}-${day}T${hour}:${min}`;
 };
 
+const getDates = () => {
+  const now = new Date();
+  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()).getTime();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const startOfYear = new Date(now.getFullYear(), 0, 1).getTime();
+  return { startOfWeek, startOfMonth, startOfYear };
+};
+
 // --- PRINT STYLES ---
 const PrintStyles = () => (
   <style>{`
@@ -65,6 +73,23 @@ const PrintStyles = () => (
     }
   `}</style>
 );
+
+// --- COMPONENT: STATUS BADGE ---
+const StatusBadge = ({ status }: { status: string }) => {
+  const styles: Record<string, string> = {
+    'pending': 'bg-zinc-800 text-zinc-500 border-white/5',
+    'in-progress': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    'completed': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+    'hold': 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  };
+
+  return (
+    <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide border flex w-fit items-center gap-2 ${styles[status] || styles['pending']}`}>
+      {status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
+      {status}
+    </span>
+  );
+};
 
 // --- COMPONENT: LIVE TIMER ---
 const LiveTimer = ({ startTime }: { startTime: number }) => {
@@ -647,218 +672,349 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
 // --- ADMIN: JOBS (REVAMPED) ---
 const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
    const [jobs, setJobs] = useState<Job[]>([]);
-   const [showModal, setShowModal] = useState(false);
-   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
-   const [aiLoading, setAiLoading] = useState(false);
-   const [isSaving, setIsSaving] = useState(false);
+   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
    const [search, setSearch] = useState('');
+   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
+   const [showModal, setShowModal] = useState(false);
    const [startJobModal, setStartJobModal] = useState<Job | null>(null);
    const [ops, setOps] = useState<string[]>([]);
 
-   useEffect(() => {
-       const u1 = DB.subscribeJobs(setJobs);
-       setOps(DB.getSettings().customOperations);
-       return () => { u1(); };
-   }, []);
+useEffect(() => {
+    const u1 = DB.subscribeJobs(setJobs);
+    setOps(DB.getSettings().customOperations);
+    return () => u1();
+}, []);
 
-   const handleDelete = (id: string) => confirm({ title: "Delete", message: "Delete job?", onConfirm: () => DB.deleteJob(id) });
-   const handleComplete = (id: string) => confirm({ title: "Complete Job", message: "Mark as done?", onConfirm: () => DB.completeJob(id) });
-   const handleReopen = (id: string) => confirm({ title: "Reopen Job", message: "Move back to active?", onConfirm: () => DB.reopenJob(id) });
-
-   const handleAdminStartJob = async (operation: string) => {
-      if (!startJobModal) return;
-      try {
-          await DB.startTimeLog(
+const handleAdminStartJob = async (operation: string) => {
+    if (!startJobModal) return;
+    try {
+        await DB.startTimeLog(
             startJobModal.id, 
             user.id, 
             user.name, 
             operation,
-            startJobModal.partNumber,
-            startJobModal.customer,
+            startJobModal.partNumber, // Snapshot
+            startJobModal.customer,   // Snapshot
             undefined,
             undefined,
-            startJobModal.jobIdsDisplay
-          );
-          addToast('success', 'Operation Started');
-          setStartJobModal(null);
-      } catch (e: any) {
-          addToast('error', 'Failed to start: ' + e.message);
-      }
-   };
-
-   const handleSave = async () => {
-    if (!editingJob.jobIdsDisplay || !editingJob.partNumber) return addToast('error', 'Missing fields');
-    setIsSaving(true);
-    const newJob: Job = {
-      id: editingJob.id || Date.now().toString(),
-      jobIdsDisplay: editingJob.jobIdsDisplay,
-      poNumber: editingJob.poNumber || '',
-      partNumber: editingJob.partNumber,
-      quantity: editingJob.quantity || 0,
-      dueDate: editingJob.dueDate || '',
-      info: editingJob.info || '',
-      status: editingJob.status || 'pending',
-      dateReceived: editingJob.dateReceived || new Date().toISOString().split('T')[0],
-      createdAt: editingJob.createdAt || Date.now()
-    };
-    try {
-        await DB.saveJob(newJob);
-        addToast('success', 'Job Saved');
-        setShowModal(false);
-        setEditingJob({});
-    } catch(e) {
-        addToast('error', 'Failed to save');
+            startJobModal.jobIdsDisplay // Snapshot
+        );
+        addToast('success', 'Operation Started');
+        setStartJobModal(null);
+    } catch (e: any) {
+        addToast('error', 'Failed to start: ' + e.message);
     }
-    setIsSaving(false);
-   };
+};
 
-   const handleAiParse = async (text: string) => {
-    setAiLoading(true);
-    try {
-      const data = await parseJobDetails(text);
-      setEditingJob(prev => ({ ...prev, ...data }));
-      addToast('success', 'Parsed');
-    } catch (e) { addToast('error', 'Parse Error'); } finally { setAiLoading(false); }
-   };
+const filteredJobs = useMemo(() => {
+    return jobs.filter(j => {
+        const isCompleted = j.status === 'completed';
+        if (activeTab === 'active' && isCompleted) return false;
+        if (activeTab === 'completed' && !isCompleted) return false;
+        if (search) {
+            const s = search.toLowerCase();
+            return j.poNumber.toLowerCase().includes(s) || 
+                   j.partNumber.toLowerCase().includes(s) || 
+                   j.jobIdsDisplay.toLowerCase().includes(s) ||
+                   (j.customer || '').toLowerCase().includes(s);
+        }
+        return true;
+    }).sort((a,b) => {
+        if (activeTab === 'completed') return (b.completedAt || 0) - (a.completedAt || 0);
+        return (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+    });
+}, [jobs, search, activeTab]);
 
-   const activeJobs = useMemo(() => {
-       const term = search.toLowerCase();
-       return jobs.filter(j => {
-           if (j.status === 'completed') return false;
-           return JSON.stringify(j).toLowerCase().includes(term);
-       }).sort((a,b) => {
-           if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
-           if (a.status !== 'in-progress' && b.status === 'in-progress') return 1;
-           return (a.dueDate || '').localeCompare(b.dueDate || '');
-       });
-   }, [jobs, search]);
+const stats = useMemo(() => {
+    const { startOfWeek, startOfMonth, startOfYear } = getDates();
+    const completed = jobs.filter(j => j.status === 'completed' && j.completedAt);
+    return {
+        week: completed.filter(j => j.completedAt! >= startOfWeek).length,
+        month: completed.filter(j => j.completedAt! >= startOfMonth).length,
+        year: completed.filter(j => j.completedAt! >= startOfYear).length,
+    };
+}, [jobs]);
 
-   return (
-      <div className="space-y-6">
-         <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
-            <h2 className="text-2xl font-bold flex items-center gap-2"><Briefcase className="w-6 h-6 text-blue-500"/> Job Management</h2>
-            <div className="flex gap-2">
-                <div className="relative">
-                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search Jobs..." className="pl-9 pr-4 py-2 bg-zinc-900 border border-white/10 rounded-xl text-sm text-white w-64 focus:ring-2 focus:ring-blue-500 outline-none" />
+const handleSave = async () => {
+    if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
+    const job: Job = {
+        id: editingJob.id || Date.now().toString(),
+        jobIdsDisplay: editingJob.jobIdsDisplay || editingJob.poNumber || 'J-'+Date.now().toString().slice(-4),
+        poNumber: editingJob.poNumber,
+        partNumber: editingJob.partNumber,
+        quantity: editingJob.quantity || 0,
+        customer: editingJob.customer || '',
+        priority: editingJob.priority || 'normal',
+        dueDate: editingJob.dueDate || '',
+        info: editingJob.info || '',
+        status: editingJob.status || 'pending',
+        dateReceived: editingJob.dateReceived || new Date().toISOString().split('T')[0],
+        createdAt: editingJob.createdAt || Date.now()
+    };
+    try { await DB.saveJob(job); setShowModal(false); setEditingJob({}); addToast('success', 'Job Saved'); } 
+    catch(e) { addToast('error', 'Save Failed'); }
+};
+
+return (
+    <div className="space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Briefcase className="w-6 h-6 text-blue-500" /> Production Jobs</h2>
+                <p className="text-zinc-500 text-sm">Manage orders and prioritize by PO.</p>
+            </div>
+            <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"><Plus className="w-4 h-4" /> New Job Order</button>
+        </div>
+
+        <div className="flex flex-col gap-6">
+            <div className="flex gap-2 border-b border-white/5 pb-2">
+                <button onClick={() => setActiveTab('active')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>Active Production</button>
+                <button onClick={() => setActiveTab('completed')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'completed' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>Completed History</button>
+            </div>
+
+            {activeTab === 'completed' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in">
+                    <div className="bg-zinc-900/50 border border-emerald-500/20 p-4 rounded-2xl">
+                        <p className="text-xs font-bold text-emerald-500 uppercase tracking-wider mb-1">Completed This Week</p>
+                        <p className="text-3xl font-black text-white">{stats.week}</p>
+                    </div>
+                    <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
+                        <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Month</p>
+                        <p className="text-3xl font-black text-white">{stats.month}</p>
+                    </div>
+                    <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
+                        <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Year</p>
+                        <p className="text-3xl font-black text-white">{stats.year}</p>
+                    </div>
                 </div>
-                <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold text-white flex items-center gap-2 hover:bg-blue-500 shadow-lg shadow-blue-600/20"><Plus className="w-4 h-4"/> New Job</button>
+            )}
+
+            <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl flex flex-col md:flex-row gap-4 items-center">
+                <div className="relative flex-1 w-full">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search PO, Job ID, or Part..." className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
             </div>
-         </div>
-         
-         <div className="space-y-4">
-             <h3 className="text-sm font-bold uppercase text-blue-400 flex items-center gap-2 tracking-wider">
-                 <Activity className="w-4 h-4" /> Active Production
-             </h3>
-             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-white/5 text-zinc-500">
-                        <tr>
-                            <th className="p-4">PO</th>
-                            <th className="p-4">Job</th>
-                            <th className="p-4">Part</th>
-                            <th className="p-4">Qty</th>
-                            <th className="p-4">Status</th>
-                            <th className="p-4">Due Date</th>
-                            <th className="p-4 text-right">Actions</th>
+        </div>
+
+        <div className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
+            <table className="w-full text-sm text-left">
+                <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-xs">
+                    <tr>
+                        <th className="p-4">PO Number</th>
+                        <th className="p-4">Job ID</th>
+                        <th className="p-4">Part Details</th>
+                        <th className="p-4">Qty</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4">Due</th>
+                        <th className="p-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                    {filteredJobs.map(j => (
+                        <tr key={j.id} className="hover:bg-white/5 transition-colors group">
+                            <td className="p-4 text-white font-black text-lg">{j.poNumber}</td>
+                            <td className="p-4 text-zinc-400 font-mono text-xs">{j.jobIdsDisplay}</td>
+                            <td className="p-4">
+                                <div className="text-zinc-300 font-bold">{j.partNumber}</div>
+                                <div className="text-xs text-zinc-500 mt-0.5">{user.role === 'admin' ? j.customer : '***'}</div>
+                            </td>
+                            <td className="p-4 font-mono text-zinc-300">{j.quantity}</td>
+                            <td className="p-4"><StatusBadge status={j.status} /></td>
+                            <td className="p-4 font-mono text-zinc-400">{j.dueDate || '—'}</td>
+                            <td className="p-4 text-right flex justify-end gap-2">
+                                <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
+                                {activeTab === 'active' && (
+                                    <button onClick={() => confirm({ title: "Complete Job", message: "Mark as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-colors" title="Complete Job"><CheckCircle className="w-4 h-4"/></button>
+                                )}
+                                <button onClick={() => setPrintable(j)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white" title="Print Traveler"><Printer className="w-4 h-4"/></button>
+                                <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4"/></button>
+                                <button onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4"/></button>
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                        {activeJobs.map(j => (
-                           <tr key={j.id} className="hover:bg-white/5 transition-colors">
-                              <td className="p-4 text-white font-bold">{j.poNumber}</td>
-                              <td className="p-4 text-zinc-300 font-mono">{j.jobIdsDisplay}</td>
-                              <td className="p-4 text-zinc-400">{j.partNumber}</td>
-                              <td className="p-4 text-zinc-300 font-mono">{j.quantity}</td>
-                              <td className="p-4">
-                                  <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide flex w-fit items-center gap-2 ${j.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
-                                      {j.status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"/>}
-                                      {j.status}
-                                  </span>
-                              </td>
-                              <td className="p-4 text-zinc-400">{j.dueDate || '-'}</td>
-                              <td className="p-4 text-right flex justify-end gap-2">
-                                 <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
-                                 <button onClick={() => handleComplete(j.id)} className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors" title="Complete"><CheckCircle className="w-4 h-4"/></button>
-                                 <button onClick={() => setPrintable(j)} className="p-2 bg-zinc-800 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700" title="Print"><Printer className="w-4 h-4"/></button>
-                                 <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 bg-zinc-800 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600" title="Edit"><Edit2 className="w-4 h-4"/></button>
-                                 <button onClick={() => handleDelete(j.id)} className="p-2 bg-zinc-800 rounded-lg text-red-400 hover:text-white hover:bg-red-600" title="Delete"><Trash2 className="w-4 h-4"/></button>
-                              </td>
-                           </tr>
-                        ))}
-                        {activeJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-zinc-500">No active jobs found.</td></tr>}
-                    </tbody>
-                </table>
-             </div>
-         </div>
-
-         {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
-              <h3 className="font-bold text-white">Job Details</h3>
-              <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
-            </div>
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
-              <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl">
-                <div className="flex justify-between items-center mb-2"><label className="text-xs font-bold text-blue-300 flex items-center gap-1"><Sparkles className="w-3 h-3" /> AI Smart Paste</label></div>
-                <textarea placeholder="Paste email, message, or text here to auto-fill..." className="w-full bg-black/20 border border-blue-500/20 rounded-lg p-2 text-xs text-blue-200 focus:outline-none placeholder-blue-500/30" rows={2} onBlur={(e) => e.target.value && handleAiParse(e.target.value)} />
-                {aiLoading && <p className="text-xs text-blue-400 mt-1 animate-pulse">Analyzing text...</p>}
-              </div>
-              
-              <div>
-                <label className="text-xs text-blue-400 font-bold uppercase tracking-wider ml-1 mb-1 block">PO Number (Required)</label>
-                <input className="w-full bg-black/40 border-2 border-blue-500/50 rounded-xl p-3 text-white text-lg font-bold focus:ring-2 focus:ring-blue-500 outline-none placeholder-zinc-700" placeholder="e.g. PO-12345" value={editingJob.poNumber || ''} onChange={e => setEditingJob({...editingJob, poNumber: e.target.value})} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-xs text-zinc-500 ml-1 mb-1 block">Job ID(s)</label><input className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white" value={editingJob.jobIdsDisplay || ''} onChange={e => setEditingJob({...editingJob, jobIdsDisplay: e.target.value})} /></div>
-                <div><label className="text-xs text-zinc-500 ml-1 mb-1 block">Part Number</label><input className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white" value={editingJob.partNumber || ''} onChange={e => setEditingJob({...editingJob, partNumber: e.target.value})} /></div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-xs text-zinc-500 ml-1 mb-1 block">Quantity</label><input type="number" className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white" value={editingJob.quantity || ''} onChange={e => setEditingJob({...editingJob, quantity: Number(e.target.value)})} /></div>
-                <div><label className="text-xs text-zinc-500 ml-1 mb-1 block">Due Date</label><input type="date" className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white" value={editingJob.dueDate || ''} onChange={e => setEditingJob({...editingJob, dueDate: e.target.value})} /></div>
-              </div>
-
-              <div><label className="text-xs text-zinc-500 ml-1 mb-1 block">Date Received</label><input type="date" className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white" value={editingJob.dateReceived || ''} onChange={e => setEditingJob({...editingJob, dateReceived: e.target.value})} /></div>
-              
-              <div><label className="text-xs text-zinc-500 ml-1 mb-1 block">Notes / Info</label><textarea className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white" rows={3} value={editingJob.info || ''} onChange={e => setEditingJob({...editingJob, info: e.target.value})} /></div>
-            </div>
-            <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-2">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
-              <button disabled={isSaving} onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-medium disabled:opacity-50">{isSaving ? 'Saving...' : 'Save Job'}</button>
-            </div>
-          </div>
+                    ))}
+                    {filteredJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-zinc-500">No jobs found matching filters.</td></tr>}
+                </tbody>
+            </table>
         </div>
-      )}
-      
-      {startJobModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
-             <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
-             <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong>{startJobModal.jobIdsDisplay}</strong> ({startJobModal.partNumber})</p>
-             <div className="grid grid-cols-2 gap-2">
-               {ops.map(op => (
-                 <button
-                   key={op}
-                   onClick={() => handleAdminStartJob(op)}
-                   className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors"
-                 >
-                   {op}
-                 </button>
-               ))}
-               {ops.length === 0 && <p className="col-span-2 text-center text-sm text-zinc-500">No operations defined. Check Settings.</p>}
-             </div>
-             <div className="mt-4 flex justify-end">
-               <button onClick={() => setStartJobModal(null)} className="text-zinc-500 hover:text-white text-sm">Cancel</button>
-             </div>
-          </div>
-        </div>
-      )}
-      </div>
-   )
-}
+
+        {showModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+                <div className="bg-zinc-900 border border-white/10 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                    <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+                        <h3 className="font-bold text-white text-lg">{editingJob.id ? 'Edit Job' : 'Create New Job'}</h3>
+                        <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+                    </div>
+                    
+                    <div className="p-8 overflow-y-auto custom-scrollbar space-y-8">
+                        {/* Section 1: Primary Information */}
+                        <div className="space-y-5">
+                            <h4 className="text-xs font-black text-blue-400 uppercase tracking-[0.2em] border-b border-blue-500/20 pb-2 flex items-center gap-2">
+                                <span className="bg-blue-500/10 text-blue-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">1</span>
+                                Primary Information
+                            </h4>
+                            
+                            <div>
+                                <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block flex items-center gap-1">
+                                    Purchase Order (PO) # <span className="text-red-500">*</span>
+                                </label>
+                                <input 
+                                    className="w-full bg-black/40 border-2 border-blue-500/30 focus:border-blue-500 rounded-xl p-4 text-white text-2xl font-black outline-none transition-all placeholder-zinc-700 shadow-inner" 
+                                    value={editingJob.poNumber || ''} 
+                                    onChange={e => setEditingJob({...editingJob, poNumber: e.target.value})} 
+                                    placeholder="e.g. PO-4500123" 
+                                    autoFocus 
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block flex items-center gap-1">
+                                        Part Number <span className="text-red-500">*</span>
+                                    </label>
+                                    <input 
+                                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-bold outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" 
+                                        value={editingJob.partNumber || ''} 
+                                        onChange={e => setEditingJob({...editingJob, partNumber: e.target.value})} 
+                                        placeholder="e.g. 123-ABC-001"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">
+                                        Internal Job Number
+                                    </label>
+                                    <input 
+                                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-blue-500/50 placeholder-zinc-600" 
+                                        value={editingJob.jobIdsDisplay || ''} 
+                                        onChange={e => setEditingJob({...editingJob, jobIdsDisplay: e.target.value})} 
+                                        placeholder="Auto-generated if empty" 
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Section 2: Quantity & Timeline */}
+                        <div className="space-y-5">
+                            <h4 className="text-xs font-black text-emerald-400 uppercase tracking-[0.2em] border-b border-emerald-500/20 pb-2 flex items-center gap-2">
+                                <span className="bg-emerald-500/10 text-emerald-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">2</span>
+                                Quantity & Timeline
+                            </h4>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quantity</label>
+                                    <input 
+                                        type="number" 
+                                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500/50" 
+                                        value={editingJob.quantity || ''} 
+                                        onChange={e => setEditingJob({...editingJob, quantity: Number(e.target.value)})} 
+                                        placeholder="0"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label>
+                                    <input 
+                                        type="date" 
+                                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" 
+                                        value={editingJob.dateReceived || new Date().toISOString().split('T')[0]} 
+                                        onChange={e => setEditingJob({...editingJob, dateReceived: e.target.value})} 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label>
+                                    <input 
+                                        type="date" 
+                                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" 
+                                        value={editingJob.dueDate || ''} 
+                                        onChange={e => setEditingJob({...editingJob, dueDate: e.target.value})} 
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Section 3: Additional Details */}
+                        <div className="space-y-5">
+                            <h4 className="text-xs font-black text-orange-400 uppercase tracking-[0.2em] border-b border-orange-500/20 pb-2 flex items-center gap-2">
+                                <span className="bg-orange-500/10 text-orange-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">3</span>
+                                Additional Details
+                            </h4>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                {user.role === 'admin' && (
+                                    <div>
+                                        <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Customer Name</label>
+                                        <input 
+                                            className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50" 
+                                            value={editingJob.customer || ''} 
+                                            onChange={e => setEditingJob({...editingJob, customer: e.target.value})} 
+                                            placeholder="Client or Company Name"
+                                        />
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Priority Level</label>
+                                    <select 
+                                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50" 
+                                        value={editingJob.priority || 'normal'} 
+                                        onChange={e => setEditingJob({...editingJob, priority: e.target.value as any})}
+                                    >
+                                        <option value="low">Low</option>
+                                        <option value="normal">Normal</option>
+                                        <option value="high">High</option>
+                                        <option value="urgent">Urgent</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Notes / Special Instructions</label>
+                                <textarea 
+                                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-4 text-white min-h-[140px] outline-none focus:ring-2 focus:ring-orange-500/50 resize-y leading-relaxed" 
+                                    value={editingJob.info || ''} 
+                                    onChange={e => setEditingJob({...editingJob, info: e.target.value})} 
+                                    placeholder="Enter any process details, material specs, or special requirements here..."
+                                    rows={5}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3">
+                        <button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
+                        <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all">
+                            <Save className="w-4 h-4" />
+                            Save Job
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {startJobModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
+                 <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
+                 <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong>{startJobModal.jobIdsDisplay}</strong> ({startJobModal.partNumber})</p>
+                 <div className="grid grid-cols-2 gap-2">
+                   {ops.map(op => (
+                     <button
+                       key={op}
+                       onClick={() => handleAdminStartJob(op)}
+                       className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors"
+                     >
+                       {op}
+                     </button>
+                   ))}
+                   {ops.length === 0 && <p className="col-span-2 text-center text-sm text-zinc-500">No operations defined. Check Settings.</p>}
+                 </div>
+                 <div className="mt-4 flex justify-end">
+                   <button onClick={() => setStartJobModal(null)} className="text-zinc-500 hover:text-white text-sm">Cancel</button>
+                 </div>
+              </div>
+            </div>
+        )}
+    </div>
+);
+};
 
 // --- ADMIN: LOGS ---
 const LogsView = ({ addToast }: { addToast: any }) => {
@@ -873,14 +1029,12 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    const [activeTab, setActiveTab] = useState<"all" | "completed" | "in-progress">("all");
    const [filterSearch, setFilterSearch] = useState("");
    
-   // Default to "Last 30 Days" approx
+   // Default to "This Month"
    const [dateRange, setDateRange] = useState<{start: string, end: string}>(() => {
       const now = new Date();
-      const past = new Date();
-      past.setDate(now.getDate() - 30);
-      const pad = (n: number) => n.toString().padStart(2, '0');
-      const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-      return { start: fmt(past), end: fmt(now) };
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { start: firstDay.toISOString().split("T")[0], end: lastDay.toISOString().split("T")[0] };
    });
 
    useEffect(() => {
@@ -924,111 +1078,117 @@ const LogsView = ({ addToast }: { addToast: any }) => {
        }
    };
 
-   // --- HELPERS ---
-   const getStatus = (l: TimeLog) => {
-      if ((l as any).status === 'completed') return 'completed';
-      if ((l as any).status === 'in_progress' || (l as any).status === 'in-progress') return 'in-progress';
-      return l.endTime ? 'completed' : 'in-progress';
+   const setPreset = (type: "today" | "week" | "month") => {
+      const now = new Date();
+      let start = new Date();
+      let end = new Date();
+      
+      if (type === "today") {
+          start = now;
+          end = now;
+      } else if (type === "week") {
+          const day = now.getDay();
+          const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+          start = new Date(now.setDate(diff));
+          end = new Date(now.setDate(start.getDate() + 6));
+      } else if (type === "month") {
+          start = new Date(now.getFullYear(), now.getMonth(), 1);
+          end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      }
+      setDateRange({ start: start.toISOString().split("T")[0], end: end.toISOString().split("T")[0] });
    };
 
-   const getCompletedTs = (l: TimeLog) => {
-      const ca = (l as any).completedAt;
-      if (typeof ca === 'number') return ca;
-      return l.endTime ?? null;
-   };
-
-   const inRange = (ts: number | null, mode: 'completed' | 'start') => {
-      // Keep logs without timestamps visible in 'all' or 'in-progress' if mode is not completed
-      if (!ts) return mode !== 'completed'; 
-      
-      const [sy, sm, sd] = dateRange.start.split('-').map(Number);
-      const [ey, em, ed] = dateRange.end.split('-').map(Number);
-      
-      const s = new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime();
-      const e = new Date(ey, em - 1, ed, 23, 59, 59, 999).getTime();
-      
-      return ts >= s && ts <= e;
-   };
-
-   // --- FILTERING & GROUPING ---
+   // -------------------------
+   // GROUPING & FILTERING
+   // -------------------------
    const groupedLogs = useMemo(() => {
-       const term = filterSearch.trim().toLowerCase();
+       const startTs = new Date(dateRange.start).setHours(0,0,0,0);
+       const endTs = new Date(dateRange.end).setHours(23,59,59,999); // Inclusive End of Day
+       const term = filterSearch.toLowerCase();
 
-       // 1. Filter
+       // 1. Filter raw logs
        const filtered = logs.filter(l => {
-           const status = getStatus(l);
-           if (activeTab === 'completed' && status !== 'completed') return false;
-           if (activeTab === 'in-progress' && status !== 'in-progress') return false;
+           const isCompleted = !!l.endTime;
 
-           // Determine which date to filter by
-           const dateMode = activeTab === 'completed' ? 'completed' : 'start';
-           const tsToCheck = dateMode === 'completed' ? getCompletedTs(l) : l.startTime;
+           // Date Check - Smart switching based on status
+           // If completed tab is active, filter by endTime (completion date).
+           // Otherwise (All/In Progress), filter by startTime (creation date).
+           const dateToCheck = (activeTab === 'completed' && isCompleted) ? l.endTime! : l.startTime;
            
-           if (!inRange(tsToCheck, dateMode)) return false;
+           if (dateToCheck < startTs || dateToCheck > endTs) return false;
 
-           if (!term) return true;
-           const hay = [
-               l.jobId,
-               l.userName,
-               l.operation,
-               l.partNumber,
-               l.customer,
-               l.jobIdsDisplay
-           ].filter(Boolean).join(' ').toLowerCase();
-           return hay.includes(term);
+           // Search Check
+           if (term && !JSON.stringify(l).toLowerCase().includes(term)) return false;
+
+           // Tab Check
+           if (activeTab === 'completed' && !isCompleted) return false;
+           if (activeTab === 'in-progress' && isCompleted) return false;
+
+           return true;
        });
 
-       // 2. Group
+       // 2. Group by Job
        const groups: Record<string, {
-           id: string;
-           displayLabel: string;
+           jobId: string;
            partNumber: string;
            customer: string;
            logs: TimeLog[];
-           totalDurationSeconds: number;
+           totalDurationMinutes: number;
            users: Set<string>;
            lastActivity: number;
+           inProgressCount: number;
+           completedCount: number;
        }> = {};
 
        filtered.forEach(log => {
-           const key = log.jobIdsDisplay || log.jobId || log.partNumber || "Unknown Job";
+           // GROUP BY SNAPSHOTTED DISPLAY ID, FALLBACK TO INTERNAL ID
+           // This ensures the "Real Job ID" is used for grouping headers
+           const key = log.jobIdsDisplay || log.jobId || "Unknown Job";
+           
            if (!groups[key]) {
                groups[key] = {
-                   id: key,
-                   displayLabel: log.jobIdsDisplay || (log.jobId ? `Job ${log.jobId}` : "Unknown"),
+                   jobId: key, // This is now the display ID
                    partNumber: log.partNumber || "N/A",
                    customer: log.customer || "",
                    logs: [],
-                   totalDurationSeconds: 0,
+                   totalDurationMinutes: 0,
                    users: new Set(),
-                   lastActivity: 0
+                   lastActivity: 0,
+                   inProgressCount: 0,
+                   completedCount: 0
                };
            }
            const g = groups[key];
            g.logs.push(log);
+           
+           // Aggregates
+           if (log.durationMinutes) g.totalDurationMinutes += log.durationMinutes;
            g.users.add(log.userName);
            
-           const end = log.endTime || Date.now();
-           const duration = Math.max(0, (end - log.startTime) / 1000);
-           if (log.endTime) g.totalDurationSeconds += duration; // Only sum finished or currently running? Usually finished. User asked for durationSeconds.
-           // Actually, let's sum durationSeconds if present, else calc
-           const storedDur = log.durationSeconds || (log.durationMinutes ? log.durationMinutes * 60 : 0);
-           g.totalDurationSeconds += storedDur;
+           const logTime = log.endTime || log.startTime;
+           if (logTime > g.lastActivity) g.lastActivity = logTime;
 
-           const act = log.endTime || log.startTime;
-           if (act > g.lastActivity) g.lastActivity = act;
+           const isCompleted = !!log.endTime;
+           if (isCompleted) g.completedCount++;
+           else g.inProgressCount++;
        });
 
-       // 3. Sort Groups
-       return Object.values(groups).sort((a,b) => b.lastActivity - a.lastActivity).map(g => {
-           g.logs.sort((a,b) => (b.startTime || 0) - (a.startTime || 0));
+       // 3. Sort Groups by Last Activity DESC
+       return Object.values(groups).sort((a, b) => b.lastActivity - a.lastActivity).map(g => {
+           // 4. Sort logs within group
+           g.logs.sort((a, b) => {
+               const tA = a.endTime || a.startTime;
+               const tB = b.endTime || b.startTime;
+               return tB - tA;
+           });
            return g;
        });
 
    }, [logs, activeTab, dateRange, filterSearch]);
 
+   // Overall Stats
+   const totalHours = groupedLogs.reduce((acc, g) => acc + (g.totalDurationMinutes / 60), 0);
    const totalEntries = groupedLogs.reduce((acc, g) => acc + g.logs.length, 0);
-   const totalHours = groupedLogs.reduce((acc, g) => acc + g.totalDurationSeconds, 0) / 3600;
 
    return (
       <div className="space-y-6 logs-view-print">
@@ -1088,6 +1248,14 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              </div>
          </div>
 
+         {/* Print Header (Visible only in Print) */}
+         <div className="hidden">
+             <h1 className="text-2xl font-bold mb-2">Production Work Log</h1>
+             <p>Period: {dateRange.start} to {dateRange.end}</p>
+             <p>Total Hours: {totalHours.toFixed(2)} | Entries: {totalEntries}</p>
+             <hr className="my-4"/>
+         </div>
+
          {/* Grouped Logs List */}
          <div className="space-y-6">
              {groupedLogs.length === 0 && (
@@ -1098,7 +1266,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              )}
              
              {groupedLogs.map(group => (
-                 <div key={group.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm transition-all hover:border-white/10">
+                 <div key={group.jobId} className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden shadow-sm transition-all hover:border-white/10">
                      {/* Group Header */}
                      <div className="p-4 bg-zinc-900/80 border-b border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                          <div className="flex items-start gap-4">
@@ -1107,7 +1275,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                              </div>
                              <div>
                                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                     {group.displayLabel} 
+                                     {group.jobId} 
+                                     {group.inProgressCount > 0 && <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 animate-pulse">Active</span>}
                                  </h3>
                                  <p className="text-xs text-zinc-400">
                                      Part: <span className="text-zinc-300 font-mono">{group.partNumber}</span>
@@ -1119,7 +1288,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                          <div className="flex items-center gap-4 text-xs">
                              <div className="text-right">
                                  <p className="text-zinc-500 uppercase font-bold">Duration</p>
-                                 <p className="text-blue-400 font-mono font-bold">{(group.totalDurationSeconds / 3600).toFixed(2)} hrs</p>
+                                 <p className="text-blue-400 font-mono font-bold">{(group.totalDurationMinutes / 60).toFixed(2)} hrs</p>
                              </div>
                              <div className="w-px h-8 bg-white/10"></div>
                              <div className="text-right">
@@ -1152,8 +1321,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                              </thead>
                              <tbody className="divide-y divide-white/5">
                                  {group.logs.map(l => {
-                                     const status = getStatus(l);
-                                     const isRunning = status === 'in-progress';
+                                     const isRunning = !l.endTime;
                                      return (
                                          <tr key={l.id} className="hover:bg-white/5 transition-colors">
                                              <td className="p-3 pl-4">
@@ -1399,7 +1567,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
 };
 
 // --- APP ROOT ---
-export function App() {
+export default function App() {
   const [user, setUser] = useState<User | null>(() => { try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); } catch(e) { return null; } });
   const [view, setView] = useState<AppView>('login');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
