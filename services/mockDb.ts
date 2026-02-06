@@ -1,4 +1,3 @@
-
 import {
   collection,
   deleteDoc,
@@ -532,7 +531,7 @@ export async function loginUser(username: string, pin: string): Promise<User | n
         const q = query(collection(dbInstance, COL.users));
         const snap: any = await Promise.race([
             getDocs(q),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Cloud timeout")), 1000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Cloud timeout")), 5000))
         ]);
         firebaseStatus = { connected: true };
         const users = snap.docs.map((d: any) => d.data() as User);

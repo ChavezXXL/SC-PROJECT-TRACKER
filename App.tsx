@@ -96,6 +96,7 @@ const LiveTimer = ({ startTime }: { startTime: number }) => {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
+    if (!startTime) return;
     const i = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTime) / 1000));
     }, 1000);
@@ -561,7 +562,7 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
 };
 
 // --- ADMIN DASHBOARD ---
-const AdminDashboard = ({ user, confirmAction, setView }: any) => {
+const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
    const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
    const [jobs, setJobs] = useState<Job[]>([]);
    const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -584,7 +585,14 @@ const AdminDashboard = ({ user, confirmAction, setView }: any) => {
    return (
       <div className="space-y-6 animate-fade-in">
          {myActiveLog && (
-            <ActiveJobPanel job={myActiveJob || null} log={myActiveLog} onStop={(id) => DB.stopTimeLog(id)} />
+            <ActiveJobPanel 
+                job={myActiveJob || null} 
+                log={myActiveLog} 
+                onStop={async (id) => {
+                    try { await DB.stopTimeLog(id); addToast('success', 'Timer Stopped'); } 
+                    catch(e) { addToast('error', 'Failed to stop'); }
+                }} 
+            />
          )}
 
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -737,6 +745,9 @@ const stats = useMemo(() => {
 
 const handleSave = async () => {
     if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
+    const today = new Date();
+    const localDate = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    
     const job: Job = {
         id: editingJob.id || Date.now().toString(),
         jobIdsDisplay: editingJob.jobIdsDisplay || editingJob.poNumber || 'J-'+Date.now().toString().slice(-4),
@@ -748,7 +759,7 @@ const handleSave = async () => {
         dueDate: editingJob.dueDate || '',
         info: editingJob.info || '',
         status: editingJob.status || 'pending',
-        dateReceived: editingJob.dateReceived || new Date().toISOString().split('T')[0],
+        dateReceived: editingJob.dateReceived || localDate,
         createdAt: editingJob.createdAt || Date.now()
     };
     try { await DB.saveJob(job); setShowModal(false); setEditingJob({}); addToast('success', 'Job Saved'); } 
@@ -1032,9 +1043,14 @@ const LogsView = ({ addToast }: { addToast: any }) => {
    // Default to "This Month"
    const [dateRange, setDateRange] = useState<{start: string, end: string}>(() => {
       const now = new Date();
+      // Ensure we are working with local dates for defaults
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { start: firstDay.toISOString().split("T")[0], end: lastDay.toISOString().split("T")[0] };
+      const offset = now.getTimezoneOffset() * 60000;
+      return { 
+          start: new Date(firstDay.getTime() - offset).toISOString().split("T")[0], 
+          end: new Date(lastDay.getTime() - offset).toISOString().split("T")[0] 
+      };
    });
 
    useEffect(() => {
@@ -1080,6 +1096,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
 
    const setPreset = (type: "today" | "week" | "month") => {
       const now = new Date();
+      // Adjust for local time
+      const offset = now.getTimezoneOffset() * 60000;
       let start = new Date();
       let end = new Date();
       
@@ -1095,15 +1113,24 @@ const LogsView = ({ addToast }: { addToast: any }) => {
           start = new Date(now.getFullYear(), now.getMonth(), 1);
           end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
       }
-      setDateRange({ start: start.toISOString().split("T")[0], end: end.toISOString().split("T")[0] });
+      
+      setDateRange({ 
+          start: new Date(start.getTime() - offset).toISOString().split("T")[0], 
+          end: new Date(end.getTime() - offset).toISOString().split("T")[0] 
+      });
    };
 
    // -------------------------
    // GROUPING & FILTERING
    // -------------------------
    const groupedLogs = useMemo(() => {
-       const startTs = new Date(dateRange.start).setHours(0,0,0,0);
-       const endTs = new Date(dateRange.end).setHours(23,59,59,999); // Inclusive End of Day
+       // Fix date filtering to be local-time aware
+       const [sY, sM, sD] = dateRange.start.split('-').map(Number);
+       const startTs = new Date(sY, sM - 1, sD).setHours(0,0,0,0);
+       
+       const [eY, eM, eD] = dateRange.end.split('-').map(Number);
+       const endTs = new Date(eY, eM - 1, eD).setHours(23,59,59,999);
+
        const term = filterSearch.toLowerCase();
 
        // 1. Filter raw logs
@@ -1111,8 +1138,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
            const isCompleted = !!l.endTime;
 
            // Date Check - Smart switching based on status
-           // If completed tab is active, filter by endTime (completion date).
-           // Otherwise (All/In Progress), filter by startTime (creation date).
            const dateToCheck = (activeTab === 'completed' && isCompleted) ? l.endTime! : l.startTime;
            
            if (dateToCheck < startTs || dateToCheck > endTs) return false;
@@ -1271,103 +1296,69 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                      <div className="p-4 bg-zinc-900/80 border-b border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                          <div className="flex items-start gap-4">
                              <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                                 <Briefcase className="w-5 h-5 text-blue-400" />
+                                 <Briefcase className="w-5 h-5 text-blue-500" />
                              </div>
                              <div>
-                                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                     {group.jobId} 
-                                     {group.inProgressCount > 0 && <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 animate-pulse">Active</span>}
-                                 </h3>
-                                 <p className="text-xs text-zinc-400">
-                                     Part: <span className="text-zinc-300 font-mono">{group.partNumber}</span>
-                                     {group.customer && <span className="mx-2">•</span>}
-                                     {group.customer}
-                                 </p>
+                                 <h3 className="text-lg font-bold text-white leading-tight">{group.jobId}</h3>
+                                 <div className="flex items-center gap-2 text-xs mt-1">
+                                     <span className="text-zinc-400">Part: <span className="text-zinc-200">{group.partNumber}</span></span>
+                                     <span className="text-zinc-600">•</span>
+                                     <span className="text-zinc-400">{group.customer || "Internal"}</span>
+                                 </div>
                              </div>
                          </div>
                          <div className="flex items-center gap-4 text-xs">
                              <div className="text-right">
-                                 <p className="text-zinc-500 uppercase font-bold">Duration</p>
-                                 <p className="text-blue-400 font-mono font-bold">{(group.totalDurationMinutes / 60).toFixed(2)} hrs</p>
+                                 <p className="text-zinc-500 uppercase font-bold">Total Time</p>
+                                 <p className="text-lg font-mono font-bold text-white">{formatDuration(group.totalDurationMinutes)}</p>
                              </div>
-                             <div className="w-px h-8 bg-white/10"></div>
-                             <div className="text-right">
-                                 <p className="text-zinc-500 uppercase font-bold">Team</p>
-                                 <div className="flex -space-x-2 justify-end mt-1">
-                                     {Array.from(group.users).slice(0, 3).map((u, i) => (
-                                         <div key={i} className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-900 flex items-center justify-center text-[10px] text-zinc-300 font-bold" title={u}>
-                                             {u.charAt(0)}
-                                         </div>
-                                     ))}
-                                     {group.users.size > 3 && <div className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-900 flex items-center justify-center text-[10px] text-zinc-500">+{group.users.size - 3}</div>}
-                                 </div>
+                             <div className="text-right border-l border-white/10 pl-4">
+                                 <p className="text-zinc-500 uppercase font-bold">Staff</p>
+                                 <p className="text-white">{group.users.size} active</p>
                              </div>
                          </div>
                      </div>
 
                      {/* Logs Table */}
                      <div className="overflow-x-auto">
-                         <table className="w-full text-sm text-left">
-                             <thead className="bg-white/5 text-zinc-500 text-xs uppercase">
-                                 <tr>
-                                     <th className="p-3 pl-4">Operation</th>
-                                     <th className="p-3">User</th>
-                                     <th className="p-3">Time Range</th>
-                                     <th className="p-3">Duration</th>
-                                     <th className="p-3">Status</th>
-                                     <th className="p-3">Notes</th>
-                                     <th className="p-3 text-right pr-4 no-print">Edit</th>
-                                 </tr>
-                             </thead>
-                             <tbody className="divide-y divide-white/5">
-                                 {group.logs.map(l => {
-                                     const isRunning = !l.endTime;
-                                     return (
-                                         <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                                             <td className="p-3 pl-4">
-                                                 <span className="font-medium text-zinc-300 bg-zinc-800 px-2 py-1 rounded text-xs border border-white/5">{l.operation}</span>
-                                             </td>
-                                             <td className="p-3 text-zinc-300 text-xs font-bold">{l.userName}</td>
-                                             <td className="p-3">
-                                                 <div className="flex flex-col text-xs font-mono text-zinc-400">
-                                                     <span>{new Date(l.startTime).toLocaleDateString()}</span>
-                                                     <span className="text-zinc-500">
-                                                         {new Date(l.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} 
-                                                         {' -> '} 
-                                                         {l.endTime ? new Date(l.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...'}
-                                                     </span>
-                                                 </div>
-                                             </td>
-                                             <td className="p-3 font-mono text-sm text-zinc-300">
-                                                 {isRunning ? <span className="text-emerald-500 animate-pulse">Running</span> : formatDuration(l.durationMinutes)}
-                                             </td>
-                                             <td className="p-3">
-                                                 {isRunning ? (
-                                                     <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
-                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Active
-                                                     </div>
-                                                 ) : (
-                                                     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
-                                                         <CheckCircle className="w-3 h-3" /> Done
-                                                     </div>
-                                                 )}
-                                             </td>
-                                             <td className="p-3 text-xs text-zinc-500 italic max-w-[200px] truncate">{l.notes || '-'}</td>
-                                             <td className="p-3 pr-4 text-right no-print">
-                                                 <button onClick={() => handleEditLog(l)} className="p-1.5 hover:bg-white/10 rounded-lg text-zinc-500 hover:text-blue-400 transition-colors"><Edit2 className="w-3 h-3"/></button>
-                                             </td>
-                                         </tr>
-                                     );
-                                 })}
-                             </tbody>
-                         </table>
+                        <table className="w-full text-xs text-left">
+                            <thead className="bg-black/20 text-zinc-500">
+                                <tr>
+                                    <th className="p-3 pl-6">Date</th>
+                                    <th className="p-3">Staff</th>
+                                    <th className="p-3">Operation</th>
+                                    <th className="p-3">Time Range</th>
+                                    <th className="p-3 text-right pr-6">Duration</th>
+                                    <th className="p-3 text-right pr-6 no-print">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                                {group.logs.map(log => (
+                                    <tr key={log.id} className="hover:bg-white/5 transition-colors group">
+                                        <td className="p-3 pl-6 text-zinc-400">{new Date(log.startTime).toLocaleDateString()}</td>
+                                        <td className="p-3 text-white font-medium">{log.userName}</td>
+                                        <td className="p-3 text-blue-400">{log.operation}</td>
+                                        <td className="p-3 font-mono text-zinc-400">
+                                            {new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - 
+                                            {log.endTime ? new Date(log.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : <span className="text-emerald-500 font-bold ml-1">ACTIVE</span>}
+                                        </td>
+                                        <td className="p-3 text-right pr-6 font-mono text-zinc-300">
+                                            {formatDuration(log.durationMinutes)}
+                                        </td>
+                                        <td className="p-3 text-right pr-6 no-print opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={() => handleEditLog(log)} className="text-blue-500 hover:text-white"><Edit2 className="w-3 h-3" /></button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                      </div>
                  </div>
              ))}
          </div>
 
          {showEditModal && editingLog && (
-             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in no-print">
+             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
                  <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
                      <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
                          <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
@@ -1421,16 +1412,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                                  />
                                  <p className="text-[10px] text-zinc-500 mt-1">Clear to mark as active.</p>
                              </div>
-                         </div>
-                         <div>
-                             <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Notes</label>
-                             <textarea 
-                                 className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                 rows={3}
-                                 value={editingLog.notes || ""}
-                                 onChange={e => setEditingLog({...editingLog, notes: e.target.value})}
-                                 placeholder="Optional notes..."
-                             />
                          </div>
                      </div>
                      <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center">
