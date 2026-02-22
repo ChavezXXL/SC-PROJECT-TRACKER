@@ -6,7 +6,7 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play
+  Play, Bell, BellOff, BellRing
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
@@ -40,6 +40,283 @@ const getDates = () => {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const startOfYear = new Date(now.getFullYear(), 0, 1).getTime();
   return { startOfWeek, startOfMonth, startOfYear };
+};
+
+
+// ─── NOTIFICATION SERVICE ──────────────────────────────────────────────────
+// Handles PWA permission, browser notifications, and in-app alert feed.
+
+const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
+  const [permission, setPermission] = useState<NotificationPermission>(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  );
+  const [alerts, setAlerts] = useState<Array<{id:string; type:'overdue'|'due-soon'|'urgent'|'long-timer'|'new-urgent'; title:string; body:string; time:number; read:boolean}>>([]);
+  const notifiedRef = useRef<Set<string>>(new Set());
+
+  // Request permission
+  const requestPermission = useCallback(async () => {
+    if (typeof Notification === 'undefined') return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    return result;
+  }, []);
+
+  // Fire a browser notification AND add to in-app feed
+  const fire = useCallback((type: string, title: string, body: string, tag: string) => {
+    const id = tag + '-' + Date.now();
+    setAlerts(prev => [{ id, type: type as any, title, body, time: Date.now(), read: false }, ...prev].slice(0, 50));
+    if (permission === 'granted') {
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'NOTIFY', title, body, tag });
+      } else {
+        new Notification(title, { body, tag, icon: '/icon-192.png' });
+      }
+    }
+  }, [permission]);
+
+  const markRead = useCallback((id: string) => {
+    setAlerts(prev => prev.map(a => a.id === id ? { ...a, read: true } : a));
+  }, []);
+
+  const markAllRead = useCallback(() => {
+    setAlerts(prev => prev.map(a => ({ ...a, read: true })));
+  }, []);
+
+  const clearAll = useCallback(() => setAlerts([]), []);
+
+  // Check jobs every minute
+  useEffect(() => {
+    const check = () => {
+      const today = new Date().toISOString().split('T')[0];
+      const in2Days = new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
+      const activeJobs = jobs.filter(j => j.status !== 'completed');
+
+      // Overdue jobs
+      activeJobs.filter(j => j.dueDate && j.dueDate < today).forEach(j => {
+        const tag = `overdue-${j.id}`;
+        if (!notifiedRef.current.has(tag)) {
+          notifiedRef.current.add(tag);
+          fire('overdue', '⚠️ Overdue Job', `PO ${j.poNumber} was due ${j.dueDate}`, tag);
+        }
+      });
+
+      // Due within 2 days
+      activeJobs.filter(j => j.dueDate && j.dueDate >= today && j.dueDate <= in2Days).forEach(j => {
+        const tag = `due-soon-${j.id}-${today}`;
+        if (!notifiedRef.current.has(tag)) {
+          notifiedRef.current.add(tag);
+          fire('due-soon', '⏰ Due Soon', `PO ${j.poNumber} is due ${j.dueDate}`, tag);
+        }
+      });
+
+      // Urgent jobs added recently (within last hour)
+      activeJobs.filter(j => j.priority === 'urgent' && j.createdAt > Date.now() - 3600000).forEach(j => {
+        const tag = `urgent-${j.id}`;
+        if (!notifiedRef.current.has(tag)) {
+          notifiedRef.current.add(tag);
+          fire('urgent', '🔴 Urgent Job Added', `PO ${j.poNumber} — ${j.partNumber} marked URGENT`, tag);
+        }
+      });
+
+      // Timers running > 4 hours (admin alert)
+      if (user?.role === 'admin') {
+        activeLogs.filter(l => l.startTime < Date.now() - 4 * 3600000).forEach(l => {
+          const tag = `long-timer-${l.id}`;
+          if (!notifiedRef.current.has(tag)) {
+            notifiedRef.current.add(tag);
+            const hrs = ((Date.now() - l.startTime) / 3600000).toFixed(1);
+            fire('long-timer', '🕐 Long Running Timer', `${l.userName} has been on ${l.operation} for ${hrs}h`, tag);
+          }
+        });
+      }
+    };
+
+    check(); // run immediately
+    const interval = setInterval(check, 60000);
+    return () => clearInterval(interval);
+  }, [jobs, activeLogs, fire, user?.role]);
+
+  return { permission, requestPermission, alerts, markRead, markAllRead, clearAll };
+};
+
+// ─── NOTIFICATION BELL COMPONENT ──────────────────────────────────────────
+const NotificationBell = ({ permission, requestPermission, alerts, markRead, markAllRead, clearAll }: any) => {
+  const [open, setOpen] = useState(false);
+  const unread = alerts.filter((a: any) => !a.read).length;
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const typeColors: Record<string, string> = {
+    overdue: 'text-red-400 bg-red-500/10 border-red-500/20',
+    'due-soon': 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+    urgent: 'text-red-400 bg-red-500/10 border-red-500/20',
+    'long-timer': 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
+    'new-urgent': 'text-red-400 bg-red-500/10 border-red-500/20',
+  };
+
+  const timeAgo = (ts: number) => {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    return `${Math.floor(mins / 60)}h ago`;
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => { setOpen(!open); if (!open && unread > 0) markAllRead(); }}
+        className={`relative p-2 rounded-xl transition-all ${
+          unread > 0
+            ? 'bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
+            : 'bg-zinc-800 border border-white/5 text-zinc-400 hover:text-white'
+        }`}
+        title="Notifications"
+      >
+        {unread > 0 ? <BellRing className="w-5 h-5 animate-pulse" /> : <Bell className="w-5 h-5" />}
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-12 w-80 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fade-in">
+          <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+            <div>
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <Bell className="w-4 h-4 text-blue-400" /> Notifications
+              </h3>
+              {permission !== 'granted' && (
+                <p className="text-[10px] text-zinc-500 mt-0.5">Browser notifications off</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {permission !== 'granted' && (
+                <button
+                  onClick={requestPermission}
+                  className="text-[10px] text-blue-400 border border-blue-500/30 px-2 py-1 rounded-lg hover:bg-blue-500/10"
+                >
+                  Enable
+                </button>
+              )}
+              {alerts.length > 0 && (
+                <button onClick={clearAll} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1 rounded-lg border border-white/5 hover:border-red-500/20">
+                  Clear all
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-y-auto max-h-96">
+            {alerts.length === 0 ? (
+              <div className="p-8 text-center text-zinc-500">
+                <Bell className="w-8 h-8 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">No notifications yet</p>
+                <p className="text-xs mt-1 opacity-60">You'll see overdue jobs, due dates, and urgent alerts here</p>
+              </div>
+            ) : (
+              alerts.map((alert: any) => (
+                <div
+                  key={alert.id}
+                  onClick={() => markRead(alert.id)}
+                  className={`p-4 border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors ${!alert.read ? 'bg-blue-500/5' : ''}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className={`text-xs font-black px-2 py-1 rounded border shrink-0 mt-0.5 ${typeColors[alert.type] || 'text-zinc-400 bg-zinc-800 border-white/10'}`}>
+                      {alert.type === 'overdue' ? 'OVERDUE' :
+                       alert.type === 'due-soon' ? 'DUE SOON' :
+                       alert.type === 'urgent' ? 'URGENT' :
+                       alert.type === 'long-timer' ? 'TIMER' : 'ALERT'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-white leading-tight">{alert.title}</p>
+                      <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{alert.body}</p>
+                      <p className="text-[10px] text-zinc-600 mt-1">{timeAgo(alert.time)}</p>
+                    </div>
+                    {!alert.read && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1"></span>}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {permission !== 'granted' && (
+            <div className="p-3 bg-zinc-950/50 border-t border-white/5">
+              <button
+                onClick={requestPermission}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 px-4 rounded-xl flex items-center justify-center gap-2 transition-all"
+              >
+                <BellRing className="w-3.5 h-3.5" />
+                Enable Push Notifications
+              </button>
+              <p className="text-[10px] text-zinc-600 text-center mt-2">Get alerted for overdue jobs, urgent orders & long timers</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// ─── PWA INSTALL BANNER ────────────────────────────────────────────────────
+const PWAInstallBanner = () => {
+  const [prompt, setPrompt] = useState<any>(null);
+  const [dismissed, setDismissed] = useState(() => !!localStorage.getItem('pwa-banner-dismissed'));
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: any) => { e.preventDefault(); setPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', () => setInstalled(true));
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const install = async () => {
+    if (!prompt) return;
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === 'accepted') setInstalled(true);
+    setPrompt(null);
+  };
+
+  const dismiss = () => {
+    setDismissed(true);
+    localStorage.setItem('pwa-banner-dismissed', '1');
+  };
+
+  // Already installed as PWA — don't show
+  if (installed || dismissed || !prompt || window.matchMedia('(display-mode: standalone)').matches) return null;
+
+  return (
+    <div className="fixed bottom-20 left-4 right-4 md:left-auto md:right-6 md:w-80 z-40 animate-fade-in">
+      <div className="bg-zinc-900 border border-blue-500/30 rounded-2xl p-4 shadow-2xl shadow-black/50">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 text-white font-black text-sm">SC</div>
+          <div className="flex-1">
+            <p className="text-white font-bold text-sm">Install SC Tracker</p>
+            <p className="text-zinc-400 text-xs mt-0.5">Add to your home screen for quick access — works offline too.</p>
+            <div className="flex gap-2 mt-3">
+              <button onClick={install} className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex-1">
+                Install App
+              </button>
+              <button onClick={dismiss} className="text-zinc-500 hover:text-white text-xs px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 transition-all">
+                Not now
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // --- PRINT STYLES ---
@@ -242,7 +519,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
 };
 
 // --- EMPLOYEE DASHBOARD ---
-const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast: any, onLogout: () => void }) => {
+const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User, addToast: any, onLogout: () => void, notifBell?: React.ReactNode }) => {
   const [tab, setTab] = useState<'jobs' | 'history' | 'scan'>('jobs');
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
@@ -325,6 +602,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           <button onClick={() => setTab('history')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
         </div>
         <div className="flex items-center gap-2">
+          {notifBell}
           <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow' : 'bg-zinc-800 text-blue-400 hover:bg-blue-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
           <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
         </div>
@@ -1634,6 +1912,18 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [printable, setPrintable] = useState<Job | null>(null);
   const [confirm, setConfirm] = useState<any>(null);
+  // For notifications — track all jobs and active logs globally
+  const [allJobs, setAllJobs] = useState<Job[]>([]);
+  const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
+  const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user);
+
+  // Subscribe globally for notification checks
+  useEffect(() => {
+    if (!user) return;
+    const unsub1 = DB.subscribeJobs(jobs => setAllJobs(jobs));
+    const unsub2 = DB.subscribeLogs(logs => setAllActiveLogs(logs.filter((l: TimeLog) => !l.endTime)));
+    return () => { unsub1(); unsub2(); };
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -1672,13 +1962,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex font-sans">
       <PrintStyles />
+      <PWAInstallBanner />
       <PrintableJobSheet job={printable} onClose={() => setPrintable(null)} />
       <ConfirmationModal isOpen={!!confirm} {...(confirm || {})} onCancel={() => setConfirm(null)} />
 
       {user.role === 'admin' && (
         <aside className="w-64 border-r border-white/5 bg-zinc-950 flex flex-col fixed h-full z-20">
-          <div className="p-6 font-bold text-white flex gap-2 items-center">
-            <Sparkles className="text-blue-500" /> NEXUS
+          <div className="p-6 font-bold text-white flex gap-2 items-center justify-between">
+            <div className="flex items-center gap-2"><Sparkles className="text-blue-500" /> NEXUS</div>
+            <NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
           </div>
           <nav className="px-4 space-y-1">
             {[
@@ -1707,8 +1999,8 @@ export default function App() {
         {view === 'admin-logs' && <LogsView addToast={addToast} />}
         {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
         {view === 'admin-settings' && <SettingsView addToast={addToast} />}
-        {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} />}
-        {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} />}
+        {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
+        {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
       </main>
 
       <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
