@@ -93,7 +93,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
 
       // Overdue jobs
       activeJobs.filter(j => j.dueDate && j.dueDate < today).forEach(j => {
-        const tag = `overdue-${j.id}`;
+        const tag = `overdue-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
           fire('overdue', '⚠️ Overdue Job', `PO ${j.poNumber} was due ${j.dueDate}`, tag);
@@ -188,7 +188,7 @@ const NotificationBell = ({ permission, requestPermission, alerts, markRead, mar
       </button>
 
       {open && (
-        <div className="absolute right-0 top-12 w-80 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fade-in">
+        <div className="absolute left-0 md:left-auto md:right-0 top-12 w-[calc(100vw-2rem)] md:w-80 max-w-sm bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl z-[999] overflow-hidden animate-fade-in">
           <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
             <div>
               <h3 className="font-bold text-white text-sm flex items-center gap-2">
@@ -1912,6 +1912,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [printable, setPrintable] = useState<Job | null>(null);
   const [confirm, setConfirm] = useState<any>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   // For notifications — track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
@@ -1959,6 +1960,15 @@ export default function App() {
     );
   }
 
+  const navItems = [
+    { id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard },
+    { id: 'admin-jobs', l: 'Jobs', i: Briefcase },
+    { id: 'admin-logs', l: 'Logs', i: Calendar },
+    { id: 'admin-team', l: 'Team', i: Users },
+    { id: 'admin-settings', l: 'Settings', i: Settings },
+    { id: 'admin-scan', l: 'Work Station', i: ScanLine },
+  ];
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex font-sans">
       <PrintStyles />
@@ -1967,40 +1977,70 @@ export default function App() {
       <ConfirmationModal isOpen={!!confirm} {...(confirm || {})} onCancel={() => setConfirm(null)} />
 
       {user.role === 'admin' && (
-        <aside className="w-64 border-r border-white/5 bg-zinc-950 flex flex-col fixed h-full z-20">
-          <div className="p-6 font-bold text-white flex gap-2 items-center justify-between">
-            <div className="flex items-center gap-2"><Sparkles className="text-blue-500" /> NEXUS</div>
-            <NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
-          </div>
-          <nav className="px-4 space-y-1">
-            {[
-              { id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard },
-              { id: 'admin-jobs', l: 'Jobs', i: Briefcase },
-              { id: 'admin-logs', l: 'Logs', i: Calendar },
-              { id: 'admin-team', l: 'Team', i: Users },
-              { id: 'admin-settings', l: 'Settings', i: Settings },
-              { id: 'admin-scan', l: 'Work Station', i: ScanLine },
-            ].map(x => (
-              <button key={x.id} onClick={() => setView(x.id as any)}
-                className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold transition-all ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/50'}`}>
-                <x.i className="w-4 h-4" /> {x.l}
-              </button>
-            ))}
-          </nav>
-          <button onClick={() => setUser(null)} className="mt-auto m-6 flex items-center gap-3 text-zinc-500 hover:text-white text-sm font-bold transition-colors">
-            <LogOut className="w-4 h-4" /> Sign Out
-          </button>
-        </aside>
+        <>
+          {/* Mobile overlay backdrop */}
+          {sidebarOpen && (
+            <div
+              className="fixed inset-0 bg-black/60 z-30 md:hidden"
+              onClick={() => setSidebarOpen(false)}
+            />
+          )}
+
+          {/* Sidebar — hidden on mobile unless open, always visible on md+ */}
+          <aside className={`
+            fixed h-full z-40 flex flex-col w-64
+            border-r border-white/5 bg-zinc-950
+            transition-transform duration-300 ease-in-out
+            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+            md:translate-x-0
+          `}>
+            <div className="p-6 font-bold text-white flex gap-2 items-center justify-between">
+              <div className="flex items-center gap-2"><Sparkles className="text-blue-500" /> SC DEBURRING</div>
+              <NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
+            </div>
+            <nav className="px-4 space-y-1">
+              {navItems.map(x => (
+                <button key={x.id} onClick={() => { setView(x.id as any); setSidebarOpen(false); }}
+                  className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold transition-all ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/50'}`}>
+                  <x.i className="w-4 h-4" /> {x.l}
+                </button>
+              ))}
+            </nav>
+            <button onClick={() => setUser(null)} className="mt-auto m-6 flex items-center gap-3 text-zinc-500 hover:text-white text-sm font-bold transition-colors">
+              <LogOut className="w-4 h-4" /> Sign Out
+            </button>
+          </aside>
+        </>
       )}
 
-      <main className={`flex-1 p-6 md:p-8 overflow-auto ${user.role === 'admin' ? 'ml-64' : ''}`}>
-        {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
-        {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
-        {view === 'admin-logs' && <LogsView addToast={addToast} />}
-        {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
-        {view === 'admin-settings' && <SettingsView addToast={addToast} />}
-        {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
-        {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
+      {/* Main content */}
+      <main className={`flex-1 overflow-auto ${user.role === 'admin' ? 'md:ml-64' : ''}`}>
+
+        {/* Mobile top bar — only shows for admin on small screens */}
+        {user.role === 'admin' && (
+          <div className="md:hidden flex items-center justify-between px-4 py-3 bg-zinc-950 border-b border-white/5 sticky top-0 z-20">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 rounded-xl bg-zinc-800 border border-white/5 text-zinc-400 hover:text-white"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2 font-bold text-white text-sm">
+              <Sparkles className="w-4 h-4 text-blue-500" /> SC DEBURRING
+            </div>
+            <NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
+          </div>
+        )}
+
+        <div className="p-4 md:p-8">
+          {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
+          {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
+          {view === 'admin-logs' && <LogsView addToast={addToast} />}
+          {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
+          {view === 'admin-settings' && <SettingsView addToast={addToast} />}
+          {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
+          {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
+        </div>
       </main>
 
       <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
