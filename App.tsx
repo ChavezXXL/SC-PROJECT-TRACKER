@@ -170,8 +170,14 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
 };
 
 // --- JOB SELECTION CARD ---
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[] }> = ({ job, onStart, disabled, operations }) => {
-  const [expanded, setExpanded] = useState(false);
+const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean }> = ({ job, onStart, disabled, operations, defaultExpanded }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded || false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (defaultExpanded && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [defaultExpanded]);
   const today = new Date().toISOString().split('T')[0];
   const isOverdue = job.dueDate && job.dueDate < today;
   const isDueSoon = job.dueDate && job.dueDate >= today && job.dueDate <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
@@ -184,7 +190,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
   const borderClass = isOverdue ? 'border-red-500/40 bg-red-500/5' : priorityColors[job.priority || 'normal'];
 
   return (
-    <div className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-blue-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+    <div ref={cardRef} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-blue-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''} ${defaultExpanded ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-500/10' : ''}`}>
       <div className="p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-1">
           <div>
@@ -244,6 +250,14 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
+  const [scannedJobId, setScannedJobId] = useState<string | null>(null);
+
+  // Auto-open job if URL has ?jobId= param (from QR scan outside the app)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlJobId = params.get('jobId');
+    if (urlJobId) setScannedJobId(urlJobId);
+  }, []);
 
   useEffect(() => {
     const settings = DB.getSettings();
@@ -285,9 +299,17 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
       let val = e.currentTarget.value.trim();
       const match = val.match(/[?&]jobId=([^&]+)/);
       if (match) val = match[1];
-      setSearch(val);
-      setTab('jobs');
-      addToast('success', 'Scanned');
+      // Find the job by internal ID or jobIdsDisplay
+      const found = jobs.find(j => j.id === val || j.jobIdsDisplay === val);
+      if (found) {
+        setScannedJobId(found.id);
+        setTab('jobs');
+        addToast('success', `Opened: ${found.poNumber}`);
+      } else {
+        setSearch(val);
+        setTab('jobs');
+        addToast('info', 'Job not found — showing search results');
+      }
     }
   };
 
@@ -356,7 +378,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout }: { user: User, addToast:
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredJobs.map(job => (
-              <JobSelectionCard key={job.id} job={job} onStart={handleStartJob} disabled={!!activeLog} operations={ops} />
+              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} />
             ))}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
