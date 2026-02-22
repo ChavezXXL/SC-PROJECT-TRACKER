@@ -1,6 +1,6 @@
 [build]
-  publish = "."
-  command = "echo 'No build needed'"
+    publish = "dist"
+    command = "npm run build"
 
 [[headers]]
   for = "/sw.js"
@@ -19,3 +19,4 @@
   to = "/index.html"
 
   status = 200
+
