@@ -473,10 +473,15 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   }, []);
 
   const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
-  const wipJobsCount = jobs.filter(j => j.status === 'in-progress').length;
+  const activeJobsCount = jobs.filter(j => j.status !== 'completed').length;
   const activeWorkersCount = new Set(activeLogs.map(l => l.userId)).size;
   const myActiveLog = activeLogs.find(l => l.userId === user.id);
   const myActiveJob = myActiveLog ? jobs.find(j => j.id === myActiveLog.jobId) : null;
+
+  const today = new Date().toISOString().split('T')[0];
+  const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+  const overdueJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.dueDate < today);
+  const dueSoonJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.dueDate >= today && j.dueDate <= in3Days);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -488,14 +493,49 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           }}
         />
       )}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      {/* Overdue / Due Soon Alert Banner */}
+      {(overdueJobs.length > 0 || dueSoonJobs.length > 0) && (
+        <div className="flex flex-col sm:flex-row gap-3">
+          {overdueJobs.length > 0 && (
+            <div className="flex-1 bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-red-400 font-bold text-sm">⚠️ {overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
+                <p className="text-red-400/70 text-xs truncate">{overdueJobs.map(j => j.jobIdsDisplay || j.poNumber).join(', ')}</p>
+              </div>
+              <button onClick={() => setView('admin-jobs')} className="text-xs text-red-400 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors shrink-0">View Jobs</button>
+            </div>
+          )}
+          {dueSoonJobs.length > 0 && (
+            <div className="flex-1 bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center shrink-0">
+                <Clock className="w-5 h-5 text-orange-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-orange-400 font-bold text-sm">⏰ {dueSoonJobs.length} Due Within 3 Days</p>
+                <p className="text-orange-400/70 text-xs truncate">{dueSoonJobs.map(j => j.jobIdsDisplay || j.poNumber).join(', ')}</p>
+              </div>
+              <button onClick={() => setView('admin-jobs')} className="text-xs text-orange-400 hover:text-white border border-orange-500/30 px-3 py-1.5 rounded-lg hover:bg-orange-500/20 transition-colors shrink-0">View Jobs</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
           <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Live Activity</p><h3 className="text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-xs text-blue-400 mt-1">Jobs running now</p></div>
           <Activity className={`w-10 h-10 text-blue-500 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">In Progress</p><h3 className="text-3xl font-black text-white">{wipJobsCount}</h3><p className="text-xs text-zinc-500 mt-1">Total open jobs</p></div>
+          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Open Jobs</p><h3 className="text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-xs text-zinc-500 mt-1">Total open jobs</p></div>
           <Briefcase className="text-zinc-600 w-10 h-10" />
+        </div>
+        <div className={`p-6 rounded-2xl flex justify-between items-center border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div><p className={`text-sm font-bold uppercase tracking-wider ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-3xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-xs mt-1 ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due date</p></div>
+          <AlertTriangle className={`w-10 h-10 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
           <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p><h3 className="text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-xs text-zinc-500 mt-1">Active Operators</p></div>
@@ -550,11 +590,31 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   );
 };
 
+// --- PRIORITY BADGE ---
+const PriorityBadge = ({ priority }: { priority?: string }) => {
+  if (!priority || priority === 'normal') return null;
+  const styles: Record<string, string> = {
+    low: 'text-zinc-500 bg-zinc-800 border-white/5',
+    high: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+    urgent: 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse',
+  };
+  const icons: Record<string, string> = { low: '↓', high: '↑', urgent: '🔴' };
+  return (
+    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${styles[priority] || ''}`}>
+      {icons[priority]} {priority}
+    </span>
+  );
+};
+
 // --- ADMIN: JOBS ---
 const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
   const [search, setSearch] = useState('');
+  const [filterPriority, setFilterPriority] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'newest' | 'oldest'>('dueDate');
+  const [showFilters, setShowFilters] = useState(false);
   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
   const [showModal, setShowModal] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
@@ -577,25 +637,38 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
     }
   };
 
+  const today = new Date().toISOString().split('T')[0];
+  const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+
+  const priorityOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
   const filteredJobs = useMemo(() => {
     return jobs.filter(j => {
-      // ✅ FIX: Strict status check — 'completed' status only for completed tab
       const isCompleted = j.status === 'completed';
       if (activeTab === 'active' && isCompleted) return false;
       if (activeTab === 'completed' && !isCompleted) return false;
+      if (filterPriority !== 'all' && j.priority !== filterPriority) return false;
+      if (filterStatus !== 'all' && j.status !== filterStatus) return false;
       if (search) {
         const s = search.toLowerCase();
         return (j.poNumber || '').toLowerCase().includes(s) ||
                (j.partNumber || '').toLowerCase().includes(s) ||
                (j.jobIdsDisplay || '').toLowerCase().includes(s) ||
-               (j.customer || '').toLowerCase().includes(s);
+               (j.customer || '').toLowerCase().includes(s) ||
+               (j.info || '').toLowerCase().includes(s);
       }
       return true;
     }).sort((a, b) => {
       if (activeTab === 'completed') return (b.completedAt || 0) - (a.completedAt || 0);
-      return (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+      if (sortBy === 'priority') return (priorityOrder[a.priority || 'normal'] ?? 2) - (priorityOrder[b.priority || 'normal'] ?? 2);
+      if (sortBy === 'newest') return b.createdAt - a.createdAt;
+      if (sortBy === 'oldest') return a.createdAt - b.createdAt;
+      // dueDate sort: put jobs without due date at end
+      const ad = a.dueDate || '9999-99-99';
+      const bd = b.dueDate || '9999-99-99';
+      return ad.localeCompare(bd);
     });
-  }, [jobs, search, activeTab]);
+  }, [jobs, search, activeTab, filterPriority, filterStatus, sortBy]);
 
   const stats = useMemo(() => {
     const { startOfWeek, startOfMonth, startOfYear } = getDates();
@@ -606,6 +679,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
       year: completed.filter(j => j.completedAt! >= startOfYear).length,
     };
   }, [jobs]);
+
+  // Count active filters
+  const activeFilterCount = [filterPriority !== 'all', filterStatus !== 'all', sortBy !== 'dueDate'].filter(Boolean).length;
 
   const handleSave = async () => {
     if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
@@ -634,36 +710,130 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Briefcase className="w-6 h-6 text-blue-500" /> Production Jobs</h2>
-          <p className="text-zinc-500 text-sm">Manage orders and prioritize by PO.</p>
+          <p className="text-zinc-500 text-sm">Manage orders and track by PO, priority, and due date.</p>
         </div>
         <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"><Plus className="w-4 h-4" /> New Job Order</button>
       </div>
 
-      <div className="flex flex-col gap-6">
-        <div className="flex gap-2 border-b border-white/5 pb-2">
-          <button onClick={() => setActiveTab('active')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
-            Active Production
-            <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status !== 'completed').length}</span>
-          </button>
-          <button onClick={() => setActiveTab('completed')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'completed' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
-            Completed History
-            <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status === 'completed').length}</span>
+      {/* Tab Bar */}
+      <div className="flex gap-2 border-b border-white/5 pb-2">
+        <button onClick={() => { setActiveTab('active'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
+          Active Production
+          <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status !== 'completed').length}</span>
+        </button>
+        <button onClick={() => { setActiveTab('completed'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'completed' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
+          Completed History
+          <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status === 'completed').length}</span>
+        </button>
+      </div>
+
+      {activeTab === 'completed' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in">
+          <div className="bg-zinc-900/50 border border-emerald-500/20 p-4 rounded-2xl"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wider mb-1">Completed This Week</p><p className="text-3xl font-black text-white">{stats.week}</p></div>
+          <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Month</p><p className="text-3xl font-black text-white">{stats.month}</p></div>
+          <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Year</p><p className="text-3xl font-black text-white">{stats.year}</p></div>
+        </div>
+      )}
+
+      {/* Filter Bar */}
+      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
+        {/* Search + Filter Toggle Row */}
+        <div className="flex gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search PO, Job ID, Part, Customer, Notes..."
+              className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${showFilters || activeFilterCount > 0 ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+            {activeFilterCount > 0 && <span className="bg-blue-500 text-white text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{activeFilterCount}</span>}
           </button>
         </div>
 
-        {activeTab === 'completed' && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in">
-            <div className="bg-zinc-900/50 border border-emerald-500/20 p-4 rounded-2xl"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wider mb-1">Completed This Week</p><p className="text-3xl font-black text-white">{stats.week}</p></div>
-            <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Month</p><p className="text-3xl font-black text-white">{stats.month}</p></div>
-            <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Year</p><p className="text-3xl font-black text-white">{stats.year}</p></div>
+        {/* Expanded Filters */}
+        {showFilters && (
+          <div className="flex flex-wrap gap-3 pt-2 border-t border-white/5 animate-fade-in">
+            {/* Priority Filter */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Priority</label>
+              <div className="flex gap-1">
+                {(['all', 'urgent', 'high', 'normal', 'low'] as const).map(p => (
+                  <button key={p} onClick={() => setFilterPriority(p)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all capitalize border ${
+                      filterPriority === p
+                        ? p === 'urgent' ? 'bg-red-500/20 border-red-500/40 text-red-400'
+                          : p === 'high' ? 'bg-orange-500/20 border-orange-500/40 text-orange-400'
+                          : p === 'low' ? 'bg-zinc-700 border-white/10 text-zinc-300'
+                          : 'bg-zinc-700 border-white/10 text-white'
+                        : 'border-white/5 text-zinc-500 hover:text-zinc-300'
+                    }`}
+                  >{p === 'all' ? 'All' : p}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Status Filter (active tab only) */}
+            {activeTab === 'active' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Status</label>
+                <div className="flex gap-1">
+                  {(['all', 'pending', 'in-progress', 'hold'] as const).map(s => (
+                    <button key={s} onClick={() => setFilterStatus(s)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all capitalize border ${filterStatus === s ? 'bg-zinc-700 border-white/20 text-white' : 'border-white/5 text-zinc-500 hover:text-zinc-300'}`}
+                    >{s === 'all' ? 'All' : s}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sort */}
+            {activeTab === 'active' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Sort By</label>
+                <div className="flex gap-1">
+                  {([
+                    { key: 'dueDate', label: 'Due Date' },
+                    { key: 'priority', label: 'Priority' },
+                    { key: 'newest', label: 'Newest' },
+                    { key: 'oldest', label: 'Oldest' },
+                  ] as const).map(s => (
+                    <button key={s.key} onClick={() => setSortBy(s.key)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${sortBy === s.key ? 'bg-zinc-700 border-white/20 text-white' : 'border-white/5 text-zinc-500 hover:text-zinc-300'}`}
+                    >{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Clear Filters */}
+            {activeFilterCount > 0 && (
+              <div className="flex flex-col justify-end">
+                <button onClick={() => { setFilterPriority('all'); setFilterStatus('all'); setSortBy('dueDate'); }}
+                  className="px-3 py-1 text-xs text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/10 transition-colors font-bold">
+                  Clear Filters
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search PO, Job ID, or Part..." className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none" />
-          </div>
+        {/* Results count */}
+        <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <span>{filteredJobs.length} job{filteredJobs.length !== 1 ? 's' : ''} shown</span>
+          {filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length > 0 && (
+            <span className="text-red-400 font-bold flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              {filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length} overdue
+            </span>
+          )}
         </div>
       </div>
 
@@ -675,34 +845,51 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
               <th className="p-4">Job ID</th>
               <th className="p-4">Part Details</th>
               <th className="p-4">Qty</th>
+              <th className="p-4">Priority</th>
               <th className="p-4">Status</th>
               <th className="p-4">Due</th>
               <th className="p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {filteredJobs.map(j => (
-              <tr key={j.id} className="hover:bg-white/5 transition-colors group">
-                <td className="p-4 text-white font-black text-lg">{j.poNumber}</td>
-                <td className="p-4 text-zinc-400 font-mono text-xs">{j.jobIdsDisplay}</td>
-                <td className="p-4"><div className="text-zinc-300 font-bold">{j.partNumber}</div><div className="text-xs text-zinc-500 mt-0.5">{user.role === 'admin' ? j.customer : '***'}</div></td>
-                <td className="p-4 font-mono text-zinc-300">{j.quantity}</td>
-                <td className="p-4"><StatusBadge status={j.status} /></td>
-                <td className="p-4 font-mono text-zinc-400 whitespace-nowrap">{j.dueDate || '—'}</td>
-                <td className="p-4 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" /></button>
-                    {activeTab === 'active' && (
-                      <button onClick={() => confirm({ title: "Complete Job", message: "Mark as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-colors" title="Complete Job"><CheckCircle className="w-4 h-4" /></button>
-                    )}
-                    <button onClick={() => setPrintable(j)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white" title="Print Traveler"><Printer className="w-4 h-4" /></button>
-                    <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                    <button onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {filteredJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-zinc-500">No jobs found matching filters.</td></tr>}
+            {filteredJobs.map(j => {
+              const isOverdue = j.status !== 'completed' && j.dueDate && j.dueDate < today;
+              const isDueSoon = j.status !== 'completed' && j.dueDate && j.dueDate >= today && j.dueDate <= in3Days;
+              return (
+                <tr key={j.id} className={`hover:bg-white/5 transition-colors group ${isOverdue ? 'bg-red-500/5' : ''}`}>
+                  <td className="p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-black text-lg">{j.poNumber}</span>
+                      {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                      {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
+                    </div>
+                  </td>
+                  <td className="p-4 text-zinc-400 font-mono text-xs">{j.jobIdsDisplay}</td>
+                  <td className="p-4">
+                    <div className="text-zinc-300 font-bold">{j.partNumber}</div>
+                    <div className="text-xs text-zinc-500 mt-0.5">{user.role === 'admin' ? j.customer : '***'}</div>
+                  </td>
+                  <td className="p-4 font-mono text-zinc-300">{j.quantity}</td>
+                  <td className="p-4"><PriorityBadge priority={j.priority} /></td>
+                  <td className="p-4"><StatusBadge status={j.status} /></td>
+                  <td className={`p-4 font-mono whitespace-nowrap font-bold ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
+                    {j.dueDate || '—'}
+                  </td>
+                  <td className="p-4 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" /></button>
+                      {activeTab === 'active' && (
+                        <button onClick={() => confirm({ title: "Complete Job", message: "Mark as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-colors" title="Complete Job"><CheckCircle className="w-4 h-4" /></button>
+                      )}
+                      <button onClick={() => setPrintable(j)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white" title="Print Traveler"><Printer className="w-4 h-4" /></button>
+                      <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                      <button onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {filteredJobs.length === 0 && <tr><td colSpan={8} className="p-12 text-center text-zinc-500">No jobs found matching filters.</td></tr>}
           </tbody>
         </table>
       </div>
