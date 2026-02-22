@@ -1,11 +1,17 @@
 [build]
   publish = "."
-  command = ""
+  command = "echo 'No build needed'"
 
 [[headers]]
   for = "/sw.js"
   [headers.values]
     Content-Type = "application/javascript"
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Content-Type = "application/manifest+json"
     Cache-Control = "no-cache"
 
 [[redirects]]
