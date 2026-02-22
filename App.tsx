@@ -121,7 +121,9 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
             <span className="animate-pulse w-3 h-3 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"></span>
             <span className="text-red-400 font-bold uppercase tracking-widest text-xs">Job In Progress</span>
           </div>
-          <h2 className="text-4xl md:text-5xl font-black text-white mb-2">{job ? job.jobIdsDisplay : 'Unknown Job'}</h2>
+          <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-1">PO Number</p>
+          <h2 className="text-4xl md:text-5xl font-black text-white mb-1">{job ? job.poNumber : 'Unknown'}</h2>
+          <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job ? job.jobIdsDisplay : '—'}</span></p>
           <div className="text-xl text-blue-400 font-medium mb-8 flex items-center gap-2">
             <span className="px-3 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20">{log.operation}</span>
           </div>
@@ -170,16 +172,39 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
 // --- JOB SELECTION CARD ---
 const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[] }> = ({ job, onStart, disabled, operations }) => {
   const [expanded, setExpanded] = useState(false);
+  const today = new Date().toISOString().split('T')[0];
+  const isOverdue = job.dueDate && job.dueDate < today;
+  const isDueSoon = job.dueDate && job.dueDate >= today && job.dueDate <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+  const priorityColors: Record<string, string> = {
+    urgent: 'border-red-500/40 bg-red-500/5',
+    high: 'border-orange-500/30 bg-orange-500/5',
+    normal: 'border-white/5',
+    low: 'border-white/5',
+  };
+  const borderClass = isOverdue ? 'border-red-500/40 bg-red-500/5' : priorityColors[job.priority || 'normal'];
+
   return (
-    <div className={`bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden transition-all duration-300 ${expanded ? 'ring-2 ring-blue-500/50 bg-zinc-800' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-      <div className="p-5 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-        <div className="flex justify-between items-start mb-2">
-          <h3 className="text-lg font-bold text-white">{job.jobIdsDisplay}</h3>
-          <span className="bg-zinc-950 text-zinc-400 text-xs px-2 py-1 rounded font-mono">{job.quantity} units</span>
+    <div className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-blue-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div className="p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)}>
+        <div className="flex justify-between items-start mb-1">
+          <div>
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-0.5">PO Number</p>
+            <h3 className="text-xl font-black text-white leading-tight">{job.poNumber}</h3>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {job.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">🔴 URGENT</span>}
+            {job.priority === 'high' && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">↑ HIGH</span>}
+            <span className="bg-zinc-950 text-zinc-400 text-xs px-2 py-1 rounded font-mono">{job.quantity} units</span>
+          </div>
         </div>
-        <div className="text-sm text-zinc-500 space-y-1">
-          <p>Part: <span className="text-zinc-300">{job.partNumber}</span></p>
-          <p>PO: {job.poNumber}</p>
+        <div className="text-sm text-zinc-500 space-y-1 mt-2">
+          <p>Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
+          <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
+          {job.dueDate && (
+            <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
+              {isOverdue ? '⚠️ OVERDUE:' : isDueSoon ? '⏰ Due Soon:' : 'Due:'} {job.dueDate}
+            </p>
+          )}
         </div>
         {!expanded && (
           <div className="mt-4 flex items-center text-blue-400 text-xs font-bold uppercase tracking-wide">
@@ -188,12 +213,17 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
         )}
       </div>
       {expanded && (
-        <div className="p-4 bg-zinc-950/30 border-t border-white/5 animate-fade-in">
+        <div className="p-4 bg-zinc-950/50 border-t border-white/5 animate-fade-in">
+          {job.info && (
+            <div className="mb-3 p-2 bg-zinc-900 rounded-lg text-xs text-zinc-400 border border-white/5">
+              <span className="text-zinc-500 font-bold uppercase text-[10px]">Notes: </span>{job.info}
+            </div>
+          )}
           <p className="text-xs text-zinc-500 uppercase font-bold mb-3">Select Operation:</p>
           <div className="grid grid-cols-2 gap-2">
             {operations.map(op => (
               <button key={op} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
-                className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-2 px-3 rounded-lg text-sm text-zinc-300 transition-colors">
+                className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-2 px-3 rounded-lg text-sm text-zinc-300 transition-colors font-medium">
                 {op}
               </button>
             ))}
@@ -504,7 +534,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-red-400 font-bold text-sm">⚠️ {overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
-                <p className="text-red-400/70 text-xs truncate">{overdueJobs.map(j => j.jobIdsDisplay || j.poNumber).join(', ')}</p>
+                <p className="text-red-400/70 text-xs truncate">{overdueJobs.map(j => j.poNumber).join(', ')}</p>
               </div>
               <button onClick={() => setView('admin-jobs')} className="text-xs text-red-400 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors shrink-0">View Jobs</button>
             </div>
@@ -516,7 +546,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-orange-400 font-bold text-sm">⏰ {dueSoonJobs.length} Due Within 3 Days</p>
-                <p className="text-orange-400/70 text-xs truncate">{dueSoonJobs.map(j => j.jobIdsDisplay || j.poNumber).join(', ')}</p>
+                <p className="text-orange-400/70 text-xs truncate">{dueSoonJobs.map(j => j.poNumber).join(', ')}</p>
               </div>
               <button onClick={() => setView('admin-jobs')} className="text-xs text-orange-400 hover:text-white border border-orange-500/30 px-3 py-1.5 rounded-lg hover:bg-orange-500/20 transition-colors shrink-0">View Jobs</button>
             </div>
@@ -576,7 +606,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <div className="mt-1 w-2 h-2 rounded-full shrink-0 bg-emerald-500"></div>
                 <div className="flex-1">
                   <p className="text-sm text-white"><span className="font-bold">{l.userName}</span> completed <span className="text-zinc-300">{l.operation}</span></p>
-                  <p className="text-xs text-zinc-500 mt-0.5">Job: {l.jobIdsDisplay || l.jobId} • {new Date(l.endTime!).toLocaleTimeString()}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5"><span className="text-zinc-300 font-bold">{l.jobIdsDisplay || l.jobId}</span> • {new Date(l.endTime!).toLocaleTimeString()}</p>
                 </div>
                 {l.durationMinutes != null && (
                   <div className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-1 rounded">{formatDuration(l.durationMinutes)}</div>
@@ -697,7 +727,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
       priority: editingJob.priority || 'normal',
       dueDate: editingJob.dueDate || '',
       info: editingJob.info || '',
-      status: editingJob.status || 'pending',
+      status: editingJob.status || 'in-progress',
       dateReceived: editingJob.dateReceived || localDate,
       createdAt: editingJob.createdAt || Date.now()
     };
@@ -841,8 +871,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
         <table className="w-full text-sm text-left min-w-[800px]">
           <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-xs">
             <tr>
-              <th className="p-4">PO Number</th>
-              <th className="p-4">Job ID</th>
+              <th className="p-4">PO Number / Job ID</th>
               <th className="p-4">Part Details</th>
               <th className="p-4">Qty</th>
               <th className="p-4">Priority</th>
@@ -858,13 +887,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
               return (
                 <tr key={j.id} className={`hover:bg-white/5 transition-colors group ${isOverdue ? 'bg-red-500/5' : ''}`}>
                   <td className="p-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-white font-black text-lg">{j.poNumber}</span>
-                      {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
-                      {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-black text-xl">{j.poNumber}</span>
+                        {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                        {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
+                      </div>
+                      <span className="text-zinc-600 font-mono text-[11px]">Job ID: {j.jobIdsDisplay}</span>
                     </div>
                   </td>
-                  <td className="p-4 text-zinc-400 font-mono text-xs">{j.jobIdsDisplay}</td>
                   <td className="p-4">
                     <div className="text-zinc-300 font-bold">{j.partNumber}</div>
                     <div className="text-xs text-zinc-500 mt-0.5">{user.role === 'admin' ? j.customer : '***'}</div>
@@ -964,7 +995,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
             <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
-            <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong>{startJobModal.jobIdsDisplay}</strong> ({startJobModal.partNumber})</p>
+            <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong className="text-white">PO: {startJobModal.poNumber}</strong> · {startJobModal.partNumber}</p>
             <div className="grid grid-cols-2 gap-2">
               {ops.map(op => (
                 <button key={op} onClick={() => handleAdminStartJob(op)} className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors">{op}</button>
@@ -1285,14 +1316,14 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-lg font-bold text-white leading-tight">{group.jobId}</h3>
+                    <h3 className="text-xl font-black text-white leading-tight">{group.poNumber || group.jobId}</h3>
                     {group.jobIsCompleted
                       ? <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider">Job Complete</span>
                       : <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider">In Production</span>
                     }
                   </div>
                   <div className="flex items-center gap-2 text-xs mt-1 flex-wrap">
-                    {group.poNumber && <span className="text-zinc-500">PO: <span className="text-zinc-300 font-bold">{group.poNumber}</span></span>}
+                    {group.poNumber && <span className="text-zinc-500 font-mono">Job ID: {group.jobId}</span>}
                     {group.poNumber && <span className="text-zinc-700">•</span>}
                     <span className="text-zinc-500">Part: <span className="text-zinc-300">{group.partNumber}</span></span>
                     {group.customer && <><span className="text-zinc-700">•</span><span className="text-zinc-400">{group.customer}</span></>}
