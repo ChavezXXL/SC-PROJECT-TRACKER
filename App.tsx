@@ -56,19 +56,28 @@ const PrintStyles = () => (
         position: absolute;
         left: 0;
         top: 0;
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
+        width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+        min-height: 100%;
+        margin: 0 !important;
+        padding: 0 !important;
         background: white;
         z-index: 9999;
+        overflow: visible !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+      }
+      #printable-area {
+        padding: 0 !important;
+        overflow: visible !important;
       }
       .no-print {
         display: none !important;
       }
       @page {
         size: auto;
-        margin: 0mm;
+        margin: 10mm;
       }
     }
   `}</style>
@@ -618,7 +627,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                <div>
                    <p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p>
                    <h3 className="text-3xl font-black text-white">{activeWorkersCount}</h3>
-                   <p className="text-xs text-zinc-500 mt-1">Clocked in</p>
+                   <p className="text-xs text-zinc-500 mt-1">Active Operators</p>
                </div>
                <Users className="text-emerald-500 w-10 h-10" />
             </div>
@@ -663,7 +672,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                                </p>
                                <p className="text-xs text-zinc-500 mt-0.5">Job: {l.jobId} • {new Date(l.startTime).toLocaleTimeString()}</p>
                            </div>
-                           {l.durationMinutes && (
+                           {l.durationMinutes != null && (
                                <div className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-1 rounded">
                                    {formatDuration(l.durationMinutes)}
                                </div>
@@ -807,8 +816,8 @@ return (
             </div>
         </div>
 
-        <div className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-hidden shadow-sm">
-            <table className="w-full text-sm text-left">
+        <div className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-x-auto shadow-sm">
+            <table className="w-full text-sm text-left min-w-[800px]">
                 <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-xs">
                     <tr>
                         <th className="p-4">PO Number</th>
@@ -831,7 +840,7 @@ return (
                             </td>
                             <td className="p-4 font-mono text-zinc-300">{j.quantity}</td>
                             <td className="p-4"><StatusBadge status={j.status} /></td>
-                            <td className="p-4 font-mono text-zinc-400">{j.dueDate || '—'}</td>
+                            <td className="p-4 font-mono text-zinc-400 whitespace-nowrap">{j.dueDate || '—'}</td>
                             <td className="p-4 text-right flex justify-end gap-2">
                                 <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4"/></button>
                                 {activeTab === 'active' && (
@@ -1245,11 +1254,11 @@ const LogsView = ({ addToast }: { addToast: any }) => {
              <div className="flex-1 w-full md:w-auto grid grid-cols-2 md:grid-cols-4 gap-2">
                  <div className="flex flex-col gap-1">
                      <label className="text-[10px] uppercase font-bold text-zinc-500">Start Date</label>
-                     <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white" />
+                     <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white min-w-[130px]" />
                  </div>
                  <div className="flex flex-col gap-1">
                      <label className="text-[10px] uppercase font-bold text-zinc-500">End Date</label>
-                     <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white" />
+                     <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white min-w-[130px]" />
                  </div>
                  
                  {/* Tabs as Buttons */}
@@ -1516,7 +1525,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
      <div className="max-w-xl space-y-6">
         <h2 className="text-2xl font-bold text-white">System Settings</h2>
         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
-           <div className="flex items-center gap-3 mb-6 pb-6 border-b border-white/5"><div className="bg-orange-500/20 p-2 rounded-lg text-orange-400"><Clock className="w-6 h-6" /></div><div><h3 className="font-bold text-white">Auto-Cleanup Rules</h3><p className="text-sm text-zinc-500">Automatically clock out forgotton timers.</p></div></div>
+           <div className="flex items-center gap-3 mb-6 pb-6 border-b border-white/5"><div className="bg-orange-500/20 p-2 rounded-lg text-orange-400"><Clock className="w-6 h-6" /></div><div><h3 className="font-bold text-white">Auto-Cleanup Rules</h3><p className="text-sm text-zinc-500">Automatically clock out forgotten timers.</p></div></div>
            <div className="space-y-4">
              <div className="flex items-center justify-between"><label className="text-sm text-zinc-300">Enable Auto-Clock Out</label><input type="checkbox" checked={settings.autoClockOutEnabled} onChange={e => setSettings({...settings, autoClockOutEnabled: e.target.checked})} className="w-5 h-5 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" /></div>
              <div><label className="text-xs text-zinc-500 block mb-1">Auto-Clock Out Time</label><input type="time" value={settings.autoClockOutTime} onChange={e => setSettings({...settings, autoClockOutTime: e.target.value})} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" /></div>

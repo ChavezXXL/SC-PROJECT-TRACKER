@@ -381,7 +381,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
 
         const existing = snap.data() as TimeLog;
         const durationSeconds = Math.max(0, Math.floor((endTime - existing.startTime) / 1000));
-        const durationMinutes = Math.floor(durationSeconds / 60);
+        const durationMinutes = Math.ceil(durationSeconds / 60);
 
         const updates: any = { 
             endTime, 
@@ -407,7 +407,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
   if (idx >= 0) {
     const l = logs[idx];
     const durationSeconds = Math.max(0, Math.floor((endTime - l.startTime) / 1000));
-    const durationMinutes = Math.floor(durationSeconds / 60);
+    const durationMinutes = Math.ceil(durationSeconds / 60);
     logs[idx] = { 
         ...l, 
         endTime, 
@@ -426,7 +426,7 @@ export async function updateTimeLog(log: TimeLog) {
   // Recalculate duration if end time exists
   if (log.endTime) {
      log.durationSeconds = Math.max(0, Math.floor((log.endTime - log.startTime) / 1000));
-     log.durationMinutes = Math.floor(log.durationSeconds / 60);
+     log.durationMinutes = Math.ceil(log.durationSeconds / 60);
      log.status = 'completed';
   } else {
      log.endTime = null;
