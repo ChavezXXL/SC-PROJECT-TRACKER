@@ -12,6 +12,7 @@ import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
 import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
+import { POScanner } from './POScanner';
 
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
@@ -43,7 +44,7 @@ const getDates = () => {
 };
 
 
-// ─── NOTIFICATION SERVICE ──────────────────────────────────────────────────
+// âââ NOTIFICATION SERVICE ââââââââââââââââââââââââââââââââââââââââââââââââââ
 // Handles PWA permission, browser notifications, and in-app alert feed.
 
 const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
@@ -96,7 +97,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         const tag = `overdue-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
-          fire('overdue', '⚠️ Overdue Job', `PO ${j.poNumber} was due ${j.dueDate}`, tag);
+          fire('overdue', 'â ï¸ Overdue Job', `PO ${j.poNumber} was due ${j.dueDate}`, tag);
         }
       });
 
@@ -105,7 +106,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         const tag = `due-soon-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
-          fire('due-soon', '⏰ Due Soon', `PO ${j.poNumber} is due ${j.dueDate}`, tag);
+          fire('due-soon', 'â° Due Soon', `PO ${j.poNumber} is due ${j.dueDate}`, tag);
         }
       });
 
@@ -114,7 +115,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         const tag = `urgent-${j.id}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
-          fire('urgent', '🔴 Urgent Job Added', `PO ${j.poNumber} — ${j.partNumber} marked URGENT`, tag);
+          fire('urgent', 'ð´ Urgent Job Added', `PO ${j.poNumber} â ${j.partNumber} marked URGENT`, tag);
         }
       });
 
@@ -125,7 +126,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
           if (!notifiedRef.current.has(tag)) {
             notifiedRef.current.add(tag);
             const hrs = ((Date.now() - l.startTime) / 3600000).toFixed(1);
-            fire('long-timer', '🕐 Long Running Timer', `${l.userName} has been on ${l.operation} for ${hrs}h`, tag);
+            fire('long-timer', 'ð Long Running Timer', `${l.userName} has been on ${l.operation} for ${hrs}h`, tag);
           }
         });
       }
@@ -139,7 +140,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   return { permission, requestPermission, alerts, markRead, markAllRead, clearAll };
 };
 
-// ─── NOTIFICATION BELL COMPONENT ──────────────────────────────────────────
+// âââ NOTIFICATION BELL COMPONENT ââââââââââââââââââââââââââââââââââââââââââ
 const NotificationBell = ({ permission, requestPermission, alerts, markRead, markAllRead, clearAll }: any) => {
   const [open, setOpen] = useState(false);
   const unread = alerts.filter((a: any) => !a.read).length;
@@ -267,7 +268,7 @@ const NotificationBell = ({ permission, requestPermission, alerts, markRead, mar
 };
 
 
-// ─── PWA INSTALL BANNER ────────────────────────────────────────────────────
+// âââ PWA INSTALL BANNER ââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const PWAInstallBanner = () => {
   const [prompt, setPrompt] = useState<any>(null);
   const [dismissed, setDismissed] = useState(() => !!localStorage.getItem('pwa-banner-dismissed'));
@@ -293,7 +294,7 @@ const PWAInstallBanner = () => {
     localStorage.setItem('pwa-banner-dismissed', '1');
   };
 
-  // Already installed as PWA — don't show
+  // Already installed as PWA â don't show
   if (installed || dismissed || !prompt || window.matchMedia('(display-mode: standalone)').matches) return null;
 
   return (
@@ -303,7 +304,7 @@ const PWAInstallBanner = () => {
           <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 text-white font-black text-sm">SC</div>
           <div className="flex-1">
             <p className="text-white font-bold text-sm">Install SC Tracker</p>
-            <p className="text-zinc-400 text-xs mt-0.5">Add to your home screen for quick access — works offline too.</p>
+            <p className="text-zinc-400 text-xs mt-0.5">Add to your home screen for quick access â works offline too.</p>
             <div className="flex gap-2 mt-3">
               <button onClick={install} className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex-1">
                 Install App
@@ -400,7 +401,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
           </div>
           <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-1">PO Number</p>
           <h2 className="text-4xl md:text-5xl font-black text-white mb-1">{job ? job.poNumber : 'Unknown'}</h2>
-          <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job ? job.jobIdsDisplay : '—'}</span></p>
+          <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job ? job.jobIdsDisplay : 'â'}</span></p>
           <div className="text-xl text-blue-400 font-medium mb-8 flex items-center gap-2">
             <span className="px-3 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20">{log.operation}</span>
           </div>
@@ -475,8 +476,8 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <h3 className="text-xl font-black text-white leading-tight">{job.poNumber}</h3>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {job.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">🔴 URGENT</span>}
-            {job.priority === 'high' && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">↑ HIGH</span>}
+            {job.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">ð´ URGENT</span>}
+            {job.priority === 'high' && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">â HIGH</span>}
             <span className="bg-zinc-950 text-zinc-400 text-xs px-2 py-1 rounded font-mono">{job.quantity} units</span>
           </div>
         </div>
@@ -485,7 +486,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
-              {isOverdue ? '⚠️ OVERDUE:' : isDueSoon ? '⏰ Due Soon:' : 'Due:'} {job.dueDate}
+              {isOverdue ? 'â ï¸ OVERDUE:' : isDueSoon ? 'â° Due Soon:' : 'Due:'} {job.dueDate}
             </p>
           )}
         </div>
@@ -524,6 +525,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [showPOScanner, setShowPOScanner] = useState(false);
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
@@ -585,7 +587,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       } else {
         setSearch(val);
         setTab('jobs');
-        addToast('info', 'Job not found — showing search results');
+        addToast('info', 'Job not found â showing search results');
       }
     }
   };
@@ -833,7 +835,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <AlertTriangle className="w-5 h-5 text-red-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-red-400 font-bold text-sm">⚠️ {overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
+                <p className="text-red-400 font-bold text-sm">â ï¸ {overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
                 <p className="text-red-400/70 text-xs truncate">{overdueJobs.map(j => j.poNumber).join(', ')}</p>
               </div>
               <button onClick={() => setView('admin-jobs')} className="text-xs text-red-400 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors shrink-0">View Jobs</button>
@@ -845,7 +847,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <Clock className="w-5 h-5 text-orange-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-orange-400 font-bold text-sm">⏰ {dueSoonJobs.length} Due Within 3 Days</p>
+                <p className="text-orange-400 font-bold text-sm">â° {dueSoonJobs.length} Due Within 3 Days</p>
                 <p className="text-orange-400/70 text-xs truncate">{dueSoonJobs.map(j => j.poNumber).join(', ')}</p>
               </div>
               <button onClick={() => setView('admin-jobs')} className="text-xs text-orange-400 hover:text-white border border-orange-500/30 px-3 py-1.5 rounded-lg hover:bg-orange-500/20 transition-colors shrink-0">View Jobs</button>
@@ -906,7 +908,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <div className="mt-1 w-2 h-2 rounded-full shrink-0 bg-emerald-500"></div>
                 <div className="flex-1">
                   <p className="text-sm text-white"><span className="font-bold">{l.userName}</span> completed <span className="text-zinc-300">{l.operation}</span></p>
-                  <p className="text-xs text-zinc-500 mt-0.5"><span className="text-zinc-300 font-bold">{l.jobIdsDisplay || l.jobId}</span> • {new Date(l.endTime!).toLocaleTimeString()}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5"><span className="text-zinc-300 font-bold">{l.jobIdsDisplay || l.jobId}</span> â¢ {new Date(l.endTime!).toLocaleTimeString()}</p>
                 </div>
                 {l.durationMinutes != null && (
                   <div className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-1 rounded">{formatDuration(l.durationMinutes)}</div>
@@ -928,7 +930,7 @@ const PriorityBadge = ({ priority }: { priority?: string }) => {
     high: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
     urgent: 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse',
   };
-  const icons: Record<string, string> = { low: '↓', high: '↑', urgent: '🔴' };
+  const icons: Record<string, string> = { low: 'â', high: 'â', urgent: 'ð´' };
   return (
     <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${styles[priority] || ''}`}>
       {icons[priority]} {priority}
@@ -1043,6 +1045,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
           <p className="text-zinc-500 text-sm">Manage orders and track by PO, priority, and due date.</p>
         </div>
         <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"><Plus className="w-4 h-4" /> New Job Order</button>
+              <button
+                onClick={() => setShowPOScanner(true)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"
+              >
+                <ScanLine className="w-4 h-4" /> Scan PO
+              </button>
       </div>
 
       {/* Tab Bar */}
@@ -1204,7 +1212,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
                   <td className="p-4"><PriorityBadge priority={j.priority} /></td>
                   <td className="p-4"><StatusBadge status={j.status} /></td>
                   <td className={`p-4 font-mono whitespace-nowrap font-bold ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
-                    {j.dueDate || '—'}
+                    {j.dueDate || 'â'}
                   </td>
                   <td className="p-4 text-right">
                     <div className="flex justify-end gap-2">
@@ -1295,7 +1303,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl p-6">
             <h3 className="text-lg font-bold text-white mb-2">Start Operation</h3>
-            <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong className="text-white">PO: {startJobModal.poNumber}</strong> · {startJobModal.partNumber}</p>
+            <p className="text-sm text-zinc-400 mb-4">Select an operation for <strong className="text-white">PO: {startJobModal.poNumber}</strong> Â· {startJobModal.partNumber}</p>
             <div className="grid grid-cols-2 gap-2">
               {ops.map(op => (
                 <button key={op} onClick={() => handleAdminStartJob(op)} className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors">{op}</button>
@@ -1311,11 +1319,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
 };
 
 // ============================================================
-// --- ADMIN: LOGS (v3 — filters by JOB completion status) ---
+// --- ADMIN: LOGS (v3 â filters by JOB completion status) ---
 // ============================================================
 const LogsView = ({ addToast }: { addToast: any }) => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);        // ← NEW: need job status
+  const [jobs, setJobs] = useState<Job[]>([]);        // â NEW: need job status
   const [users, setUsers] = useState<User[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
@@ -1338,12 +1346,12 @@ const LogsView = ({ addToast }: { addToast: any }) => {
   useEffect(() => {
     const unsub1 = DB.subscribeLogs(setLogs);
     const unsub2 = DB.subscribeUsers(setUsers);
-    const unsub3 = DB.subscribeJobs(setJobs);         // ← subscribe to jobs too
+    const unsub3 = DB.subscribeJobs(setJobs);         // â subscribe to jobs too
     setOps(DB.getSettings().customOperations);
     return () => { unsub1(); unsub2(); unsub3(); };
   }, [refreshKey]);
 
-  // Build a quick lookup: jobId → job.status
+  // Build a quick lookup: jobId â job.status
   const jobStatusMap = useMemo(() => {
     const map: Record<string, string> = {};
     jobs.forEach(j => { map[j.id] = j.status; });
@@ -1405,12 +1413,12 @@ const LogsView = ({ addToast }: { addToast: any }) => {
     const term = filterSearch.toLowerCase().trim();
 
     const filtered = logs.filter(log => {
-      // ─── KEY LOGIC ──────────────────────────────────────────────────────
+      // âââ KEY LOGIC ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
       // A log belongs to "completed" tab if its parent JOB is marked complete.
       // A log belongs to "active" tab if its parent JOB is NOT yet complete.
       // Individual timer start/stop (log.endTime) is shown INSIDE the group
-      // as a detail row — it does NOT drive the tab grouping.
-      // ────────────────────────────────────────────────────────────────────
+      // as a detail row â it does NOT drive the tab grouping.
+      // ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
       const jobIsCompleted = jobStatusMap[log.jobId] === 'completed';
 
       if (activeTab === 'completed' && !jobIsCompleted) return false;
@@ -1510,7 +1518,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 no-print">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2 text-white"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
-          <p className="text-zinc-500 text-sm mt-1">Logs grouped by job — Active = job still open, Completed = job marked done.</p>
+          <p className="text-zinc-500 text-sm mt-1">Logs grouped by job â Active = job still open, Completed = job marked done.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => window.print()} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors"><Printer className="w-4 h-4" /> Print Report</button>
@@ -1561,8 +1569,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
           <div className="bg-black/30 p-1 rounded-xl flex gap-1 shrink-0">
             {([
               { key: 'all',       label: 'All Jobs',        count: activeJobCount + completedJobCount },
-              { key: 'active',    label: '🔧 Active Jobs',  count: activeJobCount },
-              { key: 'completed', label: '✅ Completed Jobs',count: completedJobCount },
+              { key: 'active',    label: 'ð§ Active Jobs',  count: activeJobCount },
+              { key: 'completed', label: 'â Completed Jobs',count: completedJobCount },
             ] as const).map(({ key, label, count }) => (
               <button
                 key={key}
@@ -1624,10 +1632,10 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                   </div>
                   <div className="flex items-center gap-2 text-xs mt-1 flex-wrap">
                     {group.poNumber && <span className="text-zinc-500 font-mono">Job ID: {group.jobId}</span>}
-                    {group.poNumber && <span className="text-zinc-700">•</span>}
+                    {group.poNumber && <span className="text-zinc-700">â¢</span>}
                     <span className="text-zinc-500">Part: <span className="text-zinc-300">{group.partNumber}</span></span>
-                    {group.customer && <><span className="text-zinc-700">•</span><span className="text-zinc-400">{group.customer}</span></>}
-                    {group.dueDate  && <><span className="text-zinc-700">•</span><span className="text-zinc-500">Due: <span className="text-zinc-300">{group.dueDate}</span></span></>}
+                    {group.customer && <><span className="text-zinc-700">â¢</span><span className="text-zinc-400">{group.customer}</span></>}
+                    {group.dueDate  && <><span className="text-zinc-700">â¢</span><span className="text-zinc-500">Due: <span className="text-zinc-300">{group.dueDate}</span></span></>}
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     {group.runningCount > 0 && (
@@ -1669,7 +1677,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                     <th className="p-3 pl-6">Date</th>
                     <th className="p-3">Employee</th>
                     <th className="p-3">Operation</th>
-                    <th className="p-3">Start → End</th>
+                    <th className="p-3">Start â End</th>
                     <th className="p-3">Timer</th>
                     <th className="p-3 text-right pr-6">Duration</th>
                     <th className="p-3 text-right pr-6 no-print"></th>
@@ -1683,7 +1691,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                       <td className="p-3 text-blue-400 font-medium">{log.operation}</td>
                       <td className="p-3 font-mono text-zinc-400 whitespace-nowrap">
                         {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {' → '}
+                        {' â '}
                         {log.endTime
                           ? new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                           : <span className="text-blue-400 font-bold">Running</span>
@@ -1811,7 +1819,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
           <div key={u.id} className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400"><UserIcon className="w-5 h-5" /></div>
-              <div><p className="font-bold text-white">{u.name}</p><p className="text-xs text-zinc-500">@{u.username} • {u.role}</p></div>
+              <div><p className="font-bold text-white">{u.name}</p><p className="text-xs text-zinc-500">@{u.username} â¢ {u.role}</p></div>
             </div>
             <div className="flex gap-2">
               <button onClick={() => handleDelete(u.id)} className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
@@ -1913,7 +1921,7 @@ export default function App() {
   const [printable, setPrintable] = useState<Job | null>(null);
   const [confirm, setConfirm] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // For notifications — track all jobs and active logs globally
+  // For notifications â track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
   const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user);
@@ -1969,6 +1977,25 @@ export default function App() {
     { id: 'admin-scan', l: 'Work Station', i: ScanLine },
   ];
 
+  // ─── PO SCANNER ─────────────────────────────────────────────────────────
+  const handlePOJobCreate = async (jobData: { poNumber: string; partNumber: string; customer: string; quantity: number; dueDate: string; info: string; }) => {
+    const newJob: Job = {
+      id: `job_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
+      jobIdsDisplay: `J-${Date.now().toString().slice(-6)}`,
+      poNumber: jobData.poNumber,
+      partNumber: jobData.partNumber,
+      customer: jobData.customer || '',
+      quantity: jobData.quantity,
+      dueDate: jobData.dueDate,
+      dateReceived: new Date().toISOString().split('T')[0],
+      info: jobData.info,
+      status: 'pending',
+      priority: 'normal',
+      createdAt: Date.now(),
+    };
+    await DB.saveJob(newJob);
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex font-sans">
       <PrintStyles />
@@ -1986,7 +2013,7 @@ export default function App() {
             />
           )}
 
-          {/* Sidebar — hidden on mobile unless open, always visible on md+ */}
+          {/* Sidebar â hidden on mobile unless open, always visible on md+ */}
           <aside className={`
             fixed h-full z-40 flex flex-col w-64
             border-r border-white/5 bg-zinc-950
@@ -2016,7 +2043,7 @@ export default function App() {
       {/* Main content */}
       <main className={`flex-1 overflow-auto ${user.role === 'admin' ? 'md:ml-64' : ''}`}>
 
-        {/* Mobile top bar — only shows for admin on small screens */}
+        {/* Mobile top bar â only shows for admin on small screens */}
         {user.role === 'admin' && (
           <div className="md:hidden flex items-center justify-between px-4 py-3 bg-zinc-950 border-b border-white/5 sticky top-0 z-20">
             <button
@@ -2043,7 +2070,14 @@ export default function App() {
         </div>
       </main>
 
-      <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
+      {showPOScanner && (
+        <POScanner
+          geminiApiKey={import.meta.env.VITE_GEMINI_API_KEY || ''}
+          onJobCreate={handlePOJobCreate}
+          onClose={() => setShowPOScanner(false)}
+        />
+      )}
+            <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
         <div className="pointer-events-auto flex flex-col items-end gap-2">
           {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}
         </div>
