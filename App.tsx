@@ -19,7 +19,7 @@ function saveClients(l:string[]):string[]{const u=[...new Set(l.map(s=>s.trim())
 function addClient(n:string):string[]{return saveClients([...getClients(),n.trim()])}
 function removeClient(n:string):string[]{return saveClients(getClients().filter(x=>x!==n))}
 
-// Ã¢ÂÂÃ¢ÂÂ Date normalizer: always returns MM/DD/YYYY Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Date normalizer: always returns MM/DD/YYYY ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 function normDate(raw: string | null | undefined): string {
   if (!raw) return '';
   const s = raw.trim();
@@ -39,7 +39,7 @@ function todayMMDDYYYY(): string {
   const d = new Date();
   return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
 }
-// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
@@ -1903,7 +1903,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
 
 // --- ADMIN: SETTINGS ---
 
-// ââ Client History Modal âââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂ Client History Modal Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const ClientHistoryModal = ({ clientName, jobs, onClose }: { clientName: string; jobs: any[]; onClose: () => void }) => {
   const clientJobs = jobs.filter(j => (j.customer || '').trim() === clientName);
   const activeJobs = clientJobs.filter(j => j.status !== 'completed');
@@ -1915,7 +1915,7 @@ const ClientHistoryModal = ({ clientName, jobs, onClose }: { clientName: string;
         <div className="flex items-center justify-between p-5 border-b border-zinc-700">
           <div>
             <h2 className="text-white font-bold text-xl">{clientName}</h2>
-            <p className="text-zinc-400 text-sm mt-0.5">{clientJobs.length} total jobs Â· {totalParts.toLocaleString()} total parts</p>
+            <p className="text-zinc-400 text-sm mt-0.5">{clientJobs.length} total jobs ÃÂ· {totalParts.toLocaleString()} total parts</p>
           </div>
           <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none">&times;</button>
         </div>
@@ -1946,7 +1946,7 @@ const ClientHistoryModal = ({ clientName, jobs, onClose }: { clientName: string;
               <div className="space-y-2">
                 {completedJobs.map(j => (
                   <div key={j.id} className="bg-zinc-800/60 rounded-xl p-3 flex items-center justify-between opacity-80">
-                    {/* ââ CLIENTS SECTION ââ */}
+                    {/* Ã¢ÂÂÃ¢ÂÂ CLIENTS SECTION Ã¢ÂÂÃ¢ÂÂ */}
           <div className="bg-zinc-800/50 rounded-2xl p-5 border border-zinc-700 mb-4">
             <h3 className="text-white font-bold text-base mb-1">Client Companies</h3>
             <p className="text-zinc-400 text-xs mb-4">Add clients to filter jobs and view their history.</p>
@@ -1959,7 +1959,7 @@ const ClientHistoryModal = ({ clientName, jobs, onClose }: { clientName: string;
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Add</button>
             </div>
             <div className="space-y-2">
-              {clients.length === 0 && <p className="text-zinc-500 text-sm">No clients yet â add your first one above.</p>}
+              {clients.length === 0 && <p className="text-zinc-500 text-sm">No clients yet Ã¢ÂÂ add your first one above.</p>}
               {clients.sort().map(cl => (
                 <div key={cl} className="flex items-center justify-between bg-zinc-700/50 rounded-lg px-3 py-2">
                   <button onClick={() => setSelectedClientView(cl)} className="text-white text-sm font-medium hover:text-blue-400 transition-colors">{cl}</button>
@@ -1987,7 +1987,7 @@ const ClientHistoryModal = ({ clientName, jobs, onClose }: { clientName: string;
     </div>
   );
 };
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 
 const ClientHistoryModal = ({clientName,jobs,onClose}:{clientName:string;jobs:any[];onClose:()=>void}) => {
   const cjobs = jobs.filter(j=>(j.customer||'').trim()===clientName);
@@ -2000,7 +2000,7 @@ const ClientHistoryModal = ({clientName,jobs,onClose}:{clientName:string;jobs:an
         <div className="flex items-center justify-between p-5 border-b border-zinc-700">
           <div>
             <h2 className="text-white font-bold text-xl">{clientName}</h2>
-            <p className="text-zinc-400 text-sm mt-0.5">{cjobs.length} jobs · {total.toLocaleString()} total parts</p>
+            <p className="text-zinc-400 text-sm mt-0.5">{cjobs.length} jobs Â· {total.toLocaleString()} total parts</p>
           </div>
           <button onClick={onClose} className="text-zinc-400 hover:text-white text-3xl leading-none px-2">&times;</button>
         </div>
@@ -2044,7 +2044,7 @@ const ClientHistoryModal = ({clientName,jobs,onClose}:{clientName:string;jobs:an
     </div>
   );
 };
-const SettingsView = ({ addToast }: { addToast: any }) => {
+const SettingsView = ({ setSelectedClientView, clients, setClients, addToast }: { addToast: any }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
 
@@ -2066,7 +2066,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
       
           <div className="bg-zinc-800/50 rounded-2xl p-5 border border-zinc-700">
             <h3 className="text-white font-bold text-base mb-1">Client Companies</h3>
-            <p className="text-zinc-400 text-xs mb-4">Manage clients — filter jobs and view full history per client.</p>
+            <p className="text-zinc-400 text-xs mb-4">Manage clients â filter jobs and view full history per client.</p>
             <div className="flex gap-2 mb-4">
               <input id="cl-inp" type="text" placeholder="Add company name (e.g. S&H, PAMCO)"
                 className="flex-1 bg-zinc-700 border border-zinc-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
@@ -2075,7 +2075,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               <button onClick={()=>{const i=document.getElementById('cl-inp') as HTMLInputElement;if(i?.value.trim()){setClients(addClient(i.value.trim()));i.value=''}}}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Add</button>
             </div>
-            {clients.length===0&&<p className="text-zinc-500 text-sm italic">No clients yet — add one above.</p>}
+            {clients.length===0&&<p className="text-zinc-500 text-sm italic">No clients yet â add one above.</p>}
             <div className="space-y-2">
               {clients.sort().map(cl=>(
                 <div key={cl} className="flex items-center justify-between bg-zinc-700/60 rounded-lg px-3 py-2">
@@ -2281,7 +2281,11 @@ export default function App() {
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
           {view === 'admin-logs' && <LogsView addToast={addToast} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
-          {view === 'admin-settings' && <SettingsView addToast={addToast} />}
+          {view === 'admin-settings' && <SettingsView addToast={addToast} 
+            setSelectedClientView={setSelectedClientView}
+            clients={clients}
+            setClients={setClients}
+          />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
         </div>
