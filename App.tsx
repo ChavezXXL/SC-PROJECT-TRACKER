@@ -14,7 +14,21 @@ import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { POScanner } from './POScanner';
 
-// ââ Date normalizer: always returns MM/DD/YYYY ââââââââââââââââââââââââââ
+// ── Date formatter: YYYY-MM-DD → MM/DD/YYYY ──────────────────
+function fmt(d?:string|null):string{
+  if(!d)return'';
+  const m=d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m)return m[2]+'/'+m[3]+'/'+m[1];
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(d))return d;
+  return d;
+}
+function todayFmt():string{
+  const d=new Date();
+  return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+'/'+d.getFullYear();
+}
+// ─────────────────────────────────────────────────────────────
+
+// Ã¢ÂÂÃ¢ÂÂ Date normalizer: always returns MM/DD/YYYY Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 function normDate(raw: string | null | undefined): string {
   if (!raw) return '';
   const s = raw.trim();
@@ -34,7 +48,7 @@ function todayMMDDYYYY(): string {
   const d = new Date();
   return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
 }
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
@@ -110,7 +124,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   // Check jobs every minute
   useEffect(() => {
     const check = () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = todayFmt();
       const in2Days = new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
       const activeJobs = jobs.filter(j => j.status !== 'completed');
 
@@ -478,7 +492,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [defaultExpanded]);
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayFmt();
   const isOverdue = job.dueDate && job.dueDate < today;
   const isDueSoon = job.dueDate && job.dueDate >= today && job.dueDate <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
   const priorityColors: Record<string, string> = {
@@ -831,7 +845,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const myActiveLog = activeLogs.find(l => l.userId === user.id);
   const myActiveJob = myActiveLog ? jobs.find(j => j.id === myActiveLog.jobId) : null;
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayFmt();
   const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
   const overdueJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.dueDate < today);
   const dueSoonJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.dueDate >= today && j.dueDate <= in3Days);
@@ -991,7 +1005,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
     }
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayFmt();
   const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
 
   const priorityOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
@@ -1291,7 +1305,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quantity</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quantity || ''} onChange={e => setEditingJob({ ...editingJob, quantity: Number(e.target.value) })} placeholder="0" /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived || new Date().toISOString().split('T')[0]} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
+                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived || todayFmt()} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dueDate || ''} onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} /></div>
                 </div>
               </div>
