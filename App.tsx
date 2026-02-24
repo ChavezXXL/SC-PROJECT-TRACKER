@@ -14,7 +14,7 @@ import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { POScanner } from './POScanner';
 
-// ── Date formatter: YYYY-MM-DD → MM/DD/YYYY ──────────────────
+// ââ Date formatter: YYYY-MM-DD â MM/DD/YYYY ââââââââââââââââââ
 function fmt(d?:string|null):string{
   if(!d)return'';
   const m=d.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -26,9 +26,9 @@ function todayFmt():string{
   const d=new Date();
   return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+'/'+d.getFullYear();
 }
-// ─────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-// Ã¢ÂÂÃ¢ÂÂ Date normalizer: always returns MM/DD/YYYY Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Date normalizer: always returns MM/DD/YYYY ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 function normDate(raw: string | null | undefined): string {
   if (!raw) return '';
   const s = raw.trim();
@@ -48,7 +48,7 @@ function todayMMDDYYYY(): string {
   const d = new Date();
   return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
 }
-// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
@@ -133,7 +133,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         const tag = `overdue-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
-          fire('overdue', ' Overdue Job', `PO ${j.poNumber} was due ${j.dueDate}`, tag);
+          fire('overdue', ' Overdue Job', `PO ${j.poNumber} was due ${fmt(j.dueDate)}`, tag);
         }
       });
 
@@ -142,7 +142,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         const tag = `due-soon-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
-          fire('due-soon', ' Due Soon', `PO ${j.poNumber} is due ${j.dueDate}`, tag);
+          fire('due-soon', ' Due Soon', `PO ${j.poNumber} is due ${fmt(j.dueDate)}`, tag);
         }
       });
 
@@ -1671,7 +1671,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
                     {group.poNumber && <span className="text-zinc-700"></span>}
                     <span className="text-zinc-500">Part: <span className="text-zinc-300">{group.partNumber}</span></span>
                     {group.customer && <><span className="text-zinc-700"></span><span className="text-zinc-400">{group.customer}</span></>}
-                    {group.dueDate  && <><span className="text-zinc-700"></span><span className="text-zinc-500">Due: <span className="text-zinc-300">{group.dueDate}</span></span></>}
+                    {group.dueDate  && <><span className="text-zinc-700"></span><span className="text-zinc-500">Due: <span className="text-zinc-300">{fmt(group.dueDate)}</span></span></>}
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     {group.runningCount > 0 && (
@@ -2024,7 +2024,7 @@ export default function App() {
       partNumber: jobData.partNumber,
       customer: jobData.customer || '',
       quantity: jobData.quantity,
-      dueDate: jobData.dueDate,
+      dueDate: fmt(jobData.dueDate),
       dateReceived: todayMMDDYYYY(),
       info: jobData.info,
       status: 'pending',
