@@ -121,7 +121,7 @@ async function extractPODataWithGemini(imageBase64: string, mimeType: string, ap
 - Quantity: Qty, QTY, Units, Pieces, Pcs
 - Due Date: Due Date, Required By, Need By, Delivery Date, Ship Date
 - Customer Name: company/person who sent the PO
-Return ONLY valid JSON, no markdown:
+CRITICAL: Return ONLY a raw JSON object. No markdown, no backticks, no explanation, no text before or after. Start with { and end with }:
 {"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY format","customerName":"","confidence":"high|medium|low","notes":""}`;
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -131,7 +131,27 @@ Return ONLY valid JSON, no markdown:
   const result = await response.json();
   const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   const cleaned = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
-  try { return JSON.parse(cleaned); } catch { throw new Error('Could not parse AI response. Try a clearer image.'); }
+  // Multi-strategy JSON extraction
+  // Strategy 1: find JSON object anywhere in response
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try { return JSON.parse(jsonMatch[0]); } catch {}
+  }
+  // Strategy 2: try cleaned version
+  try { return JSON.parse(cleaned); } catch {}
+  // Strategy 3: fallback - extract fields with regex and return low-confidence result
+  const ext = (p: RegExp) => { const m = text.match(p); return m ? m[1].trim() : ''; };
+  return {
+    poNumber: ext(/(?:po|order|p\.o\.?)[\s#:]+([\w\-]+)/i),
+    jobNumber: ext(/(?:job|wo)[\s#:]+([\w\-]+)/i),
+    partNumber: ext(/(?:part|p\/n|item)[\s#:]+([\w\-]+)/i),
+    partName: ext(/(?:description|part name)[:\s]+([^\n]+)/i),
+    quantity: ext(/(?:qty|quantity|pcs)[:\s]+(\d+)/i),
+    dueDate: ext(/(?:due|required by|delivery)[:\s]+([\d\/\-]+)/i),
+    customerName: ext(/(?:customer|from|bill to)[:\s]+([^\n]+)/i),
+    confidence: 'low' as const,
+    notes: 'Could not fully parse — please review and fill in missing fields.',
+  };
 }
 
 function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }> {
