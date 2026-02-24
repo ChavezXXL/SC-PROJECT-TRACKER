@@ -14,6 +14,28 @@ import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { POScanner } from './POScanner';
 
+// ── Date normalizer: always returns MM/DD/YYYY ──────────────────────────
+function normDate(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const s = raw.trim();
+  // Already MM/DD/YYYY
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) return s;
+  // YYYY-MM-DD
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return iso[2] + '/' + iso[3] + '/' + iso[1];
+  // Try native parse
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
+  }
+  return s;
+}
+function todayMMDDYYYY(): string {
+  const d = new Date();
+  return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
   if (mins === undefined || mins === null) return 'Running...';
@@ -486,7 +508,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
-              {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {job.dueDate}
+              {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
             </p>
           )}
         </div>
@@ -1989,7 +2011,7 @@ export default function App() {
       customer: jobData.customer || '',
       quantity: jobData.quantity,
       dueDate: jobData.dueDate,
-      dateReceived: new Date().toISOString().split('T')[0],
+      dateReceived: todayMMDDYYYY(),
       info: jobData.info,
       status: 'pending',
       priority: 'normal',
