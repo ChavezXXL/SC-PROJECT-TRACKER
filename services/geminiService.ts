@@ -1,113 +1,74 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { SmartPasteData } from "../types";
 
-const getClient = () => {
-  // Guidelines: The API key must be obtained exclusively from the environment variable process.env.API_KEY.
-  // Do not use localStorage or throw custom errors for missing keys, assume it is pre-configured.
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
-};
+const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || (process as any).env?.API_KEY || '';
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const MODEL = 'gemini-2.0-flash';
 
 export const parseJobDetails = async (rawText: string): Promise<SmartPasteData> => {
-  const ai = getClient();
-  
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Extract manufacturing job details from the following text. 
-    Return ONLY a JSON object with keys: poNumber (string), partNumber (string), quantity (number), dueDate (string YYYY-MM-DD).
-    If a value is missing, use null.
-    Text: "${rawText}"`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          poNumber: { type: Type.STRING },
-          partNumber: { type: Type.STRING },
-          quantity: { type: Type.NUMBER },
-          dueDate: { type: Type.STRING },
-        }
-      }
-    }
+  const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: `Extract manufacturing job details from this text. Return ONLY valid JSON with keys: poNumber (string), partNumber (string), quantity (number), dueDate (string YYYY-MM-DD), customer (string), notes (string). Use null for missing values.\n\nText: "${rawText}"` }] }],
+      generationConfig: { responseMimeType: 'application/json' }
+    })
   });
-
-  const text = response.text;
-  if (!text) throw new Error("No response from AI");
-  
-  try {
-    return JSON.parse(text) as SmartPasteData;
-  } catch (e) {
-    console.error("Failed to parse JSON", text);
-    throw new Error("AI returned invalid JSON");
-  }
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('No response from AI');
+  return JSON.parse(text.replace(/```json|```/g, '').trim()) as SmartPasteData;
 };
 
-export const chatWithBot = async (history: {role: string, parts: {text: string}[]}[], message: string) => {
-  const ai = getClient();
-  const chat = ai.chats.create({
-    model: "gemini-3-pro-preview",
-    history: history,
-    config: {
-      systemInstruction: "You are SC Assistant, a helpful AI for a manufacturing floor manager at SC Deburring. You are concise, professional, and knowledgeable about industrial operations.",
-    }
+export const analyzePOImage = async (base64Image: string, mimeType: string): Promise<SmartPasteData> => {
+  const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { inlineData: { mimeType, data: base64Image } },
+        { text: `Analyze this Purchase Order image. Return ONLY valid JSON with keys: poNumber (string), partNumber (string), quantity (number), dueDate (string YYYY-MM-DD), customer (string), notes (string). Use null for missing values.` }
+      ]}],
+      generationConfig: { responseMimeType: 'application/json' }
+    })
   });
-
-  const result = await chat.sendMessage({ message });
-  return result.text;
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('No response from AI');
+  return JSON.parse(text.replace(/```json|```/g, '').trim()) as SmartPasteData;
 };
 
-export const generateJobImage = async (prompt: string, size: '1K' | '2K' | '4K') => {
-  const ai = getClient();
-  
-  // Model selection based on requirements
-  const model = "gemini-3-pro-image-preview";
-  
-  const response = await ai.models.generateContent({
-    model,
-    contents: {
-      parts: [{ text: prompt }]
-    },
-    config: {
-      imageConfig: {
-        imageSize: size,
-        aspectRatio: "16:9"
-      }
-    }
+export const chatWithBot = async (history: {role: string, parts: {text: string}[]}[], message: string): Promise<string> => {
+  const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: 'You are SC Assistant, a helpful AI for SC Deburring manufacturing. Be concise and professional.' }] },
+      contents: [...history.map(h => ({ role: h.role, parts: h.parts })), { role: 'user', parts: [{ text: message }] }]
+    })
   });
-
-  // Extract image
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
-    }
-  }
-  throw new Error("No image generated");
+  const data = await res.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response';
 };
+```
 
-export const generateSpeech = async (text: string): Promise<AudioBuffer> => {
-  const ai = getClient();
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: 'Kore' },
-        },
-      },
-    },
-  });
+---
 
-  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!base64Audio) throw new Error("No audio generated");
+**Step 2: In `App.tsx`**, find the `PriorityBadge` component and fix the icons:
 
-  const binaryString = atob(base64Audio);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
+Find:
+```
+const icons: Record<string, string> = { low: '↓', high: '↑', urgent: '🔴' };
+```
+Replace with:
+```
+const icons: Record<string, string> = { low: 'LOW', high: 'HIGH', urgent: 'URGENT' };
+```
 
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-  return await audioContext.decodeAudioData(bytes.buffer);
-};
+And find the `JobSelectionCard` priority badges:
+```
+{job.priority === 'high' && <span ...>↑ HIGH</span>}
+```
+Replace with:
+```
+{job.priority === 'high' && <span ...>HIGH</span>}
