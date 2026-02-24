@@ -950,7 +950,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
   const [showModal, setShowModal] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
   const [ops, setOps] = useState<string[]>([]);
-
+
+
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
     setOps(DB.getSettings().customOperations || []);
@@ -1914,12 +1915,14 @@ export default function App() {
   const [user, setUser] = useState<User | null>(() => {
     try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); }
     catch (e) { return null; }
-  });
+  });
+
   const [view, setView] = useState<AppView>('login');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [printable, setPrintable] = useState<Job | null>(null);
   const [confirm, setConfirm] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showPOScanner, setShowPOScanner] = useState(false);
   // For notifications Ã¢ÂÂ track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
@@ -2084,4 +2087,5 @@ export default function App() {
     </div>
   );
 }
+
 
