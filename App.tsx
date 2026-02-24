@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+
+function fmt(d){if(!d)return'';var m=String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?m[2]+'/'+m[3]+'/'+m[1]:String(d);}
+function todayFmt(){var n=new Date();return String(n.getMonth()+1).padStart(2,'0')+'/'+String(n.getDate()).padStart(2,'0')+'/'+n.getFullYear();}
 import { 
   LayoutDashboard, Briefcase, Users, Settings, LogOut, Menu,
   Sparkles, Clock, CheckCircle, StopCircle,
@@ -15,7 +18,7 @@ import { parseJobDetails } from './services/geminiService';
 import { POScanner } from './POScanner';
 
 // Ã¢ÂÂÃ¢ÂÂ Date formatter: YYYY-MM-DD Ã¢ÂÂ MM/DD/YYYY Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-function d?:string|null:string{
+function fmt(d?:string|null):string{
   if(!d)return'';
   const m=d.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if(m)return m[2]+'/'+m[3]+'/'+m[1];
@@ -461,7 +464,7 @@ const ActiveJobPanel = ({ job, log, onStop }: { job: Job | null, log: TimeLog, o
                 <div><label className="text-xs text-zinc-500 uppercase font-bold">Part Number</label><div className="text-lg md:text-xl font-bold text-white mt-1 break-words">{job.partNumber}</div></div>
                 <div><label className="text-xs text-zinc-500 uppercase font-bold">PO Number</label><div className="text-lg md:text-xl font-bold text-white mt-1 break-words">{job.poNumber}</div></div>
                 <div><label className="text-xs text-zinc-500 uppercase font-bold">Quantity</label><div className="text-lg md:text-xl font-bold text-white mt-1">{job.quantity} <span className="text-sm font-normal text-zinc-500">units</span></div></div>
-                <div><label className="text-xs text-zinc-500 uppercase font-bold">Due Date</label><div className="text-lg md:text-xl font-bold text-white mt-1">{fmt(job.dueDate || 'N/A')}</div></div>
+                <div><label className="text-xs text-zinc-500 uppercase font-bold">Due Date</label><div className="text-lg md:text-xl font-bold text-white mt-1">{job.dueDate || 'N/A'}</div></div>
               </div>
               <div className="mt-auto pt-6 border-t border-white/10">
                 <label className="text-xs text-zinc-500 uppercase font-bold mb-2 block">Notes / Instructions</label>
@@ -522,7 +525,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
-              {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {fmt(normDate(job.dueDate))}
+              {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
             </p>
           )}
         </div>
@@ -760,8 +763,8 @@ const PrintableJobSheet = ({ job, onClose }: { job: Job | null, onClose: () => v
               <div className="grid grid-cols-2 gap-6">
                 <div className="border-4 border-gray-300 p-4"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Part</label><div className="text-3xl font-bold break-words">{job.partNumber}</div></div>
                 <div className="border-4 border-gray-300 p-4"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Qty</label><div className="text-3xl font-bold">{job.quantity}</div></div>
-                <div className="border-4 border-gray-300 p-4"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Received</label><div className="text-xl font-bold">{fmt(job.dateReceived || '-')}</div></div>
-                <div className="border-4 border-gray-300 p-4"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label><div className="text-2xl font-bold text-red-600">{fmt(job.dueDate || '-')}</div></div>
+                <div className="border-4 border-gray-300 p-4"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Received</label><div className="text-xl font-bold">{job.dateReceived || '-'}</div></div>
+                <div className="border-4 border-gray-300 p-4"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label><div className="text-2xl font-bold text-red-600">{job.dueDate || '-'}</div></div>
               </div>
               <div className="flex-1">
                 <label className="block text-sm uppercase font-bold text-gray-500 mb-2">Notes</label>
@@ -1026,14 +1029,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                (j.info || '').toLowerCase().includes(s);
       }
       return true;
-    }).sort((a, b) => {if (activeTab === 'completed') return (b.completedAt || 0) - (a.completedAt || 0);
+    }).sort((a, b) => {
+      if (activeTab === 'completed') return (b.completedAt || 0) - (a.completedAt || 0);
       if (sortBy === 'priority') return (priorityOrder[a.priority || 'normal'] ?? 2) - (priorityOrder[b.priority || 'normal'] ?? 2);
       if (sortBy === 'newest') return b.createdAt - a.createdAt;
       if (sortBy === 'oldest') return a.createdAt - b.createdAt;
       // dueDate sort: put jobs without due date at end
       const ad = a.dueDate || '9999-99-99';
       const bd = b.dueDate || '9999-99-99';
-      return ad.localeCompare(bd);)});
+      return ad.localeCompare(bd);
+    });
   }, [jobs, search, activeTab, filterPriority, filterStatus, sortBy]);
 
   const stats = useMemo(() => {
@@ -1053,18 +1058,20 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
     if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
     const today = new Date();
     const localDate = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    const job: Job = {id: editingJob.id || Date.now(.toString(),
+    const job: Job = {
+      id: editingJob.id || Date.now().toString(),
       jobIdsDisplay: editingJob.jobIdsDisplay || editingJob.poNumber || 'J-' + Date.now().toString().slice(-4),
       poNumber: editingJob.poNumber,
       partNumber: editingJob.partNumber,
       quantity: editingJob.quantity || 0,
-      customer: editingJob.customer,
+      customer: editingJob.customer || '',
       priority: editingJob.priority || 'normal',
       dueDate: editingJob.dueDate || '',
       info: editingJob.info || '',
       status: editingJob.status || 'in-progress',
       dateReceived: editingJob.dateReceived || localDate,
-      createdAt: editingJob.createdAt || Date.now())};
+      createdAt: editingJob.createdAt || Date.now()
+    };
     try { await DB.saveJob(job); setShowModal(false); setEditingJob({}); addToast('success', 'Job Saved'); }
     catch (e) { addToast('error', 'Save Failed'); }
   };
@@ -1201,7 +1208,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           {filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length > 0 && (
             <span className="text-red-400 font-bold flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              {fmt(filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length)} overdue
+              {filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length} overdue
             </span>
           )}
         </div>
@@ -1301,8 +1308,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quantity</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quantity || ''} onChange={e => setEditingJob({ ...editingJob, quantity: Number(e.target.value) })} placeholder="0" /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={fmt(editingJob.dateReceived || todayFmt())} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={fmt(editingJob.dueDate)} onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} /></div>
+                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived || todayFmt()} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
+                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dueDate || ''} onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} /></div>
                 </div>
               </div>
 
@@ -1372,7 +1379,7 @@ const LogsView = ({ addToast }: { addToast: any }) => {
     const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return { start: firstDay, end: lastDay };
+    return { start: fmt(firstDay), end: fmt(lastDay) };
   });
 
   useEffect(() => {
@@ -1422,17 +1429,17 @@ const LogsView = ({ addToast }: { addToast: any }) => {
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     if (type === 'today') {
-      const s = now;
+      const s = fmt(now);
       setDateRange({ start: s, end: s });
     } else if (type === 'week') {
       const diff = now.getDay() === 0 ? -6 : 1 - now.getDay();
       const mon = new Date(now); mon.setDate(now.getDate() + diff);
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-      setDateRange({ start: mon, end: sun });
+      setDateRange({ start: fmt(mon), end: fmt(sun) });
     } else {
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
       const last  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      setDateRange({ start: first, end: last });
+      setDateRange({ start: fmt(first), end: fmt(last) });
     }
   };
 
@@ -1494,10 +1501,11 @@ const LogsView = ({ addToast }: { addToast: any }) => {
       if (!groups[displayKey]) {
         // Pull extra info from the jobs list
         const job = jobs.find(j => j.id === log.jobId);
-        groups[displayKey] = {fmt(jobId: displayKey,
+        groups[displayKey] = {
+          jobId: displayKey,
           internalJobId: log.jobId,
           partNumber: log.partNumber || job?.partNumber || 'N/A',
-          customer:   log.customer  || job?.customer,
+          customer:   log.customer  || job?.customer  || '',
           dueDate:    job?.dueDate  || '',
           poNumber:   job?.poNumber || '',
           jobIsCompleted: jobStatusMap[log.jobId] === 'completed',
@@ -1507,7 +1515,8 @@ const LogsView = ({ addToast }: { addToast: any }) => {
           users: new Set(),
           lastActivity: 0,
           runningCount: 0,
-          stoppedCount: 0,)};
+          stoppedCount: 0,
+        };
       }
       const g = groups[displayKey];
       g.logs.push(log);
@@ -2018,7 +2027,7 @@ export default function App() {
       partNumber: jobData.partNumber,
       customer: jobData.customer || '',
       quantity: jobData.quantity,
-      dueDate: jobData.dueDate,
+      dueDate: fmt(jobData.dueDate),
       dateReceived: todayMMDDYYYY(),
       info: jobData.info,
       status: 'pending',
