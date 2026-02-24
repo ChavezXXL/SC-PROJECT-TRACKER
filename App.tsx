@@ -1914,8 +1914,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(() => {
     try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); }
     catch (e) { return null; }
-  });
-  const [showPOScanner, setShowPOScanner] = useState(false);
+  });
   const [view, setView] = useState<AppView>('login');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [printable, setPrintable] = useState<Job | null>(null);
