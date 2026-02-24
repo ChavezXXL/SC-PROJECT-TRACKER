@@ -30,7 +30,7 @@ interface POScannerProps {
   onClose: () => void;
 }
 
-// ── Gemini guard: single-flight + cooldown + 429 backoff ──────────────────────
+// ââ Gemini guard: single-flight + cooldown + 429 backoff ââââââââââââââââââââââ
 const useGeminiGuard = () => {
   const inFlightRef = useRef(false);
   const lastCallRef = useRef(0);
@@ -39,11 +39,11 @@ const useGeminiGuard = () => {
     fn: () => Promise<T>,
     opts?: { cooldownMs?: number; maxRetries?: number }
   ): Promise<T> => {
-    const cooldownMs = opts?.cooldownMs ?? 4000;
+    const cooldownMs = opts?.cooldownMs ?? 6000;
     const maxRetries = opts?.maxRetries ?? 2;
 
     if (inFlightRef.current) {
-      throw new Error('Gemini request already running — please wait.');
+      throw new Error('Gemini request already running â please wait.');
     }
 
     const now = Date.now();
@@ -79,7 +79,7 @@ const useGeminiGuard = () => {
 
   return { run };
 };
-// ─────────────────────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function formatDateForCalendar(dateStr: string): string | null {
   if (!dateStr) return null;
@@ -100,7 +100,7 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string) {
     const dueDateFormatted = formatDateForCalendar(data.dueDate);
     if (!dueDateFormatted) return false;
     const event = {
-      summary: `DUE: ${data.partName || data.partNumber} — PO# ${data.poNumber}`,
+      summary: `DUE: ${data.partName || data.partNumber} â PO# ${data.poNumber}`,
       description: [`Job ID: ${jobId}`, `PO/Order #: ${data.poNumber}`, `Part #: ${data.partNumber}`, `Part Name: ${data.partName}`, `Quantity: ${data.quantity}`, `Customer: ${data.customerName}`, data.notes ? `Notes: ${data.notes}` : ''].filter(Boolean).join('\n'),
       start: { date: dueDateFormatted, timeZone: 'America/Los_Angeles' },
       end: { date: dueDateFormatted, timeZone: 'America/Los_Angeles' },
@@ -121,13 +121,20 @@ async function extractPODataWithGemini(imageBase64: string, mimeType: string, ap
 - Quantity: Qty, QTY, Units, Pieces, Pcs
 - Due Date: Due Date, Required By, Need By, Delivery Date, Ship Date
 - Customer Name: company/person who sent the PO
+
+IMPORTANT RULES:
+1. ALWAYS fill in your best guess for every field - NEVER leave a field blank if there is any related information visible
+2. confidence = "high" if you can clearly read 4+ fields, "medium" if 2-3 fields readable, "low" only if image is completely unreadable
+3. Even if the PO format is unusual, extract whatever numbers and text you can find
+4. jobNumber is optional - use "" only if truly no job/work order number exists
+
 CRITICAL: Return ONLY a raw JSON object. No markdown, no backticks, no explanation, no text before or after. Start with { and end with }:
 {"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY format","customerName":"","confidence":"high|medium|low","notes":""}`;
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: imageBase64 } }] }], generationConfig: { temperature: 0.1, maxOutputTokens: 1024 } }),
   });
-  if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(`Gemini API error: ${response.status} — ${err?.error?.message || 'Unknown'}`); }
+  if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(`Gemini API error: ${response.status} â ${err?.error?.message || 'Unknown'}`); }
   const result = await response.json();
   const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   const cleaned = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
@@ -150,7 +157,7 @@ CRITICAL: Return ONLY a raw JSON object. No markdown, no backticks, no explanati
     dueDate: ext(/(?:due|required by|delivery)[:\s]+([\d\/\-]+)/i),
     customerName: ext(/(?:customer|from|bill to)[:\s]+([^\n]+)/i),
     confidence: 'low' as const,
-    notes: 'Could not fully parse — please review and fill in missing fields.',
+    notes: 'Could not fully parse â please review and fill in missing fields.',
   };
 }
 
@@ -165,7 +172,7 @@ function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }>
 
 const ConfidenceBadge = ({ level }: { level: 'high' | 'medium' | 'low' }) => {
   const styles = { high: 'bg-green-500/20 text-green-400 border-green-500/30', medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', low: 'bg-red-500/20 text-red-400 border-red-500/30' };
-  const labels = { high: '✓ High Confidence', medium: '⚠ Review Carefully', low: '⚠ Low Confidence — Double Check' };
+  const labels = { high: 'â High Confidence', medium: 'â  Review Carefully', low: 'â  Low Confidence â Double Check' };
   return <span className={`text-xs px-2 py-1 rounded-full border ${styles[level]}`}>{labels[level]}</span>;
 };
 
@@ -260,7 +267,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
         <h3 className="text-white font-bold text-lg mb-2">Analyzing Purchase Order</h3>
         <p className="text-gray-400 text-sm">Gemini AI is extracting all job details...</p>
-        <div className="mt-4 space-y-1 text-xs text-gray-500"><p>• Reading PO number & order details</p><p>• Finding part numbers & quantities</p><p>• Extracting due dates</p></div>
+        <div className="mt-4 space-y-1 text-xs text-gray-500"><p>â¢ Reading PO number & order details</p><p>â¢ Finding part numbers & quantities</p><p>â¢ Extracting due dates</p></div>
       </div>
     </div>
   );
@@ -284,14 +291,14 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
           </div>
           {imagePreview && <div className="px-5 pt-4 flex-shrink-0"><img src={imagePreview} alt="PO" className="w-full h-24 object-cover rounded-xl border border-gray-700" /></div>}
           <div className="flex-1 overflow-y-auto p-5 space-y-3">
-            <p className="text-gray-400 text-xs mb-3">✏️ Review and correct any fields before creating the job.</p>
+            <p className="text-gray-400 text-xs mb-3">âï¸ Review and correct any fields before creating the job.</p>
             {fields.map(({ key, label, icon: Icon, placeholder }) => (
               <div key={key}>
                 <label className="flex items-center gap-2 text-gray-400 text-xs mb-1"><Icon className="w-3 h-3" />{label}</label>
                 <input type="text" value={(editedData as any)[key] || ''} onChange={(e) => handleFieldChange(key as keyof ExtractedPOData, e.target.value)} placeholder={placeholder} className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
               </div>
             ))}
-            {editedData.notes && <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-3"><p className="text-yellow-400 text-xs font-medium mb-1">📋 AI Notes from PO</p><p className="text-gray-300 text-xs">{editedData.notes}</p></div>}
+            {editedData.notes && <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-3"><p className="text-yellow-400 text-xs font-medium mb-1">ð AI Notes from PO</p><p className="text-gray-300 text-xs">{editedData.notes}</p></div>}
           </div>
           <div className="p-5 border-t border-gray-700 flex gap-3 flex-shrink-0">
             <button onClick={reset} className="flex items-center gap-2 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm"><RefreshCw className="w-4 h-4" />Rescan</button>
@@ -326,7 +333,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
           {editedData.dueDate && <div className="flex justify-between text-sm"><span className="text-gray-400">Due Date</span><span className="text-white font-medium">{editedData.dueDate}</span></div>}
         </div>
         <div className={`flex items-center justify-center gap-2 text-sm mb-6 ${calendarAdded ? 'text-green-400' : 'text-yellow-400'}`}>
-          <Calendar className="w-4 h-4" />{calendarAdded ? '✓ Added to Google Calendar' : '⚠ Calendar not connected yet'}
+          <Calendar className="w-4 h-4" />{calendarAdded ? 'â Added to Google Calendar' : 'â  Calendar not connected yet'}
         </div>
         <div className="flex gap-3">
           <button onClick={reset} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-sm">Scan Another PO</button>
