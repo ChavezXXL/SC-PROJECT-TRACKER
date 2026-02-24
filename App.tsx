@@ -14,12 +14,7 @@ import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { POScanner } from './POScanner';
 
-function getClients():string[]{try{return JSON.parse(localStorage.getItem('sc_clients')||'[]')}catch{return[]}}
-function saveClients(l:string[]):string[]{const u=[...new Set(l.map(s=>s.trim()).filter(Boolean))];localStorage.setItem('sc_clients',JSON.stringify(u));return u}
-function addClient(n:string):string[]{return saveClients([...getClients(),n.trim()])}
-function removeClient(n:string):string[]{return saveClients(getClients().filter(x=>x!==n))}
-
-// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Date normalizer: always returns MM/DD/YYYY ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
+// ââ Date normalizer: always returns MM/DD/YYYY ââââââââââââââââââââââââââ
 function normDate(raw: string | null | undefined): string {
   if (!raw) return '';
   const s = raw.trim();
@@ -39,7 +34,7 @@ function todayMMDDYYYY(): string {
   const d = new Date();
   return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
 }
-// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
@@ -971,16 +966,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
   const [search, setSearch] = useState('');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterClient, setFilterClient] = useState<string>('all');
-  const [clients, setClients] = useState<string[]>(getClients());
-  const [selectedClientView, setSelectedClientView] = useState<string|null>(null);
-  const [filterClient, setFilterClient] = useState<string>('all');
-  const [clients, setClients] = useState<string[]>(() => {
-    // Seed clients from all existing jobs on first load
-    return getClients();
-  });
-  const [showClientModal, setShowClientModal] = useState(false);
-  const [selectedClientView, setSelectedClientView] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'newest' | 'oldest'>('dueDate');
   const [showFilters, setShowFilters] = useState(false);
   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
@@ -1123,14 +1108,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
-          <select value={filterClient} onChange={e=>setFilterClient(e.target.value)} className="bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-            <option value="all">All Clients</option>
-            {clients.sort().map(cl=><option key={cl} value={cl}>{cl}</option>)}
-          </select>
-            <select value={filterClient} onChange={e => setFilterClient(e.target.value)} className="bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-              <option value="all">All Clients</option>
-              {clients.sort().map(cl => <option key={cl} value={cl}>{cl}</option>)}
-            </select>
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${showFilters || activeFilterCount > 0 ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
@@ -1637,10 +1614,6 @@ const LogsView = ({ addToast }: { addToast: any }) => {
               className="w-full pl-9 pr-4 py-2 bg-black/30 border border-white/10 rounded-xl text-sm text-white focus:ring-1 focus:ring-blue-500 outline-none"
             />
           </div>
-          <select value={filterClient} onChange={e=>setFilterClient(e.target.value)} className="bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-            <option value="all">All Clients</option>
-            {clients.sort().map(cl=><option key={cl} value={cl}>{cl}</option>)}
-          </select>
         </div>
       </div>
 
@@ -1902,149 +1875,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
 };
 
 // --- ADMIN: SETTINGS ---
-
-// Ã¢ÂÂÃ¢ÂÂ Client History Modal Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-const ClientHistoryModal = ({ clientName, jobs, onClose }: { clientName: string; jobs: any[]; onClose: () => void }) => {
-  const clientJobs = jobs.filter(j => (j.customer || '').trim() === clientName);
-  const activeJobs = clientJobs.filter(j => j.status !== 'completed');
-  const completedJobs = clientJobs.filter(j => j.status === 'completed');
-  const totalParts = clientJobs.reduce((sum, j) => sum + (Number(j.quantity) || 0), 0);
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]">
-        <div className="flex items-center justify-between p-5 border-b border-zinc-700">
-          <div>
-            <h2 className="text-white font-bold text-xl">{clientName}</h2>
-            <p className="text-zinc-400 text-sm mt-0.5">{clientJobs.length} total jobs ÃÂ· {totalParts.toLocaleString()} total parts</p>
-          </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none">&times;</button>
-        </div>
-        <div className="overflow-y-auto p-5 space-y-5">
-          {activeJobs.length > 0 && (
-            <div>
-              <h3 className="text-blue-400 font-semibold text-sm uppercase tracking-wider mb-3">Active Jobs ({activeJobs.length})</h3>
-              <div className="space-y-2">
-                {activeJobs.map(j => (
-                  <div key={j.id} className="bg-zinc-800 rounded-xl p-3 flex items-center justify-between">
-                    <div>
-                      <span className="text-white font-bold">PO# {j.poNumber}</span>
-                      <span className="text-zinc-400 text-sm ml-3">{j.partNumber}</span>
-                      {j.dueDate && <span className="text-zinc-500 text-xs ml-3">Due: {normDate(j.dueDate)}</span>}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-zinc-300 text-sm">Qty: {j.quantity}</span>
-                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${j.status === 'in-progress' ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-700 text-zinc-300'}`}>{j.status}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {completedJobs.length > 0 && (
-            <div>
-              <h3 className="text-green-400 font-semibold text-sm uppercase tracking-wider mb-3">Completed History ({completedJobs.length})</h3>
-              <div className="space-y-2">
-                {completedJobs.map(j => (
-                  <div key={j.id} className="bg-zinc-800/60 rounded-xl p-3 flex items-center justify-between opacity-80">
-                    {/* Ã¢ÂÂÃ¢ÂÂ CLIENTS SECTION Ã¢ÂÂÃ¢ÂÂ */}
-          <div className="bg-zinc-800/50 rounded-2xl p-5 border border-zinc-700 mb-4">
-            <h3 className="text-white font-bold text-base mb-1">Client Companies</h3>
-            <p className="text-zinc-400 text-xs mb-4">Add clients to filter jobs and view their history.</p>
-            <div className="flex gap-2 mb-4">
-              <input id="new-client-input" type="text" placeholder="Company name (e.g. S&H, PAMCO)"
-                className="flex-1 bg-zinc-700 border border-zinc-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                onKeyDown={e => { if (e.key === 'Enter') { const v=(e.target as HTMLInputElement).value.trim(); if(v){setClients(addClient(v));(e.target as HTMLInputElement).value='';} }}}
-              />
-              <button onClick={() => { const inp=document.getElementById('new-client-input') as HTMLInputElement; if(inp?.value.trim()){setClients(addClient(inp.value.trim()));inp.value='';} }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Add</button>
-            </div>
-            <div className="space-y-2">
-              {clients.length === 0 && <p className="text-zinc-500 text-sm">No clients yet Ã¢ÂÂ add your first one above.</p>}
-              {clients.sort().map(cl => (
-                <div key={cl} className="flex items-center justify-between bg-zinc-700/50 rounded-lg px-3 py-2">
-                  <button onClick={() => setSelectedClientView(cl)} className="text-white text-sm font-medium hover:text-blue-400 transition-colors">{cl}</button>
-                  <button onClick={() => { if(window.confirm('Remove '+cl+'?')) setClients(removeClient(cl)); }} className="text-zinc-500 hover:text-red-400 text-xl leading-none">&times;</button>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div>
-                      <span className="text-zinc-300 font-bold">PO# {j.poNumber}</span>
-                      <span className="text-zinc-500 text-sm ml-3">{j.partNumber}</span>
-                      {j.dateReceived && <span className="text-zinc-600 text-xs ml-3">Recv: {normDate(j.dateReceived)}</span>}
-                    </div>
-                    <span className="text-zinc-400 text-sm">Qty: {j.quantity}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {clientJobs.length === 0 && (
-            <p className="text-zinc-500 text-center py-8">No jobs found for this client.</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-
-const ClientHistoryModal = ({clientName,jobs,onClose}:{clientName:string;jobs:any[];onClose:()=>void}) => {
-  const cjobs = jobs.filter(j=>(j.customer||'').trim()===clientName);
-  const active = cjobs.filter(j=>j.status!=='completed');
-  const done = cjobs.filter(j=>j.status==='completed');
-  const total = cjobs.reduce((s,j)=>s+(Number(j.quantity)||0),0);
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]">
-        <div className="flex items-center justify-between p-5 border-b border-zinc-700">
-          <div>
-            <h2 className="text-white font-bold text-xl">{clientName}</h2>
-            <p className="text-zinc-400 text-sm mt-0.5">{cjobs.length} jobs Â· {total.toLocaleString()} total parts</p>
-          </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-3xl leading-none px-2">&times;</button>
-        </div>
-        <div className="overflow-y-auto p-5 space-y-5">
-          {active.length>0&&<div>
-            <h3 className="text-blue-400 font-semibold text-xs uppercase tracking-wider mb-3">Active Jobs ({active.length})</h3>
-            <div className="space-y-2">
-              {active.map(j=>(
-                <div key={j.id} className="bg-zinc-800 rounded-xl p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-white font-bold text-sm">PO# {j.poNumber}</span>
-                    <span className="text-zinc-400 text-xs">{j.partNumber}</span>
-                    {j.dueDate&&<span className="text-zinc-500 text-xs">Due: {j.dueDate}</span>}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-zinc-300 text-sm">Qty {j.quantity}</span>
-                    <span className={`text-xs px-2 py-1 rounded-full font-semibold ${j.status==='in-progress'?'bg-blue-500/20 text-blue-400':'bg-zinc-700 text-zinc-300'}`}>{j.status}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>}
-          {done.length>0&&<div>
-            <h3 className="text-green-400 font-semibold text-xs uppercase tracking-wider mb-3">Completed History ({done.length})</h3>
-            <div className="space-y-2">
-              {done.map(j=>(
-                <div key={j.id} className="bg-zinc-800/50 rounded-xl p-3 flex items-center justify-between opacity-75">
-                  <div className="flex items-center gap-3">
-                    <span className="text-zinc-300 font-bold text-sm">PO# {j.poNumber}</span>
-                    <span className="text-zinc-500 text-xs">{j.partNumber}</span>
-                    {j.dateReceived&&<span className="text-zinc-600 text-xs">Recv: {j.dateReceived}</span>}
-                  </div>
-                  <span className="text-zinc-400 text-sm">Qty {j.quantity}</span>
-                </div>
-              ))}
-            </div>
-          </div>}
-          {cjobs.length===0&&<p className="text-zinc-500 text-center py-10">No jobs found for this client.</p>}
-        </div>
-      </div>
-    </div>
-  );
-};
-const SettingsView = ({ setSelectedClientView, clients, setClients, addToast }: { addToast: any }) => {
+const SettingsView = ({ addToast }: { addToast: any }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
 
@@ -2063,29 +1894,7 @@ const SettingsView = ({ setSelectedClientView, clients, setClients, addToast }: 
   return (
     <div className="max-w-xl space-y-6">
       <h2 className="text-2xl font-bold text-white">System Settings</h2>
-      
-          <div className="bg-zinc-800/50 rounded-2xl p-5 border border-zinc-700">
-            <h3 className="text-white font-bold text-base mb-1">Client Companies</h3>
-            <p className="text-zinc-400 text-xs mb-4">Manage clients â filter jobs and view full history per client.</p>
-            <div className="flex gap-2 mb-4">
-              <input id="cl-inp" type="text" placeholder="Add company name (e.g. S&H, PAMCO)"
-                className="flex-1 bg-zinc-700 border border-zinc-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                onKeyDown={e=>{if(e.key==='Enter'){const v=(e.target as HTMLInputElement).value.trim();if(v){setClients(addClient(v));(e.target as HTMLInputElement).value=''}}}}
-              />
-              <button onClick={()=>{const i=document.getElementById('cl-inp') as HTMLInputElement;if(i?.value.trim()){setClients(addClient(i.value.trim()));i.value=''}}}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Add</button>
-            </div>
-            {clients.length===0&&<p className="text-zinc-500 text-sm italic">No clients yet â add one above.</p>}
-            <div className="space-y-2">
-              {clients.sort().map(cl=>(
-                <div key={cl} className="flex items-center justify-between bg-zinc-700/60 rounded-lg px-3 py-2">
-                  <button onClick={()=>setSelectedClientView(cl)} className="text-white text-sm font-medium hover:text-blue-400 transition-colors">{cl}</button>
-                  <button onClick={()=>{if(window.confirm('Remove '+cl+'?'))setClients(removeClient(cl))}} className="text-zinc-500 hover:text-red-400 text-xl leading-none">&times;</button>
-                </div>
-              ))}
-            </div>
-          </div>
-<div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
+      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
         <div className="flex items-center gap-3 pb-6 border-b border-white/5">
           <div className="bg-orange-500/20 p-2 rounded-lg text-orange-400"><Clock className="w-6 h-6" /></div>
           <div><h3 className="font-bold text-white">Auto-Cleanup Rules</h3><p className="text-sm text-zinc-500">Automatically clock out forgotten timers.</p></div>
@@ -2209,8 +2018,6 @@ export default function App() {
       createdAt: Date.now(),
     };
     await DB.saveJob(newJob);
-    if(newJob.customer){setClients(addClient(newJob.customer));}
-    if (newJob.customer) { setClients(addClient(newJob.customer)); }
   };
 
   return (
@@ -2281,20 +2088,12 @@ export default function App() {
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
           {view === 'admin-logs' && <LogsView addToast={addToast} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
-          {view === 'admin-settings' && <SettingsView addToast={addToast} 
-            setSelectedClientView={setSelectedClientView}
-            clients={clients}
-            setClients={setClients}
-          />}
+          {view === 'admin-settings' && <SettingsView addToast={addToast} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
         </div>
       </main>
 
-      {selectedClientView && (
-        <ClientHistoryModal clientName={selectedClientView} jobs={jobs} onClose={() => setSelectedClientView(null)} />
-      )}
-      {selectedClientView&&<ClientHistoryModal clientName={selectedClientView} jobs={jobs} onClose={()=>setSelectedClientView(null)}/>}
       {showPOScanner && (
         <POScanner
           geminiApiKey={import.meta.env.VITE_GEMINI_API_KEY || ''}
