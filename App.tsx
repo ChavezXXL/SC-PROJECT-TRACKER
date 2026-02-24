@@ -938,7 +938,7 @@ const PriorityBadge = ({ priority }: { priority?: string }) => {
 };
 
 // --- ADMIN: JOBS ---
-const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
+const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: any) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
   const [search, setSearch] = useState('');
@@ -950,11 +950,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
   const [showModal, setShowModal] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
   const [ops, setOps] = useState<string[]>([]);
-
-  const [showPOScanner, setShowPOScanner] = useState(false);
+
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
-    setOps(DB.getSettings().customOperations);
+    setOps(DB.getSettings().customOperations || []);
     return () => u1();
   }, []);
 
@@ -1046,7 +1045,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm }: any) => {
         </div>
         <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"><Plus className="w-4 h-4" /> New Job Order</button>
               <button
-                onClick={() => setShowPOScanner(true)}
+                onClick={onOpenPOScanner}
                 className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"
               >
                 <ScanLine className="w-4 h-4" /> Scan PO
@@ -2062,7 +2061,7 @@ export default function App() {
 
         <div className="p-4 md:p-8">
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
-          {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} />}
+          {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
           {view === 'admin-logs' && <LogsView addToast={addToast} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
