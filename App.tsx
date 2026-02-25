@@ -634,7 +634,6 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
         <div className="flex gap-2">
           <button onClick={() => setTab('jobs')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
-          {tab === 'progress' && <ProgressView userId={user?.id || ''} userName={user?.name || ''} />}
           <button onClick={() => setTab('history')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
           <button onClick={() => setTab('progress')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'progress' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><Zap className="w-4 h-4" /> Progress</button>
         </div>
@@ -655,6 +654,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           </div>
         </div>
       ) : tab === 'history' ? (
+      {tab === 'progress' && <ProgressView userId={user?.id || ''} userName={user?.name || ''} />}
         <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden animate-fade-in">
           <div className="p-4 border-b border-white/5 bg-white/5"><h3 className="font-semibold text-white">Your Recent Activity</h3></div>
           <div className="overflow-y-auto max-h-[60vh]">
