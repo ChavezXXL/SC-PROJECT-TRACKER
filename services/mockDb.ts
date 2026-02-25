@@ -45,7 +45,7 @@ if (initRes.ok && initRes.db) {
             });
             firebaseStatus = { connected: true };
         } catch (e: any) {
-            console.error("❌ Connection/Diagnostic Check Failed. FORCING OFFLINE MODE.", e);
+            console.error("â Connection/Diagnostic Check Failed. FORCING OFFLINE MODE.", e);
             handleError(e);
             dbInstance = null;
             firebaseStatus = { connected: false, error: "Offline Mode (Connection Failed)" };
@@ -395,6 +395,8 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
 
         // Use sanitize here as well to be safe
         await updateDoc(ref, sanitize(updates));
+      // Update progress stats (fire-and-forget, non-blocking)
+      updateUserProgress(existing.userId, existing.jobId, existing.operation, durationSeconds).catch(() => {});
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -579,4 +581,74 @@ export async function saveSettings(settings: SystemSettings) {
         throw handleError(e);
       }
   }
+}
+
+
+// ═══════════════════════════════════════════════════
+// USER PROGRESS - Spark-safe stat tracking (Option B)
+// 1 read + 1 write per timer stop. 1 read per tab open.
+// ═══════════════════════════════════════════════════
+
+function getISOWeek(): string {
+  const d = new Date();
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const week = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7);
+  return d.getFullYear() + '-W' + String(week).padStart(2, '0');
+}
+
+async function updateUserProgress(
+  userId: string,
+  jobId: string,
+  operation: string,
+  durationSeconds: number
+): Promise<void> {
+  if (durationSeconds < 10 || !dbInstance) return;
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const weekKey = getISOWeek();
+    const prKey = jobId + '|' + operation;
+    const ref = doc(dbInstance, 'userProgress', userId);
+    const snap = await getDoc(ref);
+    const now: any = snap.exists() ? snap.data() : {};
+
+    const sameWeek = now.weekKey === weekKey;
+    const weekHours = (sameWeek ? (now.weekHours || 0) : 0) + (durationSeconds / 3600);
+    const weekOpCount = (sameWeek ? (now.weekOpCount || 0) : 0) + 1;
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    let streakDays = now.streakDays || 0;
+    if (now.lastLogDate === today) {
+      // already logged today - no change
+    } else if (now.lastLogDate === yesterdayStr) {
+      streakDays += 1;
+    } else {
+      streakDays = 1;
+    }
+
+    const prs: Record<string, number> = now.prs || {};
+    const existing = prs[prKey];
+    if (existing === undefined || durationSeconds < existing) {
+      prs[prKey] = durationSeconds;
+    }
+
+    await setDoc(ref, {
+      weekKey, weekHours, weekOpCount, streakDays,
+      lastLogDate: today, prs, updatedAt: Date.now(),
+    }, { merge: true });
+
+    firebaseStatus = { connected: true };
+  } catch (e) {
+    console.warn('Progress update skipped (non-critical):', e);
+  }
+}
+
+export function subscribeUserProgress(userId: string, cb: (data: any) => void): () => void {
+  if (!dbInstance) { cb(null); return () => {}; }
+  const ref = doc(dbInstance, 'userProgress', userId);
+  return onSnapshot(ref,
+    (snap: any) => cb(snap.exists() ? snap.data() : null),
+    () => cb(null)
+  );
 }
