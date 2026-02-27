@@ -1063,10 +1063,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       quantity: editingJob.quantity || 0,
       customer: editingJob.customer || '',
       priority: editingJob.priority || 'normal',
-      dueDate: editingJob.dueDate || '',
+      dueDate: normDate(editingJob.dueDate) || '',
       info: editingJob.info || '',
       status: editingJob.status || 'in-progress',
-      dateReceived: editingJob.dateReceived || localDate,
+      dateReceived: normDate(editingJob.dateReceived) || localDate,
       createdAt: editingJob.createdAt || Date.now()
     };
     try { await DB.saveJob(job); setShowModal(false); setEditingJob({}); addToast('success', 'Job Saved'); }
@@ -1305,8 +1305,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quantity</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quantity || ''} onChange={e => setEditingJob({ ...editingJob, quantity: Number(e.target.value) })} placeholder="0" /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived || todayFmt()} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dueDate || ''} onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} /></div>
+                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived ? (editingJob.dateReceived.includes('/') ? `${editingJob.dateReceived.split('/')[2]}-${editingJob.dateReceived.split('/')[0].padStart(2,'0')}-${editingJob.dateReceived.split('/')[1].padStart(2,'0')}` : editingJob.dateReceived) : ''} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
+                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dueDate ? (editingJob.dueDate.includes('/') ? `${editingJob.dueDate.split('/')[2]}-${editingJob.dueDate.split('/')[0].padStart(2,'0')}-${editingJob.dueDate.split('/')[1].padStart(2,'0')}` : editingJob.dueDate) : ''} onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} /></div>
                 </div>
               </div>
 
