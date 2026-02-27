@@ -30,90 +30,95 @@ interface POScannerProps {
   onClose: () => void;
 }
 
-// Ã¢ÂÂÃ¢ÂÂ Gemini guard: single-flight + cooldown + 429 backoff Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const useGeminiGuard = () => {
   const inFlightRef = useRef(false);
   const lastCallRef = useRef(0);
-
   const run = useCallback(async <T,>(
     fn: () => Promise<T>,
     opts?: { cooldownMs?: number; maxRetries?: number }
   ): Promise<T> => {
     const cooldownMs = opts?.cooldownMs ?? 6000;
     const maxRetries = opts?.maxRetries ?? 2;
-
-    if (inFlightRef.current) {
-      throw new Error('Gemini request already running Ã¢ÂÂ please wait.');
-    }
-
+    if (inFlightRef.current) throw new Error('Gemini request already running please wait.');
     const now = Date.now();
     const wait = cooldownMs - (now - lastCallRef.current);
-    if (wait > 0) {
-      await new Promise(res => setTimeout(res, wait));
-    }
-
+    if (wait > 0) await new Promise(res => setTimeout(res, wait));
     inFlightRef.current = true;
     lastCallRef.current = Date.now();
-
     try {
       let attempt = 0;
       while (true) {
-        try {
-          return await fn();
-        } catch (err: any) {
+        try { return await fn(); } catch (err: any) {
           attempt++;
           const msg = String(err?.message || err);
-          const is429 =
-            msg.includes('429') ||
-            msg.toLowerCase().includes('rate') ||
-            msg.toLowerCase().includes('quota');
+          const is429 = msg.includes('429') || msg.toLowerCase().includes('rate') || msg.toLowerCase().includes('quota');
           if (!is429 || attempt > maxRetries) throw err;
           const backoff = 1000 * Math.pow(2, attempt - 1);
           await new Promise(res => setTimeout(res, backoff));
         }
       }
-    } finally {
-      inFlightRef.current = false;
-    }
+    } finally { inFlightRef.current = false; }
   }, []);
-
   return { run };
 };
-// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 
 function formatDateForCalendar(dateStr: string): string | null {
   if (!dateStr) return null;
   const cleaned = dateStr.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned;
   const mdyMatch = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (mdyMatch) { const [, m, d, y] = mdyMatch; return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
+  if (mdyMatch) {
+    const [, m, d, y] = mdyMatch;
+    return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
   const parsed = new Date(cleaned);
   if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
   return null;
 }
 
-async function addToGoogleCalendar(data: ExtractedPOData, jobId: string) {
+async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promise<boolean> {
   try {
-    if (typeof (window as any).gapi === 'undefined') return false;
-    const gapi = (window as any).gapi;
-    if (!gapi.client?.calendar) return false;
     const dueDateFormatted = formatDateForCalendar(data.dueDate);
     if (!dueDateFormatted) return false;
-    const event = {
-      summary: `DUE: ${data.partName || data.partNumber} Ã¢ÂÂ PO# ${data.poNumber}`,
-      description: [`Job ID: ${jobId}`, `PO/Order #: ${data.poNumber}`, `Part #: ${data.partNumber}`, `Part Name: ${data.partName}`, `Quantity: ${data.quantity}`, `Customer: ${data.customerName}`, data.notes ? `Notes: ${data.notes}` : ''].filter(Boolean).join('\n'),
+    const buildEvent = () => ({
+      summary: `DUE: ${data.partName || data.partNumber} - PO# ${data.poNumber}`,
+      description: [
+        `Job ID: ${jobId}`,
+        `PO/Order #: ${data.poNumber}`,
+        `Part #: ${data.partNumber}`,
+        `Part Name: ${data.partName}`,
+        `Quantity: ${data.quantity}`,
+        `Customer: ${data.customerName}`,
+        data.notes ? `Notes: ${data.notes}` : '',
+      ].filter(Boolean).join('\n'),
       start: { date: dueDateFormatted, timeZone: 'America/Los_Angeles' },
       end: { date: dueDateFormatted, timeZone: 'America/Los_Angeles' },
       colorId: '11',
-      reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 24 * 60 }, { method: 'popup', minutes: 3 * 24 * 60 }] },
+      reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 24*60 }, { method: 'popup', minutes: 3*24*60 }] },
+    });
+    const insertEvent = async (): Promise<boolean> => {
+      await (window as any).gapi.client.calendar.events.insert({ calendarId: 'primary', resource: buildEvent() });
+      return true;
     };
-    await gapi.client.calendar.events.insert({ calendarId: 'primary', resource: event });
-    return true;
-  } catch (err) { console.error('Calendar error:', err); return false; }
+    const gapi = (window as any).gapi;
+    if (gapi?.client?.calendar) return await insertEvent();
+    if (typeof (window as any).__requestCalendarAccess === 'function') {
+      return await new Promise<boolean>((resolve) => {
+        (window as any).__requestCalendarAccess(async (success: boolean) => {
+          if (!success) { resolve(false); return; }
+          try { resolve(await insertEvent()); } catch { resolve(false); }
+        });
+      });
+    }
+    return false;
+  } catch (err) {
+    console.error('Calendar error:', err);
+    return false;
+  }
 }
 
 async function extractPODataWithGemini(imageBase64: string, mimeType: string, apiKey: string): Promise<ExtractedPOData> {
-  const prompt = `You are analyzing a purchase order (PO) for a precision deburring company. Extract these fields - be flexible with labels:
+  const prompt = `You are analyzing a purchase order (PO) for a precision deburring company. Extract these fields:
 - PO Number: PO#, P.O., Order#, Order Number, Purchase Order, SO#, Release#, Work Order
 - Job Number: Job#, Work Order#, WO#, Traveler# - may not exist
 - Part Number: Part#, P/N, Part No., Item#, Drawing#
@@ -122,57 +127,64 @@ async function extractPODataWithGemini(imageBase64: string, mimeType: string, ap
 - Due Date: Due Date, Required By, Need By, Delivery Date, Ship Date
 - Customer Name: company/person who sent the PO
 
-IMPORTANT RULES:
-1. ALWAYS fill in your best guess for every field - NEVER leave a field blank if there is any related information visible
-2. confidence = "high" if you can clearly read 4+ fields, "medium" if 2-3 fields readable, "low" only if image is completely unreadable
-3. Even if the PO format is unusual, extract whatever numbers and text you can find
-4. jobNumber is optional - use "" only if truly no job/work order number exists
+RULES:
+1. Fill in best guess for every field - NEVER leave blank if info exists
+2. confidence = "high" if 4+ fields readable, "medium" if 2-3, "low" if unreadable
+3. jobNumber is optional - use "" only if truly none exists
 
-CRITICAL: Return ONLY a raw JSON object. No markdown, no backticks, no explanation, no text before or after. Start with { and end with }:
-{"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY format","customerName":"","confidence":"high|medium|low","notes":""}`;
-  const requestBody = {
-    contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: imageBase64 } }] }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
-  };
-  const response = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify(requestBody),
-    },
-  );
-  if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(`Gemini API error: ${response.status} Ã¢ÂÂ ${err?.error?.message || 'Unknown'}`); }
-  const result = await response.json();
-  const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const cleaned = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
-  // Multi-strategy JSON extraction
-  // Strategy 1: find JSON object anywhere in response
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try { return JSON.parse(jsonMatch[0]); } catch {}
+Return ONLY raw JSON, no markdown, no backticks:
+{"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY","customerName":"","confidence":"high|medium|low","notes":""}`;
+
+  const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'];
+  let lastError: any;
+  
+  for (const model of models) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: imageBase64 } }] }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+          }),
+        }
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(`${response.status}: ${err?.error?.message || 'API error'}`);
+      }
+      const result = await response.json();
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const cleaned = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) { try { return JSON.parse(jsonMatch[0]); } catch {} }
+      try { return JSON.parse(cleaned); } catch {}
+      break;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`Model ${model} failed:`, err.message);
+      continue;
+    }
   }
-  // Strategy 2: try cleaned version
-  try { return JSON.parse(cleaned); } catch {}
-  // Strategy 3: fallback - extract fields with regex and return low-confidence result
-  const ext = (p: RegExp) => { const m = text.match(p); return m ? m[1].trim() : ''; };
+
+  const ext = (p: RegExp) => { const m = String(lastError || '').match(p); return ''; };
   return {
-    poNumber: ext(/(?:po|order|p\.o\.?)[\s#:]+([\w\-]+)/i),
-    jobNumber: ext(/(?:job|wo)[\s#:]+([\w\-]+)/i),
-    partNumber: ext(/(?:part|p\/n|item)[\s#:]+([\w\-]+)/i),
-    partName: ext(/(?:description|part name)[:\s]+([^\n]+)/i),
-    quantity: ext(/(?:qty|quantity|pcs)[:\s]+(\d+)/i),
-    dueDate: ext(/(?:due|required by|delivery)[:\s]+([\d\/\-]+)/i),
-    customerName: ext(/(?:customer|from|bill to)[:\s]+([^\n]+)/i),
+    poNumber: '', jobNumber: '', partNumber: '', partName: '',
+    quantity: '', dueDate: '', customerName: '',
     confidence: 'low' as const,
-    notes: 'Could not fully parse Ã¢ÂÂ please review and fill in missing fields.',
+    notes: `Scan failed: ${lastError?.message || 'Unknown error'}. Please fill in fields manually.`,
   };
 }
 
 function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => { const result = reader.result as string; resolve({ base64: result.split(',')[1], mimeType: file.type || 'image/jpeg' }); };
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve({ base64: result.split(',')[1], mimeType: file.type || 'image/jpeg' });
+    };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
@@ -180,19 +192,17 @@ function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }>
 
 const ConfidenceBadge = ({ level }: { level: 'high' | 'medium' | 'low' }) => {
   const styles = { high: 'bg-green-500/20 text-green-400 border-green-500/30', medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', low: 'bg-red-500/20 text-red-400 border-red-500/30' };
-  const labels = { high: 'Ã¢ÂÂ High Confidence', medium: 'Ã¢ÂÂ  Review Carefully', low: 'Ã¢ÂÂ  Low Confidence Ã¢ÂÂ Double Check' };
+  const labels = { high: 'High Confidence', medium: 'Review Carefully', low: 'Low Confidence - Check All Fields' };
   return <span className={`text-xs px-2 py-1 rounded-full border ${styles[level]}`}>{labels[level]}</span>;
 };
 
 export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey, onClose }) => {
   const [step, setStep] = useState<'upload'|'processing'|'review'|'saving'|'success'|'error'>('upload');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [imageFile, setImageFile] = useState<File | null>(null);
   const [extractedData, setExtractedData] = useState<ExtractedPOData | null>(null);
   const [editedData, setEditedData] = useState<ExtractedPOData | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [calendarAdded, setCalendarAdded] = useState<boolean | null>(null);
-  const [createdJobId, setCreatedJobId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const { run: geminiRun } = useGeminiGuard();
@@ -200,16 +210,20 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
   const handleImageSelect = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) { setErrorMsg('Please select an image file.'); setStep('error'); return; }
     setImagePreview(URL.createObjectURL(file));
-    setImageFile(file);
     setStep('processing');
     try {
       const { base64, mimeType } = await fileToBase64(file);
       const data = await geminiRun(
         () => extractPODataWithGemini(base64, mimeType, geminiApiKey),
-        { cooldownMs: 4000, maxRetries: 2 }
+        { cooldownMs: 3000, maxRetries: 1 }
       );
-      setExtractedData(data); setEditedData({ ...data }); setStep('review');
-    } catch (err: any) { setErrorMsg(err.message || 'Failed to process image.'); setStep('error'); }
+      setExtractedData(data);
+      setEditedData({ ...data });
+      setStep('review');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to process image. Check your Gemini API key.');
+      setStep('error');
+    }
   }, [geminiApiKey, geminiRun]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); };
@@ -220,7 +234,6 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
     setStep('saving');
     try {
       const jobId = `JOB-${Date.now()}`;
-      setCreatedJobId(jobId);
       await onJobCreate({
         poNumber: editedData.poNumber || editedData.jobNumber || 'N/A',
         partNumber: editedData.partNumber,
@@ -236,8 +249,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
   };
 
   const reset = () => {
-    setStep('upload'); setImagePreview(null); setImageFile(null); setExtractedData(null);
-    setEditedData(null); setErrorMsg(''); setCalendarAdded(null); setCreatedJobId('');
+    setStep('upload'); setImagePreview(null); setExtractedData(null); setEditedData(null); setErrorMsg(''); setCalendarAdded(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
@@ -253,13 +265,9 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
           <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 space-y-4">
-          <button onClick={() => cameraInputRef.current?.click()} className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl p-4 flex items-center justify-center gap-3 font-semibold">
-            <Camera className="w-6 h-6" />Take Photo of PO
-          </button>
+          <button onClick={() => cameraInputRef.current?.click()} className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl p-4 flex items-center justify-center gap-3 font-semibold"><Camera className="w-6 h-6" />Take Photo of PO</button>
           <div className="flex items-center gap-3"><div className="flex-1 h-px bg-gray-700" /><span className="text-gray-500 text-sm">or</span><div className="flex-1 h-px bg-gray-700" /></div>
-          <button onClick={() => fileInputRef.current?.click()} className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white rounded-xl p-4 flex items-center justify-center gap-3">
-            <Upload className="w-5 h-5 text-gray-400" />Upload from Device
-          </button>
+          <button onClick={() => fileInputRef.current?.click()} className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white rounded-xl p-4 flex items-center justify-center gap-3"><Upload className="w-5 h-5 text-gray-400" />Upload from Device</button>
           <p className="text-gray-500 text-xs text-center">Works with photos, scans, or screenshots of any PO format</p>
         </div>
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileInput} />
@@ -274,8 +282,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
         {imagePreview && <div className="mb-6 relative"><img src={imagePreview} alt="PO" className="w-full h-40 object-cover rounded-xl opacity-50" /><div className="absolute inset-0 flex items-center justify-center"><div className="bg-black/60 rounded-xl px-4 py-2 flex items-center gap-2"><Loader2 className="w-4 h-4 text-blue-400 animate-spin" /><span className="text-white text-sm">AI Reading PO...</span></div></div></div>}
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
         <h3 className="text-white font-bold text-lg mb-2">Analyzing Purchase Order</h3>
-        <p className="text-gray-400 text-sm">Gemini AI is extracting all job details...</p>
-        <div className="mt-4 space-y-1 text-xs text-gray-500"><p>Ã¢ÂÂ¢ Reading PO number & order details</p><p>Ã¢ÂÂ¢ Finding part numbers & quantities</p><p>Ã¢ÂÂ¢ Extracting due dates</p></div>
+        <p className="text-gray-400 text-sm">AI is reading your PO image...</p>
       </div>
     </div>
   );
@@ -283,7 +290,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
   if (step === 'review' && editedData) {
     const fields = [
       { key: 'poNumber', label: 'PO / Order Number', icon: Hash, placeholder: 'e.g. PO-12345' },
-      { key: 'jobNumber', label: 'Job Number (if any)', icon: FileText, placeholder: 'e.g. JOB-001 (optional)' },
+      { key: 'jobNumber', label: 'Job Number (optional)', icon: FileText, placeholder: 'e.g. JOB-001' },
       { key: 'partNumber', label: 'Part Number', icon: Package, placeholder: 'e.g. ABC-123' },
       { key: 'partName', label: 'Part Name / Description', icon: Package, placeholder: 'e.g. Bracket Assembly' },
       { key: 'quantity', label: 'Quantity', icon: Hash, placeholder: 'e.g. 50' },
@@ -299,14 +306,14 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
           </div>
           {imagePreview && <div className="px-5 pt-4 flex-shrink-0"><img src={imagePreview} alt="PO" className="w-full h-24 object-cover rounded-xl border border-gray-700" /></div>}
           <div className="flex-1 overflow-y-auto p-5 space-y-3">
-            <p className="text-gray-400 text-xs mb-3">Ã¢ÂÂÃ¯Â¸Â Review and correct any fields before creating the job.</p>
+            <p className="text-gray-400 text-xs mb-3">Review and correct any fields before creating the job.</p>
             {fields.map(({ key, label, icon: Icon, placeholder }) => (
               <div key={key}>
                 <label className="flex items-center gap-2 text-gray-400 text-xs mb-1"><Icon className="w-3 h-3" />{label}</label>
                 <input type="text" value={(editedData as any)[key] || ''} onChange={(e) => handleFieldChange(key as keyof ExtractedPOData, e.target.value)} placeholder={placeholder} className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
               </div>
             ))}
-            {editedData.notes && <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-3"><p className="text-yellow-400 text-xs font-medium mb-1">Ã°ÂÂÂ AI Notes from PO</p><p className="text-gray-300 text-xs">{editedData.notes}</p></div>}
+            {editedData.notes && <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-3"><p className="text-yellow-400 text-xs font-medium mb-1">AI Notes</p><p className="text-gray-300 text-xs">{editedData.notes}</p></div>}
           </div>
           <div className="p-5 border-t border-gray-700 flex gap-3 flex-shrink-0">
             <button onClick={reset} className="flex items-center gap-2 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm"><RefreshCw className="w-4 h-4" />Rescan</button>
@@ -337,14 +344,14 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
         <div className="bg-gray-800 rounded-xl p-4 text-left space-y-2 mb-4">
           {editedData.poNumber && <div className="flex justify-between text-sm"><span className="text-gray-400">PO #</span><span className="text-white font-medium">{editedData.poNumber}</span></div>}
           {editedData.partNumber && <div className="flex justify-between text-sm"><span className="text-gray-400">Part #</span><span className="text-white font-medium">{editedData.partNumber}</span></div>}
-          {editedData.quantity && <div className="flex justify-between text-sm"><span className="text-gray-400">Quantity</span><span className="text-white font-medium">{editedData.quantity}</span></div>}
-          {editedData.dueDate && <div className="flex justify-between text-sm"><span className="text-gray-400">Due Date</span><span className="text-white font-medium">{editedData.dueDate}</span></div>}
+          {editedData.quantity && <div className="flex justify-between text-sm"><span className="text-gray-400">Qty</span><span className="text-white font-medium">{editedData.quantity}</span></div>}
+          {editedData.dueDate && <div className="flex justify-between text-sm"><span className="text-gray-400">Due</span><span className="text-white font-medium">{editedData.dueDate}</span></div>}
         </div>
         <div className={`flex items-center justify-center gap-2 text-sm mb-6 ${calendarAdded ? 'text-green-400' : 'text-yellow-400'}`}>
-          <Calendar className="w-4 h-4" />{calendarAdded ? 'Ã¢ÂÂ Added to Google Calendar' : 'Ã¢ÂÂ  Calendar not connected yet'}
+          <Calendar className="w-4 h-4" />{calendarAdded ? 'Added to Google Calendar' : 'Connect Google Calendar to auto-add'}
         </div>
         <div className="flex gap-3">
-          <button onClick={reset} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-sm">Scan Another PO</button>
+          <button onClick={reset} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-sm">Scan Another</button>
           <button onClick={onClose} className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold text-sm">Done</button>
         </div>
       </div>
