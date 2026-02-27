@@ -207,7 +207,7 @@ Return ONLY raw JSON, no markdown, no backticks:
         try { return JSON.parse(jsonMatch[0]); } catch {}
       }
       try { return JSON.parse(cleaned); } catch {}
-      break;
+      continue;
     } catch (err: any) {
       lastError = err;
       console.warn(`Model ${model} failed:`, err.message);
