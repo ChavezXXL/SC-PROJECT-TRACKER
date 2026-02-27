@@ -10,7 +10,7 @@ interface ExtractedPOData {
   jobNumber: string;
   partNumber: string;
   partName: string;
-  quantity: string;
+  quantity: string;h
   dueDate: string;
   customerName: string;
   confidence: 'high' | 'medium' | 'low';
@@ -135,7 +135,7 @@ RULES:
 Return ONLY raw JSON, no markdown, no backticks:
 {"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY","customerName":"","confidence":"high|medium|low","notes":""}`;
 
-  const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'];
+  const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'];
   let lastError: any;
   
   for (const model of models) {
