@@ -189,7 +189,7 @@ Respond using this exact JSON schema:
             }],
             generationConfig: { 
               temperature: 0.1, 
-              maxOutputTokens: 1024,
+              maxOutputTokens: 4096, // Increased to ensure long outputs aren't cut off
               responseMimeType: "application/json"
             },
           }),
@@ -202,7 +202,11 @@ Respond using this exact JSON schema:
       }
 
       const result = await response.json();
-      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      let text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      
+      // Sanitize the text by removing unescaped control characters (like hidden newlines)
+      // that can cause JSON.parse to throw an "unterminated string" error.
+      text = text.replace(/[\u0000-\u001F]+/g, " ");
       
       return JSON.parse(text);
       
@@ -221,8 +225,8 @@ Respond using this exact JSON schema:
   };
 }
 
-// Replaces fileToBase64 to compress image before sending to Gemini
-function compressImage(file: File, maxWidth = 1200): Promise<{ base64: string; mimeType: string }> {
+// Compresses image before sending to Gemini
+function compressImage(file: File, maxWidth = 2000): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -232,7 +236,7 @@ function compressImage(file: File, maxWidth = 1200): Promise<{ base64: string; m
         let width = img.width;
         let height = img.height;
         
-        // Scale down if it's too wide to save bandwidth and memory
+        // Scale down if it's too wide, but keep it large enough for OCR (2000px)
         if (width > maxWidth) {
           height = Math.round((height * maxWidth) / width);
           width = maxWidth;
@@ -243,8 +247,8 @@ function compressImage(file: File, maxWidth = 1200): Promise<{ base64: string; m
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          // Compress to JPEG at 80% quality
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          // Compress to JPEG at 95% quality for crisp text
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
           resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
         } else {
           reject(new Error("Canvas context failed"));
