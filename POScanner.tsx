@@ -324,6 +324,8 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
     setStep('saving');
     try {
       const jobId = `JOB-${Date.now()}`;
+      
+      // Save the job to the database immediately
       await onJobCreate({
         poNumber: editedData.poNumber || editedData.jobNumber || 'N/A',
         partNumber: editedData.partNumber,
@@ -336,7 +338,14 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
           editedData.notes || ''
         ].filter(Boolean).join(' | '),
       });
-      const calSuccess = await addToGoogleCalendar(editedData, jobId);
+
+      // Prevent Google Calendar from freezing the app on mobile! 
+      // Gives it exactly 2 seconds before giving up and showing success.
+      const calSuccess = await Promise.race([
+        addToGoogleCalendar(editedData, jobId),
+        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2000))
+      ]);
+
       setCalendarAdded(calSuccess);
       setStep('success');
     } catch (err: any) {
