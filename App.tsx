@@ -2161,8 +2161,15 @@ export default function App() {
     { id: 'admin-scan', l: 'Work Station', i: ScanLine },
   ];
 
-  //  PO SCANNER 
+ //  PO SCANNER 
   const handlePOJobCreate = async (jobData: { poNumber: string; partNumber: string; customer: string; quantity: number; dueDate: string; info: string; }) => {
+    
+    // Safety Fallback: Clear the placeholder if the AI failed to find a date
+    let cleanDueDate = jobData.dueDate;
+    if (cleanDueDate === "MM/DD/YYYY" || !cleanDueDate) {
+      cleanDueDate = "";
+    }
+
     const newJob: Job = {
       id: `job_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
       jobIdsDisplay: `J-${Date.now().toString().slice(-6)}`,
@@ -2170,8 +2177,8 @@ export default function App() {
       partNumber: jobData.partNumber,
       customer: jobData.customer || '',
       quantity: jobData.quantity,
-      dueDate: fmt(jobData.dueDate),
-      dateReceived: todayMMDDYYYY(),
+      dueDate: fmt(cleanDueDate),
+      dateReceived: todayFmt(), // <--- FIXED BUG: Replaced todayMMDDYYYY() with todayFmt()
       info: jobData.info,
       status: 'pending',
       priority: 'normal',
@@ -2269,5 +2276,6 @@ export default function App() {
     </div>
   );
 }
+
 
 
