@@ -151,13 +151,13 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
 
 async function extractPODataWithGemini(imageBase64: string, mimeType: string, apiKey: string): Promise<ExtractedPOData> {
   const prompt = `You are analyzing a purchase order (PO) for a precision deburring company. Extract these fields:
-- PO Number: PO#, P.O., Order#, Order Number, Purchase Order, SO#, Release#, Work Order
-- Job Number: Job#, Work Order#, WO#, Traveler# - may not exist
-- Part Number: Part#, P/N, Part No., Item#, Drawing#
-- Part Name: description/name of the part
-- Quantity: Qty, QTY, Units, Pieces, Pcs
-- Due Date: Due Date, Required By, Need By, Delivery Date, Ship Date
-- Customer Name: company/person who sent the PO
+- poNumber: PO#, P.O., Order#, Order Number, Purchase Order, SO#, Release#, Work Order
+- jobNumber: Job#, Work Order#, WO#, Traveler# - may not exist
+- partNumber: Part#, P/N, Part No., Item#, Drawing#
+- partName: description/name of the part
+- quantity: Qty, QTY, Units, Pieces, Pcs
+- dueDate: Due Date, Required By, Need By, Delivery Date, Ship Date
+- customerName: company/person who sent the PO
 
 RULES:
 1. Fill in best guess for every field - NEVER leave blank if info exists
@@ -165,7 +165,7 @@ RULES:
 3. jobNumber is optional - use "" only if truly none exists
 4. Return due date in MM/DD/YYYY format
 
-Return ONLY raw JSON, no markdown, no backticks:
+Respond using this exact JSON schema:
 {"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY","customerName":"","confidence":"high|medium|low","notes":""}`;
 
   const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'];
@@ -174,12 +174,11 @@ Return ONLY raw JSON, no markdown, no backticks:
   for (const model of models) {
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
           },
           body: JSON.stringify({
             contents: [{
@@ -188,7 +187,11 @@ Return ONLY raw JSON, no markdown, no backticks:
                 { inline_data: { mime_type: mimeType, data: imageBase64 } }
               ]
             }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+            generationConfig: { 
+              temperature: 0.1, 
+              maxOutputTokens: 1024,
+              responseMimeType: "application/json"
+            },
           }),
         }
       );
@@ -199,15 +202,10 @@ Return ONLY raw JSON, no markdown, no backticks:
       }
 
       const result = await response.json();
-      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      const cleaned = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-
-      if (jsonMatch) {
-        try { return JSON.parse(jsonMatch[0]); } catch {}
-      }
-      try { return JSON.parse(cleaned); } catch {}
-      continue;
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      
+      return JSON.parse(text);
+      
     } catch (err: any) {
       lastError = err;
       console.warn(`Model ${model} failed:`, err.message);
@@ -223,12 +221,37 @@ Return ONLY raw JSON, no markdown, no backticks:
   };
 }
 
-function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }> {
+// Replaces fileToBase64 to compress image before sending to Gemini
+function compressImage(file: File, maxWidth = 1200): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve({ base64: result.split(',')[1], mimeType: file.type || 'image/jpeg' });
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        
+        // Scale down if it's too wide to save bandwidth and memory
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          // Compress to JPEG at 80% quality
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+        } else {
+          reject(new Error("Canvas context failed"));
+        }
+      };
+      img.onerror = reject;
+      img.src = event.target?.result as string;
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
@@ -269,7 +292,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
     setImagePreview(URL.createObjectURL(file));
     setStep('processing');
     try {
-      const { base64, mimeType } = await fileToBase64(file);
+      const { base64, mimeType } = await compressImage(file);
       const data = await geminiRun(
         () => extractPODataWithGemini(base64, mimeType, geminiApiKey),
         { cooldownMs: 3000, maxRetries: 1 }
@@ -464,7 +487,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
       <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-sm shadow-2xl p-8 text-center">
         <Loader2 className="w-12 h-12 text-green-500 animate-spin mx-auto mb-4" />
         <h3 className="text-white font-bold text-lg mb-2">Creating Job...</h3>
-        <p className="text-gray-400 text-sm">Saving to Firebase and Google Calendar</p>
+        <p className="text-gray-400 text-sm">Saving to Database and Google Calendar</p>
       </div>
     </div>
   );
