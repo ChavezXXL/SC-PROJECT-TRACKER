@@ -7,7 +7,7 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play, Bell, BellOff, BellRingh
+  Play, Bell, BellOff, BellRing
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
@@ -2276,6 +2276,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
