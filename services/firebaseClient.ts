@@ -3,20 +3,19 @@ import * as firebaseApp from "firebase/app";
 
 const STORAGE_KEY_FB = 'nexus_firebase_config';
 
-// Read from environment variables (set in Netlify dashboard, never hardcoded)
 const defaultConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-    databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "",
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-    appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+    apiKey: "AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8",
+    authDomain: "sc-job-tracker.firebaseapp.com",
+    databaseURL: "https://sc-job-tracker-default-rtdb.firebaseio.com",
+    projectId: "sc-job-tracker",
+    storageBucket: "sc-job-tracker.firebasestorage.app",
+    messagingSenderId: "29160179130",
+    appId: "1:29160179130:web:32b55040b011bc316f4983",
 };
 
-let cachedDb: Firestore | null = null;
+let cachedDb = null;
 
-export const saveFirebaseConfig = (config: any) => {
+export const saveFirebaseConfig = (config) => {
   try {
     localStorage.setItem(STORAGE_KEY_FB, JSON.stringify(config));
     window.location.reload();
@@ -25,7 +24,7 @@ export const saveFirebaseConfig = (config: any) => {
   }
 };
 
-export function initFirebaseFromLocalStorage(): { ok: boolean; db?: Firestore; error?: string } {
+export function initFirebaseFromLocalStorage() {
   if (cachedDb) return { ok: true, db: cachedDb };
 
   try {
@@ -33,16 +32,19 @@ export function initFirebaseFromLocalStorage(): { ok: boolean; db?: Firestore; e
     const stored = localStorage.getItem(STORAGE_KEY_FB);
     if (stored) {
       try {
-        config = JSON.parse(stored);
-      } catch (e) {}
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.apiKey) {
+          config = parsed;
+        }
+      } catch {}
     }
 
-    if (!config.apiKey || config.apiKey === "PASTE_YOUR_API_KEY_HERE") {
+    if (!config.apiKey) {
       return { ok: false, error: "No API Key Configured" };
     }
 
-    let app: any;
-    const fb = firebaseApp as any;
+    let app;
+    const fb = firebaseApp;
     const getApps = fb.getApps || (fb.default && fb.default.getApps);
     const getApp = fb.getApp || (fb.default && fb.default.getApp);
     const initializeApp = fb.initializeApp || (fb.default && fb.default.initializeApp);
@@ -59,26 +61,25 @@ export function initFirebaseFromLocalStorage(): { ok: boolean; db?: Firestore; e
 
     try {
       cachedDb = getFirestore(app);
-      console.log("🔥 Firebase Firestore Client Retrieved");
+      console.log("Firebase Firestore Client Retrieved");
       return { ok: true, db: cachedDb };
-    } catch (innerErr: any) {
-      console.warn("⚠️ Firestore init failed. Defaulting to Local Storage.", innerErr.message);
+    } catch (innerErr) {
+      console.warn("Firestore init failed.", innerErr.message);
       return { ok: false, error: innerErr.message };
     }
 
-  } catch (e: any) {
-    console.warn("Firebase Init Error (Defaulting to Local Storage):", e);
+  } catch (e) {
+    console.warn("Firebase Init Error:", e);
     return { ok: false, error: e.message || "Unknown Firebase Error" };
   }
 }
 
-export async function validateConnection(db: Firestore): Promise<void> {
+export async function validateConnection(db) {
   try {
     const q = query(collection(db, "jobs"), limit(1));
     await getDocs(q);
-    console.log("✅ Firestore Connection Verified (Read Success)");
-  } catch (e: any) {
-    console.warn("❌ Firestore Connection Check Failed (will use Local Storage):", e);
-    throw e;
+    console.log("Firestore Connection Verified");
+  } catch (e) {
+    console.warn("Firestore Connection Check Failed:", e);
   }
 }
