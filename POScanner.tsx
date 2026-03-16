@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import {
   Camera, Upload, CheckCircle, AlertCircle, Loader2,
   X, Calendar, Hash, Package, User, FileText, RefreshCw,
-  ChevronRight, ScanLine
+  ChevronRight, ScanLine, ClipboardList
 } from 'lucide-react';
 
 interface ExtractedPOData {
@@ -15,6 +15,7 @@ interface ExtractedPOData {
   customerName: string;
   confidence: 'high' | 'medium' | 'low';
   notes: string;
+  specialInstructions: string; // NEW: edge breaks, stamping, material, heat treat, etc.
 }
 
 interface POScannerProps {
@@ -25,6 +26,7 @@ interface POScannerProps {
     quantity: number;
     dueDate: string;
     info: string;
+    specialInstructions?: string;
   }) => Promise<void>;
   geminiApiKey: string;
   onClose: () => void;
@@ -69,29 +71,20 @@ const useGeminiGuard = () => {
 function formatDateForCalendar(dateStr: string): string | null {
   if (!dateStr) return null;
   const cleaned = dateStr.trim();
-
-  // Already ISO format YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned;
-
-  // MM/DD/YYYY or MM-DD-YYYY (4-digit year)
   const mdy4 = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (mdy4) {
     const [, m, d, y] = mdy4;
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
-
-  // MM/DD/YY or MM-DD-YY (2-digit year)
   const mdy2 = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
   if (mdy2) {
     const [, m, d, yy] = mdy2;
     const y = parseInt(yy, 10) > 50 ? '19' + yy : '20' + yy;
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
-
-  // Fallback: let JS parse it
   const parsed = new Date(cleaned);
   if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
-
   return null;
 }
 
@@ -99,7 +92,6 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
   try {
     const dueDateFormatted = formatDateForCalendar(data.dueDate);
     if (!dueDateFormatted) return false;
-
     const buildEvent = () => ({
       summary: `DUE: ${data.partName || data.partNumber} - PO# ${data.poNumber}`,
       description: [
@@ -109,6 +101,7 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
         `Part Name: ${data.partName}`,
         `Quantity: ${data.quantity}`,
         `Customer: ${data.customerName}`,
+        data.specialInstructions ? `Instructions: ${data.specialInstructions}` : '',
         data.notes ? `Notes: ${data.notes}` : '',
       ].filter(Boolean).join('\n'),
       start: { date: dueDateFormatted, timeZone: 'America/Los_Angeles' },
@@ -122,7 +115,6 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
         ]
       },
     });
-
     const insertEvent = async (): Promise<boolean> => {
       await (window as any).gapi.client.calendar.events.insert({
         calendarId: 'primary',
@@ -130,10 +122,8 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
       });
       return true;
     };
-
     const gapi = (window as any).gapi;
     if (gapi?.client?.calendar) return await insertEvent();
-
     if (typeof (window as any).__requestCalendarAccess === 'function') {
       return await new Promise<boolean>((resolve) => {
         (window as any).__requestCalendarAccess(async (success: boolean) => {
@@ -150,25 +140,41 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
 }
 
 async function extractPODataWithGemini(imageBase64: string, mimeType: string, apiKey: string): Promise<ExtractedPOData> {
-  const prompt = `You are analyzing a purchase order (PO) for a precision deburring company. Extract these fields:
-- poNumber: PO#, P.O., Order#, Order Number, Purchase Order, SO#, Release#, Work Order
-- jobNumber: Job#, Work Order#, WO#, Traveler# - may not exist
-- partNumber: Part#, P/N, Part No., Item#, Drawing#
-- partName: description/name of the part
-- quantity: Qty, QTY, Units, Pieces, Pcs
-- dueDate: Due Date, Required By, Need By, Delivery Date, Ship Date
-- customerName: company/person who sent the PO
+  const prompt = `You are an expert at reading aerospace and defense manufacturing Purchase Orders (POs), Work Orders, and Travelers. Extract every field you can find.
+
+FIELD MAPPING — look for ALL of these label variants:
+- poNumber: "PO#", "P.O.", "P.O.#", "Purchase Order", "Order #", "Order No", "SO#", "Release#", "Contract#", "Blanket PO"
+- jobNumber: "Job#", "Job No", "WO#", "Work Order", "Traveler#", "Router#", "Op#" — use "" if none
+- partNumber: "Part#", "Part No", "P/N", "PN", "Item#", "Drawing#", "Dwg#", "Part Number", "NSN"
+- partName: Description, Name, Nomenclature, Item Description — what the part is called
+- quantity: "Qty", "QTY", "Quantity", "Units", "Pcs", "Pieces", "Ea", "EA", "Order Qty"
+- dueDate: "Due Date", "Required Date", "Need By", "Delivery Date", "Ship Date", "Required By", "Must Ship", "Sched Date"
+- customerName: Company name, customer name, "Bill To", "Sold To", "Ordered By" — who sent the PO
+
+SPECIAL INSTRUCTIONS — this is critical. Extract ALL of the following if present:
+- Edge break callouts: e.g. "Break all sharp edges .005-.015", "Deburr all edges", "Remove all burrs"
+- Stamping requirements: e.g. "Stamp part number", "ID stamp required", "Mark with electro-etch"
+- Material specs: e.g. "Material: 4340 Steel", "Aluminum 7075", "Ti-6Al-4V"
+- Heat treat: e.g. "Heat Treat to 48-53 HRC", "Per SAI AMS2759", "Anneal after"
+- Surface finish: e.g. "125 Ra max", "32 microinch", "No scratches"
+- Scotch-Brite: e.g. "Use of Scotch-Brite on pressure vessel parts PROHIBITED"
+- Flow passage warnings: e.g. "DO NOT use Scotch-Brite on manifolds with flow passages"
+- Protection notes: e.g. "DO NOT nick or ding", "Protect from metal-on-metal contact"
+- Certifications: e.g. "Cert of Conformance required", "DFARS compliant", "Rated Order"
+- Any other manufacturing notes in INSTRUCTIONS, NOTES, REMARKS, or SPECIAL REQUIREMENTS sections
 
 RULES:
-1. Fill in best guess for every field - NEVER leave blank if info exists
-2. confidence = "high" if 4+ fields readable, "medium" if 2-3, "low" if unreadable
-3. jobNumber is optional - use "" only if truly none exists
-4. Return due date in MM/DD/YYYY format
+1. NEVER return empty strings if the information exists anywhere on the document
+2. Search the entire image including headers, footers, tables, boxes, and fine print
+3. confidence = "high" if 5+ fields found, "medium" if 3-4, "low" if under 3
+4. Return dueDate in MM/DD/YYYY format
+5. Combine ALL special instructions into one clear string
+6. notes field = only use for extraction warnings or ambiguities, NOT for instructions
 
-Respond using this exact JSON schema:
-{"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"MM/DD/YYYY","customerName":"","confidence":"high|medium|low","notes":""}`;
+Return ONLY this exact JSON, no other text:
+{"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"","customerName":"","confidence":"high|medium|low","notes":"","specialInstructions":""}`;
 
-  const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'];
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
   let lastError: any;
 
   for (const model of models) {
@@ -177,9 +183,7 @@ Respond using this exact JSON schema:
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
               parts: [
@@ -187,9 +191,9 @@ Respond using this exact JSON schema:
                 { inline_data: { mime_type: mimeType, data: imageBase64 } }
               ]
             }],
-            generationConfig: { 
-              temperature: 0.1, 
-              maxOutputTokens: 4096, // Increased to ensure long outputs aren't cut off
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 4096,
               responseMimeType: "application/json"
             },
           }),
@@ -203,13 +207,13 @@ Respond using this exact JSON schema:
 
       const result = await response.json();
       let text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-      
-      // Sanitize the text by removing unescaped control characters (like hidden newlines)
-      // that can cause JSON.parse to throw an "unterminated string" error.
       text = text.replace(/[\u0000-\u001F]+/g, " ");
-      
-      return JSON.parse(text);
-      
+      const parsed = JSON.parse(text);
+
+      // Ensure specialInstructions always exists
+      if (!parsed.specialInstructions) parsed.specialInstructions = '';
+      return parsed;
+
     } catch (err: any) {
       lastError = err;
       console.warn(`Model ${model} failed:`, err.message);
@@ -222,10 +226,10 @@ Respond using this exact JSON schema:
     quantity: '', dueDate: '', customerName: '',
     confidence: 'low' as const,
     notes: `Scan failed: ${lastError?.message || 'Unknown error'}. Please fill in fields manually.`,
+    specialInstructions: '',
   };
 }
 
-// Compresses image before sending to Gemini
 function compressImage(file: File, maxWidth = 2000): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -235,19 +239,15 @@ function compressImage(file: File, maxWidth = 2000): Promise<{ base64: string; m
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        
-        // Scale down if it's too wide, but keep it large enough for OCR (2000px)
         if (width > maxWidth) {
           height = Math.round((height * maxWidth) / width);
           width = maxWidth;
         }
-        
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          // Compress to JPEG at 95% quality for crisp text
           const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
           resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
         } else {
@@ -324,8 +324,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
     setStep('saving');
     try {
       const jobId = `JOB-${Date.now()}`;
-      
-      // Save the job to the database immediately
+
       await onJobCreate({
         poNumber: editedData.poNumber || editedData.jobNumber || 'N/A',
         partNumber: editedData.partNumber,
@@ -335,12 +334,10 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
         info: [
           editedData.partName ? `Part: ${editedData.partName}` : '',
           editedData.jobNumber ? `Job#: ${editedData.jobNumber}` : '',
-          editedData.notes || ''
         ].filter(Boolean).join(' | '),
+        specialInstructions: editedData.specialInstructions || '',
       });
 
-      // Prevent Google Calendar from freezing the app on mobile! 
-      // Gives it exactly 2 seconds before giving up and showing success.
       const calSuccess = await Promise.race([
         addToGoogleCalendar(editedData, jobId),
         new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2000))
@@ -422,13 +419,13 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
         )}
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
         <h3 className="text-white font-bold text-lg mb-2">Analyzing Purchase Order</h3>
-        <p className="text-gray-400 text-sm">AI is reading your PO image...</p>
+        <p className="text-gray-400 text-sm">Reading fields and extracting instructions...</p>
       </div>
     </div>
   );
 
   if (step === 'review' && editedData) {
-    const fields = [
+    const standardFields = [
       { key: 'poNumber', label: 'PO / Order Number', icon: Hash, placeholder: 'e.g. PO-12345' },
       { key: 'jobNumber', label: 'Job Number (optional)', icon: FileText, placeholder: 'e.g. JOB-001' },
       { key: 'partNumber', label: 'Part Number', icon: Package, placeholder: 'e.g. ABC-123' },
@@ -448,14 +445,17 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
           </div>
+
           {imagePreview && (
             <div className="px-5 pt-4 flex-shrink-0">
               <img src={imagePreview} alt="PO" className="w-full h-24 object-cover rounded-xl border border-gray-700" />
             </div>
           )}
+
           <div className="flex-1 overflow-y-auto p-5 space-y-3">
             <p className="text-gray-400 text-xs mb-3">Review and correct any fields before creating the job.</p>
-            {fields.map(({ key, label, icon: Icon, placeholder }) => (
+
+            {standardFields.map(({ key, label, icon: Icon, placeholder }) => (
               <div key={key}>
                 <label className="flex items-center gap-2 text-gray-400 text-xs mb-1">
                   <Icon className="w-3 h-3" />{label}
@@ -469,6 +469,22 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
                 />
               </div>
             ))}
+
+            {/* Special Instructions — dedicated field */}
+            <div>
+              <label className="flex items-center gap-2 text-orange-400 text-xs mb-1 font-medium">
+                <ClipboardList className="w-3 h-3" />Special Instructions
+              </label>
+              <textarea
+                value={editedData.specialInstructions || ''}
+                onChange={(e) => handleFieldChange('specialInstructions', e.target.value)}
+                placeholder="e.g. Break all sharp edges .005-.015 | Stamp part number | Heat treat 48-53 HRC per AMS2759 | No Scotch-Brite on flow passages"
+                rows={3}
+                className="w-full bg-gray-800 border border-orange-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500 resize-none"
+              />
+              <p className="text-gray-500 text-xs mt-1">Edge breaks, stamping, material specs, surface finish, certifications, warnings</p>
+            </div>
+
             {editedData.notes && (
               <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-3">
                 <p className="text-yellow-400 text-xs font-medium mb-1">AI Notes</p>
@@ -476,6 +492,7 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
               </div>
             )}
           </div>
+
           <div className="p-5 border-t border-gray-700 flex gap-3 flex-shrink-0">
             <button
               onClick={reset}
@@ -517,6 +534,12 @@ export const POScanner: React.FC<POScannerProps> = ({ onJobCreate, geminiApiKey,
           {editedData.partNumber && <div className="flex justify-between text-sm"><span className="text-gray-400">Part #</span><span className="text-white font-medium">{editedData.partNumber}</span></div>}
           {editedData.quantity && <div className="flex justify-between text-sm"><span className="text-gray-400">Qty</span><span className="text-white font-medium">{editedData.quantity}</span></div>}
           {editedData.dueDate && <div className="flex justify-between text-sm"><span className="text-gray-400">Due</span><span className="text-white font-medium">{editedData.dueDate}</span></div>}
+          {editedData.specialInstructions && (
+            <div className="pt-1 border-t border-gray-700">
+              <p className="text-orange-400 text-xs font-medium mb-1">Instructions</p>
+              <p className="text-gray-300 text-xs">{editedData.specialInstructions}</p>
+            </div>
+          )}
         </div>
         <div className={`flex items-center justify-center gap-2 text-sm mb-6 ${calendarAdded ? 'text-green-400' : 'text-yellow-400'}`}>
           <Calendar className="w-4 h-4" />
