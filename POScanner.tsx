@@ -207,6 +207,7 @@ Return ONLY this exact JSON, no other text:
       const result = await response.json();
       let text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       text = text.replace(/[\u0000-\u001F]+/g, " ");
+      text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
       const parsed = JSON.parse(text);
 
       // Ensure specialInstructions always exists
