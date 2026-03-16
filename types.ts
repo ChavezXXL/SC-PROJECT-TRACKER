@@ -24,6 +24,7 @@ export interface Job {
   dateReceived: string;
   dueDate: string;
   info: string;
+  specialInstructions?: string;
   status: JobStatus;
   createdAt: number;
   completedAt?: number;
