@@ -194,7 +194,6 @@ Return ONLY this exact JSON, no other text:
             generationConfig: {
               temperature: 0.1,
               maxOutputTokens: 4096,
-              responseMimeType: "application/json"
             },
           }),
         }
