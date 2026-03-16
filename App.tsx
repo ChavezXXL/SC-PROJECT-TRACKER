@@ -2170,7 +2170,7 @@ export default function App() {
       cleanDueDate = "";
     }
 
-    const newJob: Job = {
+   const newJob: Job = {
       id: `job_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
       jobIdsDisplay: `J-${Date.now().toString().slice(-6)}`,
       poNumber: jobData.poNumber,
@@ -2178,8 +2178,9 @@ export default function App() {
       customer: jobData.customer || '',
       quantity: jobData.quantity,
       dueDate: fmt(cleanDueDate),
-      dateReceived: todayFmt(), // <--- FIXED BUG: Replaced todayFmt() with todayFmt()
+      dateReceived: todayFmt(),
       info: jobData.info,
+      specialInstructions: jobData.specialInstructions || '',
       status: 'pending',
       priority: 'normal',
       createdAt: Date.now(),
