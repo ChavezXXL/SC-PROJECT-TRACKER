@@ -12,7 +12,7 @@ interface ExtractedPOData {
   partName: string;
   quantity: string;
   dueDate: string;
-  customerName: string;
+  customerName: string;h
   confidence: 'high' | 'medium' | 'low';
   notes: string;
   specialInstructions: string; // NEW: edge breaks, stamping, material, heat treat, etc.
@@ -174,7 +174,7 @@ RULES:
 Return ONLY this exact JSON, no other text:
 {"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"","customerName":"","confidence":"high|medium|low","notes":"","specialInstructions":""}`;
 
- const models = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
+ const models = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash'];
   let lastError: any;
 
   for (const model of models) {
