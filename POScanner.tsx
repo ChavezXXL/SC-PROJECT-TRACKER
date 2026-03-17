@@ -320,7 +320,7 @@ Return ONLY this exact JSON, no other text:
       const result = await response.json();
       let text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
 
-      console.log(`[POScanner] ${model} raw response:`, text.substring(0, 200));
+      console.log(`[POScanner] ${model} raw response:`, text.substring(0, 300));
 
       text = text.replace(/[\u0000-\u001F]+/g, ' ');
       text = text
@@ -770,28 +770,24 @@ export const POScanner: React.FC<POScannerProps> = ({
                 <span className="text-white font-medium">{editedData.poNumber}</span>
               </div>
             )}
-
             {editedData.partNumber && (
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Part #</span>
                 <span className="text-white font-medium">{editedData.partNumber}</span>
               </div>
             )}
-
             {editedData.quantity && (
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Qty</span>
                 <span className="text-white font-medium">{editedData.quantity}</span>
               </div>
             )}
-
             {editedData.dueDate && (
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Due</span>
                 <span className="text-white font-medium">{editedData.dueDate}</span>
               </div>
             )}
-
             {editedData.specialInstructions && (
               <div className="pt-1 border-t border-gray-700">
                 <p className="text-orange-400 text-xs font-medium mb-1">Instructions</p>
