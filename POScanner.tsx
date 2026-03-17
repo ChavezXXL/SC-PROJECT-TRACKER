@@ -56,7 +56,7 @@ const useGeminiGuard = () => {
     const maxRetries = opts?.maxRetries ?? 2;
 
     if (inFlightRef.current) {
-      throw new Error('Gemini request already running please wait.');
+      throw new Error('Gemini request already running — please wait.');
     }
 
     const now = Date.now();
@@ -234,6 +234,13 @@ async function extractPODataWithGemini(
   mimeType: string,
   apiKey: string
 ): Promise<ExtractedPOData> {
+  // ===== EARLY BAIL: No API key = immediate clear error =====
+  if (!apiKey || apiKey.trim().length < 10) {
+    throw new Error(
+      'Gemini API key is missing. Check that VITE_GEMINI_API_KEY (or GEMINI_API_KEY) is set in your Netlify environment variables, then redeploy.'
+    );
+  }
+
   const prompt = `You are an expert at reading aerospace and defense manufacturing Purchase Orders (POs), Work Orders, and Travelers. Extract every field you can find.
 
 FIELD MAPPING — look for ALL of these label variants:
@@ -268,11 +275,19 @@ RULES:
 Return ONLY this exact JSON, no other text:
 {"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"","customerName":"","confidence":"high|medium|low","notes":"","specialInstructions":""}`;
 
-  const models = ['gemini-1.5-pro', 'gemini-1.5-flash'];
+  // Updated model fallback list — current as of early 2026
+  const models = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+  ];
   let lastError: any;
 
   for (const model of models) {
     try {
+      console.log(`[POScanner] Trying model: ${model}`);
+
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
         {
@@ -297,11 +312,15 @@ Return ONLY this exact JSON, no other text:
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(`${response.status}: ${err?.error?.message || 'API error'}`);
+        const errMsg = err?.error?.message || 'API error';
+        console.warn(`[POScanner] ${model} returned ${response.status}: ${errMsg}`);
+        throw new Error(`${response.status}: ${errMsg}`);
       }
 
       const result = await response.json();
       let text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+      console.log(`[POScanner] ${model} raw response:`, text.substring(0, 200));
 
       text = text.replace(/[\u0000-\u001F]+/g, ' ');
       text = text
@@ -322,10 +341,21 @@ Return ONLY this exact JSON, no other text:
         throw new Error('Gemini returned invalid JSON.');
       }
 
-      return normalizeExtractedPOData(parsed);
+      const normalized = normalizeExtractedPOData(parsed);
+
+      // Quick sanity check — if we got at least one meaningful field, trust it
+      const hasData = normalized.poNumber || normalized.partNumber || normalized.customerName || normalized.quantity;
+      if (hasData) {
+        console.log(`[POScanner] ${model} extraction successful:`, normalized);
+      } else {
+        console.warn(`[POScanner] ${model} returned all empty fields — trying next model`);
+        throw new Error('All fields came back empty — likely a bad parse');
+      }
+
+      return normalized;
     } catch (err: any) {
       lastError = err;
-      console.warn(`Model ${model} failed:`, err.message);
+      console.warn(`[POScanner] Model ${model} failed:`, err.message);
     }
   }
 
@@ -522,6 +552,16 @@ export const POScanner: React.FC<POScannerProps> = ({
           </div>
 
           <div className="p-5 space-y-4">
+            {/* Warn if API key looks missing */}
+            {(!geminiApiKey || geminiApiKey.length < 10) && (
+              <div className="bg-red-900/30 border border-red-500/40 rounded-xl p-3 text-center">
+                <p className="text-red-400 text-xs font-bold">Gemini API Key not detected</p>
+                <p className="text-red-400/70 text-[11px] mt-1">
+                  Set VITE_GEMINI_API_KEY in Netlify env vars and redeploy.
+                </p>
+              </div>
+            )}
+
             <button
               onClick={() => cameraInputRef.current?.click()}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl p-4 flex items-center justify-center gap-3 font-semibold"
