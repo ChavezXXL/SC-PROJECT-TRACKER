@@ -2143,12 +2143,13 @@ export default function App() {
     );
   }
 
-  const navItems = [
+ const navItems = [
     { id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard },
     { id: 'admin-jobs', l: 'Jobs', i: Briefcase },
     { id: 'admin-logs', l: 'Logs', i: Calendar },
     { id: 'admin-team', l: 'Team', i: Users },
     { id: 'admin-settings', l: 'Settings', i: Settings },
+    { id: 'admin-live', l: 'Live Floor', i: Activity },
     { id: 'admin-scan', l: 'Work Station', i: ScanLine },
   ];
 
