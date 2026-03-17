@@ -13,7 +13,7 @@ import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
 import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
-import { POScanner } from './POScanner';
+import { LiveFloorMonitor } from './LiveFloorMonitor';
 
 function fmt(d?: string | null): string {
   if (!d) return '';
