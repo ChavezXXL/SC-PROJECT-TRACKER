@@ -1438,50 +1438,148 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         // Jobs without quotes (need attention)
         const unquoted = completedJobs.filter(j => !(j.quoteAmount && j.quoteAmount > 0));
 
+        // Margin calculations
+        const monthMargin = monthTotals.revenue > 0 ? ((monthTotals.revenue - monthTotals.cost) / monthTotals.revenue * 100) : 0;
+        const weekMargin = weekTotals.revenue > 0 ? ((weekTotals.revenue - weekTotals.cost) / weekTotals.revenue * 100) : 0;
+
+        // Active jobs with live costs (estimated vs actual)
+        const activeJobsWithCosts = jobs.filter(j => j.status !== 'completed' && j.quoteAmount).map(j => {
+          const f = calcJobFinancials(j);
+          const remaining = (j.quoteAmount || 0) - f.cost;
+          const usedPct = j.quoteAmount ? Math.min(100, (f.cost / j.quoteAmount) * 100) : 0;
+          return { ...j, ...f, remaining, usedPct };
+        }).sort((a, b) => b.usedPct - a.usedPct).slice(0, 5);
+
+        // Revenue per customer this month
+        const custRev = new Map<string, { revenue: number; cost: number; jobs: number }>();
+        monthJobs.forEach(j => {
+          const c = j.customer || 'Unknown';
+          const f = calcJobFinancials(j);
+          const cur = custRev.get(c) || { revenue: 0, cost: 0, jobs: 0 };
+          cur.revenue += f.revenue; cur.cost += f.cost; cur.jobs++;
+          custRev.set(c, cur);
+        });
+        const topCustomers = Array.from(custRev.entries()).filter(([, d]) => d.revenue > 0).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 5);
+
+        // Average cost per hour
+        const avgCostPerHr = monthTotals.hrs > 0 ? monthTotals.cost / monthTotals.hrs : 0;
+        const avgRevenuePerHr = monthTotals.hrs > 0 ? monthTotals.revenue / monthTotals.hrs : 0;
+
         return (
-          <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden">
-            <div className="p-6 border-b border-white/5 flex items-center justify-between">
-              <h3 className="font-bold text-white flex items-center gap-2"><Calculator className="w-4 h-4 text-emerald-400" /> Financial Overview</h3>
-              {unquoted.length > 0 && <span className="text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded-lg font-bold">{unquoted.length} job{unquoted.length !== 1 ? 's' : ''} missing quote</span>}
+          <div className="space-y-4">
+            {/* Top KPI Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Monthly Revenue</p>
+                <p className="text-2xl font-black text-emerald-400">${monthTotals.revenue.toLocaleString()}</p>
+                <p className="text-[10px] text-zinc-600">{monthTotals.jobs} jobs completed</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Monthly Costs</p>
+                <p className="text-2xl font-black text-orange-400">${monthTotals.cost.toFixed(0)}</p>
+                <p className="text-[10px] text-zinc-600">{monthTotals.hrs.toFixed(0)}h labor + overhead</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Net Profit</p>
+                <p className={`text-2xl font-black ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {monthProfit !== null ? `${monthProfit >= 0 ? '+' : ''}$${monthProfit.toFixed(0)}` : '—'}
+                </p>
+                <p className="text-[10px] text-zinc-600">{monthMargin > 0 ? `${monthMargin.toFixed(0)}% margin` : 'No quoted jobs'}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">$/Hour Earned</p>
+                <p className="text-2xl font-black text-blue-400">${avgRevenuePerHr.toFixed(0)}</p>
+                <p className="text-[10px] text-zinc-600">Cost: ${avgCostPerHr.toFixed(0)}/hr</p>
+              </div>
             </div>
-            <div className="grid grid-cols-2 divide-x divide-white/5">
-              {/* This Week */}
-              <div className="p-5 space-y-3">
-                <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">This Week</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between"><span className="text-xs text-zinc-500">Jobs Completed</span><span className="text-sm font-bold text-white">{weekTotals.jobs}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-zinc-500">Hours Worked</span><span className="text-sm font-mono text-zinc-300">{weekTotals.hrs.toFixed(1)}h</span></div>
-                  {weekTotals.revenue > 0 && <>
-                    <div className="flex justify-between"><span className="text-xs text-zinc-500">Revenue</span><span className="text-sm font-mono text-emerald-400">${weekTotals.revenue.toLocaleString()}</span></div>
-                    <div className="flex justify-between"><span className="text-xs text-zinc-500">Costs</span><span className="text-sm font-mono text-red-400">${weekTotals.cost.toFixed(0)}</span></div>
-                    <div className="border-t border-white/5 pt-2 flex justify-between">
-                      <span className="text-xs font-bold text-zinc-400">Profit</span>
+
+            {/* Week vs Month Comparison */}
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+              <div className="p-4 border-b border-white/5 flex items-center justify-between">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2"><Calculator className="w-4 h-4 text-emerald-400" /> Profit & Loss</h3>
+                {unquoted.length > 0 && <span className="text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded-lg font-bold">{unquoted.length} missing quote</span>}
+              </div>
+              <div className="grid grid-cols-2 divide-x divide-white/5">
+                <div className="p-4 space-y-2">
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase">This Week</p>
+                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Revenue</span><span className="text-emerald-400 font-mono">${weekTotals.revenue.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Labor</span><span className="text-orange-400 font-mono">${weekTotals.cost.toFixed(0)}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Hours</span><span className="text-zinc-300 font-mono">{weekTotals.hrs.toFixed(1)}h</span></div>
+                  <div className="border-t border-white/5 pt-2 flex justify-between items-center">
+                    <span className="text-xs font-bold text-zinc-400">Profit</span>
+                    <div className="text-right">
                       <span className={`text-lg font-black ${weekProfit && weekProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {weekProfit !== null ? `${weekProfit >= 0 ? '+' : '-'}$${Math.abs(weekProfit).toFixed(0)}` : '—'}
+                        {weekProfit !== null ? `${weekProfit >= 0 ? '+' : ''}$${weekProfit.toFixed(0)}` : '—'}
                       </span>
+                      {weekMargin > 0 && <p className="text-[10px] text-zinc-500">{weekMargin.toFixed(0)}% margin</p>}
                     </div>
-                  </>}
+                  </div>
                 </div>
-              </div>
-              {/* This Month */}
-              <div className="p-5 space-y-3">
-                <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">This Month</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between"><span className="text-xs text-zinc-500">Jobs Completed</span><span className="text-sm font-bold text-white">{monthTotals.jobs}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-zinc-500">Hours Worked</span><span className="text-sm font-mono text-zinc-300">{monthTotals.hrs.toFixed(1)}h</span></div>
-                  {monthTotals.revenue > 0 && <>
-                    <div className="flex justify-between"><span className="text-xs text-zinc-500">Revenue</span><span className="text-sm font-mono text-emerald-400">${monthTotals.revenue.toLocaleString()}</span></div>
-                    <div className="flex justify-between"><span className="text-xs text-zinc-500">Costs</span><span className="text-sm font-mono text-red-400">${monthTotals.cost.toFixed(0)}</span></div>
-                    <div className="border-t border-white/5 pt-2 flex justify-between">
-                      <span className="text-xs font-bold text-zinc-400">Profit</span>
+                <div className="p-4 space-y-2">
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase">This Month</p>
+                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Revenue</span><span className="text-emerald-400 font-mono">${monthTotals.revenue.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Labor</span><span className="text-orange-400 font-mono">${monthTotals.cost.toFixed(0)}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Hours</span><span className="text-zinc-300 font-mono">{monthTotals.hrs.toFixed(1)}h</span></div>
+                  <div className="border-t border-white/5 pt-2 flex justify-between items-center">
+                    <span className="text-xs font-bold text-zinc-400">Profit</span>
+                    <div className="text-right">
                       <span className={`text-lg font-black ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {monthProfit !== null ? `${monthProfit >= 0 ? '+' : '-'}$${Math.abs(monthProfit).toFixed(0)}` : '—'}
+                        {monthProfit !== null ? `${monthProfit >= 0 ? '+' : ''}$${monthProfit.toFixed(0)}` : '—'}
                       </span>
+                      {monthMargin > 0 && <p className="text-[10px] text-zinc-500">{monthMargin.toFixed(0)}% margin</p>}
                     </div>
-                  </>}
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* Live Job Budget Tracker — Estimated vs Actual */}
+            {activeJobsWithCosts.length > 0 && (
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Live Job Budget — Est. vs Actual</h3>
+                <div className="space-y-3">
+                  {activeJobsWithCosts.map(j => (
+                    <div key={j.id} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-white font-bold">{j.poNumber} <span className="text-zinc-500 font-normal">{j.partNumber}</span></span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-zinc-500">Spent: <span className="text-orange-400 font-mono">${j.cost.toFixed(0)}</span></span>
+                          <span className="text-zinc-500">Budget: <span className="text-zinc-300 font-mono">${(j.quoteAmount || 0).toLocaleString()}</span></span>
+                          <span className={`font-bold font-mono ${j.remaining >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.remaining >= 0 ? '+' : ''}${j.remaining.toFixed(0)}</span>
+                        </div>
+                      </div>
+                      <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${j.usedPct > 90 ? 'bg-red-500' : j.usedPct > 70 ? 'bg-yellow-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, j.usedPct)}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top Customers Revenue */}
+            {topCustomers.length > 0 && (
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Top Customers (This Month)</h3>
+                <div className="space-y-2">
+                  {topCustomers.map(([cust, data], i) => {
+                    const maxRev = topCustomers[0][1].revenue || 1;
+                    const margin = data.revenue > 0 ? ((data.revenue - data.cost) / data.revenue * 100) : 0;
+                    return (
+                      <div key={cust} className="flex items-center gap-3">
+                        <span className="text-xs text-zinc-500 w-4">{i + 1}</span>
+                        <span className="text-xs text-white font-bold w-28 truncate">{cust}</span>
+                        <div className="flex-1 h-5 bg-zinc-800 rounded overflow-hidden relative">
+                          <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded transition-all" style={{ width: `${(data.revenue / maxRev) * 100}%` }} />
+                          <span className="absolute right-2 top-0 text-[10px] font-mono text-white/80">${data.revenue.toLocaleString()}</span>
+                        </div>
+                        <span className={`text-[10px] font-bold w-10 text-right ${margin >= 20 ? 'text-emerald-400' : margin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{margin.toFixed(0)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
