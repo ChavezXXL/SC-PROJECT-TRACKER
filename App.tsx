@@ -42,6 +42,37 @@ function normDate(raw: string | null | undefined): string {
   return s;
 }
 
+// Returns a sortable YYYYMMDD number for date comparison.
+// Accepts MM/DD/YYYY, M/D/YYYY, or YYYY-MM-DD. Empty/invalid -> 0.
+// CRITICAL: Use this for ALL date math. Never compare MM/DD/YYYY strings directly,
+// because string-wise "04/05/2026" < "12/31/2025" (since "0" < "1") which breaks
+// every overdue/due-soon check.
+function dueCmp(d?: string | null): number {
+  if (!d) return 0;
+  const s = d.trim();
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const [, m, day, y] = mdy;
+    return parseInt(y, 10) * 10000 + parseInt(m, 10) * 100 + parseInt(day, 10);
+  }
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const [, y, m, day] = iso;
+    return parseInt(y, 10) * 10000 + parseInt(m, 10) * 100 + parseInt(day, 10);
+  }
+  return 0;
+}
+
+function todayCmp(): number {
+  const d = new Date();
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+
+function daysFromTodayCmp(days: number): number {
+  const d = new Date(Date.now() + days * 86400000);
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+
 // --- UTILS ---
 const formatDuration = (mins: number | undefined) => {
   if (mins === undefined || mins === null) return 'Running...';
@@ -116,13 +147,16 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   // Check jobs every minute
   useEffect(() => {
     const check = () => {
-      const today = todayFmt();
-      const in2Days = new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
+      const todayC = todayCmp();
+      const in2DaysC = daysFromTodayCmp(2);
       const activeJobs = jobs.filter(j => j.status !== 'completed');
 
       // Overdue jobs
-      activeJobs.filter(j => j.dueDate && j.dueDate < today).forEach(j => {
-        const tag = `overdue-${j.id}-${today}`;
+      activeJobs.filter(j => {
+        const c = dueCmp(j.dueDate);
+        return c > 0 && c < todayC;
+      }).forEach(j => {
+        const tag = `overdue-${j.id}-${todayC}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
           fire('overdue', ' Overdue Job', `PO ${j.poNumber} was due ${fmt(j.dueDate)}`, tag);
@@ -130,8 +164,11 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
       });
 
       // Due within 2 days
-      activeJobs.filter(j => j.dueDate && j.dueDate >= today && j.dueDate <= in2Days).forEach(j => {
-        const tag = `due-soon-${j.id}-${today}`;
+      activeJobs.filter(j => {
+        const c = dueCmp(j.dueDate);
+        return c > 0 && c >= todayC && c <= in2DaysC;
+      }).forEach(j => {
+        const tag = `due-soon-${j.id}-${todayC}`;
         if (!notifiedRef.current.has(tag)) {
           notifiedRef.current.add(tag);
           fire('due-soon', ' Due Soon', `PO ${j.poNumber} is due ${fmt(j.dueDate)}`, tag);
@@ -485,8 +522,11 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
     }
   }, [defaultExpanded]);
   const today = todayFmt();
-  const isOverdue = job.dueDate && job.dueDate < today;
-  const isDueSoon = job.dueDate && job.dueDate >= today && job.dueDate <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+  const todayC = todayCmp();
+  const in3DaysC = daysFromTodayCmp(3);
+  const jobC = dueCmp(job.dueDate);
+  const isOverdue = jobC > 0 && jobC < todayC;
+  const isDueSoon = jobC > 0 && jobC >= todayC && jobC <= in3DaysC;
   const priorityColors: Record<string, string> = {
     urgent: 'border-red-500/40 bg-red-500/5',
     high: 'border-orange-500/30 bg-orange-500/5',
@@ -840,9 +880,18 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const myActiveJob = myActiveLog ? jobs.find(j => j.id === myActiveLog.jobId) : null;
 
   const today = todayFmt();
-  const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
-  const overdueJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.dueDate < today);
-  const dueSoonJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.dueDate >= today && j.dueDate <= in3Days);
+  const todayC = todayCmp();
+  const in3DaysC = daysFromTodayCmp(3);
+  const overdueJobs = jobs.filter(j => {
+    if (j.status === 'completed') return false;
+    const c = dueCmp(j.dueDate);
+    return c > 0 && c < todayC;
+  });
+  const dueSoonJobs = jobs.filter(j => {
+    if (j.status === 'completed') return false;
+    const c = dueCmp(j.dueDate);
+    return c > 0 && c >= todayC && c <= in3DaysC;
+  });
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -1000,7 +1049,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
   };
 
   const today = todayFmt();
-  const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+  const todayC = todayCmp();
+  const in3DaysC = daysFromTodayCmp(3);
 
   const priorityOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
@@ -1025,10 +1075,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       if (sortBy === 'priority') return (priorityOrder[a.priority || 'normal'] ?? 2) - (priorityOrder[b.priority || 'normal'] ?? 2);
       if (sortBy === 'newest') return b.createdAt - a.createdAt;
       if (sortBy === 'oldest') return a.createdAt - b.createdAt;
-      // dueDate sort: put jobs without due date at end
-      const ad = a.dueDate || '9999-99-99';
-      const bd = b.dueDate || '9999-99-99';
-      return ad.localeCompare(bd);
+      // dueDate sort: put jobs without due date at end, compare numerically
+      const ac = dueCmp(a.dueDate) || Number.MAX_SAFE_INTEGER;
+      const bc = dueCmp(b.dueDate) || Number.MAX_SAFE_INTEGER;
+      return ac - bc;
     });
   }, [jobs, search, activeTab, filterPriority, filterStatus, sortBy]);
 
@@ -1196,10 +1246,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         {/* Results count */}
         <div className="flex items-center gap-2 text-xs text-zinc-500">
           <span>{filteredJobs.length} job{filteredJobs.length !== 1 ? 's' : ''} shown</span>
-          {filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length > 0 && (
+          {filteredJobs.filter(j => {
+            if (j.status === 'completed') return false;
+            const c = dueCmp(j.dueDate);
+            return c > 0 && c < todayC;
+          }).length > 0 && (
             <span className="text-red-400 font-bold flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              {filteredJobs.filter(j => j.dueDate && j.dueDate < today && j.status !== 'completed').length} overdue
+              {filteredJobs.filter(j => {
+                if (j.status === 'completed') return false;
+                const c = dueCmp(j.dueDate);
+                return c > 0 && c < todayC;
+              }).length} overdue
             </span>
           )}
         </div>
@@ -1220,8 +1278,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           </thead>
           <tbody className="divide-y divide-white/5">
             {filteredJobs.map(j => {
-              const isOverdue = j.status !== 'completed' && j.dueDate && j.dueDate < today;
-              const isDueSoon = j.status !== 'completed' && j.dueDate && j.dueDate >= today && j.dueDate <= in3Days;
+              const jc = dueCmp(j.dueDate);
+              const isOverdue = j.status !== 'completed' && jc > 0 && jc < todayC;
+              const isDueSoon = j.status !== 'completed' && jc > 0 && jc >= todayC && jc <= in3DaysC;
               return (
                 <tr key={j.id} className={`hover:bg-white/5 transition-colors group ${isOverdue ? 'bg-red-500/5' : ''}`}>
                   <td className="p-4">
@@ -2109,6 +2168,21 @@ export default function App() {
     return () => { unsub1(); unsub2(); };
   }, [user]);
 
+  // ── AUTO CLOCK-OUT SWEEP ───────────────────────────────────────
+  // Runs on any open tab (TV, admin desktop, employee phone). Every minute
+  // we check: is the Auto-Clock-Out setting enabled, is it past the cutoff
+  // time, and are there stale active timers? If so, stop them. The first
+  // tab to see them wins; Firestore's onSnapshot propagates to everyone else.
+  useEffect(() => {
+    if (!user) return;
+    // Run once on mount so the TV cleans up the moment someone walks in
+    DB.sweepStaleLogs().catch(e => console.warn('[auto-clock-out] sweep failed:', e));
+    const id = setInterval(() => {
+      DB.sweepStaleLogs().catch(e => console.warn('[auto-clock-out] sweep failed:', e));
+    }, 60 * 1000); // every 60s
+    return () => clearInterval(id);
+  }, [user]);
+
   useEffect(() => {
     if (user) {
       localStorage.setItem('nexus_user', JSON.stringify(user));
@@ -2169,7 +2243,9 @@ export default function App() {
       partNumber: jobData.partNumber,
       customer: jobData.customer || '',
       quantity: jobData.quantity,
-      dueDate: fmt(cleanDueDate),
+      // normDate handles MM/DD/YYYY, YYYY-MM-DD, and natural-language dates
+      // uniformly, outputting the canonical MM/DD/YYYY used everywhere else.
+      dueDate: normDate(cleanDueDate),
       dateReceived: todayFmt(),
       info: jobData.info,
       specialInstructions: jobData.specialInstructions || '',

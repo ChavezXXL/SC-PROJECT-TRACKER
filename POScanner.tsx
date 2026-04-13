@@ -55,8 +55,15 @@ const useGeminiGuard = () => {
     const cooldownMs = opts?.cooldownMs ?? 6000;
     const maxRetries = opts?.maxRetries ?? 2;
 
-    if (inFlightRef.current) {
-      throw new Error('Gemini request already running — please wait.');
+    // If another request is in flight, wait for it to finish rather than
+    // hard-throwing. Double-tapping scan should feel natural, not broken.
+    const start = Date.now();
+    const maxWait = 30000; // 30s safety cap
+    while (inFlightRef.current) {
+      if (Date.now() - start > maxWait) {
+        throw new Error('Previous scan is taking too long — please refresh and try again.');
+      }
+      await new Promise((res) => setTimeout(res, 200));
     }
 
     const now = Date.now();
@@ -343,9 +350,13 @@ Return ONLY this exact JSON, no other text:
 
       const normalized = normalizeExtractedPOData(parsed);
 
-      // Quick sanity check — if we got at least one meaningful field, trust it
-      const hasData = normalized.poNumber || normalized.partNumber || normalized.customerName || normalized.quantity;
-      if (hasData) {
+      // Sanity check: did Gemini find ANY field? If literally every field is
+      // empty, the parse probably failed or the image is unreadable — try
+      // the next model. But if even one field came through, trust it and return.
+      const anyField = normalized.poNumber || normalized.jobNumber || normalized.partNumber
+        || normalized.partName || normalized.quantity || normalized.dueDate
+        || normalized.customerName || normalized.specialInstructions;
+      if (anyField) {
         console.log(`[POScanner] ${model} extraction successful:`, normalized);
       } else {
         console.warn(`[POScanner] ${model} returned all empty fields — trying next model`);
@@ -359,18 +370,11 @@ Return ONLY this exact JSON, no other text:
     }
   }
 
-  return {
-    poNumber: '',
-    jobNumber: '',
-    partNumber: '',
-    partName: '',
-    quantity: '',
-    dueDate: '',
-    customerName: '',
-    confidence: 'low',
-    notes: `Scan failed: ${lastError?.message || 'Unknown error'}. Please fill in fields manually.`,
-    specialInstructions: '',
-  };
+  // All models failed — throw a real error so the UI shows the error screen
+  // instead of proceeding to the review step with a blank form.
+  throw new Error(
+    `Scan failed: ${lastError?.message || 'All Gemini models failed.'} Try a clearer photo or fill in fields manually.`
+  );
 }
 
 function compressImage(file: File, maxWidth = 2000): Promise<{ base64: string; mimeType: string }> {
@@ -462,7 +466,7 @@ export const POScanner: React.FC<POScannerProps> = ({
       const { base64, mimeType } = await compressImage(file);
       const data = await geminiRun(
         () => extractPODataWithGemini(base64, mimeType, geminiApiKey),
-        { cooldownMs: 3000, maxRetries: 1 }
+        { cooldownMs: 2000, maxRetries: 3 }
       );
 
       setEditedData({ ...data });
