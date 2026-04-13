@@ -92,7 +92,7 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'employee-scan' | 'employee-job';
 
 export interface SampleWorkEntry {
   id: string;

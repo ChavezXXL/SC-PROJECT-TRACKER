@@ -3651,6 +3651,171 @@ const QuoteCalculator = ({ settings }: { settings: SystemSettings }) => {
   );
 };
 
+// ═══════════════════════════════════════════════════
+// REPORTS VIEW — Worker productivity, job metrics
+// ═══════════════════════════════════════════════════
+const ReportsView = () => {
+  const [logs, setLogs] = useState<TimeLog[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [period, setPeriod] = useState<'week' | 'month' | 'all'>('week');
+  const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
+
+  useEffect(() => {
+    const u1 = DB.subscribeLogs(setLogs);
+    const u2 = DB.subscribeUsers(setUsers);
+    const u3 = DB.subscribeJobs(setJobs);
+    const u4 = DB.subscribeSettings(setSettings);
+    return () => { u1(); u2(); u3(); u4(); };
+  }, []);
+
+  const now = Date.now();
+  const weekAgo = now - 7 * 86400000;
+  const monthAgo = now - 30 * 86400000;
+  const cutoff = period === 'week' ? weekAgo : period === 'month' ? monthAgo : 0;
+
+  const completedLogs = logs.filter(l => l.endTime && l.endTime > cutoff);
+  const activeWorkers = users.filter(u => u.isActive !== false && u.role !== 'admin');
+  const shopRate = settings.shopRate || 0;
+  const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
+
+  // Per-worker stats
+  const workerStats = activeWorkers.map(w => {
+    const wLogs = completedLogs.filter(l => l.userId === w.id);
+    const totalMins = wLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    const totalHrs = totalMins / 60;
+    const jobIds = [...new Set(wLogs.map(l => l.jobId))];
+    const operations = [...new Set(wLogs.map(l => l.operation))];
+    const rate = (w as any).hourlyRate || shopRate;
+    const cost = totalHrs * (rate + ohRate);
+    const avgMinsPerSession = wLogs.length > 0 ? totalMins / wLogs.length : 0;
+    return { user: w, logs: wLogs, totalMins, totalHrs, jobCount: jobIds.length, operations, cost, sessions: wLogs.length, avgMinsPerSession };
+  }).sort((a, b) => b.totalHrs - a.totalHrs);
+
+  // Totals
+  const totalHrs = workerStats.reduce((a, w) => a + w.totalHrs, 0);
+  const totalCost = workerStats.reduce((a, w) => a + w.cost, 0);
+  const totalSessions = workerStats.reduce((a, w) => a + w.sessions, 0);
+  const completedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff);
+  const totalRevenue = completedJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+
+  // Operations breakdown
+  const opMap = new Map<string, number>();
+  completedLogs.forEach(l => opMap.set(l.operation, (opMap.get(l.operation) || 0) + (l.durationMinutes || 0)));
+  const opBreakdown = Array.from(opMap.entries()).sort((a, b) => b[1] - a[1]);
+  const maxOpMins = opBreakdown.length > 0 ? opBreakdown[0][1] : 1;
+
+  return (
+    <div className="max-w-4xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Reports</h2>
+          <p className="text-sm text-zinc-500">Worker productivity and shop performance.</p>
+        </div>
+        <div className="flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5">
+          {(['week', 'month', 'all'] as const).map(p => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${period === p ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+              {p === 'week' ? 'This Week' : p === 'month' ? 'This Month' : 'All Time'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-zinc-500 uppercase font-bold">Total Hours</p>
+          <p className="text-2xl font-black text-white">{totalHrs.toFixed(1)}</p>
+        </div>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-zinc-500 uppercase font-bold">Sessions</p>
+          <p className="text-2xl font-black text-white">{totalSessions}</p>
+        </div>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-zinc-500 uppercase font-bold">Jobs Done</p>
+          <p className="text-2xl font-black text-emerald-400">{completedJobs.length}</p>
+        </div>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-zinc-500 uppercase font-bold">Revenue</p>
+          <p className="text-2xl font-black text-green-400">${totalRevenue.toLocaleString()}</p>
+        </div>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-zinc-500 uppercase font-bold">Labor Cost</p>
+          <p className="text-2xl font-black text-orange-400">${totalCost.toFixed(0)}</p>
+        </div>
+      </div>
+
+      {/* Worker Productivity Table */}
+      <div>
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Productivity</h3>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
+              <tr>
+                <th className="text-left p-3">Worker</th>
+                <th className="text-right p-3">Hours</th>
+                <th className="text-right p-3">Sessions</th>
+                <th className="text-right p-3">Jobs</th>
+                <th className="text-right p-3">Avg/Session</th>
+                <th className="text-right p-3">Cost</th>
+                <th className="p-3">Top Operations</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {workerStats.map(w => (
+                <tr key={w.user.id} className="hover:bg-white/5">
+                  <td className="p-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 text-xs font-bold">{w.user.name.charAt(0)}</div>
+                      <div>
+                        <p className="text-white font-bold text-sm">{w.user.name}</p>
+                        <p className="text-zinc-600 text-[10px]">{w.user.role}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-3 text-right font-mono text-white font-bold">{w.totalHrs.toFixed(1)}h</td>
+                  <td className="p-3 text-right font-mono text-zinc-300">{w.sessions}</td>
+                  <td className="p-3 text-right font-mono text-zinc-300">{w.jobCount}</td>
+                  <td className="p-3 text-right font-mono text-zinc-400">{w.avgMinsPerSession.toFixed(0)}m</td>
+                  <td className="p-3 text-right font-mono text-orange-400">${w.cost.toFixed(0)}</td>
+                  <td className="p-3">
+                    <div className="flex flex-wrap gap-1">
+                      {w.operations.slice(0, 3).map(op => (
+                        <span key={op} className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">{op}</span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {workerStats.length === 0 && (
+                <tr><td colSpan={7} className="p-8 text-center text-zinc-500">No activity in this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Operations Breakdown */}
+      <div>
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Operations Breakdown</h3>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-2">
+          {opBreakdown.map(([op, mins]) => (
+            <div key={op} className="flex items-center gap-3">
+              <span className="text-xs text-zinc-300 font-bold w-32 truncate">{op}</span>
+              <div className="flex-1 h-5 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500/60 rounded-full transition-all" style={{ width: `${(mins / maxOpMins) * 100}%` }} />
+              </div>
+              <span className="text-xs font-mono text-zinc-400 w-16 text-right">{(mins / 60).toFixed(1)}h</span>
+            </div>
+          ))}
+          {opBreakdown.length === 0 && <p className="text-zinc-500 text-sm text-center py-4">No operations logged in this period.</p>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SettingsView = ({ addToast }: { addToast: any }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
@@ -4158,6 +4323,7 @@ export default function App() {
     { id: 'admin-jobs', l: 'Jobs', i: Briefcase },
     { id: 'admin-logs', l: 'Logs', i: Calendar },
     { id: 'admin-team', l: 'Team', i: Users },
+    { id: 'admin-reports', l: 'Reports', i: Calculator },
     { id: 'admin-settings', l: 'Settings', i: Settings },
     { id: 'admin-live', l: 'Live Floor', i: Activity },
     { id: 'admin-samples', l: 'Samples', i: Camera },
@@ -4260,6 +4426,7 @@ export default function App() {
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
+          {view === 'admin-reports' && <ReportsView />}
           {view === 'admin-live' && <LiveFloorMonitor user={user} onBack={() => setView('admin-dashboard')} addToast={addToast} />}
           {view === 'admin-samples' && <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
