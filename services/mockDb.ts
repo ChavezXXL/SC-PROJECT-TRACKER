@@ -652,3 +652,76 @@ export function subscribeUserProgress(userId: string, cb: (data: any) => void): 
     () => cb(null)
   );
 }
+
+// ═══════════════════════════════════════════════════
+// AUTO CLOCK-OUT SWEEP
+// Stops any active timers whose clock on the current day has passed
+// the configured auto-clock-out time. Safe to call repeatedly.
+// Client-side: any open tab running this will write the stops to
+// Firestore, and onSnapshot propagates to every other tab + TV.
+// Returns the number of timers that were actually stopped.
+// ═══════════════════════════════════════════════════
+let sweepInFlight = false;
+
+export async function sweepStaleLogs(): Promise<number> {
+  if (sweepInFlight) return 0;
+  sweepInFlight = true;
+  try {
+    const settings = getSettings();
+    if (!settings.autoClockOutEnabled) return 0;
+
+    // Parse the configured cutoff time (HH:MM, 24-hour)
+    const timeStr = settings.autoClockOutTime || '17:30';
+    const m = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return 0;
+    const cutoffHour = parseInt(m[1], 10);
+    const cutoffMin = parseInt(m[2], 10);
+
+    const now = new Date();
+    // Today's cutoff moment (local time)
+    const cutoffToday = new Date(
+      now.getFullYear(), now.getMonth(), now.getDate(),
+      cutoffHour, cutoffMin, 0, 0
+    ).getTime();
+
+    // Only sweep if we're past today's cutoff
+    if (Date.now() < cutoffToday) return 0;
+
+    // Gather active logs
+    let activeLogs: TimeLog[] = [];
+    if (dbInstance) {
+      try {
+        const snap = await getDocs(collection(dbInstance, COL.logs));
+        activeLogs = snap.docs
+          .map((d: any) => d.data() as TimeLog)
+          .filter((l: TimeLog) => !l.endTime);
+      } catch (e) {
+        console.warn('sweepStaleLogs: failed to read logs', e);
+        return 0;
+      }
+    } else {
+      activeLogs = readLS<TimeLog[]>(LS.logs, []).filter((l) => !l.endTime);
+    }
+
+    // Stop every active log that STARTED before today's cutoff.
+    // (If someone clocks in AFTER the cutoff — e.g. night shift — we leave them alone.)
+    let stopped = 0;
+    for (const log of activeLogs) {
+      if (log.startTime < cutoffToday) {
+        try {
+          await stopTimeLog(log.id);
+          stopped++;
+        } catch (e) {
+          console.warn('sweepStaleLogs: failed to stop log', log.id, e);
+        }
+      }
+    }
+
+    if (stopped > 0) {
+      console.log(`[auto-clock-out] Swept ${stopped} stale timer${stopped > 1 ? 's' : ''} at ${new Date().toLocaleTimeString()}`);
+    }
+    return stopped;
+  } finally {
+    sweepInFlight = false;
+  }
+}
