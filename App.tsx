@@ -1546,16 +1546,16 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
 // --- PRIORITY BADGE ---
 const PriorityBadge = ({ priority }: { priority?: string }) => {
-  if (!priority || priority === 'normal') return null;
+  const p = priority || 'normal';
   const styles: Record<string, string> = {
-    low: 'text-zinc-500 bg-zinc-800 border-white/5',
+    low: 'text-zinc-600 bg-zinc-800/50 border-white/5',
+    normal: 'text-zinc-500 bg-zinc-800/30 border-white/5',
     high: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
     urgent: 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse',
   };
-  const icons: Record<string, string> = { low: '  ', high: ' ', urgent: '' };
   return (
-    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${styles[priority] || ''}`}>
-      {icons[priority]} {priority}
+    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${styles[p] || styles.normal}`}>
+      {p}
     </span>
   );
 };
@@ -1945,7 +1945,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               const hasQuote = (j.quoteAmount || 0) > 0;
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
-                <tr key={j.id} className={`hover:bg-white/5 transition-colors group ${isOverdue ? 'bg-red-500/5' : ''}`}>
+                <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
                   <td className="p-4">
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2">
@@ -1983,7 +1983,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                   <td className={`p-4 font-mono whitespace-nowrap font-bold ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
                     {fmt(j.dueDate)}
                   </td>
-                  <td className="p-4 text-right">
+                  <td className="p-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
                       <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" /></button>
                       {activeTab === 'active' && (
@@ -3575,151 +3575,153 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
     DB.saveSettings(updated);
   };
 
+  const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
+  const trueCost = (settings.shopRate || 0) + ohRate;
+
   return (
-    <div className="max-w-xl space-y-6">
-      <h2 className="text-2xl font-bold text-white">System Settings</h2>
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
-        <div className="flex items-center gap-3 pb-6 border-b border-white/5">
-          <div className="bg-orange-500/20 p-2 rounded-lg text-orange-400"><Clock className="w-6 h-6" /></div>
-          <div><h3 className="font-bold text-white">Auto-Cleanup Rules</h3><p className="text-sm text-zinc-500">Automatically clock out forgotten timers.</p></div>
+    <div className="max-w-3xl space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Settings</h2>
+          <p className="text-sm text-zinc-500 mt-1">Configure your shop's automation, operations, and financials.</p>
         </div>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between"><label className="text-sm text-zinc-300">Enable Auto-Clock Out</label><input type="checkbox" checked={settings.autoClockOutEnabled} onChange={e => setSettings({ ...settings, autoClockOutEnabled: e.target.checked })} className="w-5 h-5 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" /></div>
-          <div><label className="text-xs text-zinc-500 block mb-1">Auto-Clock Out Time</label><input type="time" value={settings.autoClockOutTime} onChange={e => setSettings({ ...settings, autoClockOutTime: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" /></div>
-        </div>
+        <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 text-sm"><Save className="w-4 h-4" /> Save Changes</button>
       </div>
 
-      {/* Auto Lunch Pause */}
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
-        <div className="flex items-center gap-3 pb-6 border-b border-white/5">
-          <div className="bg-yellow-500/20 p-2 rounded-lg text-yellow-400"><Pause className="w-6 h-6" /></div>
-          <div><h3 className="font-bold text-white">Auto Lunch Pause</h3><p className="text-sm text-zinc-500">Automatically pause all timers during lunch.</p></div>
-        </div>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-zinc-300">Enable Auto Lunch Pause</label>
-            <input type="checkbox" checked={settings.autoLunchPauseEnabled || false} onChange={e => setSettings({ ...settings, autoLunchPauseEnabled: e.target.checked })} className="w-5 h-5 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-xs text-zinc-500 block mb-1">Lunch Start</label><input type="time" value={settings.lunchStart || '12:00'} onChange={e => setSettings({ ...settings, lunchStart: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" /></div>
-            <div><label className="text-xs text-zinc-500 block mb-1">Lunch End</label><input type="time" value={settings.lunchEnd || '12:30'} onChange={e => setSettings({ ...settings, lunchEnd: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" /></div>
-          </div>
-          <p className="text-xs text-zinc-500">All running timers auto-pause at lunch start and auto-resume when lunch ends. Pause time is NOT counted in work duration.</p>
-        </div>
-      </div>
-
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
-        <div className="flex items-center gap-3 pb-6 border-b border-white/5">
-          <div className="bg-blue-500/20 p-2 rounded-lg text-blue-400"><Activity className="w-6 h-6" /></div>
-          <div><h3 className="font-bold text-white">Production Operations</h3><p className="text-sm text-zinc-500">Customize the workflow steps available for tracking.</p></div>
-        </div>
-        <div className="space-y-4">
-          <div className="flex gap-2">
-            <input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="New Operation Name..." className="flex-1 bg-zinc-950 border border-white/10 rounded-lg p-2 text-white" onKeyDown={e => e.key === 'Enter' && handleAddOp()} />
-            <button onClick={handleAddOp} className="bg-blue-600 px-4 rounded-lg text-white font-bold"><Plus className="w-4 h-4" /></button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(settings.customOperations || []).map(op => (
-              <div key={op} className="bg-zinc-800 border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                <span className="text-sm text-zinc-200">{op}</span>
-                <button onClick={() => handleDeleteOp(op)} className="text-zinc-500 hover:text-red-500"><X className="w-3 h-3" /></button>
+      {/* ── SECTION: Automation ── */}
+      <div className="space-y-1">
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-1">Automation</h3>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
+          {/* Auto Clock-Out */}
+          <div className="p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-orange-500/20 p-1.5 rounded-lg text-orange-400"><Clock className="w-4 h-4" /></div>
+              <div>
+                <p className="text-sm font-medium text-white">Auto Clock-Out</p>
+                <p className="text-xs text-zinc-500">End forgotten timers at {settings.autoClockOutTime || '17:30'}</p>
               </div>
-            ))}
-            {(settings.customOperations || []).length === 0 && <span className="text-zinc-500 italic text-sm">No operations defined.</span>}
+            </div>
+            <div className="flex items-center gap-3">
+              <input type="time" value={settings.autoClockOutTime} onChange={e => setSettings({ ...settings, autoClockOutTime: e.target.value })} className="bg-zinc-950 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-28" />
+              <input type="checkbox" checked={settings.autoClockOutEnabled} onChange={e => setSettings({ ...settings, autoClockOutEnabled: e.target.checked })} className="w-5 h-5 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" />
+            </div>
+          </div>
+          {/* Auto Lunch Pause */}
+          <div className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-yellow-500/20 p-1.5 rounded-lg text-yellow-400"><Pause className="w-4 h-4" /></div>
+                <div>
+                  <p className="text-sm font-medium text-white">Auto Lunch Pause</p>
+                  <p className="text-xs text-zinc-500">Pause all timers during lunch break</p>
+                </div>
+              </div>
+              <input type="checkbox" checked={settings.autoLunchPauseEnabled || false} onChange={e => setSettings({ ...settings, autoLunchPauseEnabled: e.target.checked })} className="w-5 h-5 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" />
+            </div>
+            {settings.autoLunchPauseEnabled && (
+              <div className="flex gap-3 mt-3 ml-10">
+                <div><label className="text-[10px] text-zinc-500 block mb-0.5">Start</label><input type="time" value={settings.lunchStart || '12:00'} onChange={e => setSettings({ ...settings, lunchStart: e.target.value })} className="bg-zinc-950 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-28" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-0.5">End</label><input type="time" value={settings.lunchEnd || '12:30'} onChange={e => setSettings({ ...settings, lunchEnd: e.target.value })} className="bg-zinc-950 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-28" /></div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Shop Financials */}
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
-        <div className="flex items-center gap-3 pb-6 border-b border-white/5">
-          <div className="bg-emerald-500/20 p-2 rounded-lg text-emerald-400"><Calculator className="w-6 h-6" /></div>
-          <div><h3 className="font-bold text-white">Shop Financials</h3><p className="text-sm text-zinc-500">Set per-worker rates in <strong>Team</strong>, then set overhead here. Profit/loss shows on every completed job.</p></div>
+      {/* ── SECTION: Production ── */}
+      <div className="space-y-1">
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-1">Production</h3>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
+          {/* Operations */}
+          <div className="p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="bg-blue-500/20 p-1.5 rounded-lg text-blue-400"><Activity className="w-4 h-4" /></div>
+              <p className="text-sm font-medium text-white">Operations</p>
+            </div>
+            <div className="flex gap-2">
+              <input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="Add operation..." className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white" onKeyDown={e => e.key === 'Enter' && handleAddOp()} />
+              <button onClick={handleAddOp} className="bg-blue-600 hover:bg-blue-500 px-3 rounded-lg text-white text-sm font-bold">Add</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(settings.customOperations || []).map(op => (
+                <span key={op} className="bg-zinc-800 border border-white/10 px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-xs text-zinc-300">
+                  {op}
+                  <button onClick={() => handleDeleteOp(op)} className="text-zinc-600 hover:text-red-400"><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+            </div>
+          </div>
+          {/* Clients */}
+          <div className="p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="bg-purple-500/20 p-1.5 rounded-lg text-purple-400"><Briefcase className="w-4 h-4" /></div>
+              <div>
+                <p className="text-sm font-medium text-white">Clients</p>
+                <p className="text-xs text-zinc-500">Used in job and sample dropdowns</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <input value={newClient} onChange={e => setNewClient(e.target.value)} placeholder="Add client..." className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white" onKeyDown={e => e.key === 'Enter' && handleAddClient()} />
+              <button onClick={handleAddClient} className="bg-purple-600 hover:bg-purple-500 px-3 rounded-lg text-white text-sm font-bold">Add</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(settings.clients || []).sort((a, b) => a.localeCompare(b)).map(client => (
+                <span key={client} className="bg-zinc-800 border border-white/10 px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-xs text-zinc-300">
+                  {client}
+                  <button onClick={() => handleDeleteClient(client)} className="text-zinc-600 hover:text-red-400"><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      </div>
+
+      {/* ── SECTION: Financials ── */}
+      <div className="space-y-1">
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-1">Financials</h3>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-4">
+          <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-1 block">Fallback Rate ($/hr)</label>
+              <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Shop Rate ($/hr)</label>
               <div className="relative">
-                <span className="absolute left-3 top-2.5 text-zinc-500 font-bold">$</span>
-                <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 pl-7 text-white font-mono" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21.00" />
+                <span className="absolute left-2.5 top-2 text-zinc-600 text-sm">$</span>
+                <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-1.5 pl-6 pr-2 text-white text-sm font-mono" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" />
               </div>
-              <p className="text-[10px] text-zinc-600 mt-1">Used if a worker has no rate set in Team</p>
             </div>
             <div>
-              <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-1 block">Monthly Overhead ($)</label>
+              <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Monthly Overhead</label>
               <div className="relative">
-                <span className="absolute left-3 top-2.5 text-zinc-500 font-bold">$</span>
-                <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 pl-7 text-white font-mono" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" />
+                <span className="absolute left-2.5 top-2 text-zinc-600 text-sm">$</span>
+                <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-1.5 pl-6 pr-2 text-white text-sm font-mono" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" />
               </div>
-              <p className="text-[10px] text-zinc-600 mt-1">Rent, utilities, insurance, tooling</p>
             </div>
             <div>
-              <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-1 block">Monthly Work Hours</label>
-              <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2 text-white font-mono" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" />
-              <p className="text-[10px] text-zinc-600 mt-1">Total billable hours per month</p>
+              <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Work Hrs / Month</label>
+              <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-1.5 px-2 text-white text-sm font-mono" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" />
             </div>
           </div>
-          {(settings.shopRate || 0) > 0 && (settings.monthlyOverhead || 0) > 0 && (settings.monthlyWorkHours || 0) > 0 && (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div>
-                  <p className="text-xs text-zinc-400">Shop Rate</p>
-                  <p className="text-lg font-bold text-white">${(settings.shopRate || 0).toFixed(2)}/hr</p>
-                </div>
-                <div>
-                  <p className="text-xs text-zinc-400">Overhead Rate</p>
-                  <p className="text-lg font-bold text-yellow-400">${((settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160)).toFixed(2)}/hr</p>
-                </div>
-                <div>
-                  <p className="text-xs text-zinc-400">True Cost/Hr</p>
-                  <p className="text-lg font-bold text-emerald-400">${((settings.shopRate || 0) + (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160)).toFixed(2)}/hr</p>
-                </div>
-              </div>
+          {trueCost > 0 && (
+            <div className="bg-zinc-800/50 rounded-lg p-3 grid grid-cols-3 gap-3 text-center">
+              <div><p className="text-[10px] text-zinc-500 uppercase">Shop Rate</p><p className="text-sm font-bold text-white">${(settings.shopRate || 0).toFixed(2)}/hr</p></div>
+              <div><p className="text-[10px] text-zinc-500 uppercase">Overhead</p><p className="text-sm font-bold text-yellow-400">${ohRate.toFixed(2)}/hr</p></div>
+              <div><p className="text-[10px] text-zinc-500 uppercase">True Cost</p><p className="text-sm font-bold text-emerald-400">${trueCost.toFixed(2)}/hr</p></div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Clients */}
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 space-y-6">
-        <div className="flex items-center gap-3 pb-6 border-b border-white/5">
-          <div className="bg-purple-500/20 p-2 rounded-lg text-purple-400"><Briefcase className="w-6 h-6" /></div>
-          <div>
-            <h3 className="font-bold text-white">Clients</h3>
-            <p className="text-sm text-zinc-500">Manage client companies — used when adding samples and jobs.</p>
-          </div>
-        </div>
-        <div className="space-y-4">
-          <div className="flex gap-2">
-            <input
-              value={newClient}
-              onChange={e => setNewClient(e.target.value)}
-              placeholder="New client name..."
-              className="flex-1 bg-zinc-950 border border-white/10 rounded-lg p-2 text-white"
-              onKeyDown={e => e.key === 'Enter' && handleAddClient()}
-            />
-            <button onClick={handleAddClient} className="bg-purple-600 hover:bg-purple-500 px-4 rounded-lg text-white font-bold"><Plus className="w-4 h-4" /></button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(settings.clients || []).sort((a, b) => a.localeCompare(b)).map(client => (
-              <div key={client} className="bg-zinc-800 border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                <span className="text-sm text-zinc-200">{client}</span>
-                <button onClick={() => handleDeleteClient(client)} className="text-zinc-500 hover:text-red-500"><X className="w-3 h-3" /></button>
-              </div>
-            ))}
-            {(settings.clients || []).length === 0 && <span className="text-zinc-500 italic text-sm">No clients added yet.</span>}
-          </div>
+      {/* ── SECTION: Tools ── */}
+      <div className="space-y-1">
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-1">Tools</h3>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
+          <div className="p-4"><QuoteCalculator settings={settings} /></div>
+          <div className="p-4"><PushRegistrationPanel addToast={addToast} /></div>
         </div>
       </div>
 
-      {/* Quote Calculator */}
-      <QuoteCalculator settings={settings} />
-
-      {/* Notifications */}
-      <PushRegistrationPanel addToast={addToast} />
-
-      <div className="flex justify-end"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2"><Save className="w-5 h-5" /> Save Changes</button></div>
+      {/* Bottom save */}
+      <div className="flex justify-end pb-8"><button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 text-sm"><Save className="w-4 h-4" /> Save Changes</button></div>
     </div>
   );
 };

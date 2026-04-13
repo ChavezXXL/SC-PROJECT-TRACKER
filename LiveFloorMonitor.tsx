@@ -416,6 +416,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
               title={compact ? 'Expanded view' : 'Compact view'}>
               {compact ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
             </button>
+            <button onClick={() => {
+              if (document.fullscreenElement) { document.exitFullscreen(); }
+              else { document.documentElement.requestFullscreen().catch(() => {}); }
+            }}
+              className="p-2 rounded-lg transition-colors bg-white/5 text-white/40 hover:text-white hover:bg-blue-500/20"
+              title="Toggle fullscreen (TV mode)">
+              <Smartphone className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
