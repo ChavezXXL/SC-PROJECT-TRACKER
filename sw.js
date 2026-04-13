@@ -1,5 +1,5 @@
 // SC Deburring Job Tracker - Service Worker v1
-const CACHE_NAME = 'sc-tracker-v1';
+const CACHE_NAME = 'sc-tracker-v2';
 const OFFLINE_URL = '/';
 
 // Assets to cache on install
@@ -27,10 +27,14 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// ── Fetch: network-first, fallback to cache ───────────────────────
+// ── Fetch strategy ───────────────────────────────────────────────
+// Hashed assets (/assets/*) → cache-first (they never change, save bandwidth)
+// Everything else → network-first with cache fallback
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
+
+  // Skip third-party requests
   if (url.hostname.includes('firebase') ||
       url.hostname.includes('google') ||
       url.hostname.includes('esm.sh') ||
@@ -38,6 +42,22 @@ self.addEventListener('fetch', event => {
       url.hostname.includes('tailwindcss') ||
       url.hostname.includes('cdn')) return;
 
+  // Cache-first for hashed assets (Vite fingerprints them, so they're immutable)
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        if (cached) return cached;
+        return fetch(event.request).then(response => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Network-first for HTML and other non-hashed resources
   event.respondWith(
     fetch(event.request)
       .then(response => {
