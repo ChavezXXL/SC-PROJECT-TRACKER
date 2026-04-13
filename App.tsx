@@ -1623,7 +1623,8 @@ const PartImageLightbox = ({ src, onClose }: { src: string, onClose: () => void 
 // --- ADMIN: JOBS ---
 const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: any) => {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'calendar'>('active');
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [search, setSearch] = useState('');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -1800,6 +1801,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           Completed History
           <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status === 'completed').length}</span>
         </button>
+        <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-1.5 ${activeTab === 'calendar' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
+          <Calendar className="w-3.5 h-3.5" /> Calendar
+        </button>
       </div>
 
       {activeTab === 'completed' && (
@@ -1810,8 +1814,107 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         </div>
       )}
 
+      {/* Calendar View */}
+      {activeTab === 'calendar' && (() => {
+        const yr = calMonth.year, mo = calMonth.month;
+        const firstDay = new Date(yr, mo, 1).getDay();
+        const daysInMonth = new Date(yr, mo + 1, 0).getDate();
+        const monthName = new Date(yr, mo, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        const todayStr = todayFmt();
+        const todayD = new Date();
+        const isToday = (day: number) => todayD.getFullYear() === yr && todayD.getMonth() === mo && todayD.getDate() === day;
+
+        // Group active jobs by due date day-of-month
+        const jobsByDay: Record<number, Job[]> = {};
+        jobs.filter(j => j.status !== 'completed' && j.dueDate).forEach(j => {
+          const m = j.dueDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (!m) return;
+          const jMo = parseInt(m[1]) - 1, jDay = parseInt(m[2]), jYr = parseInt(m[3]);
+          if (jYr === yr && jMo === mo) {
+            if (!jobsByDay[jDay]) jobsByDay[jDay] = [];
+            jobsByDay[jDay].push(j);
+          }
+        });
+
+        const prevMonth = () => setCalMonth(mo === 0 ? { year: yr - 1, month: 11 } : { year: yr, month: mo - 1 });
+        const nextMonth = () => setCalMonth(mo === 11 ? { year: yr + 1, month: 0 } : { year: yr, month: mo + 1 });
+        const goToday = () => { const d = new Date(); setCalMonth({ year: d.getFullYear(), month: d.getMonth() }); };
+
+        const statusColor = (s?: string) => {
+          if (s === 'in-progress') return 'bg-blue-500';
+          if (s === 'hold') return 'bg-yellow-500';
+          return 'bg-zinc-500';
+        };
+
+        const cells = [];
+        // Empty cells for days before the 1st
+        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[90px] bg-zinc-950/30" />);
+        // Day cells
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dayJobs = jobsByDay[d] || [];
+          const past = dateNum(`${String(mo+1).padStart(2,'0')}/${String(d).padStart(2,'0')}/${yr}`) < dateNum(todayStr);
+          cells.push(
+            <div key={d} className={`min-h-[90px] border border-white/5 p-1.5 rounded-lg transition-colors ${isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/50' : 'bg-zinc-900/30 hover:bg-zinc-800/30'}`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-xs font-bold ${isToday(d) ? 'text-blue-400' : past ? 'text-zinc-600' : 'text-zinc-400'}`}>{d}</span>
+                {dayJobs.length > 0 && <span className="text-[9px] bg-zinc-700 text-zinc-300 px-1 rounded">{dayJobs.length}</span>}
+              </div>
+              <div className="space-y-0.5 overflow-y-auto max-h-[60px]">
+                {dayJobs.slice(0, 4).map(j => (
+                  <div key={j.id} onClick={() => { setEditingJob(j); setShowModal(true); }} className="flex items-center gap-1 px-1 py-0.5 rounded text-[10px] cursor-pointer hover:bg-white/10 transition-colors truncate" title={`${j.poNumber} - ${j.partNumber} (${j.customer || ''})`}>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColor(j.status)}`} />
+                    <span className="text-zinc-300 font-bold truncate">{j.poNumber}</span>
+                    <span className="text-zinc-600 truncate hidden sm:inline">{j.partNumber}</span>
+                  </div>
+                ))}
+                {dayJobs.length > 4 && <p className="text-[9px] text-zinc-500 pl-1">+{dayJobs.length - 4} more</p>}
+              </div>
+              {dayJobs.length > 0 && past && (
+                <div className="mt-0.5"><span className="text-[8px] text-red-400 font-bold">OVERDUE</span></div>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div className="animate-fade-in space-y-3">
+            {/* Month nav */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></button>
+                <h3 className="text-lg font-bold text-white min-w-[180px] text-center">{monthName}</h3>
+                <button onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronRight className="w-4 h-4" /></button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={goToday} className="text-xs text-blue-400 hover:text-blue-300 font-bold px-2 py-1 rounded hover:bg-blue-500/10">Today</button>
+                <div className="flex items-center gap-3 text-[10px] text-zinc-500">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-zinc-500" /> Pending</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> In Progress</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> On Hold</span>
+                </div>
+              </div>
+            </div>
+            {/* Day headers */}
+            <div className="grid grid-cols-7 gap-1">
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                <div key={d} className="text-center text-[10px] font-bold text-zinc-500 uppercase py-1">{d}</div>
+              ))}
+            </div>
+            {/* Calendar grid */}
+            <div className="grid grid-cols-7 gap-1">
+              {cells}
+            </div>
+            {/* Summary */}
+            <div className="flex gap-4 text-xs text-zinc-500 pt-2">
+              <span>{Object.values(jobsByDay).flat().length} jobs due this month</span>
+              <span className="text-red-400">{Object.entries(jobsByDay).filter(([d]) => dateNum(`${String(mo+1).padStart(2,'0')}/${String(parseInt(d)).padStart(2,'0')}/${yr}`) < dateNum(todayStr)).reduce((a, [, j]) => a + j.length, 0)} overdue</span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filter Bar */}
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
+      {activeTab !== 'calendar' && <><div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
         {/* Search + Filter Toggle Row */}
         <div className="flex gap-3">
           <div className="relative flex-1">
@@ -2022,6 +2125,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           </tbody>
         </table>
       </div>
+      </>}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
