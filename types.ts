@@ -8,10 +8,19 @@ export interface User {
   pin: string;
   role: UserRole;
   isActive: boolean;
+  hourlyRate?: number;  // actual $/hr cost for this worker (admin only)
 }
 
 export type JobStatus = 'pending' | 'in-progress' | 'completed' | 'hold';
 export type JobPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+export interface JobNote {
+  id: string;
+  text: string;
+  userId: string;
+  userName: string;
+  timestamp: number;
+}
 
 export interface Job {
   id: string;
@@ -29,6 +38,9 @@ export interface Job {
   createdAt: number;
   completedAt?: number;
   expectedHours?: number;
+  jobNotes?: JobNote[];
+  quoteAmount?: number;        // What the customer pays for this job ($)
+  partImage?: string;           // Base64 data URL of the part photo (compressed JPEG)
 }
 
 export interface TimeLog {
@@ -44,10 +56,14 @@ export interface TimeLog {
   partNumber?: string;
   customer?: string;
   jobIdsDisplay?: string; // Human readable Job ID snapshot
-  status?: 'in_progress' | 'completed';
+  status?: 'in_progress' | 'completed' | 'paused';
   createdAt?: number;
   updatedAt?: number;
   durationSeconds?: number;
+  // Pause fields
+  pausedAt?: number | null;
+  totalPausedMs?: number;
+  pauseReason?: string;
   // Existing fields
   isAutoClosed?: boolean;
   notes?: string;
@@ -62,6 +78,12 @@ export interface SystemSettings {
   autoClockOutTime: string;
   autoClockOutEnabled: boolean;
   customOperations: string[];
+  autoLunchPauseEnabled: boolean;
+  clients: string[];
+  // Shop Financials
+  shopRate?: number;           // $/hr billed to workers
+  monthlyOverhead?: number;    // Monthly fixed costs (rent, utilities, insurance, etc.)
+  monthlyWorkHours?: number;   // Estimated work hours per month (for overhead calc)
 }
 
 export interface ToastMessage {
@@ -70,7 +92,39 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-scan' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'employee-scan' | 'employee-job';
+
+export interface SampleWorkEntry {
+  id: string;
+  userId: string;
+  userName: string;
+  operation: string;
+  startTime: number;
+  endTime?: number | null;
+  durationSeconds?: number;
+  pausedAt?: number | null;
+  totalPausedMs?: number;
+  notes?: string;
+  qty?: number;
+}
+
+export interface Sample {
+  id: string;
+  companyName: string;
+  partNumber: string;
+  partName: string;
+  photoUrl: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  notes: string;
+  qty?: number;
+  createdAt: number;
+  updatedAt: number;
+  createdBy: string;
+  // Work tracking
+  workEntries?: SampleWorkEntry[];
+  activeEntry?: SampleWorkEntry | null;
+  totalWorkedMs?: number;
+}
 
 export interface SmartPasteData {
   poNumber: string | null;

@@ -5,12 +5,16 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  orderBy,
+  limit,
   query,
   setDoc,
   updateDoc,
+  arrayUnion,
 } from "firebase/firestore";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry } from "../types";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -79,10 +83,11 @@ function handleError(e: any) {
 // Removes undefined fields to prevent Firestore crashes ("Function DocumentReference.set() called with invalid data. Unsupported field value: undefined")
 function sanitize(obj: any): any {
   if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(item => sanitize(item));
   const clean: any = {};
   Object.keys(obj).forEach(key => {
     if (obj[key] !== undefined) {
-      clean[key] = obj[key];
+      clean[key] = sanitize(obj[key]);
     }
   });
   return clean;
@@ -98,6 +103,20 @@ export function isFirebaseConnected() {
 
 export function saveFirebaseConfig(cfg: any) {
   saveCfg(cfg);
+}
+
+// --------------------
+// FIREBASE STORAGE - Photo Upload
+// --------------------
+export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Promise<string> {
+  if (!dbInstance) {
+    throw new Error('Firebase not connected — cannot upload photo');
+  }
+  const storage = getStorage();
+  const path = `sample-photos/${sampleId}_${Date.now()}.jpg`;
+  const ref = storageRef(storage, path);
+  await uploadBytes(ref, file, { contentType: 'image/jpeg' });
+  return getDownloadURL(ref);
 }
 
 // --------------------
@@ -255,6 +274,24 @@ export async function completeJob(id: string) {
   }
 }
 
+export async function addJobNote(jobId: string, text: string, userId: string, userName: string) {
+  const note = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, userId, userName, timestamp: Date.now() };
+  if (dbInstance) {
+    try {
+      await updateDoc(doc(dbInstance, COL.jobs, jobId), { jobNotes: arrayUnion(note) } as any);
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === jobId);
+  if (idx >= 0) {
+    if (!jobs[idx].jobNotes) jobs[idx].jobNotes = [];
+    jobs[idx].jobNotes!.push(note);
+    writeLS(LS.jobs, jobs);
+  }
+}
+
 export async function reopenJob(id: string) {
   if (dbInstance) {
       try {
@@ -279,8 +316,9 @@ export async function reopenJob(id: string) {
 // --------------------
 export function subscribeLogs(cb: (logs: TimeLog[]) => void) {
   if (dbInstance) {
-    const colRef = collection(dbInstance, COL.logs);
-    return onSnapshot(colRef,
+    // Limit to 500 most recent logs to conserve Firebase free-tier reads
+    const q = query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(500));
+    return onSnapshot(q,
       (snap) => {
         firebaseStatus = { connected: true };
         const logs = snap.docs.map((d) => d.data() as TimeLog);
@@ -380,23 +418,33 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         if (!snap.exists()) throw new Error("Log not found.");
 
         const existing = snap.data() as TimeLog;
-        const durationSeconds = Math.max(0, Math.floor((endTime - existing.startTime) / 1000));
+
+        // Finalize any active pause
+        let totalPausedMs = existing.totalPausedMs || 0;
+        if (existing.pausedAt) {
+          totalPausedMs += endTime - existing.pausedAt;
+        }
+
+        const wallMs = endTime - existing.startTime;
+        const workingMs = Math.max(0, wallMs - totalPausedMs);
+        const durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
         const durationMinutes = Math.ceil(durationSeconds / 60);
 
-        const updates: any = { 
-            endTime, 
+        const updates: any = {
+            endTime,
             durationMinutes,
             durationSeconds,
             status: 'completed',
-            updatedAt: endTime
+            updatedAt: endTime,
+            pausedAt: null,
+            totalPausedMs,
+            pauseReason: null,
         };
         if (sessionQty !== undefined) updates.sessionQty = sessionQty;
         if (notes !== undefined) updates.notes = notes;
 
-        // Use sanitize here as well to be safe
         await updateDoc(ref, sanitize(updates));
-      // Update progress stats (fire-and-forget, non-blocking)
-      updateUserProgress(existing.userId, existing.jobId, existing.operation, durationSeconds).catch(() => {});
+        updateUserProgress(existing.userId, existing.jobId, existing.operation, durationSeconds).catch(() => {});
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -408,15 +456,24 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
   const idx = logs.findIndex((l) => l.id === logId);
   if (idx >= 0) {
     const l = logs[idx];
-    const durationSeconds = Math.max(0, Math.floor((endTime - l.startTime) / 1000));
+    let totalPausedMs = l.totalPausedMs || 0;
+    if (l.pausedAt) {
+      totalPausedMs += endTime - l.pausedAt;
+    }
+    const wallMs = endTime - l.startTime;
+    const workingMs = Math.max(0, wallMs - totalPausedMs);
+    const durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
     const durationMinutes = Math.ceil(durationSeconds / 60);
-    logs[idx] = { 
-        ...l, 
-        endTime, 
+    logs[idx] = {
+        ...l,
+        endTime,
         durationMinutes,
         durationSeconds,
         status: 'completed',
         updatedAt: endTime,
+        pausedAt: null,
+        totalPausedMs,
+        pauseReason: undefined,
         ...(sessionQty !== undefined ? { sessionQty } : {}),
         ...(notes !== undefined ? { notes } : {})
     } as TimeLog;
@@ -555,19 +612,64 @@ export async function loginUser(username: string, pin: string): Promise<User | n
 // --------------------
 export function getSettings(): SystemSettings {
   const fallback: SystemSettings = {
-    lunchStart: "12:00", 
-    lunchEnd: "12:30", 
+    lunchStart: "12:00",
+    lunchEnd: "12:30",
     lunchDeductionMinutes: 30,
-    autoClockOutTime: "17:30", 
+    autoClockOutTime: "17:30",
     autoClockOutEnabled: false,
-    customOperations: ['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing']
+    customOperations: ['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'],
+    autoLunchPauseEnabled: false,
+    clients: [],
   };
   const settings = readLS<SystemSettings>(LS.settings, fallback);
-  
-  if (!settings.customOperations) {
-      settings.customOperations = fallback.customOperations;
-  }
+
+  if (!settings.customOperations) settings.customOperations = fallback.customOperations;
+  if (settings.autoLunchPauseEnabled === undefined) settings.autoLunchPauseEnabled = false;
+  if (!settings.clients) settings.clients = [];
   return settings;
+}
+
+export function subscribeSettings(cb: (settings: SystemSettings) => void): () => void {
+  const fallback: SystemSettings = {
+    lunchStart: "12:00",
+    lunchEnd: "12:30",
+    lunchDeductionMinutes: 30,
+    autoClockOutTime: "17:30",
+    autoClockOutEnabled: false,
+    customOperations: ['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'],
+    autoLunchPauseEnabled: false,
+    clients: [],
+  };
+
+  const merge = (data: any): SystemSettings => {
+    const s = { ...fallback, ...data };
+    if (!s.customOperations) s.customOperations = fallback.customOperations;
+    if (s.autoLunchPauseEnabled === undefined) s.autoLunchPauseEnabled = false;
+    if (!s.clients) s.clients = [];
+    return s;
+  };
+
+  if (dbInstance) {
+    const ref = doc(dbInstance, COL.settings, "system");
+    return onSnapshot(ref,
+      (snap: any) => {
+        firebaseStatus = { connected: true };
+        if (snap.exists()) {
+          const data = snap.data();
+          const merged = merge(data);
+          writeLS(LS.settings, merged);
+          cb(merged);
+        } else {
+          cb(merge(readLS(LS.settings, fallback)));
+        }
+      },
+      (err: any) => {
+        handleError(err);
+        cb(merge(readLS(LS.settings, fallback)));
+      }
+    );
+  }
+  return localSubscribe(() => merge(readLS(LS.settings, fallback)), cb);
 }
 
 export async function saveSettings(settings: SystemSettings) {
@@ -653,14 +755,151 @@ export function subscribeUserProgress(userId: string, cb: (data: any) => void): 
   );
 }
 
-// ═══════════════════════════════════════════════════
-// AUTO CLOCK-OUT SWEEP
-// Stops any active timers whose clock on the current day has passed
-// the configured auto-clock-out time. Safe to call repeatedly.
-// Client-side: any open tab running this will write the stops to
-// Firestore, and onSnapshot propagates to every other tab + TV.
-// Returns the number of timers that were actually stopped.
-// ═══════════════════════════════════════════════════
+// --------------------
+// PAUSE / RESUME
+// --------------------
+export async function pauseTimeLog(logId: string, reason?: string): Promise<void> {
+  const now = Date.now();
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, COL.logs, logId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Log not found.");
+      const existing = snap.data() as TimeLog;
+      if (existing.pausedAt || existing.endTime) return; // already paused or stopped
+      await updateDoc(ref, sanitize({
+        pausedAt: now,
+        pauseReason: reason || 'manual',
+        status: 'paused',
+        updatedAt: now,
+      }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const logs = readLS<TimeLog[]>(LS.logs, []);
+  const idx = logs.findIndex(l => l.id === logId);
+  if (idx >= 0) {
+    const l = logs[idx];
+    if (l.pausedAt || l.endTime) return;
+    logs[idx] = { ...l, pausedAt: now, pauseReason: reason || 'manual', status: 'paused', updatedAt: now };
+    writeLS(LS.logs, logs);
+  }
+}
+
+export async function resumeTimeLog(logId: string): Promise<void> {
+  const now = Date.now();
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, COL.logs, logId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Log not found.");
+      const existing = snap.data() as TimeLog;
+      if (!existing.pausedAt) return; // not paused
+      const pausedDuration = now - existing.pausedAt;
+      const totalPausedMs = (existing.totalPausedMs || 0) + pausedDuration;
+      await updateDoc(ref, sanitize({
+        pausedAt: null,
+        pauseReason: null,
+        totalPausedMs,
+        status: 'in_progress',
+        updatedAt: now,
+      }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const logs = readLS<TimeLog[]>(LS.logs, []);
+  const idx = logs.findIndex(l => l.id === logId);
+  if (idx >= 0) {
+    const l = logs[idx];
+    if (!l.pausedAt) return;
+    const pausedDuration = now - l.pausedAt;
+    const totalPausedMs = (l.totalPausedMs || 0) + pausedDuration;
+    logs[idx] = { ...l, pausedAt: null, pauseReason: undefined, totalPausedMs, status: 'in_progress', updatedAt: now };
+    writeLS(LS.logs, logs);
+  }
+}
+
+export async function pauseAllActive(reason: string): Promise<number> {
+  return new Promise((resolve) => {
+    const unsub = subscribeLogs(async (all) => {
+      unsub();
+      const active = all.filter(l => !l.endTime && !l.pausedAt);
+      for (const l of active) {
+        try { await pauseTimeLog(l.id, reason); } catch {}
+      }
+      resolve(active.length);
+    });
+  });
+}
+
+export async function resumeAllPaused(): Promise<number> {
+  return new Promise((resolve) => {
+    const unsub = subscribeLogs(async (all) => {
+      unsub();
+      const paused = all.filter(l => !l.endTime && l.pausedAt);
+      for (const l of paused) {
+        try { await resumeTimeLog(l.id); } catch {}
+      }
+      resolve(paused.length);
+    });
+  });
+}
+
+export async function createBackfillLog(
+  jobId: string,
+  userId: string,
+  userName: string,
+  operation: string,
+  startTime: number,
+  endTime: number,
+  partNumber?: string,
+  customer?: string,
+  jobIdsDisplay?: string
+) {
+  const id = 'bf_' + Date.now().toString();
+  const durationMinutes = Math.round((endTime - startTime) / 60000);
+  const log: TimeLog = {
+    id, jobId, userId, userName, operation,
+    startTime, endTime, durationMinutes,
+    status: 'completed',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  if (partNumber) log.partNumber = partNumber;
+  if (customer) log.customer = customer;
+  if (jobIdsDisplay) log.jobIdsDisplay = jobIdsDisplay;
+
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, COL.logs, id), sanitize(log), { merge: true });
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const logs = readLS<TimeLog[]>(LS.logs, []);
+  logs.push(log);
+  writeLS(LS.logs, logs);
+}
+
+export async function stopAllActive(): Promise<number> {
+  return new Promise((resolve) => {
+    const unsub = subscribeLogs(async (all) => {
+      unsub();
+      const active = all.filter(l => !l.endTime);
+      for (const l of active) {
+        try { await stopTimeLog(l.id); } catch {}
+      }
+      resolve(active.length);
+    });
+  });
+}
+
+// ── Auto Clock-Out Sweep ────────────────────────────────────────
 let sweepInFlight = false;
 
 export async function sweepStaleLogs(): Promise<number> {
@@ -670,7 +909,6 @@ export async function sweepStaleLogs(): Promise<number> {
     const settings = getSettings();
     if (!settings.autoClockOutEnabled) return 0;
 
-    // Parse the configured cutoff time (HH:MM, 24-hour)
     const timeStr = settings.autoClockOutTime || '17:30';
     const m = timeStr.match(/^(\d{1,2}):(\d{2})$/);
     if (!m) return 0;
@@ -678,13 +916,11 @@ export async function sweepStaleLogs(): Promise<number> {
     const cutoffMin = parseInt(m[2], 10);
 
     const now = new Date();
-    // Today's cutoff moment (local time)
     const cutoffToday = new Date(
       now.getFullYear(), now.getMonth(), now.getDate(),
       cutoffHour, cutoffMin, 0, 0
     ).getTime();
 
-    // Only sweep if we're past today's cutoff
     if (Date.now() < cutoffToday) return 0;
 
     // Gather active logs
@@ -703,8 +939,8 @@ export async function sweepStaleLogs(): Promise<number> {
       activeLogs = readLS<TimeLog[]>(LS.logs, []).filter((l) => !l.endTime);
     }
 
-    // Stop every active log that STARTED before today's cutoff.
-    // (If someone clocks in AFTER the cutoff — e.g. night shift — we leave them alone.)
+    // Stop every active log that STARTED before today's cutoff
+    // (Night-shift safe: if someone clocks in AFTER the cutoff, leave them alone)
     let stopped = 0;
     for (const log of activeLogs) {
       if (log.startTime < cutoffToday) {
@@ -716,12 +952,382 @@ export async function sweepStaleLogs(): Promise<number> {
         }
       }
     }
-
-    if (stopped > 0) {
-      console.log(`[auto-clock-out] Swept ${stopped} stale timer${stopped > 1 ? 's' : ''} at ${new Date().toLocaleTimeString()}`);
-    }
     return stopped;
   } finally {
     sweepInFlight = false;
   }
+}
+
+// ── Web Push Subscriptions ────────────────────────────────────────
+export async function savePushSubscription(userId: string, subscription: any): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  // Key by userId + endpoint hash so one user can have multiple devices
+  const endpoint: string = subscription.endpoint || '';
+  const key = userId + '_' + btoa(endpoint).slice(-20).replace(/[^a-zA-Z0-9]/g, '');
+  await setDoc(doc(db, 'push_subscriptions', key), {
+    userId,
+    subscription,
+    updatedAt: Date.now(),
+  }, { merge: true });
+}
+
+export function getWorkingElapsedMs(log: TimeLog): number {
+  const end = log.endTime || Date.now();
+  const wall = end - log.startTime;
+  let paused = log.totalPausedMs || 0;
+  if (log.pausedAt && !log.endTime) {
+    paused += Date.now() - log.pausedAt;
+  }
+  return Math.max(0, wall - paused);
+}
+
+// --------------------
+// SAMPLES
+// --------------------
+const LS_SAMPLES = "nexus_samples";
+
+export function subscribeSamples(cb: (samples: Sample[]) => void): () => void {
+  if (dbInstance) {
+    const colRef = collection(dbInstance, "samples");
+    return onSnapshot(colRef,
+      (snap: any) => {
+        firebaseStatus = { connected: true };
+        const samples = snap.docs.map((d: any) => d.data() as Sample);
+        cb(samples);
+      },
+      (err: any) => {
+        handleError(err);
+        cb(readLS<Sample[]>(LS_SAMPLES, []));
+      }
+    );
+  }
+  return localSubscribe(() => readLS<Sample[]>(LS_SAMPLES, []), cb);
+}
+
+export async function saveSample(sample: Sample): Promise<void> {
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, "samples", sample.id), sanitize(sample), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const idx = samples.findIndex(s => s.id === sample.id);
+  if (idx >= 0) samples[idx] = sample;
+  else samples.push(sample);
+  writeLS(LS_SAMPLES, samples);
+}
+
+export async function deleteSample(id: string): Promise<void> {
+  if (dbInstance) {
+    try {
+      await deleteDoc(doc(dbInstance, "samples", id));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const samples = readLS<Sample[]>(LS_SAMPLES, []).filter(s => s.id !== id);
+  writeLS(LS_SAMPLES, samples);
+}
+
+export async function startSampleWork(
+  sampleId: string,
+  userId: string,
+  userName: string,
+  operation: string,
+  qty?: number
+): Promise<void> {
+  const now = Date.now();
+  const entry: SampleWorkEntry = {
+    id: `sw_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    userId,
+    userName,
+    operation,
+    startTime: now,
+    endTime: null,
+    pausedAt: null,
+    totalPausedMs: 0,
+    ...(qty ? { qty } : {}),
+  };
+
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, "samples", sampleId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Sample not found.");
+      await updateDoc(ref, sanitize({
+        activeEntry: entry,
+        updatedAt: now,
+      }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const idx = samples.findIndex(s => s.id === sampleId);
+  if (idx >= 0) {
+    samples[idx] = { ...samples[idx], activeEntry: entry, updatedAt: now };
+    writeLS(LS_SAMPLES, samples);
+  }
+}
+
+export async function stopSampleWork(sampleId: string, notes?: string): Promise<void> {
+  const now = Date.now();
+
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, "samples", sampleId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Sample not found.");
+      const sample = snap.data() as Sample;
+      if (!sample.activeEntry) return;
+
+      const entry = sample.activeEntry;
+      // Finalize any active pause
+      let totalPausedMs = entry.totalPausedMs || 0;
+      if (entry.pausedAt) {
+        totalPausedMs += now - entry.pausedAt;
+      }
+      const wallMs = now - entry.startTime;
+      const workingMs = Math.max(0, wallMs - totalPausedMs);
+      const durationSeconds = Math.floor(workingMs / 1000);
+
+      const completed: SampleWorkEntry = {
+        ...entry,
+        endTime: now,
+        durationSeconds,
+        pausedAt: null,
+        totalPausedMs,
+        notes: notes || entry.notes,
+      };
+
+      const existingEntries = sample.workEntries || [];
+      const newTotalWorked = (sample.totalWorkedMs || 0) + workingMs;
+
+      await updateDoc(ref, sanitize({
+        activeEntry: null,
+        workEntries: [...existingEntries, completed],
+        totalWorkedMs: newTotalWorked,
+        updatedAt: now,
+      }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const idx = samples.findIndex(s => s.id === sampleId);
+  if (idx >= 0) {
+    const sample = samples[idx];
+    if (!sample.activeEntry) return;
+    const entry = sample.activeEntry;
+    let totalPausedMs = entry.totalPausedMs || 0;
+    if (entry.pausedAt) {
+      totalPausedMs += now - entry.pausedAt;
+    }
+    const wallMs = now - entry.startTime;
+    const workingMs = Math.max(0, wallMs - totalPausedMs);
+    const durationSeconds = Math.floor(workingMs / 1000);
+
+    const completed: SampleWorkEntry = {
+      ...entry,
+      endTime: now,
+      durationSeconds,
+      pausedAt: null,
+      totalPausedMs,
+      notes: notes || entry.notes,
+    };
+
+    samples[idx] = {
+      ...sample,
+      activeEntry: null,
+      workEntries: [...(sample.workEntries || []), completed],
+      totalWorkedMs: (sample.totalWorkedMs || 0) + workingMs,
+      updatedAt: now,
+    };
+    writeLS(LS_SAMPLES, samples);
+  }
+}
+
+export async function pauseSampleWork(sampleId: string, reason?: string): Promise<void> {
+  const now = Date.now();
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, "samples", sampleId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Sample not found.");
+      const sample = snap.data() as Sample;
+      if (!sample.activeEntry || sample.activeEntry.pausedAt) return;
+      await updateDoc(ref, sanitize({
+        activeEntry: { ...sample.activeEntry, pausedAt: now },
+        updatedAt: now,
+      }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const idx = samples.findIndex(s => s.id === sampleId);
+  if (idx >= 0 && samples[idx].activeEntry && !samples[idx].activeEntry!.pausedAt) {
+    samples[idx] = {
+      ...samples[idx],
+      activeEntry: { ...samples[idx].activeEntry!, pausedAt: now },
+      updatedAt: now,
+    };
+    writeLS(LS_SAMPLES, samples);
+  }
+}
+
+export async function resumeSampleWork(sampleId: string): Promise<void> {
+  const now = Date.now();
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, "samples", sampleId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Sample not found.");
+      const sample = snap.data() as Sample;
+      if (!sample.activeEntry || !sample.activeEntry.pausedAt) return;
+      const pausedDuration = now - sample.activeEntry.pausedAt;
+      const totalPausedMs = (sample.activeEntry.totalPausedMs || 0) + pausedDuration;
+      await updateDoc(ref, sanitize({
+        activeEntry: { ...sample.activeEntry, pausedAt: null, totalPausedMs },
+        updatedAt: now,
+      }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const idx = samples.findIndex(s => s.id === sampleId);
+  if (idx >= 0 && samples[idx].activeEntry?.pausedAt) {
+    const entry = samples[idx].activeEntry!;
+    const pausedDuration = now - entry.pausedAt!;
+    const totalPausedMs = (entry.totalPausedMs || 0) + pausedDuration;
+    samples[idx] = {
+      ...samples[idx],
+      activeEntry: { ...entry, pausedAt: null, totalPausedMs },
+      updatedAt: now,
+    };
+    writeLS(LS_SAMPLES, samples);
+  }
+}
+
+export async function editSampleWorkEntry(
+  sampleId: string,
+  entryId: string,
+  updates: Partial<SampleWorkEntry>
+): Promise<void> {
+  const now = Date.now();
+
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, "samples", sampleId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Sample not found.");
+      const sample = snap.data() as Sample;
+      const entries = sample.workEntries || [];
+      const idx = entries.findIndex(e => e.id === entryId);
+      if (idx < 0) return;
+
+      const old = entries[idx];
+      const oldMs = (old.durationSeconds || 0) * 1000;
+      const updated = { ...old, ...updates };
+      // Recalc duration if start/end changed
+      if (updated.startTime && updated.endTime) {
+        const wall = updated.endTime - updated.startTime;
+        const paused = updated.totalPausedMs || 0;
+        updated.durationSeconds = Math.max(0, Math.floor((wall - paused) / 1000));
+      }
+      const newMs = (updated.durationSeconds || 0) * 1000;
+      entries[idx] = updated;
+      const totalWorkedMs = Math.max(0, (sample.totalWorkedMs || 0) - oldMs + newMs);
+
+      await updateDoc(ref, sanitize({ workEntries: entries, totalWorkedMs, updatedAt: now }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const sIdx = samples.findIndex(s => s.id === sampleId);
+  if (sIdx < 0) return;
+  const sample = samples[sIdx];
+  const entries = sample.workEntries || [];
+  const eIdx = entries.findIndex(e => e.id === entryId);
+  if (eIdx < 0) return;
+
+  const old = entries[eIdx];
+  const oldMs = (old.durationSeconds || 0) * 1000;
+  const updated = { ...old, ...updates };
+  if (updated.startTime && updated.endTime) {
+    const wall = updated.endTime - updated.startTime;
+    const paused = updated.totalPausedMs || 0;
+    updated.durationSeconds = Math.max(0, Math.floor((wall - paused) / 1000));
+  }
+  const newMs = (updated.durationSeconds || 0) * 1000;
+  entries[eIdx] = updated;
+  samples[sIdx] = {
+    ...sample,
+    workEntries: entries,
+    totalWorkedMs: Math.max(0, (sample.totalWorkedMs || 0) - oldMs + newMs),
+    updatedAt: now,
+  };
+  writeLS(LS_SAMPLES, samples);
+}
+
+export async function deleteSampleWorkEntry(sampleId: string, entryId: string): Promise<void> {
+  const now = Date.now();
+
+  if (dbInstance) {
+    try {
+      const ref = doc(dbInstance, "samples", sampleId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Sample not found.");
+      const sample = snap.data() as Sample;
+      const entries = sample.workEntries || [];
+      const entry = entries.find(e => e.id === entryId);
+      if (!entry) return;
+      const removedMs = (entry.durationSeconds || 0) * 1000;
+      const filtered = entries.filter(e => e.id !== entryId);
+      const totalWorkedMs = Math.max(0, (sample.totalWorkedMs || 0) - removedMs);
+
+      await updateDoc(ref, sanitize({ workEntries: filtered, totalWorkedMs, updatedAt: now }));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+
+  const samples = readLS<Sample[]>(LS_SAMPLES, []);
+  const sIdx = samples.findIndex(s => s.id === sampleId);
+  if (sIdx < 0) return;
+  const sample = samples[sIdx];
+  const entries = sample.workEntries || [];
+  const entry = entries.find(e => e.id === entryId);
+  if (!entry) return;
+  const removedMs = (entry.durationSeconds || 0) * 1000;
+  samples[sIdx] = {
+    ...sample,
+    workEntries: entries.filter(e => e.id !== entryId),
+    totalWorkedMs: Math.max(0, (sample.totalWorkedMs || 0) - removedMs),
+    updatedAt: now,
+  };
+  writeLS(LS_SAMPLES, samples);
 }
