@@ -1625,6 +1625,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'calendar'>('active');
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [calSelectedDay, setCalSelectedDay] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -1824,9 +1825,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         const todayD = new Date();
         const isToday = (day: number) => todayD.getFullYear() === yr && todayD.getMonth() === mo && todayD.getDate() === day;
 
-        // Group active jobs by due date day-of-month
+        // Group ALL jobs (including completed) by due date
         const jobsByDay: Record<number, Job[]> = {};
-        jobs.filter(j => j.status !== 'completed' && j.dueDate).forEach(j => {
+        jobs.filter(j => j.dueDate).forEach(j => {
           const m = j.dueDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
           if (!m) return;
           const jMo = parseInt(m[1]) - 1, jDay = parseInt(m[2]), jYr = parseInt(m[3]);
@@ -1836,78 +1837,166 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           }
         });
 
-        const prevMonth = () => setCalMonth(mo === 0 ? { year: yr - 1, month: 11 } : { year: yr, month: mo - 1 });
-        const nextMonth = () => setCalMonth(mo === 11 ? { year: yr + 1, month: 0 } : { year: yr, month: mo + 1 });
-        const goToday = () => { const d = new Date(); setCalMonth({ year: d.getFullYear(), month: d.getMonth() }); };
+        const prevMonth = () => { setCalMonth(mo === 0 ? { year: yr - 1, month: 11 } : { year: yr, month: mo - 1 }); setCalSelectedDay(null); };
+        const nextMonth = () => { setCalMonth(mo === 11 ? { year: yr + 1, month: 0 } : { year: yr, month: mo + 1 }); setCalSelectedDay(null); };
+        const goToday = () => { const d = new Date(); setCalMonth({ year: d.getFullYear(), month: d.getMonth() }); setCalSelectedDay(d.getDate()); };
 
         const statusColor = (s?: string) => {
+          if (s === 'completed') return 'bg-emerald-500';
           if (s === 'in-progress') return 'bg-blue-500';
           if (s === 'hold') return 'bg-yellow-500';
           return 'bg-zinc-500';
         };
+        const statusLabel = (s?: string) => {
+          if (s === 'completed') return 'Completed';
+          if (s === 'in-progress') return 'In Progress';
+          if (s === 'hold') return 'On Hold';
+          return 'Pending';
+        };
+
+        // Stats for month
+        const allMonthJobs = Object.values(jobsByDay).flat();
+        const pendingCount = allMonthJobs.filter(j => j.status === 'pending').length;
+        const inProgressCount = allMonthJobs.filter(j => j.status === 'in-progress').length;
+        const completedCount = allMonthJobs.filter(j => j.status === 'completed').length;
+        const overdueCount = allMonthJobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < dateNum(todayStr)).length;
+
+        const selectedDayJobs = calSelectedDay ? (jobsByDay[calSelectedDay] || []) : [];
+        const selectedDateStr = calSelectedDay ? new Date(yr, mo, calSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
 
         const cells = [];
-        // Empty cells for days before the 1st
-        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[90px] bg-zinc-950/30" />);
-        // Day cells
+        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[80px] bg-zinc-950/20 rounded" />);
         for (let d = 1; d <= daysInMonth; d++) {
           const dayJobs = jobsByDay[d] || [];
           const past = dateNum(`${String(mo+1).padStart(2,'0')}/${String(d).padStart(2,'0')}/${yr}`) < dateNum(todayStr);
+          const selected = calSelectedDay === d;
+          const hasOverdue = dayJobs.some(j => j.status !== 'completed') && past;
           cells.push(
-            <div key={d} className={`min-h-[90px] border border-white/5 p-1.5 rounded-lg transition-colors ${isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/50' : 'bg-zinc-900/30 hover:bg-zinc-800/30'}`}>
+            <div key={d} onClick={() => setCalSelectedDay(selected ? null : d)}
+              className={`min-h-[80px] border p-1.5 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
               <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-bold ${isToday(d) ? 'text-blue-400' : past ? 'text-zinc-600' : 'text-zinc-400'}`}>{d}</span>
-                {dayJobs.length > 0 && <span className="text-[9px] bg-zinc-700 text-zinc-300 px-1 rounded">{dayJobs.length}</span>}
+                <span className={`text-xs font-bold ${selected ? 'text-blue-300' : isToday(d) ? 'text-blue-400' : past ? 'text-zinc-600' : 'text-zinc-400'}`}>{d}</span>
+                {dayJobs.length > 0 && (
+                  <div className="flex gap-0.5">
+                    {hasOverdue && <span className="w-1.5 h-1.5 rounded-full bg-red-500" />}
+                    <span className="text-[9px] bg-zinc-700/80 text-zinc-300 px-1 rounded">{dayJobs.length}</span>
+                  </div>
+                )}
               </div>
-              <div className="space-y-0.5 overflow-y-auto max-h-[60px]">
-                {dayJobs.slice(0, 4).map(j => (
-                  <div key={j.id} onClick={() => { setEditingJob(j); setShowModal(true); }} className="flex items-center gap-1 px-1 py-0.5 rounded text-[10px] cursor-pointer hover:bg-white/10 transition-colors truncate" title={`${j.poNumber} - ${j.partNumber} (${j.customer || ''})`}>
+              <div className="space-y-0.5 overflow-hidden max-h-[48px]">
+                {dayJobs.slice(0, 3).map(j => (
+                  <div key={j.id} className="flex items-center gap-1 text-[9px] truncate">
                     <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColor(j.status)}`} />
-                    <span className="text-zinc-300 font-bold truncate">{j.poNumber}</span>
-                    <span className="text-zinc-600 truncate hidden sm:inline">{j.partNumber}</span>
+                    <span className={`truncate ${j.status === 'completed' ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>{j.poNumber}</span>
                   </div>
                 ))}
-                {dayJobs.length > 4 && <p className="text-[9px] text-zinc-500 pl-1">+{dayJobs.length - 4} more</p>}
+                {dayJobs.length > 3 && <p className="text-[8px] text-zinc-600">+{dayJobs.length - 3} more</p>}
               </div>
-              {dayJobs.length > 0 && past && (
-                <div className="mt-0.5"><span className="text-[8px] text-red-400 font-bold">OVERDUE</span></div>
-              )}
             </div>
           );
         }
 
         return (
-          <div className="animate-fade-in space-y-3">
-            {/* Month nav */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></button>
-                <h3 className="text-lg font-bold text-white min-w-[180px] text-center">{monthName}</h3>
-                <button onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronRight className="w-4 h-4" /></button>
+          <div className="animate-fade-in">
+            {/* Month Stats Bar */}
+            <div className="grid grid-cols-4 gap-2 mb-4">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-lg p-2 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase">Pending</p>
+                <p className="text-lg font-black text-zinc-300">{pendingCount}</p>
               </div>
+              <div className="bg-zinc-900/50 border border-blue-500/20 rounded-lg p-2 text-center">
+                <p className="text-[10px] text-blue-400 uppercase">In Progress</p>
+                <p className="text-lg font-black text-blue-400">{inProgressCount}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-emerald-500/20 rounded-lg p-2 text-center">
+                <p className="text-[10px] text-emerald-400 uppercase">Completed</p>
+                <p className="text-lg font-black text-emerald-400">{completedCount}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-red-500/20 rounded-lg p-2 text-center">
+                <p className="text-[10px] text-red-400 uppercase">Overdue</p>
+                <p className="text-lg font-black text-red-400">{overdueCount}</p>
+              </div>
+            </div>
+
+            {/* Month nav */}
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <button onClick={goToday} className="text-xs text-blue-400 hover:text-blue-300 font-bold px-2 py-1 rounded hover:bg-blue-500/10">Today</button>
-                <div className="flex items-center gap-3 text-[10px] text-zinc-500">
+                <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></button>
+                <h3 className="text-lg font-bold text-white min-w-[200px] text-center">{monthName}</h3>
+                <button onClick={nextMonth} className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronRight className="w-4 h-4" /></button>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={goToday} className="text-xs text-blue-400 hover:text-blue-300 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-500/10 border border-blue-500/20">Today</button>
+                <div className="hidden md:flex items-center gap-3 text-[10px] text-zinc-500">
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-zinc-500" /> Pending</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> In Progress</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> On Hold</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Active</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Done</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Overdue</span>
                 </div>
               </div>
             </div>
-            {/* Day headers */}
-            <div className="grid grid-cols-7 gap-1">
-              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
-                <div key={d} className="text-center text-[10px] font-bold text-zinc-500 uppercase py-1">{d}</div>
-              ))}
-            </div>
-            {/* Calendar grid */}
-            <div className="grid grid-cols-7 gap-1">
-              {cells}
-            </div>
-            {/* Summary */}
-            <div className="flex gap-4 text-xs text-zinc-500 pt-2">
-              <span>{Object.values(jobsByDay).flat().length} jobs due this month</span>
-              <span className="text-red-400">{Object.entries(jobsByDay).filter(([d]) => dateNum(`${String(mo+1).padStart(2,'0')}/${String(parseInt(d)).padStart(2,'0')}/${yr}`) < dateNum(todayStr)).reduce((a, [, j]) => a + j.length, 0)} overdue</span>
+
+            <div className="flex gap-4">
+              {/* Calendar Grid */}
+              <div className={`${calSelectedDay ? 'flex-1' : 'w-full'} transition-all`}>
+                <div className="grid grid-cols-7 gap-1 mb-1">
+                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                    <div key={d} className="text-center text-[10px] font-bold text-zinc-500 uppercase py-1">{d}</div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7 gap-1">{cells}</div>
+              </div>
+
+              {/* Day Detail Panel */}
+              {calSelectedDay && (
+                <div className="w-80 bg-zinc-900/50 border border-white/5 rounded-xl p-4 animate-fade-in flex-shrink-0 max-h-[520px] overflow-y-auto">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-white font-bold">{selectedDateStr}</p>
+                      <p className="text-xs text-zinc-500">{selectedDayJobs.length} job{selectedDayJobs.length !== 1 ? 's' : ''} due</p>
+                    </div>
+                    <button onClick={() => setCalSelectedDay(null)} className="p-1 hover:bg-white/10 rounded-lg text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button>
+                  </div>
+
+                  {selectedDayJobs.length === 0 ? (
+                    <div className="text-center py-8 text-zinc-600">
+                      <Calendar className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No jobs due this day</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedDayJobs.map(j => {
+                        const isOverdue = j.status !== 'completed' && dateNum(j.dueDate) < dateNum(todayStr);
+                        const jobLogs = allLogs.filter(l => l.jobId === j.id);
+                        const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+                        return (
+                          <div key={j.id} onClick={() => { setEditingJob(j); setShowModal(true); }}
+                            className="bg-zinc-800/50 border border-white/5 rounded-lg p-3 cursor-pointer hover:bg-zinc-800 hover:border-white/10 transition-all">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-white font-black text-sm">{j.poNumber}</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${j.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : j.status === 'in-progress' ? 'bg-blue-500/20 text-blue-400' : isOverdue ? 'bg-red-500/20 text-red-400' : 'bg-zinc-700 text-zinc-400'}`}>
+                                {isOverdue ? 'OVERDUE' : statusLabel(j.status).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mb-1">
+                              {j.partImage && <img src={j.partImage} className="w-8 h-8 rounded object-cover border border-white/10" alt="" />}
+                              <div>
+                                <p className="text-xs text-zinc-300 font-bold">{j.partNumber}</p>
+                                <p className="text-[10px] text-zinc-500">{j.customer || 'No customer'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-zinc-500 mt-2">
+                              <span>Qty: {j.quantity}</span>
+                              {totalMins > 0 && <span>{(totalMins / 60).toFixed(1)}h logged</span>}
+                              {j.quoteAmount ? <span className="text-emerald-400">${j.quoteAmount}</span> : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -3796,22 +3885,134 @@ const ReportsView = () => {
         </div>
       </div>
 
-      {/* Operations Breakdown */}
-      <div>
-        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Operations Breakdown</h3>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-2">
-          {opBreakdown.map(([op, mins]) => (
-            <div key={op} className="flex items-center gap-3">
-              <span className="text-xs text-zinc-300 font-bold w-32 truncate">{op}</span>
-              <div className="flex-1 h-5 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500/60 rounded-full transition-all" style={{ width: `${(mins / maxOpMins) * 100}%` }} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Worker Hours Chart */}
+        <div>
+          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Hours</h3>
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-2">
+            {workerStats.filter(w => w.totalHrs > 0).map(w => {
+              const maxHrs = workerStats[0]?.totalHrs || 1;
+              return (
+                <div key={w.user.id} className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-300 font-bold w-20 truncate">{w.user.name}</span>
+                  <div className="flex-1 h-6 bg-zinc-800 rounded overflow-hidden relative">
+                    <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded transition-all" style={{ width: `${(w.totalHrs / maxHrs) * 100}%` }} />
+                    <span className="absolute right-2 top-0.5 text-[10px] font-mono text-white/80">{w.totalHrs.toFixed(1)}h</span>
+                  </div>
+                </div>
+              );
+            })}
+            {workerStats.filter(w => w.totalHrs > 0).length === 0 && <p className="text-zinc-500 text-sm text-center py-4">No hours logged.</p>}
+          </div>
+        </div>
+
+        {/* Operations Breakdown */}
+        <div>
+          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Operations Breakdown</h3>
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-2">
+            {opBreakdown.map(([op, mins]) => (
+              <div key={op} className="flex items-center gap-2">
+                <span className="text-xs text-zinc-300 font-bold w-24 truncate">{op}</span>
+                <div className="flex-1 h-6 bg-zinc-800 rounded overflow-hidden relative">
+                  <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 rounded transition-all" style={{ width: `${(mins / maxOpMins) * 100}%` }} />
+                  <span className="absolute right-2 top-0.5 text-[10px] font-mono text-white/80">{(mins / 60).toFixed(1)}h</span>
+                </div>
               </div>
-              <span className="text-xs font-mono text-zinc-400 w-16 text-right">{(mins / 60).toFixed(1)}h</span>
-            </div>
-          ))}
-          {opBreakdown.length === 0 && <p className="text-zinc-500 text-sm text-center py-4">No operations logged in this period.</p>}
+            ))}
+            {opBreakdown.length === 0 && <p className="text-zinc-500 text-sm text-center py-4">No data.</p>}
+          </div>
         </div>
       </div>
+
+      {/* Customer Breakdown */}
+      {(() => {
+        const custMap = new Map<string, { jobs: number; hours: number; revenue: number; cost: number }>();
+        completedLogs.forEach(l => {
+          const j = jobs.find(jj => jj.id === l.jobId);
+          const cust = j?.customer || 'Unknown';
+          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0 };
+          cur.hours += (l.durationMinutes || 0) / 60;
+          custMap.set(cust, cur);
+        });
+        jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff).forEach(j => {
+          const cust = j.customer || 'Unknown';
+          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0 };
+          cur.jobs++;
+          cur.revenue += j.quoteAmount || 0;
+          custMap.set(cust, cur);
+        });
+        const custBreakdown = Array.from(custMap.entries()).sort((a, b) => b[1].hours - a[1].hours);
+        if (custBreakdown.length === 0) return null;
+        return (
+          <div>
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Customer Breakdown</h3>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
+                  <tr>
+                    <th className="text-left p-3">Customer</th>
+                    <th className="text-right p-3">Jobs</th>
+                    <th className="text-right p-3">Hours</th>
+                    <th className="text-right p-3">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {custBreakdown.map(([cust, data]) => (
+                    <tr key={cust} className="hover:bg-white/5">
+                      <td className="p-3 text-white font-bold">{cust}</td>
+                      <td className="p-3 text-right font-mono text-zinc-300">{data.jobs}</td>
+                      <td className="p-3 text-right font-mono text-zinc-300">{data.hours.toFixed(1)}h</td>
+                      <td className="p-3 text-right font-mono text-emerald-400">{data.revenue > 0 ? `$${data.revenue.toLocaleString()}` : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Job Profitability */}
+      {(() => {
+        const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && j.quoteAmount).map(j => {
+          const jLogs = completedLogs.filter(l => l.jobId === j.id);
+          const hrs = jLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0) / 60;
+          const cost = hrs * ((shopRate || 0) + ohRate);
+          const profit = (j.quoteAmount || 0) - cost;
+          const margin = j.quoteAmount ? (profit / j.quoteAmount) * 100 : 0;
+          return { ...j, hrs, cost, profit, margin };
+        }).sort((a, b) => b.profit - a.profit);
+        if (profitableJobs.length === 0) return null;
+        return (
+          <div>
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Job Profitability</h3>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
+                  <tr>
+                    <th className="text-left p-3">PO / Part</th>
+                    <th className="text-right p-3">Quote</th>
+                    <th className="text-right p-3">Cost</th>
+                    <th className="text-right p-3">Profit</th>
+                    <th className="text-right p-3">Margin</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {profitableJobs.map(j => (
+                    <tr key={j.id} className="hover:bg-white/5">
+                      <td className="p-3"><span className="text-white font-bold">{j.poNumber}</span> <span className="text-zinc-500 text-xs">{j.partNumber}</span></td>
+                      <td className="p-3 text-right font-mono text-zinc-300">${(j.quoteAmount || 0).toLocaleString()}</td>
+                      <td className="p-3 text-right font-mono text-orange-400">${j.cost.toFixed(0)}</td>
+                      <td className={`p-3 text-right font-mono font-bold ${j.profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.profit >= 0 ? '+' : ''}${j.profit.toFixed(0)}</td>
+                      <td className={`p-3 text-right font-mono text-xs ${j.margin >= 20 ? 'text-emerald-400' : j.margin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{j.margin.toFixed(0)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
