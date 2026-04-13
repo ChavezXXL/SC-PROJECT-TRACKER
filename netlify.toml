@@ -1,6 +1,12 @@
 [build]
-    publish = "dist"
-    command = "npm run build"
+  publish = "dist"
+  command = "npm run build"
+
+# Cache hashed assets for 1 year (Vite fingerprints filenames on every build)
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
 
 [[headers]]
   for = "/sw.js"
@@ -14,9 +20,14 @@
     Content-Type = "application/manifest+json"
     Cache-Control = "no-cache"
 
+# Cache index.html for 5 minutes — picks up new deploys quickly
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
-
   status = 200
 

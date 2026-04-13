@@ -27,6 +27,18 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              // Split heavy deps into separate cached chunks
+              'vendor-react': ['react', 'react-dom'],
+              'vendor-firebase': ['firebase/app', 'firebase/firestore', 'firebase/storage'],
+              'vendor-charts': ['recharts'],
+            }
+          }
+        }
       }
     };
 });
