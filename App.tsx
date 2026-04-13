@@ -14,6 +14,7 @@ import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './typ
 import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { LiveFloorMonitor } from './LiveFloorMonitor';
+import { POScanner } from './POScanner';
 
 function fmt(d?: string | null): string {
   if (!d) return '';
@@ -2228,7 +2229,7 @@ export default function App() {
   ];
 
  //  PO SCANNER 
-  const handlePOJobCreate = async (jobData: { poNumber: string; partNumber: string; customer: string; quantity: number; dueDate: string; info: string; }) => {
+  const handlePOJobCreate = async (jobData: { poNumber: string; partNumber: string; customer: string; quantity: number; dueDate: string; info: string; specialInstructions?: string; }) => {
     
     // Safety Fallback: Clear the placeholder if the AI failed to find a date
     let cleanDueDate = jobData.dueDate;
