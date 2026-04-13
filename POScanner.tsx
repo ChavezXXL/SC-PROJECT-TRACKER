@@ -259,24 +259,22 @@ FIELD MAPPING — look for ALL of these label variants:
 - dueDate: "Due Date", "Required Date", "Need By", "Delivery Date", "Ship Date", "Required By", "Must Ship", "Sched Date"
 - customerName: Company name, customer name, "Bill To", "Sold To", "Ordered By" — who sent the PO
 
-SPECIAL INSTRUCTIONS — this is critical. Extract ALL of the following if present:
-- Edge break callouts: e.g. "Break all sharp edges .005-.015", "Deburr all edges", "Remove all burrs"
-- Stamping requirements: e.g. "Stamp part number", "ID stamp required", "Mark with electro-etch"
-- Material specs: e.g. "Material: 4340 Steel", "Aluminum 7075", "Ti-6Al-4V"
-- Heat treat: e.g. "Heat Treat to 48-53 HRC", "Per SAI AMS2759", "Anneal after"
-- Surface finish: e.g. "125 Ra max", "32 microinch", "No scratches"
-- Scotch-Brite: e.g. "Use of Scotch-Brite on pressure vessel parts PROHIBITED"
-- Flow passage warnings: e.g. "DO NOT use Scotch-Brite on manifolds with flow passages"
-- Protection notes: e.g. "DO NOT nick or ding", "Protect from metal-on-metal contact"
-- Certifications: e.g. "Cert of Conformance required", "DFARS compliant", "Rated Order"
-- Any other manufacturing notes in INSTRUCTIONS, NOTES, REMARKS, or SPECIAL REQUIREMENTS sections
+SPECIAL INSTRUCTIONS — this is for a DEBURRING SHOP. Only extract notes relevant to deburring work:
+- Edge break / deburr callouts: e.g. ".005-.015 edge break", "Deburr all edges", "Remove all burrs", "Deburr complete"
+- Cut sizes / tolerances for deburring: e.g. ".003-.005 max", "Break sharp edges .010-.015"
+- Blending requirements: e.g. "Blend all tool marks", "Smooth blend radius"
+- Surface finish related to deburring: e.g. "125 Ra max", "No scratches", "No nicks or dings"
+- Scotch-Brite warnings: e.g. "NO Scotch-Brite", "Scotch-Brite prohibited on flow passages"
+- Protection notes for deburring: e.g. "DO NOT nick", "Protect surfaces"
+- DO NOT include: material specs, heat treat, certifications, DFARS, shipping info, payment terms, or general manufacturing notes that are not about deburring
+- Keep it SHORT — just the deburring-relevant instructions, not full paragraphs
 
 RULES:
 1. NEVER return empty strings if the information exists anywhere on the document
 2. Search the entire image including headers, footers, tables, boxes, and fine print
 3. confidence = "high" if 5+ fields found, "medium" if 3-4, "low" if under 3
 4. Return dueDate in MM/DD/YYYY format
-5. Combine ALL special instructions into one clear string
+5. Keep specialInstructions SHORT — only deburring-relevant callouts, no full paragraphs
 6. notes field = only use for extraction warnings or ambiguities, NOT for instructions
 
 Return ONLY this exact JSON, no other text:
