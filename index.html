@@ -122,6 +122,18 @@
                 ::-webkit-scrollbar-thumb:hover { background: #52525b; }
                 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
                 .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+                /* Recharts: kill all outlines, focus rings, active shapes, and cursor boxes */
+                .recharts-sector, .recharts-sector:focus, .recharts-sector:active,
+                .recharts-rectangle, .recharts-rectangle:focus, .recharts-rectangle:active,
+                .recharts-bar-rectangle, .recharts-bar-rectangle:focus,
+                .recharts-active-shape .recharts-sector,
+                .recharts-surface, .recharts-surface:focus,
+                .recharts-wrapper, .recharts-wrapper:focus,
+                svg.recharts-surface *:focus, svg.recharts-surface *:active {
+                  outline: none !important; stroke: none !important; box-shadow: none !important;
+                }
+                .recharts-tooltip-cursor { display: none !important; }
+                .recharts-active-dot { display: none !important; }
                 input, select, textarea { font-size: 16px !important; }
         </style>
         <script type="importmap">

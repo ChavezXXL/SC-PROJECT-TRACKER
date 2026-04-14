@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote } from "../types";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -127,6 +127,7 @@ const LS = {
   logs: "nexus_logs",
   users: "nexus_users",
   settings: "nexus_settings",
+  quotes: "nexus_quotes",
 };
 
 function readLS<T>(key: string, fallback: T): T {
@@ -185,6 +186,7 @@ const COL = {
   logs: "logs",
   users: "users",
   settings: "settings",
+  quotes: "quotes",
 };
 
 // --------------------
@@ -994,6 +996,49 @@ export function getWorkingElapsedMs(log: TimeLog): number {
     paused += Date.now() - log.pausedAt;
   }
   return Math.max(0, wall - paused);
+}
+
+// --------------------
+// QUOTES
+// --------------------
+
+export function subscribeQuotes(cb: (quotes: Quote[]) => void) {
+  if (dbInstance) {
+    const colRef = collection(dbInstance, COL.quotes);
+    return onSnapshot(colRef, (snap) => {
+      firebaseStatus = { connected: true };
+      const quotes = snap.docs.map(d => d.data() as Quote);
+      cb(quotes.sort((a, b) => b.createdAt - a.createdAt));
+    }, () => cb(readLS<Quote[]>(LS.quotes, [])));
+  }
+  return localSubscribe(() => readLS<Quote[]>(LS.quotes, []), cb);
+}
+
+export async function saveQuote(quote: Quote) {
+  if (dbInstance) {
+    try { await setDoc(doc(dbInstance, COL.quotes, quote.id), sanitize(quote), { merge: true }); firebaseStatus = { connected: true }; }
+    catch (e) { throw handleError(e); }
+    return;
+  }
+  const quotes = readLS<Quote[]>(LS.quotes, []);
+  const idx = quotes.findIndex(q => q.id === quote.id);
+  if (idx >= 0) quotes[idx] = quote; else quotes.push(quote);
+  writeLS(LS.quotes, quotes);
+}
+
+export async function deleteQuote(id: string) {
+  if (dbInstance) {
+    try { await deleteDoc(doc(dbInstance, COL.quotes, id)); firebaseStatus = { connected: true }; }
+    catch (e) { throw handleError(e); }
+    return;
+  }
+  writeLS(LS.quotes, readLS<Quote[]>(LS.quotes, []).filter(q => q.id !== id));
+}
+
+export function getNextQuoteNumber(quotes: Quote[]): string {
+  const nums = quotes.map(q => parseInt(q.quoteNumber?.replace(/\D/g, '') || '0', 10)).filter(n => !isNaN(n));
+  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+  return `Q-${String(next).padStart(3, '0')}`;
 }
 
 // --------------------

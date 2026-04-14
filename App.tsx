@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, LineChart, Line, CartesianGrid, Legend
+} from 'recharts';
 
 import {
   LayoutDashboard, Briefcase, Users, Settings, LogOut, Menu,
@@ -8,15 +12,18 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download
+  Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText
 } from 'lucide-react';
 import { Toast } from './components/Toast';
-import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide } from './types';
+import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage } from './types';
 import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
 import { SamplesView } from './SamplesView';
 import { POScanner } from './POScanner';
+import { QuotesView } from './QuotesView';
+import { CustomerPortal } from './CustomerPortal';
+import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
 
 function fmt(d?: string | null): string {
   if (!d) return '';
@@ -1577,29 +1584,91 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
               </div>
             )}
 
-            {/* Top Customers Revenue */}
-            {topCustomers.length > 0 && (
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Top Customers (This Month)</h3>
-                <div className="space-y-2">
-                  {topCustomers.map(([cust, data], i) => {
-                    const maxRev = topCustomers[0][1].revenue || 1;
-                    const margin = data.revenue > 0 ? ((data.revenue - data.cost) / data.revenue * 100) : 0;
-                    return (
-                      <div key={cust} className="flex items-center gap-3">
-                        <span className="text-xs text-zinc-500 w-4">{i + 1}</span>
-                        <span className="text-xs text-white font-bold w-28 truncate">{cust}</span>
-                        <div className="flex-1 h-5 bg-zinc-800 rounded overflow-hidden relative">
-                          <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded transition-all" style={{ width: `${(data.revenue / maxRev) * 100}%` }} />
-                          <span className="absolute right-2 top-0 text-[10px] font-mono text-white/80">${data.revenue.toLocaleString()}</span>
-                        </div>
-                        <span className={`text-[10px] font-bold w-10 text-right ${margin >= 20 ? 'text-emerald-400' : margin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{margin.toFixed(0)}%</span>
+            {/* Top Customers Revenue — Premium Charts */}
+            {topCustomers.length > 0 && (() => {
+              const CUST_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
+              const shortName = (s: string) => s.length > 12 ? s.slice(0, 11) + '…' : s;
+              const custChartData = topCustomers.map(([cust, data]) => ({
+                name: shortName(cust),
+                fullName: cust,
+                revenue: data.revenue,
+                cost: Math.round(data.cost),
+                margin: data.revenue > 0 ? parseFloat(((data.revenue - data.cost) / data.revenue * 100).toFixed(0)) : 0,
+              }));
+              const totalCustRev = custChartData.reduce((a, d) => a + d.revenue, 0);
+              const ttStyle = { contentStyle: { background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.6)', padding: '10px 14px' }, itemStyle: { color: '#e4e4e7', padding: '2px 0' }, labelStyle: { color: '#f4f4f5', fontWeight: 700, marginBottom: 4 } };
+              return (
+                <>
+                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Top Customers (This Month)</h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <defs>
+                        {custChartData.map((_, i) => (
+                          <filter key={`cg${i}`} id={`cg${i}`}><feDropShadow dx="0" dy="0" stdDeviation="3" floodColor={CUST_COLORS[i % CUST_COLORS.length]} floodOpacity="0.3" /></filter>
+                        ))}
+                      </defs>
+                      <Pie data={custChartData} cx="50%" cy="45%" innerRadius={70} outerRadius={120} paddingAngle={2} dataKey="revenue" nameKey="fullName" stroke="none" animationBegin={0} animationDuration={1000} animationEasing="ease-out" cornerRadius={4}>
+                        {custChartData.map((_, i) => <Cell key={i} fill={CUST_COLORS[i % CUST_COLORS.length]} stroke="none" style={{ filter: `url(#cg${i})` }} />)}
+                      </Pie>
+                      <Tooltip cursor={false} {...ttStyle} formatter={(value: number) => [`$${value.toLocaleString()}`, 'Revenue']} />
+                      <text x="50%" y="43%" textAnchor="middle" dominantBaseline="middle" fill="#f4f4f5" fontSize={24} fontWeight={800}>${totalCustRev >= 1000 ? `${(totalCustRev/1000).toFixed(1)}k` : totalCustRev}</text>
+                      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#71717a" fontSize={10} fontWeight={600}>REVENUE</text>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-1 pb-1">
+                    {custChartData.map((d, i) => (
+                      <div key={d.name} className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: CUST_COLORS[i % CUST_COLORS.length], boxShadow: `0 0 6px ${CUST_COLORS[i % CUST_COLORS.length]}40` }} />
+                        <span className="text-[11px] text-zinc-400">{d.fullName}</span>
+                        <span className="text-[10px] text-zinc-600 font-mono">${d.revenue.toLocaleString()}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Revenue vs Cost</h3>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={custChartData} margin={{ top: 5, right: 10, left: 0, bottom: 35 }}>
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                      <XAxis dataKey="name" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" height={55} />
+                      <YAxis tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
+                      <Tooltip cursor={false}
+                        content={({ active, payload, label }: any) => {
+                          if (!active || !payload?.length) return null;
+                          const item = custChartData.find(d => d.name === label);
+                          return (
+                            <div style={{ background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)', fontSize: 12 }}>
+                              <p style={{ color: '#f4f4f5', fontWeight: 700, marginBottom: 6 }}>{item?.fullName || label}</p>
+                              {payload.map((p: any, idx: number) => (
+                                <p key={idx} style={{ color: '#e4e4e7', padding: '2px 0' }}>
+                                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: idx === 0 ? CUST_COLORS[payload[0]?.payload ? custChartData.indexOf(payload[0].payload) : 0] : '#71717a', marginRight: 6 }} />
+                                  {p.dataKey === 'revenue' ? 'Revenue' : 'Cost'}: <strong>${Number(p.value).toLocaleString()}</strong>
+                                </p>
+                              ))}
+                              {item && item.margin !== 0 && <p style={{ color: item.margin >= 20 ? '#10b981' : item.margin >= 0 ? '#f59e0b' : '#ef4444', fontSize: 11, marginTop: 4, fontWeight: 600 }}>{item.margin}% margin</p>}
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend content={() => (
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: 20, paddingTop: 8 }}>
+                          <span style={{ color: '#a1a1aa', fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#3b82f6', display: 'inline-block' }} /> Revenue</span>
+                          <span style={{ color: '#a1a1aa', fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'rgba(59,130,246,0.3)', display: 'inline-block' }} /> Cost</span>
+                        </div>
+                      )} />
+                      <Bar dataKey="revenue" radius={[6, 6, 0, 0]} barSize={20} name="Revenue" animationBegin={0} animationDuration={800} animationEasing="ease-out">
+                        {custChartData.map((_, i) => <Cell key={`r${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} />)}
+                      </Bar>
+                      <Bar dataKey="cost" radius={[6, 6, 0, 0]} barSize={20} name="Cost" animationBegin={200} animationDuration={800} animationEasing="ease-out">
+                        {custChartData.map((_, i) => <Cell key={`c${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} fillOpacity={0.3} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                </>
+              );
+            })()}
           </div>
         );
       })()}
@@ -1610,17 +1679,17 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[400px]">
             {activeLogs.length === 0 && <div className="p-8 text-center text-zinc-500">Floor is quiet. No active timers.</div>}
             {activeLogs.map(l => (
-              <div key={l.id} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-zinc-400 border border-white/5">{l.userName.charAt(0)}</div>
-                  <div>
-                    <p className="font-bold text-white">{l.userName}</p>
-                    <p className="text-xs text-zinc-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> {l.operation}</p>
+              <div key={l.id} className="p-3 sm:p-4 flex items-center justify-between hover:bg-white/5 transition-colors gap-2">
+                <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-zinc-400 border border-white/5 shrink-0 text-xs sm:text-sm">{l.userName.charAt(0)}</div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-white text-sm truncate">{l.userName}</p>
+                    <p className="text-xs text-zinc-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span> <span className="truncate">{l.operation}</span></p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-white text-xl font-bold font-mono"><LiveTimer startTime={l.startTime} pausedAt={l.pausedAt} totalPausedMs={l.totalPausedMs} /></div>
-                  <button onClick={() => confirmAction({ title: "Force Stop", message: "Stop this timer?", onConfirm: () => DB.stopTimeLog(l.id) })} className="bg-red-500/10 text-red-500 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors"><Power className="w-4 h-4" /></button>
+                <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                  <div className="text-white text-sm sm:text-xl font-bold font-mono"><LiveTimer startTime={l.startTime} pausedAt={l.pausedAt} totalPausedMs={l.totalPausedMs} /></div>
+                  <button onClick={() => confirmAction({ title: "Force Stop", message: "Stop this timer?", onConfirm: () => DB.stopTimeLog(l.id) })} className="bg-red-500/10 text-red-500 p-1.5 sm:p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors"><Power className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button>
                 </div>
               </div>
             ))}
@@ -4026,16 +4095,16 @@ const ReportsView = () => {
       <div>
         <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Productivity</h3>
         <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-          <table className="w-full text-sm min-w-[600px]">
+          <table className="w-full text-sm">
             <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
               <tr>
                 <th className="text-left p-3">Worker</th>
                 <th className="text-right p-3">Hours</th>
-                <th className="text-right p-3">Sessions</th>
+                <th className="text-right p-3 hidden sm:table-cell">Sessions</th>
                 <th className="text-right p-3">Jobs</th>
-                <th className="text-right p-3">Avg/Session</th>
+                <th className="text-right p-3 hidden sm:table-cell">Avg/Session</th>
                 <th className="text-right p-3">Cost</th>
-                <th className="p-3">Top Operations</th>
+                <th className="p-3 hidden md:table-cell">Top Operations</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -4051,11 +4120,11 @@ const ReportsView = () => {
                     </div>
                   </td>
                   <td className="p-3 text-right font-mono text-white font-bold">{w.totalHrs.toFixed(1)}h</td>
-                  <td className="p-3 text-right font-mono text-zinc-300">{w.sessions}</td>
+                  <td className="p-3 text-right font-mono text-zinc-300 hidden sm:table-cell">{w.sessions}</td>
                   <td className="p-3 text-right font-mono text-zinc-300">{w.jobCount}</td>
-                  <td className="p-3 text-right font-mono text-zinc-400">{w.avgMinsPerSession.toFixed(0)}m</td>
+                  <td className="p-3 text-right font-mono text-zinc-400 hidden sm:table-cell">{w.avgMinsPerSession.toFixed(0)}m</td>
                   <td className="p-3 text-right font-mono text-orange-400">${w.cost.toFixed(0)}</td>
-                  <td className="p-3">
+                  <td className="p-3 hidden md:table-cell">
                     <div className="flex flex-wrap gap-1">
                       {w.operations.slice(0, 3).map(op => (
                         <span key={op} className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">{op}</span>
@@ -4072,44 +4141,71 @@ const ReportsView = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Worker Hours Chart */}
-        <div>
-          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Hours</h3>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-2">
-            {workerStats.filter(w => w.totalHrs > 0).map(w => {
-              const maxHrs = workerStats[0]?.totalHrs || 1;
-              return (
-                <div key={w.user.id} className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-300 font-bold w-20 truncate">{w.user.name}</span>
-                  <div className="flex-1 h-6 bg-zinc-800 rounded overflow-hidden relative">
-                    <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded transition-all" style={{ width: `${(w.totalHrs / maxHrs) * 100}%` }} />
-                    <span className="absolute right-2 top-0.5 text-[10px] font-mono text-white/80">{w.totalHrs.toFixed(1)}h</span>
-                  </div>
-                </div>
-              );
-            })}
-            {workerStats.filter(w => w.totalHrs > 0).length === 0 && <p className="text-zinc-500 text-sm text-center py-4">No hours logged.</p>}
+      {(() => {
+        const VIVID = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#a855f7', '#eab308', '#64748b', '#e11d48', '#84cc16', '#0ea5e9'];
+        const workerChartData = workerStats.filter(w => w.totalHrs > 0).map(w => ({ name: w.user.name.split(' ')[0], hours: parseFloat(w.totalHrs.toFixed(1)), cost: Math.round(w.cost) }));
+        const pieData = opBreakdown.map(([op, mins]) => ({ name: op, value: parseFloat((mins / 60).toFixed(1)) }));
+        const totalOpHrs = pieData.reduce((a, d) => a + d.value, 0);
+        const tooltipStyle = { contentStyle: { background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', padding: '10px 14px' }, itemStyle: { color: '#e4e4e7', padding: '2px 0' }, labelStyle: { color: '#f4f4f5', fontWeight: 700, marginBottom: 4 } };
+        return (
+          <>
+          {/* Worker Hours — Full Width Bar Chart */}
+          <div>
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Worker Hours</h3>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+              {workerChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={Math.max(280, workerChartData.length * 48)}>
+                  <BarChart layout="vertical" data={workerChartData} margin={{ top: 5, right: 50, left: 5, bottom: 5 }}>
+                    <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                    <XAxis type="number" tick={{ fill: '#52525b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fill: '#d4d4d8', fontSize: 13, fontWeight: 700 }} axisLine={false} tickLine={false} width={80} />
+                    <Tooltip cursor={false} {...tooltipStyle} formatter={(value: number) => [`${value}h`, 'Hours']} />
+                    <Bar dataKey="hours" radius={[0, 8, 8, 0]} barSize={30} animationBegin={0} animationDuration={800} animationEasing="ease-out">
+                      {workerChartData.map((_, i) => <Cell key={i} fill={VIVID[i % VIVID.length]} fillOpacity={0.85} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <p className="text-zinc-500 text-sm text-center py-8">No hours logged.</p>}
+            </div>
           </div>
-        </div>
 
-        {/* Operations Breakdown */}
-        <div>
-          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Operations Breakdown</h3>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-2">
-            {opBreakdown.map(([op, mins]) => (
-              <div key={op} className="flex items-center gap-2">
-                <span className="text-xs text-zinc-300 font-bold w-24 truncate">{op}</span>
-                <div className="flex-1 h-6 bg-zinc-800 rounded overflow-hidden relative">
-                  <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 rounded transition-all" style={{ width: `${(mins / maxOpMins) * 100}%` }} />
-                  <span className="absolute right-2 top-0.5 text-[10px] font-mono text-white/80">{(mins / 60).toFixed(1)}h</span>
+          {/* Operations Breakdown — Large Donut with center label */}
+          <div>
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Operations Breakdown</h3>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5 relative" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+              {pieData.length > 0 ? (
+                <>
+                <ResponsiveContainer width="100%" height={340}>
+                  <PieChart>
+                    <defs>
+                      {pieData.map((_, i) => (
+                        <filter key={`glow${i}`} id={`glow${i}`}><feDropShadow dx="0" dy="0" stdDeviation="3" floodColor={VIVID[i % VIVID.length]} floodOpacity="0.3" /></filter>
+                      ))}
+                    </defs>
+                    <Pie data={pieData} cx="50%" cy="45%" innerRadius={75} outerRadius={130} paddingAngle={2} dataKey="value" stroke="none" animationBegin={0} animationDuration={1000} animationEasing="ease-out" cornerRadius={4}>
+                      {pieData.map((_, i) => <Cell key={i} fill={VIVID[i % VIVID.length]} stroke="none" style={{ filter: `url(#glow${i})` }} />)}
+                    </Pie>
+                    <Tooltip cursor={false} {...tooltipStyle} formatter={(value: number) => [`${value}h`, 'Hours']} />
+                    <text x="50%" y="43%" textAnchor="middle" dominantBaseline="middle" fill="#f4f4f5" fontSize={28} fontWeight={800}>{totalOpHrs.toFixed(0)}</text>
+                    <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#71717a" fontSize={11} fontWeight={600}>TOTAL HOURS</text>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-2 pb-1">
+                  {pieData.map((d, i) => (
+                    <div key={d.name} className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: VIVID[i % VIVID.length], boxShadow: `0 0 6px ${VIVID[i % VIVID.length]}40` }} />
+                      <span className="text-[11px] text-zinc-400">{d.name}</span>
+                      <span className="text-[10px] text-zinc-600 font-mono">{d.value}h</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))}
-            {opBreakdown.length === 0 && <p className="text-zinc-500 text-sm text-center py-4">No data.</p>}
+                </>
+              ) : <p className="text-zinc-500 text-sm text-center py-8">No data.</p>}
+            </div>
           </div>
-        </div>
-      </div>
+          </>
+        );
+      })()}
 
       {/* Customer Breakdown */}
       {(() => {
@@ -4200,6 +4296,102 @@ const ReportsView = () => {
           </div>
         );
       })()}
+
+      {/* ── Estimated vs Actual ── */}
+      {(() => {
+        const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (j.quoteAmount || j.expectedHours)).map(j => {
+          const jLogs = completedLogs.filter(l => l.jobId === j.id);
+          const actualHrs = jLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0) / 60;
+          const actualCost = actualHrs * ((shopRate || 0) + ohRate);
+          const estHrs = j.expectedHours || 0;
+          const quotedAmt = j.quoteAmount || 0;
+          const hrsVariance = estHrs > 0 ? ((actualHrs - estHrs) / estHrs * 100) : 0;
+          const costVariance = quotedAmt > 0 ? ((quotedAmt - actualCost) / quotedAmt * 100) : 0;
+          return { ...j, actualHrs, actualCost, estHrs, quotedAmt, hrsVariance, costVariance };
+        });
+        if (quotedJobs.length === 0) return null;
+        const avgAccuracy = quotedJobs.filter(j => j.estHrs > 0).length > 0
+          ? quotedJobs.filter(j => j.estHrs > 0).reduce((a, j) => a + Math.max(0, 100 - Math.abs(j.hrsVariance)), 0) / quotedJobs.filter(j => j.estHrs > 0).length
+          : 0;
+        const totalProfit = quotedJobs.reduce((a, j) => a + (j.quotedAmt - j.actualCost), 0);
+        const bestJob = [...quotedJobs].sort((a, b) => b.costVariance - a.costVariance)[0];
+        const worstJob = [...quotedJobs].sort((a, b) => a.costVariance - b.costVariance)[0];
+        const barData = quotedJobs.slice(0, 10).map(j => ({
+          name: j.poNumber.length > 10 ? j.poNumber.slice(0, 9) + '…' : j.poNumber,
+          estimated: parseFloat(j.estHrs.toFixed(1)),
+          actual: parseFloat(j.actualHrs.toFixed(1)),
+        }));
+        return (
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Estimated vs Actual</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Est. Accuracy</p>
+                <p className={`text-xl font-black ${avgAccuracy >= 80 ? 'text-emerald-400' : avgAccuracy >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>{avgAccuracy.toFixed(0)}%</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Net Profit</p>
+                <p className={`text-xl font-black ${totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${totalProfit >= 0 ? '+' : ''}${totalProfit.toFixed(0)}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Best Job</p>
+                <p className="text-sm font-bold text-emerald-400 truncate">{bestJob?.poNumber}</p>
+                <p className="text-[10px] text-zinc-600">{bestJob ? `+${bestJob.costVariance.toFixed(0)}%` : '-'}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Worst Job</p>
+                <p className="text-sm font-bold text-red-400 truncate">{worstJob?.poNumber}</p>
+                <p className="text-[10px] text-zinc-600">{worstJob ? `${worstJob.costVariance.toFixed(0)}%` : '-'}</p>
+              </div>
+            </div>
+            {barData.some(d => d.estimated > 0) && (
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest mb-3">Hours: Estimated vs Actual</p>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={barData} margin={{ top: 5, right: 10, left: 0, bottom: 30 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="name" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" height={50} />
+                    <YAxis tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}h`} />
+                    <Tooltip cursor={false}
+                      contentStyle={{ background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.6)', padding: '10px 14px' }}
+                      formatter={(value: number, name: string) => [`${value}h`, name === 'estimated' ? 'Estimated' : 'Actual']}
+                    />
+                    <Legend formatter={(v: string) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v === 'estimated' ? 'Estimated' : 'Actual'}</span>} />
+                    <Bar dataKey="estimated" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={16} name="estimated" />
+                    <Bar dataKey="actual" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={16} name="actual" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
+                  <tr>
+                    <th className="text-left p-3">PO</th>
+                    <th className="text-right p-3">Quoted</th>
+                    <th className="text-right p-3">Actual Cost</th>
+                    <th className="text-right p-3">Est. Hrs</th>
+                    <th className="text-right p-3 hidden sm:table-cell">Actual Hrs</th>
+                    <th className="text-right p-3">Variance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {quotedJobs.map(j => (
+                    <tr key={j.id} className="hover:bg-white/5">
+                      <td className="p-3"><span className="text-white font-bold">{j.poNumber}</span><br /><span className="text-zinc-600 text-[10px]">{j.customer}</span></td>
+                      <td className="p-3 text-right font-mono text-zinc-300">{j.quotedAmt > 0 ? `$${j.quotedAmt.toLocaleString()}` : '-'}</td>
+                      <td className="p-3 text-right font-mono text-orange-400">${j.actualCost.toFixed(0)}</td>
+                      <td className="p-3 text-right font-mono text-blue-400">{j.estHrs > 0 ? `${j.estHrs.toFixed(1)}h` : '-'}</td>
+                      <td className="p-3 text-right font-mono text-yellow-400 hidden sm:table-cell">{j.actualHrs.toFixed(1)}h</td>
+                      <td className={`p-3 text-right font-mono font-bold text-xs ${j.costVariance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.costVariance >= 0 ? '+' : ''}{j.costVariance.toFixed(0)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -4208,7 +4400,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
-  const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'system'>('profile');
+  const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'documents' | 'tv' | 'system'>('profile');
   const [opsOpen, setOpsOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
 
@@ -4218,6 +4410,17 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   }, []);
 
   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
+
+  // Autosave: save settings 1.5s after any change
+  const settingsJson = JSON.stringify(settings);
+  const initialSettingsRef = useRef(settingsJson);
+  useEffect(() => {
+    if (settingsJson === initialSettingsRef.current) return; // skip initial render
+    const timer = setTimeout(() => {
+      DB.saveSettings(settings);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [settingsJson]);
   const handleAddOp = () => { if (!newOp.trim()) return; const ops = settings.customOperations || []; if (ops.includes(newOp.trim())) return; setSettings({ ...settings, customOperations: [...ops, newOp.trim()] }); setNewOp(''); };
   const handleDeleteOp = (op: string) => { setSettings({ ...settings, customOperations: (settings.customOperations || []).filter(o => o !== op) }); };
   const handleAddClient = () => { if (!newClient.trim()) return; const clients = settings.clients || []; if (clients.map(c => c.toLowerCase()).includes(newClient.trim().toLowerCase())) return; const updated = { ...settings, clients: [...clients, newClient.trim()] }; setSettings(updated); DB.saveSettings(updated); setNewClient(''); };
@@ -4231,12 +4434,14 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
     { id: 'schedule', label: 'Schedule', icon: Clock },
     { id: 'production', label: 'Production', icon: Activity },
     { id: 'financial', label: 'Financial', icon: Calculator },
+    { id: 'documents', label: 'Documents', icon: FileText },
+    { id: 'tv', label: 'TV Display', icon: Activity },
     { id: 'system', label: 'System', icon: Settings },
   ];
 
   return (
     <div className="flex gap-6 w-full max-w-4xl">
-      {/* Left sidebar nav */}
+      {/* Left sidebar nav — desktop only */}
       <div className="w-48 flex-shrink-0 space-y-1 hidden md:block">
         <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-3 mb-3">Settings</p>
         {sideItems.map(item => (
@@ -4250,18 +4455,17 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
         </div>
       </div>
 
-      {/* Mobile tabs */}
-      <div className="md:hidden flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5 mb-4 overflow-x-auto w-full">
-        {sideItems.map(item => (
-          <button key={item.id} onClick={() => setSettingsTab(item.id)}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${settingsTab === item.id ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
-            {item.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Right content area */}
+      {/* Right content area (includes mobile tabs) */}
       <div className="flex-1 min-w-0">
+        {/* Mobile tabs */}
+        <div className="md:hidden flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5 mb-4 overflow-x-auto">
+          {sideItems.map(item => (
+            <button key={item.id} onClick={() => setSettingsTab(item.id)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${settingsTab === item.id ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+              {item.label}
+            </button>
+          ))}
+        </div>
 
       {/* ── TAB: General ── */}
       {/* ── SHOP PROFILE ── */}
@@ -4288,10 +4492,74 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyAddress || ''} onChange={e => setSettings({ ...settings, companyAddress: e.target.value })} placeholder="123 Industrial Blvd, City, ST 12345" />
               </div>
               <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Logo URL <span className="text-zinc-600">(paste a link to your logo image)</span></label>
-                <div className="flex gap-2 items-center">
-                  <input className="flex-1 bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyLogo || ''} onChange={e => setSettings({ ...settings, companyLogo: e.target.value })} placeholder="https://yoursite.com/logo.png" />
-                  {settings.companyLogo && <img src={settings.companyLogo} alt="Logo" className="w-8 h-8 rounded object-contain bg-white/10" />}
+                <label className="text-[10px] text-zinc-500 block mb-1">Company Logo</label>
+                <div className="flex gap-3 items-start">
+                  <div
+                    className="flex-1 border-2 border-dashed border-white/10 rounded-xl p-4 text-center cursor-pointer hover:border-blue-500/40 hover:bg-blue-500/5 transition-all"
+                    onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/10'); }}
+                    onDragLeave={e => { e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10'); }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
+                      const file = e.dataTransfer.files[0];
+                      if (file && file.type.startsWith('image/')) {
+                        const img = new window.Image();
+                        img.onload = () => {
+                          const canvas = document.createElement('canvas');
+                          const maxW = 400;
+                          const scale = Math.min(1, maxW / img.width);
+                          canvas.width = img.width * scale;
+                          canvas.height = img.height * scale;
+                          canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+                          const dataUrl = canvas.toDataURL('image/png', 0.9);
+                          const updated = { ...settings, companyLogo: dataUrl };
+                          setSettings(updated);
+                          DB.saveSettings(updated);
+                          addToast('success', 'Logo uploaded & saved');
+                        };
+                        img.src = URL.createObjectURL(file);
+                      }
+                    }}
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = 'image/*';
+                      input.onchange = (ev: any) => {
+                        const file = ev.target.files?.[0];
+                        if (file) {
+                          const img = new window.Image();
+                          img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const maxW = 400;
+                            const scale = Math.min(1, maxW / img.width);
+                            canvas.width = img.width * scale;
+                            canvas.height = img.height * scale;
+                            canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            const dataUrl = canvas.toDataURL('image/png', 0.9);
+                            const updated = { ...settings, companyLogo: dataUrl };
+                            setSettings(updated);
+                            DB.saveSettings(updated);
+                            addToast('success', 'Logo uploaded & saved');
+                          };
+                          img.src = URL.createObjectURL(file);
+                        }
+                      };
+                      input.click();
+                    }}
+                  >
+                    {settings.companyLogo ? (
+                      <img src={settings.companyLogo} alt="Logo" className="max-h-16 mx-auto object-contain" />
+                    ) : (
+                      <div className="text-zinc-500">
+                        <Image className="w-8 h-8 mx-auto mb-1 text-zinc-600" />
+                        <p className="text-xs">Drop your logo here or click to upload</p>
+                        <p className="text-[10px] text-zinc-600 mt-0.5">PNG, JPG, SVG</p>
+                      </div>
+                    )}
+                  </div>
+                  {settings.companyLogo && (
+                    <button onClick={() => { const updated = { ...settings, companyLogo: '' }; setSettings(updated); DB.saveSettings(updated); addToast('info', 'Logo removed'); }} className="text-zinc-600 hover:text-red-400 text-xs shrink-0 mt-2">Remove</button>
+                  )}
                 </div>
               </div>
             </div>
@@ -4310,203 +4578,6 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                   <button onClick={() => { setSettings({ ...settings, theme: 'dark' }); document.body.classList.remove('light-theme'); }} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${(settings.theme || 'dark') === 'dark' ? 'bg-zinc-600 text-white' : 'text-zinc-400'}`}>Dark</button>
                   <button onClick={() => { setSettings({ ...settings, theme: 'light' }); document.body.classList.add('light-theme'); }} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${settings.theme === 'light' ? 'bg-white text-black' : 'text-zinc-400'}`}>Light</button>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* TV Display */}
-          <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Display (Live Floor)</p>
-
-            {/* Live Mini Preview */}
-            <div className="bg-black rounded-xl border border-white/10 p-3 mb-4 overflow-hidden">
-              <p className="text-[9px] text-zinc-600 uppercase tracking-widest mb-2">Live Preview</p>
-              <div className="bg-zinc-950 rounded-lg border border-white/5 overflow-hidden" style={{fontSize: '6px'}}>
-                {/* Preview header */}
-                {settings.tvCompanyHeader !== false && (settings.companyName || settings.companyLogo) && (
-                  <div className="flex items-center justify-center gap-1 px-2 py-1 border-b border-white/5">
-                    {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-3 object-contain" />}
-                    <span className="text-white font-bold" style={{fontSize:'7px'}}>{settings.companyName || 'Your Company'}</span>
-                  </div>
-                )}
-                {settings.tvShowClock !== false && (
-                  <div className="text-center py-0.5 text-zinc-500" style={{fontSize:'6px'}}>{new Date().toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'})}</div>
-                )}
-                {/* Preview announcement */}
-                {settings.tvAnnouncement && (
-                  <div className={`px-2 py-0.5 text-center font-bold ${settings.tvAnnouncementColor === 'red' ? 'bg-red-500/20 text-red-400' : settings.tvAnnouncementColor === 'yellow' ? 'bg-yellow-500/20 text-yellow-400' : settings.tvAnnouncementColor === 'green' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`} style={{fontSize:'6px'}}>
-                    {settings.tvAnnouncement}
-                  </div>
-                )}
-                {/* Preview stats */}
-                {settings.tvShowStats !== false && (
-                  <div className="flex justify-center gap-3 px-2 py-1 text-zinc-500" style={{fontSize:'5px'}}>
-                    <span>4 workers</span><span>3 running</span><span>1 paused</span>
-                  </div>
-                )}
-                {/* Preview worker cards */}
-                <div className="px-2 py-1 space-y-1">
-                  {['Jesse P — Deburring', 'Chris F — Stamping', 'Bryan F — Cutting'].map((w, i) => (
-                    <div key={i} className="bg-white/[0.02] border border-white/5 rounded px-1.5 py-1 flex items-center justify-between">
-                      <div>
-                        <span className="text-white font-bold" style={{fontSize:'6px'}}>{w.split(' — ')[0]}</span>
-                        <span className="text-blue-400 ml-1" style={{fontSize:'5px'}}>{w.split(' — ')[1]}</span>
-                      </div>
-                      <span className="text-white font-mono" style={{fontSize:'7px'}}>0{i+1}:2{i}:0{i*3}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* TV Settings Grid */}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
-              {/* Header section */}
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Company Header</p><p className="text-xs text-zinc-500">Show name + logo at top</p></div>
-                <input type="checkbox" checked={settings.tvCompanyHeader !== false} onChange={e => setSettings({ ...settings, tvCompanyHeader: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Live Clock</p><p className="text-xs text-zinc-500">Current time in header</p></div>
-                <input type="checkbox" checked={settings.tvShowClock !== false} onChange={e => setSettings({ ...settings, tvShowClock: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Stats Bar</p><p className="text-xs text-zinc-500">Worker count, running, paused</p></div>
-                <input type="checkbox" checked={settings.tvShowStats !== false} onChange={e => setSettings({ ...settings, tvShowStats: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-
-              {/* Card content */}
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Customer Name</p></div>
-                <input type="checkbox" checked={settings.tvShowCustomer !== false} onChange={e => setSettings({ ...settings, tvShowCustomer: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Job ID</p></div>
-                <input type="checkbox" checked={settings.tvShowJobId !== false} onChange={e => setSettings({ ...settings, tvShowJobId: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Progress Bar</p></div>
-                <input type="checkbox" checked={settings.tvShowElapsedBar !== false} onChange={e => setSettings({ ...settings, tvShowElapsedBar: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Card Size</p></div>
-                <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
-                  <option value="compact">Compact</option>
-                  <option value="normal">Normal</option>
-                  <option value="large">Large</option>
-                </select>
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Auto-Scroll</p></div>
-                <input type="checkbox" checked={settings.tvAutoScroll || false} onChange={e => setSettings({ ...settings, tvAutoScroll: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-            </div>
-          </div>
-
-          {/* Slideshow Manager */}
-          <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Slideshow</p>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
-              {/* Enable slideshow */}
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-white">Enable Slideshow</p>
-                  <p className="text-xs text-zinc-500">Rotate between worker view, messages, and stats</p>
-                </div>
-                <input type="checkbox" checked={settings.tvSlideshowEnabled || false} onChange={e => setSettings({ ...settings, tvSlideshowEnabled: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-              </div>
-              {/* Default duration */}
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-white">Slide Duration</p>
-                  <p className="text-xs text-zinc-500">Seconds per slide (default)</p>
-                </div>
-                <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.tvSlideDuration || 15} onChange={e => setSettings({ ...settings, tvSlideDuration: Number(e.target.value) })}>
-                  {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
-                </select>
-              </div>
-              {/* Slide list */}
-              <div className="px-4 py-3 space-y-2">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm text-white font-bold">Slides</p>
-                  <div className="flex gap-1">
-                    <button onClick={() => {
-                      const slides = [...(settings.tvSlides || [])];
-                      slides.push({ id: `msg_${Date.now()}`, type: 'message', enabled: true, title: 'New Message', body: '', color: 'blue' });
-                      setSettings({ ...settings, tvSlides: slides });
-                    }} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded font-bold">+ Message</button>
-                    <button onClick={() => {
-                      const slides = [...(settings.tvSlides || [])];
-                      if (!slides.find(s => s.type === 'stats')) slides.push({ id: 'stats', type: 'stats', enabled: true });
-                      setSettings({ ...settings, tvSlides: slides });
-                    }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold">+ Stats</button>
-                    <button onClick={() => {
-                      const slides = [...(settings.tvSlides || [])];
-                      if (!slides.find(s => s.type === 'workers')) slides.unshift({ id: 'workers', type: 'workers', enabled: true });
-                      setSettings({ ...settings, tvSlides: slides });
-                    }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold">+ Workers</button>
-                  </div>
-                </div>
-
-                {/* Default workers slide if no slides configured */}
-                {(!settings.tvSlides || settings.tvSlides.length === 0) && (
-                  <div className="text-xs text-zinc-500 text-center py-3">No slides configured. The default worker view will show. Add slides above to create a rotation.</div>
-                )}
-
-                {/* Slide items */}
-                {(settings.tvSlides || []).map((slide, idx) => (
-                  <div key={slide.id} className={`border rounded-lg p-3 space-y-2 ${slide.enabled ? 'border-white/10 bg-zinc-800/30' : 'border-white/5 bg-zinc-900/30 opacity-50'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded font-bold uppercase">{slide.type}</span>
-                        <span className="text-xs text-zinc-400">#{idx + 1}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <select className="bg-zinc-950 border border-white/10 rounded px-1 py-0.5 text-white text-[10px]" value={slide.duration || settings.tvSlideDuration || 15} onChange={e => {
-                          const slides = [...(settings.tvSlides || [])];
-                          slides[idx] = { ...slides[idx], duration: Number(e.target.value) };
-                          setSettings({ ...settings, tvSlides: slides });
-                        }}>
-                          {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
-                        </select>
-                        <input type="checkbox" checked={slide.enabled} onChange={e => {
-                          const slides = [...(settings.tvSlides || [])];
-                          slides[idx] = { ...slides[idx], enabled: e.target.checked };
-                          setSettings({ ...settings, tvSlides: slides });
-                        }} className="w-3.5 h-3.5 rounded bg-zinc-800 text-blue-600" />
-                        <button onClick={() => {
-                          const slides = (settings.tvSlides || []).filter((_, i) => i !== idx);
-                          setSettings({ ...settings, tvSlides: slides });
-                        }} className="text-zinc-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
-                      </div>
-                    </div>
-
-                    {/* Message slide editor */}
-                    {slide.type === 'message' && (
-                      <div className="space-y-2">
-                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-sm text-white" placeholder="Title" value={slide.title || ''} onChange={e => {
-                          const slides = [...(settings.tvSlides || [])];
-                          slides[idx] = { ...slides[idx], title: e.target.value };
-                          setSettings({ ...settings, tvSlides: slides });
-                        }} />
-                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white" placeholder="Body text (optional)" value={slide.body || ''} onChange={e => {
-                          const slides = [...(settings.tvSlides || [])];
-                          slides[idx] = { ...slides[idx], body: e.target.value };
-                          setSettings({ ...settings, tvSlides: slides });
-                        }} />
-                        <div className="flex gap-1.5">
-                          {[{id:'blue',cls:'bg-blue-500'},{id:'yellow',cls:'bg-yellow-500'},{id:'red',cls:'bg-red-500'},{id:'green',cls:'bg-emerald-500'},{id:'white',cls:'bg-white'}].map(c => (
-                            <button key={c.id} onClick={() => {
-                              const slides = [...(settings.tvSlides || [])];
-                              slides[idx] = { ...slides[idx], color: c.id as any };
-                              setSettings({ ...settings, tvSlides: slides });
-                            }} className={`w-6 h-6 rounded ${c.cls} transition-all ${(slide.color || 'blue') === c.id ? 'ring-2 ring-white ring-offset-1 ring-offset-zinc-900 scale-110' : 'opacity-40 hover:opacity-70'}`} />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
               </div>
             </div>
           </div>
@@ -4657,6 +4728,422 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Quote Calculator</p>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
               <QuoteCalculator settings={settings} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DOCUMENTS — Split-pane with live preview ── */}
+      {settingsTab === 'documents' && (() => {
+        const accent = (settings as any).accentColor || '#3b82f6';
+        const [docSection, setDocSection] = [undefined, undefined]; // accordion placeholder
+        return (
+        <div className="flex gap-4 flex-col lg:flex-row">
+          {/* ── LEFT: Settings Controls ── */}
+          <div className="w-full lg:w-[280px] xl:w-[300px] shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+            {/* Logo */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Logo</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4">
+                <div
+                  className="border-2 border-dashed border-white/10 rounded-xl p-4 text-center cursor-pointer hover:border-blue-500/40 hover:bg-blue-500/5 transition-all"
+                  onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/10'); }}
+                  onDragLeave={e => { e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10'); }}
+                  onDrop={e => {
+                    e.preventDefault(); e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
+                    const file = e.dataTransfer.files[0];
+                    if (file?.type.startsWith('image/')) {
+                      const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); const u = { ...settings, companyLogo: c.toDataURL('image/png', 0.9) }; setSettings(u); DB.saveSettings(u); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(file);
+                    }
+                  }}
+                  onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = (ev: any) => { const f = ev.target.files?.[0]; if (f) { const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); const u = { ...settings, companyLogo: c.toDataURL('image/png', 0.9) }; setSettings(u); DB.saveSettings(u); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(f); } }; i.click(); }}
+                >
+                  {settings.companyLogo ? (
+                    <div><img src={settings.companyLogo} alt="Logo" className="max-h-16 mx-auto object-contain" /><p className="text-[10px] text-zinc-500 mt-2">Click to change</p></div>
+                  ) : (
+                    <div className="text-zinc-500"><Image className="w-8 h-8 mx-auto mb-1 text-zinc-600" /><p className="text-xs">Drop logo or click to upload</p><p className="text-[10px] text-zinc-600">PNG, JPG, SVG</p></div>
+                  )}
+                </div>
+                {settings.companyLogo && <button onClick={() => { const u = { ...settings, companyLogo: '' }; setSettings(u); DB.saveSettings(u); }} className="text-xs text-zinc-600 hover:text-red-400 mt-2 block mx-auto">Remove logo</button>}
+              </div>
+            </details>
+
+            {/* Numbering */}
+            <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Numbering</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1">Quote Prefix</label>
+                    <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.quotePrefix || 'Q-'} onChange={e => setSettings({ ...settings, quotePrefix: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1">Next Number</label>
+                    <div className="flex gap-1">
+                      <input type="number" className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.quoteNextNumber || 1} onChange={e => setSettings({ ...settings, quoteNextNumber: parseInt(e.target.value) || 1 })} min={1} />
+                      <button onClick={() => setSettings({ ...settings, quoteNextNumber: 1 })} className="text-[10px] text-red-400 hover:text-red-300 px-2 shrink-0">Reset</button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="text-[10px] text-zinc-500 block mb-1">Invoice Prefix</label><input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.invoicePrefix || 'INV-'} onChange={e => setSettings({ ...settings, invoicePrefix: e.target.value })} /></div>
+                  <div><label className="text-[10px] text-zinc-500 block mb-1">Next Number</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.invoiceNextNumber || 1} onChange={e => setSettings({ ...settings, invoiceNextNumber: parseInt(e.target.value) || 1 })} min={1} /></div>
+                </div>
+              </div>
+            </details>
+
+            {/* Header */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Header</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                {[
+                  { key: 'showShippingOnDocs', label: 'Shipping Details', desc: 'Show Ship To address' },
+                  { key: 'showDueDateOnDocs', label: 'Due Date', desc: 'Show due date', def: true },
+                  { key: 'showTermsOnDocs', label: 'Payment Terms', desc: 'Show terms (e.g. Net 30)', def: true },
+                ].map(o => (
+                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                    <div><p className="text-sm text-white">{o.label}</p><p className="text-[10px] text-zinc-600">{o.desc}</p></div>
+                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def ?? false} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
+                  </label>
+                ))}
+              </div>
+            </details>
+
+            {/* Table */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Table</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                {[
+                  { key: 'showUnitCol', label: 'Unit Column', desc: 'Show unit (ea, hr, ft) column', def: true },
+                  { key: 'showRateCol', label: 'Rate Column', desc: 'Show unit price column', def: true },
+                  { key: 'showQtyCol', label: 'Quantity Column', desc: 'Show quantity column', def: true },
+                ].map(o => (
+                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                    <div><p className="text-sm text-white">{o.label}</p><p className="text-[10px] text-zinc-600">{o.desc}</p></div>
+                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def ?? true} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
+                  </label>
+                ))}
+              </div>
+            </details>
+
+            {/* Footer */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Footer</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                <label className="flex items-center justify-between cursor-pointer py-1">
+                  <div><p className="text-sm text-white">Signature Lines</p><p className="text-[10px] text-zinc-600">Show company + client signature lines</p></div>
+                  <input type="checkbox" checked={(settings as any).showSignatureLines ?? true} onChange={e => setSettings({ ...settings, showSignatureLines: e.target.checked } as any)} className="w-5 h-5 rounded accent-blue-500" />
+                </label>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Default Comment / Certificate</label>
+                  <textarea className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white min-h-[70px]" value={settings.defaultQuoteComment || ''} onChange={e => setSettings({ ...settings, defaultQuoteComment: e.target.value })} placeholder="CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform..." />
+                </div>
+              </div>
+            </details>
+
+            {/* Project Details */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Project Details</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                <p className="text-xs text-zinc-500">Add fields to capture job info (e.g. PO number, part number).</p>
+                {(settings.customProjectFields || ['Purchase Order', 'Part No.']).map((f: string, i: number) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b border-white/5">
+                    <span className="text-sm text-white font-bold">{f}</span>
+                    <button onClick={() => { const fs = [...(settings.customProjectFields || ['Purchase Order', 'Part No.'])]; fs.splice(i, 1); setSettings({ ...settings, customProjectFields: fs }); }} className="text-xs text-zinc-600 hover:text-red-400">Remove</button>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <input id="newPF" className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="e.g. Job No., Machine ID" />
+                  <button onClick={() => { const inp = document.getElementById('newPF') as HTMLInputElement; if (inp?.value.trim()) { setSettings({ ...settings, customProjectFields: [...(settings.customProjectFields || ['Purchase Order', 'Part No.']), inp.value.trim()] }); inp.value = ''; } }} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold">Add</button>
+                </div>
+              </div>
+            </details>
+
+            {/* Defaults */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Defaults</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Payment Terms</label><input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultPaymentTerms || ''} onChange={e => setSettings({ ...settings, defaultPaymentTerms: e.target.value })} placeholder="Net 30" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Tax Rate (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.taxRate || ''} onChange={e => setSettings({ ...settings, taxRate: parseFloat(e.target.value) || 0 })} step="0.1" placeholder="0" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Discount (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={(settings as any).defaultDiscount || ''} onChange={e => setSettings({ ...settings, defaultDiscount: parseFloat(e.target.value) || 0 } as any)} step="0.1" placeholder="0" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Markup (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={(settings as any).defaultMarkup || '25'} onChange={e => setSettings({ ...settings, defaultMarkup: parseFloat(e.target.value) || 0 } as any)} step="1" placeholder="25" /></div>
+              </div>
+            </details>
+
+            {/* Color */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Color</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4">
+                <div className="grid grid-cols-8 gap-2">
+                  {[
+                    '#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#22c55e','#10b981','#14b8a6',
+                    '#06b6d4','#0ea5e9','#3b82f6','#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899',
+                    '#f43f5e','#be123c','#9f1239','#7f1d1d','#78350f','#365314','#064e3b','#134e4a',
+                    '#0c4a6e','#1e3a5f','#312e81','#4c1d95','#581c87','#701a75','#831843','#18181b',
+                  ].map(c => (
+                    <button key={c} onClick={() => setSettings({ ...settings, accentColor: c } as any)} className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${accent === c ? 'border-white scale-110 ring-2 ring-white/30' : 'border-transparent'}`} style={{ background: c }} />
+                  ))}
+                </div>
+              </div>
+            </details>
+
+            {/* Watermark */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white">Watermark</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4">
+                <div className="flex flex-wrap gap-2">
+                  {['None', 'DRAFT', 'SAMPLE', 'CONFIDENTIAL', 'COPY', 'VOID'].map(w => (
+                    <button key={w} onClick={() => setSettings({ ...settings, watermark: w === 'None' ? '' : w } as any)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${((settings as any).watermark || '') === (w === 'None' ? '' : w) ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>{w}</button>
+                  ))}
+                </div>
+              </div>
+            </details>
+          </div>
+
+          {/* ── RIGHT: Live Document Preview ── */}
+          <div className="flex-1 hidden lg:block min-w-0">
+            <div className="sticky top-4 bg-white text-black rounded-2xl shadow-2xl overflow-hidden" style={{ fontFamily: '-apple-system, sans-serif' }}>
+            <div className="p-10" style={{ fontSize: 13 }}>
+              {/* Mini Preview */}
+              <div className="flex justify-between items-start mb-6 gap-4">
+                <div className="min-w-0">
+                  {settings.companyLogo && <img src={settings.companyLogo} className="h-12 mb-2 object-contain" alt="" />}
+                  <div className="font-extrabold text-gray-900 leading-tight" style={{ fontSize: 18 }}>{settings.companyName || 'Company Name'}</div>
+                  {settings.companyAddress && <div className="text-gray-500 mt-1" style={{ fontSize: 11 }}>{settings.companyAddress}</div>}
+                  {settings.companyPhone && <div className="text-gray-500" style={{ fontSize: 11 }}>{settings.companyPhone}</div>}
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-extrabold" style={{ fontSize: 28, color: accent, letterSpacing: '0.02em' }}>QUOTE</div>
+                  <div className="text-gray-500 font-medium" style={{ fontSize: 12 }}>{settings.quotePrefix || 'Q-'}001</div>
+                  <div className="text-gray-400 mt-1" style={{ fontSize: 10 }}>{new Date().toLocaleDateString()}</div>
+                </div>
+              </div>
+              {/* Watermark */}
+              {(settings as any).watermark && <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ fontSize: 48, color: 'rgba(0,0,0,0.06)', fontWeight: 900, transform: 'rotate(-30deg)' }}>{(settings as any).watermark}</div>}
+              {/* Info Block */}
+              <div className="flex gap-6 mb-4 border-b border-gray-200 pb-3" style={{ fontSize: 11 }}>
+                <div><span className="text-gray-400">Date:</span> <span className="text-gray-700 font-medium">{new Date().toLocaleDateString()}</span></div>
+                {(settings.showTermsOnDocs ?? true) && <div><span className="text-gray-400">Terms:</span> <span className="text-gray-700 font-medium">{settings.defaultPaymentTerms || 'Net 30'}</span></div>}
+                {(settings.showDueDateOnDocs ?? true) && <div><span className="text-gray-400">Due:</span> <span className="text-gray-700 font-medium">05/14/2026</span></div>}
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200">
+                <div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Bill To</div>
+                <div className="font-bold text-gray-800 mt-1" style={{ fontSize: 15 }}>Acme Manufacturing</div>
+                <div className="text-gray-500" style={{ fontSize: 11 }}>orders@acmemfg.com</div>
+                <div className="text-gray-400" style={{ fontSize: 11 }}>(555) 123-4567</div>
+              </div>
+              {(settings.showShippingOnDocs) && <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200"><div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Ship To</div><div className="text-gray-500 mt-1" style={{ fontSize: 11 }}>123 Industrial Pkwy, Suite 200</div></div>}
+              {/* Project Fields */}
+              <div className="mb-4 space-y-1" style={{ fontSize: 11 }}>
+                {(settings.customProjectFields || ['Purchase Order', 'Part No.']).map((f: string, fi: number) => (
+                  <div key={f}><span className="font-bold text-gray-700">{f}:</span> <span className="text-gray-400">{fi === 0 ? 'PO-78432' : fi === 1 ? 'BRK-1200' : '—'}</span></div>
+                ))}
+              </div>
+              {/* Items Table */}
+              <table className="w-full mb-4" style={{ fontSize: 11 }}>
+                <thead><tr className="border-b-2 border-gray-200 text-gray-400 uppercase" style={{ fontSize: 9 }}><th className="text-left py-2">Description</th><th className="text-right py-2">Qty</th>{(settings as any).showUnitCol !== false && <th className="text-right py-2">Unit</th>}<th className="text-right py-2">Rate</th><th className="text-right py-2">Amount</th></tr></thead>
+                <tbody>
+                  <tr className="border-b border-gray-100"><td className="py-2.5 text-gray-700">Deburring — Bracket Assembly</td><td className="py-2.5 text-right text-gray-600">500</td>{(settings as any).showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">ea</td>}<td className="py-2.5 text-right text-gray-600">$2.50</td><td className="py-2.5 text-right font-bold text-gray-800">$1,250.00</td></tr>
+                  <tr className="border-b border-gray-100 bg-gray-50"><td className="py-2.5 text-gray-700">Setup & Inspection</td><td className="py-2.5 text-right text-gray-600">1</td>{(settings as any).showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">lot</td>}<td className="py-2.5 text-right text-gray-600">$125.00</td><td className="py-2.5 text-right font-bold text-gray-800">$125.00</td></tr>
+                </tbody>
+              </table>
+              {/* Totals */}
+              <div className="flex justify-end" style={{ fontSize: 12 }}>
+                <div className="w-52 space-y-1.5">
+                  <div className="flex justify-between"><span className="text-gray-400">Subtotal</span><span className="text-gray-700">$1,375.00</span></div>
+                  {(settings as any).defaultMarkup > 0 && <div className="flex justify-between"><span className="text-gray-400">Markup {(settings as any).defaultMarkup}%</span><span className="text-gray-700">+${((settings as any).defaultMarkup / 100 * 1375).toFixed(2)}</span></div>}
+                  {(settings as any).defaultDiscount > 0 && <div className="flex justify-between"><span className="text-gray-400">Discount</span><span className="text-red-500">-${((settings as any).defaultDiscount / 100 * 1375).toFixed(2)}</span></div>}
+                  {(settings.taxRate || 0) > 0 && <div className="flex justify-between"><span className="text-gray-400">Tax {settings.taxRate}%</span><span className="text-gray-700">+${(settings.taxRate! / 100 * 1375).toFixed(2)}</span></div>}
+                  {(() => { const sub = 1375; const m = ((settings as any).defaultMarkup || 0) / 100; const d = ((settings as any).defaultDiscount || 0) / 100; const t = (settings.taxRate || 0) / 100; const total = (sub * (1 + m) * (1 - d)) * (1 + t); return (
+                  <div className="flex justify-between font-extrabold border-t-2 border-gray-800 pt-2 mt-1" style={{ fontSize: 16, color: accent }}>
+                    <span>Total</span><span>${total.toFixed(2)}</span>
+                  </div>
+                  ); })()}
+                </div>
+              </div>
+              {/* Footer */}
+              {settings.defaultQuoteComment && <div className="mt-4 pt-3 border-t border-gray-200"><div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Comments</div><div className="text-gray-500 mt-1" style={{ fontSize: 10 }}>{settings.defaultQuoteComment.substring(0, 150)}{settings.defaultQuoteComment.length > 150 ? '...' : ''}</div></div>}
+              {(settings as any).showSignatureLines !== false && (
+                <div className="flex gap-8 mt-8"><div className="flex-1 pt-2 border-t border-gray-300 text-gray-400" style={{ fontSize: 10 }}>{settings.companyName || 'Company'}</div><div className="flex-1 pt-2 border-t border-gray-300 text-gray-400" style={{ fontSize: 10 }}>Client's signature</div></div>
+              )}
+            </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* ── TV DISPLAY — Split-pane with live preview ── */}
+      {settingsTab === 'tv' && (
+        <div className="flex gap-4 flex-col lg:flex-row">
+          {/* LEFT: TV Controls */}
+          <div className="w-full lg:w-[280px] xl:w-[300px] shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+
+            {/* Display Options */}
+            <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Display</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
+              <div className="px-4 pb-4 space-y-2">
+                {[
+                  { key: 'tvCompanyHeader', label: 'Company Header', desc: 'Show name + logo at top', def: true },
+                  { key: 'tvShowClock', label: 'Live Clock', desc: 'Current time in header', def: true },
+                  { key: 'tvShowStats', label: 'Stats Bar', desc: 'Workers, running, paused counts', def: true },
+                  { key: 'tvShowCustomer', label: 'Customer Name', desc: 'Show on worker cards', def: true },
+                  { key: 'tvShowJobId', label: 'Job ID', desc: 'Show job ID on cards', def: true },
+                  { key: 'tvShowElapsedBar', label: 'Progress Bar', desc: 'Time elapsed bar', def: true },
+                  { key: 'tvAutoScroll', label: 'Auto-Scroll', desc: 'Scroll when many workers', def: false },
+                ].map(o => (
+                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                    <div><p className="text-xs text-white">{o.label}</p><p className="text-[9px] text-zinc-600">{o.desc}</p></div>
+                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
+                  </label>
+                ))}
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-xs text-white">Card Size</p>
+                  <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
+                    <option value="compact">Compact</option><option value="normal">Normal</option><option value="large">Large</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+
+            {/* Slideshow */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Slideshow</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
+              <div className="px-4 pb-4 space-y-3">
+                <label className="flex items-center justify-between cursor-pointer py-1">
+                  <div><p className="text-xs text-white">Enable Slideshow</p><p className="text-[9px] text-zinc-600">Rotate between views</p></div>
+                  <input type="checkbox" checked={settings.tvSlideshowEnabled || false} onChange={e => setSettings({ ...settings, tvSlideshowEnabled: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
+                </label>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-xs text-white">Duration</p>
+                  <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvSlideDuration || 15} onChange={e => setSettings({ ...settings, tvSlideDuration: Number(e.target.value) })}>
+                    {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
+                  </select>
+                </div>
+              </div>
+            </details>
+
+            {/* Slides */}
+            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Slides</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
+              <div className="px-4 pb-4 space-y-2">
+                <div className="flex gap-1 mb-2">
+                  <button onClick={() => { const s = [...(settings.tvSlides || [])]; s.push({ id: `msg_${Date.now()}`, type: 'message', enabled: true, title: 'Announcement', body: '', color: 'blue' }); setSettings({ ...settings, tvSlides: s }); }} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded font-bold flex-1">+ Message</button>
+                  <button onClick={() => { const s = [...(settings.tvSlides || [])]; if (!s.find(x => x.type === 'stats')) s.push({ id: 'stats', type: 'stats', enabled: true }); setSettings({ ...settings, tvSlides: s }); }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold flex-1">+ Stats</button>
+                  <button onClick={() => { const s = [...(settings.tvSlides || [])]; if (!s.find(x => x.type === 'workers')) s.unshift({ id: 'workers', type: 'workers', enabled: true }); setSettings({ ...settings, tvSlides: s }); }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold flex-1">+ Workers</button>
+                </div>
+                {(!settings.tvSlides || settings.tvSlides.length === 0) && <p className="text-[10px] text-zinc-500 text-center py-2">No slides. Default worker view will show.</p>}
+                {(settings.tvSlides || []).map((slide, idx) => (
+                  <div key={slide.id} className={`border rounded-lg p-2.5 space-y-1.5 ${slide.enabled ? 'border-white/10 bg-zinc-800/30' : 'border-white/5 opacity-50'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded font-bold uppercase">{slide.type}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <select className="bg-zinc-950 border border-white/10 rounded px-1 py-0.5 text-white text-[9px]" value={slide.duration || settings.tvSlideDuration || 15} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], duration: Number(e.target.value) }; setSettings({ ...settings, tvSlides: s }); }}>
+                          {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
+                        </select>
+                        <input type="checkbox" checked={slide.enabled} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], enabled: e.target.checked }; setSettings({ ...settings, tvSlides: s }); }} className="w-3.5 h-3.5 rounded accent-blue-500" />
+                        <button onClick={() => setSettings({ ...settings, tvSlides: (settings.tvSlides || []).filter((_, i) => i !== idx) })} className="text-zinc-600 hover:text-red-400"><X className="w-3 h-3" /></button>
+                      </div>
+                    </div>
+                    {slide.type === 'message' && (
+                      <div className="space-y-1.5">
+                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white" placeholder="Title" value={slide.title || ''} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], title: e.target.value }; setSettings({ ...settings, tvSlides: s }); }} />
+                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-[10px] text-white" placeholder="Body (optional)" value={slide.body || ''} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], body: e.target.value }; setSettings({ ...settings, tvSlides: s }); }} />
+                        <div className="flex gap-1">{[{id:'blue',cls:'bg-blue-500'},{id:'yellow',cls:'bg-yellow-500'},{id:'red',cls:'bg-red-500'},{id:'green',cls:'bg-emerald-500'},{id:'white',cls:'bg-white'}].map(c => (
+                          <button key={c.id} onClick={() => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], color: c.id as any }; setSettings({ ...settings, tvSlides: s }); }} className={`w-5 h-5 rounded ${c.cls} transition-all ${(slide.color || 'blue') === c.id ? 'ring-2 ring-white scale-110' : 'opacity-40'}`} />
+                        ))}</div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+
+          {/* RIGHT: Live TV Preview */}
+          <div className="flex-1 hidden lg:block min-w-0">
+            <div className="sticky top-4 bg-black rounded-2xl shadow-2xl overflow-hidden border border-white/10">
+              <div className="bg-zinc-950 p-6" style={{ minHeight: 400 }}>
+                {/* Header */}
+                {settings.tvCompanyHeader !== false && (
+                  <div className="flex items-center justify-center gap-3 pb-3 border-b border-white/5 mb-3">
+                    {settings.companyLogo && <img src={settings.companyLogo} className="h-6 object-contain" alt="" />}
+                    <span className="text-white font-bold text-sm">{settings.companyName || 'Your Company'}</span>
+                  </div>
+                )}
+                {/* Clock */}
+                {settings.tvShowClock !== false && (
+                  <div className="text-center text-zinc-500 text-xs font-mono mb-2">{new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', second:'2-digit'})}</div>
+                )}
+                {/* Stats */}
+                {settings.tvShowStats !== false && (
+                  <div className="flex justify-center gap-6 text-[10px] text-zinc-500 mb-4">
+                    <span>👥 8 workers</span><span>⚡ 6 running</span><span>⏸ 2 paused</span>
+                  </div>
+                )}
+                {/* Worker Cards */}
+                <div className="space-y-2">
+                  {[
+                    { name: 'Alex M', op: 'Deburring', time: '01:45:22', po: 'PO-78432', part: 'BRK-1200', customer: 'Acme Mfg', color: 'blue' },
+                    { name: 'Sarah K', op: 'Polishing', time: '02:12:08', po: 'PO-91100', part: 'SHF-400', customer: 'Delta Corp', color: 'emerald' },
+                    { name: 'Mike R', op: 'Stamping', time: '00:33:41', po: 'PO-55021', part: 'PLT-880', customer: 'Nova Inc', color: 'purple' },
+                  ].map((w, i) => (
+                    <div key={i} className={`bg-white/[0.03] border border-white/5 rounded-xl p-3 ${settings.tvCardSize === 'compact' ? 'py-2' : settings.tvCardSize === 'large' ? 'p-4' : ''}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-8 h-8 rounded-full bg-${w.color}-500/20 flex items-center justify-center text-${w.color}-400 text-xs font-bold`}>{w.name.charAt(0)}</div>
+                          <div>
+                            <span className="text-white font-bold text-sm">{w.name}</span>
+                            <span className={`text-${w.color}-400 text-xs ml-2`}>{w.op}</span>
+                          </div>
+                        </div>
+                        <span className="text-white font-mono font-bold text-lg">{w.time}</span>
+                      </div>
+                      {settings.tvShowElapsedBar !== false && (
+                        <div className="h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
+                          <div className={`h-full bg-${w.color}-500 rounded-full`} style={{ width: `${30 + i * 25}%` }} />
+                        </div>
+                      )}
+                      {(settings.tvShowCustomer !== false || settings.tvShowJobId !== false) && (
+                        <div className="flex gap-3 mt-2 text-[10px] text-zinc-500">
+                          {settings.tvShowJobId !== false && <span>PO: {w.po}</span>}
+                          <span>Part: {w.part}</span>
+                          {settings.tvShowCustomer !== false && <span className="text-blue-400">{w.customer}</span>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -4963,6 +5450,16 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
 }
 
 export default function App() {
+  // Check for Customer Portal mode (?portal=CUSTOMER_NAME&quote=QUOTE_ID)
+  const [portalCustomer] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('portal') || null;
+  });
+  const [portalQuoteId] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('quote') || null;
+  });
+
   // Save ?jobId= from QR scan URL to sessionStorage IMMEDIATELY before anything else
   // This survives login flow, page refreshes, and works for both admin and employee
   useState(() => {
@@ -5045,6 +5542,11 @@ export default function App() {
     setToasts(p => p.filter(x => x.id !== id));
   }, []);
 
+  // ── Customer Portal Mode ──
+  if (portalCustomer) {
+    return <CustomerPortal customerFilter={portalCustomer} quoteId={portalQuoteId} />;
+  }
+
   if (!user || view === 'login') {
     return (
       <>
@@ -5068,6 +5570,7 @@ export default function App() {
     { id: 'admin-settings', l: 'Settings', i: Settings },
     { id: 'admin-live', l: 'Live Floor', i: Activity },
     { id: 'admin-samples', l: 'Samples', i: Camera },
+    { id: 'admin-quotes', l: 'Quotes', i: FileText },
     { id: 'admin-scan', l: 'Work Station', i: ScanLine },
   ];
 
@@ -5170,6 +5673,10 @@ export default function App() {
           {view === 'admin-reports' && <ReportsView />}
           {view === 'admin-live' && <LiveFloorMonitor user={user} onBack={() => setView('admin-dashboard')} addToast={addToast} />}
           {view === 'admin-samples' && <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />}
+          {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
+            const jobId = `JOB-${Date.now()}`;
+            await DB.saveJob({ id: jobId, jobIdsDisplay: `J-${jobId.slice(-6)}`, poNumber: data.poNumber, partNumber: data.partNumber, customer: data.customer, quantity: data.quantity, dateReceived: new Date().toLocaleDateString('en-US'), dueDate: data.dueDate, info: data.info, status: 'pending', createdAt: Date.now(), quoteAmount: data.quoteAmount, linkedQuoteId: data.linkedQuoteId } as any);
+          }} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
         </div>
@@ -5180,6 +5687,7 @@ export default function App() {
     geminiApiKey={import.meta.env.VITE_GEMINI_API_KEY || ''}
     onJobCreate={handlePOJobCreate}
     onClose={() => setShowPOScanner(false)}
+    clients={settings.clients || []}
   />
 )}
             <div className="fixed bottom-6 right-6 z-50 pointer-events-none">

@@ -42,6 +42,7 @@ interface POScannerProps {
   }) => Promise<void>;
   geminiApiKey: string;
   onClose: () => void;
+  clients?: string[];
 }
 
 const useGeminiGuard = () => {
@@ -435,10 +436,34 @@ const ConfidenceBadge = ({ level }: { level: 'high' | 'medium' | 'low' }) => {
   );
 };
 
+// Fuzzy match a scanned customer name to the closest client in the settings list
+function matchClient(scanned: string, clients: string[]): string {
+  if (!scanned || clients.length === 0) return scanned;
+  const s = scanned.toLowerCase().trim();
+  // Exact match first
+  const exact = clients.find(c => c.toLowerCase() === s);
+  if (exact) return exact;
+  // Contains match — either direction
+  const contains = clients.find(c => s.includes(c.toLowerCase()) || c.toLowerCase().includes(s));
+  if (contains) return contains;
+  // Word overlap match
+  const sWords = s.split(/[\s,.\-_]+/).filter(w => w.length > 2);
+  let bestMatch = '';
+  let bestScore = 0;
+  for (const c of clients) {
+    const cWords = c.toLowerCase().split(/[\s,.\-_]+/).filter(w => w.length > 2);
+    const overlap = sWords.filter(w => cWords.some(cw => cw.includes(w) || w.includes(cw))).length;
+    const score = overlap / Math.max(sWords.length, cWords.length, 1);
+    if (score > bestScore && score >= 0.4) { bestScore = score; bestMatch = c; }
+  }
+  return bestMatch || scanned;
+}
+
 export const POScanner: React.FC<POScannerProps> = ({
   onJobCreate,
   geminiApiKey,
-  onClose
+  onClose,
+  clients = []
 }) => {
   const [step, setStep] = useState<'upload' | 'processing' | 'review' | 'saving' | 'success' | 'error'>('upload');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -467,13 +492,17 @@ export const POScanner: React.FC<POScannerProps> = ({
         { cooldownMs: 2000, maxRetries: 3 }
       );
 
+      // Match scanned customer name to existing clients list
+      if (data.customerName && clients.length > 0) {
+        data.customerName = matchClient(data.customerName, clients);
+      }
       setEditedData({ ...data });
       setStep('review');
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to process image. Check your Gemini API key.');
       setStep('error');
     }
-  }, [geminiApiKey, geminiRun]);
+  }, [geminiApiKey, geminiRun, clients]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -647,7 +676,7 @@ export const POScanner: React.FC<POScannerProps> = ({
       { key: 'partName', label: 'Part Name / Description', icon: Package, placeholder: 'e.g. Bracket Assembly' },
       { key: 'quantity', label: 'Quantity', icon: Hash, placeholder: 'e.g. 50' },
       { key: 'dueDate', label: 'Due Date', icon: Calendar, placeholder: 'e.g. 03/15/2025' },
-      { key: 'customerName', label: 'Customer Name', icon: User, placeholder: 'e.g. Boeing' },
+      { key: 'customerName', label: 'Customer Name', icon: User, placeholder: 'e.g. Boeing', isCustomer: true },
     ] as const;
 
     return (
@@ -680,19 +709,35 @@ export const POScanner: React.FC<POScannerProps> = ({
               Review and correct any fields before creating the job.
             </p>
 
-            {standardFields.map(({ key, label, icon: Icon, placeholder }) => (
+            {standardFields.map(({ key, label, icon: Icon, placeholder, ...rest }) => (
               <div key={key}>
                 <label className="flex items-center gap-2 text-gray-400 text-xs mb-1">
                   <Icon className="w-3 h-3" />
                   {label}
                 </label>
-                <input
-                  type="text"
-                  value={editedData[key] || ''}
-                  onChange={(e) => handleFieldChange(key, e.target.value)}
-                  placeholder={placeholder}
-                  className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-                />
+                {('isCustomer' in rest) && clients.length > 0 ? (
+                  <select
+                    value={editedData[key] || ''}
+                    onChange={(e) => handleFieldChange(key, e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">— Select a client —</option>
+                    {clients.sort((a, b) => a.localeCompare(b)).map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    {editedData[key] && !clients.some(c => c.toLowerCase() === (editedData[key] || '').toLowerCase()) && (
+                      <option value={editedData[key]}>📝 {editedData[key]} (scanned)</option>
+                    )}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={editedData[key] || ''}
+                    onChange={(e) => handleFieldChange(key, e.target.value)}
+                    placeholder={placeholder}
+                    className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  />
+                )}
               </div>
             ))}
 
