@@ -16,7 +16,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import { Job, TimeLog, SystemSettings } from './types';
+import { Job, TimeLog, SystemSettings, TvSlide } from './types';
 import * as DB from './services/mockDb';
 
 // ── LIVE TICKER (pause-aware) ───────────────────────────────────
@@ -319,6 +319,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [compact, setCompact] = useState(false);
   const [dimMode, setDimMode] = useState(false);
   const prevLogIdsRef = useRef<Set<string>>(new Set());
+  const [currentSlideIdx, setCurrentSlideIdx] = useState(0);
 
   const isAdmin = user.role === 'admin';
 
@@ -394,6 +395,23 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const now = new Date();
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const inLunch = settings.autoLunchPauseEnabled && hhmm >= (settings.lunchStart || '12:00') && hhmm < (settings.lunchEnd || '12:30');
+
+  // ── Slideshow ──────────────────────────────────────────────────
+  const defaultSlides: TvSlide[] = [{ id: 'workers', type: 'workers', enabled: true }];
+  const slides = (settings.tvSlides && settings.tvSlides.length > 0 ? settings.tvSlides : defaultSlides).filter(s => s.enabled);
+  const slideshowOn = settings.tvSlideshowEnabled && slides.length > 1;
+  const defaultDuration = settings.tvSlideDuration || 15;
+
+  useEffect(() => {
+    if (!slideshowOn) return;
+    const dur = (slides[currentSlideIdx]?.duration || defaultDuration) * 1000;
+    const timer = setTimeout(() => {
+      setCurrentSlideIdx(prev => (prev + 1) % slides.length);
+    }, dur);
+    return () => clearTimeout(timer);
+  }, [slideshowOn, currentSlideIdx, slides.length, defaultDuration]);
+
+  const currentSlide = slides[currentSlideIdx] || slides[0] || defaultSlides[0];
 
   return (
     <div className={`min-h-screen transition-all duration-500 ${dimMode ? 'bg-black' : 'bg-zinc-950'}`}>
@@ -484,43 +502,125 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         )}
       </div>
 
-      <div className={`p-4 ${compact ? 'max-w-2xl' : 'max-w-3xl'} mx-auto`}>
-        {activeLogs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center py-24 px-6">
-            <div className="w-20 h-20 rounded-full bg-white/[0.03] flex items-center justify-center mb-6">
-              <Clock className="w-10 h-10 text-white/10" />
+      {/* ── SLIDE CONTENT ── */}
+      {currentSlide.type === 'message' && (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 animate-fade-in">
+          <div className={`max-w-2xl text-center ${
+            currentSlide.color === 'red' ? 'text-red-400' :
+            currentSlide.color === 'yellow' ? 'text-yellow-400' :
+            currentSlide.color === 'green' ? 'text-emerald-400' :
+            currentSlide.color === 'white' ? 'text-white' : 'text-blue-400'
+          }`}>
+            {currentSlide.title && <h1 className="text-4xl md:text-6xl font-black mb-6 leading-tight">{currentSlide.title}</h1>}
+            {currentSlide.body && <p className="text-xl md:text-2xl opacity-80 leading-relaxed">{currentSlide.body}</p>}
+          </div>
+          {slideshowOn && (
+            <div className="absolute bottom-6 flex gap-1.5">
+              {slides.map((s, i) => (
+                <div key={s.id} className={`h-1.5 rounded-full transition-all ${i === currentSlideIdx ? 'w-8 bg-white/60' : 'w-1.5 bg-white/20'}`} />
+              ))}
             </div>
-            <h2 className="text-white/60 font-bold text-xl mb-2">Floor is quiet</h2>
-            <p className="text-white/20 text-sm max-w-xs">
-              When workers start timers, their live activity will appear here in real-time.
-            </p>
-            <div className="mt-8 flex items-center gap-2 text-white/10 text-xs">
-              <Radio className="w-3 h-3" />
-              Listening for activity...
-            </div>
-          </div>
-        ) : compact ? (
-          <div className="rounded-2xl border border-white/5 overflow-hidden bg-white/[0.01]">
-            {sorted.map((log) => (
-              <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact isAdmin={isAdmin} tvSettings={settings}
-                onForceStop={isAdmin ? handleForceStop : undefined}
-                onPause={isAdmin ? handlePause : undefined}
-                onResume={isAdmin ? handleResume : undefined} />
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {sorted.map((log) => (
-              <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact={false} isAdmin={isAdmin} tvSettings={settings}
-                onForceStop={isAdmin ? handleForceStop : undefined}
-                onPause={isAdmin ? handlePause : undefined}
-                onResume={isAdmin ? handleResume : undefined} />
-            ))}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      {activeLogs.length > 0 && (
+      {currentSlide.type === 'stats' && (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 animate-fade-in">
+          <div className="max-w-3xl w-full space-y-8">
+            <h2 className="text-3xl font-black text-white text-center">Shop Overview</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-white/5 rounded-2xl p-6 text-center">
+                <p className="text-white/40 text-xs uppercase font-bold mb-1">Active Workers</p>
+                <p className="text-4xl font-black text-emerald-400">{workerCount}</p>
+              </div>
+              <div className="bg-white/5 rounded-2xl p-6 text-center">
+                <p className="text-white/40 text-xs uppercase font-bold mb-1">Running</p>
+                <p className="text-4xl font-black text-blue-400">{runningCount}</p>
+              </div>
+              <div className="bg-white/5 rounded-2xl p-6 text-center">
+                <p className="text-white/40 text-xs uppercase font-bold mb-1">Paused</p>
+                <p className="text-4xl font-black text-yellow-400">{pausedCount}</p>
+              </div>
+              <div className="bg-white/5 rounded-2xl p-6 text-center">
+                <p className="text-white/40 text-xs uppercase font-bold mb-1">Total Jobs</p>
+                <p className="text-4xl font-black text-white">{jobs.filter(j => j.status !== 'completed').length}</p>
+              </div>
+            </div>
+            {/* Top workers by time */}
+            <div className="bg-white/5 rounded-2xl p-6">
+              <h3 className="text-white/40 text-xs uppercase font-bold mb-4">Active Now</h3>
+              <div className="space-y-3">
+                {sorted.slice(0, 6).map(log => {
+                  const job = getJob(log.jobId);
+                  return (
+                    <div key={log.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${log.pausedAt ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}`}>{log.userName.charAt(0)}</div>
+                        <div>
+                          <span className="text-white font-bold text-sm">{log.userName}</span>
+                          <span className="text-white/40 text-xs ml-2">{log.operation}</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-white font-mono text-sm"><LiveTicker log={log} size="sm" /></span>
+                        {job && <p className="text-white/30 text-[10px]">{job.poNumber}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          {slideshowOn && (
+            <div className="absolute bottom-6 flex gap-1.5">
+              {slides.map((s, i) => (
+                <div key={s.id} className={`h-1.5 rounded-full transition-all ${i === currentSlideIdx ? 'w-8 bg-white/60' : 'w-1.5 bg-white/20'}`} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {currentSlide.type === 'workers' && (
+        <div className={`p-4 ${compact ? 'max-w-2xl' : 'max-w-3xl'} mx-auto`}>
+          {activeLogs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center py-24 px-6">
+              <div className="w-20 h-20 rounded-full bg-white/[0.03] flex items-center justify-center mb-6">
+                <Clock className="w-10 h-10 text-white/10" />
+              </div>
+              <h2 className="text-white/60 font-bold text-xl mb-2">Floor is quiet</h2>
+              <p className="text-white/20 text-sm max-w-xs">When workers start timers, their live activity will appear here.</p>
+            </div>
+          ) : compact ? (
+            <div className="rounded-2xl border border-white/5 overflow-hidden bg-white/[0.01]">
+              {sorted.map((log) => (
+                <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact isAdmin={isAdmin} tvSettings={settings}
+                  onForceStop={isAdmin ? handleForceStop : undefined}
+                  onPause={isAdmin ? handlePause : undefined}
+                  onResume={isAdmin ? handleResume : undefined} />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {sorted.map((log) => (
+                <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact={false} isAdmin={isAdmin} tvSettings={settings}
+                  onForceStop={isAdmin ? handleForceStop : undefined}
+                  onPause={isAdmin ? handlePause : undefined}
+                  onResume={isAdmin ? handleResume : undefined} />
+              ))}
+            </div>
+          )}
+          {slideshowOn && (
+            <div className="fixed bottom-6 left-0 right-0 flex justify-center gap-1.5">
+              {slides.map((s, i) => (
+                <div key={s.id} className={`h-1.5 rounded-full transition-all ${i === currentSlideIdx ? 'w-8 bg-white/60' : 'w-1.5 bg-white/20'}`} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeLogs.length > 0 && !slideshowOn && (
         <div className="fixed bottom-0 left-0 right-0 h-1">
           <div className="h-full bg-gradient-to-r from-transparent via-blue-500/50 to-transparent animate-pulse" />
         </div>

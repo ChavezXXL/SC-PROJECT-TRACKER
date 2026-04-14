@@ -11,7 +11,7 @@ import {
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download
 } from 'lucide-react';
 import { Toast } from './components/Toast';
-import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings } from './types';
+import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide } from './types';
 import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
@@ -4403,29 +4403,111 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
             </div>
           </div>
 
-          {/* Announcement Banner */}
+          {/* Slideshow Manager */}
           <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Announcement</p>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-3">
-              <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Message <span className="text-zinc-600">(leave empty to hide)</span></label>
-                <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.tvAnnouncement || ''} onChange={e => setSettings({ ...settings, tvAnnouncement: e.target.value })} placeholder="e.g. Safety Week — Wear PPE at all times" />
-              </div>
-              <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Banner Color</label>
-                <div className="flex gap-2">
-                  {[{id:'blue',label:'Blue',cls:'bg-blue-500'},{id:'yellow',label:'Yellow',cls:'bg-yellow-500'},{id:'red',label:'Red',cls:'bg-red-500'},{id:'green',label:'Green',cls:'bg-emerald-500'}].map(c => (
-                    <button key={c.id} onClick={() => setSettings({ ...settings, tvAnnouncementColor: c.id })}
-                      className={`w-8 h-8 rounded-lg ${c.cls} transition-all ${(settings.tvAnnouncementColor || 'blue') === c.id ? 'ring-2 ring-white ring-offset-2 ring-offset-zinc-900 scale-110' : 'opacity-50 hover:opacity-80'}`}
-                      title={c.label} />
-                  ))}
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Slideshow</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
+              {/* Enable slideshow */}
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white">Enable Slideshow</p>
+                  <p className="text-xs text-zinc-500">Rotate between worker view, messages, and stats</p>
                 </div>
+                <input type="checkbox" checked={settings.tvSlideshowEnabled || false} onChange={e => setSettings({ ...settings, tvSlideshowEnabled: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
-              {settings.tvAnnouncement && (
-                <div className={`rounded-lg px-3 py-2 text-center text-sm font-bold ${(settings.tvAnnouncementColor || 'blue') === 'red' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : (settings.tvAnnouncementColor || 'blue') === 'yellow' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : (settings.tvAnnouncementColor || 'blue') === 'green' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'}`}>
-                  {settings.tvAnnouncement}
+              {/* Default duration */}
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white">Slide Duration</p>
+                  <p className="text-xs text-zinc-500">Seconds per slide (default)</p>
                 </div>
-              )}
+                <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.tvSlideDuration || 15} onChange={e => setSettings({ ...settings, tvSlideDuration: Number(e.target.value) })}>
+                  {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
+                </select>
+              </div>
+              {/* Slide list */}
+              <div className="px-4 py-3 space-y-2">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm text-white font-bold">Slides</p>
+                  <div className="flex gap-1">
+                    <button onClick={() => {
+                      const slides = [...(settings.tvSlides || [])];
+                      slides.push({ id: `msg_${Date.now()}`, type: 'message', enabled: true, title: 'New Message', body: '', color: 'blue' });
+                      setSettings({ ...settings, tvSlides: slides });
+                    }} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded font-bold">+ Message</button>
+                    <button onClick={() => {
+                      const slides = [...(settings.tvSlides || [])];
+                      if (!slides.find(s => s.type === 'stats')) slides.push({ id: 'stats', type: 'stats', enabled: true });
+                      setSettings({ ...settings, tvSlides: slides });
+                    }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold">+ Stats</button>
+                    <button onClick={() => {
+                      const slides = [...(settings.tvSlides || [])];
+                      if (!slides.find(s => s.type === 'workers')) slides.unshift({ id: 'workers', type: 'workers', enabled: true });
+                      setSettings({ ...settings, tvSlides: slides });
+                    }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold">+ Workers</button>
+                  </div>
+                </div>
+
+                {/* Default workers slide if no slides configured */}
+                {(!settings.tvSlides || settings.tvSlides.length === 0) && (
+                  <div className="text-xs text-zinc-500 text-center py-3">No slides configured. The default worker view will show. Add slides above to create a rotation.</div>
+                )}
+
+                {/* Slide items */}
+                {(settings.tvSlides || []).map((slide, idx) => (
+                  <div key={slide.id} className={`border rounded-lg p-3 space-y-2 ${slide.enabled ? 'border-white/10 bg-zinc-800/30' : 'border-white/5 bg-zinc-900/30 opacity-50'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded font-bold uppercase">{slide.type}</span>
+                        <span className="text-xs text-zinc-400">#{idx + 1}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select className="bg-zinc-950 border border-white/10 rounded px-1 py-0.5 text-white text-[10px]" value={slide.duration || settings.tvSlideDuration || 15} onChange={e => {
+                          const slides = [...(settings.tvSlides || [])];
+                          slides[idx] = { ...slides[idx], duration: Number(e.target.value) };
+                          setSettings({ ...settings, tvSlides: slides });
+                        }}>
+                          {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
+                        </select>
+                        <input type="checkbox" checked={slide.enabled} onChange={e => {
+                          const slides = [...(settings.tvSlides || [])];
+                          slides[idx] = { ...slides[idx], enabled: e.target.checked };
+                          setSettings({ ...settings, tvSlides: slides });
+                        }} className="w-3.5 h-3.5 rounded bg-zinc-800 text-blue-600" />
+                        <button onClick={() => {
+                          const slides = (settings.tvSlides || []).filter((_, i) => i !== idx);
+                          setSettings({ ...settings, tvSlides: slides });
+                        }} className="text-zinc-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+
+                    {/* Message slide editor */}
+                    {slide.type === 'message' && (
+                      <div className="space-y-2">
+                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-sm text-white" placeholder="Title" value={slide.title || ''} onChange={e => {
+                          const slides = [...(settings.tvSlides || [])];
+                          slides[idx] = { ...slides[idx], title: e.target.value };
+                          setSettings({ ...settings, tvSlides: slides });
+                        }} />
+                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white" placeholder="Body text (optional)" value={slide.body || ''} onChange={e => {
+                          const slides = [...(settings.tvSlides || [])];
+                          slides[idx] = { ...slides[idx], body: e.target.value };
+                          setSettings({ ...settings, tvSlides: slides });
+                        }} />
+                        <div className="flex gap-1.5">
+                          {[{id:'blue',cls:'bg-blue-500'},{id:'yellow',cls:'bg-yellow-500'},{id:'red',cls:'bg-red-500'},{id:'green',cls:'bg-emerald-500'},{id:'white',cls:'bg-white'}].map(c => (
+                            <button key={c.id} onClick={() => {
+                              const slides = [...(settings.tvSlides || [])];
+                              slides[idx] = { ...slides[idx], color: c.id as any };
+                              setSettings({ ...settings, tvSlides: slides });
+                            }} className={`w-6 h-6 rounded ${c.cls} transition-all ${(slide.color || 'blue') === c.id ? 'ring-2 ring-white ring-offset-1 ring-offset-zinc-900 scale-110' : 'opacity-40 hover:opacity-70'}`} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 

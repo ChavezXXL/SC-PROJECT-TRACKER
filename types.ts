@@ -102,10 +102,25 @@ export interface SystemSettings {
   tvAutoScroll?: boolean;      // Auto-scroll when many workers
   tvRefreshRate?: number;      // Seconds between ticker updates
   tvCompanyHeader?: boolean;   // Show company name/logo at top of TV
-  tvAnnouncement?: string;     // Custom scrolling message on TV
-  tvAnnouncementColor?: string; // Banner color: 'blue' | 'yellow' | 'red' | 'green'
+  tvAnnouncement?: string;     // Legacy single message (kept for backward compat)
+  tvAnnouncementColor?: string; // Legacy banner color
   tvShowClock?: boolean;       // Show current time on TV header
   tvShowStats?: boolean;       // Show stats strip (workers/running/paused)
+  // Slideshow
+  tvSlides?: TvSlide[];        // Ordered list of slides for TV rotation
+  tvSlideDuration?: number;    // Default seconds per slide (default 15)
+  tvSlideshowEnabled?: boolean; // Enable slideshow rotation
+}
+
+export interface TvSlide {
+  id: string;
+  type: 'workers' | 'message' | 'stats';
+  enabled: boolean;
+  duration?: number;           // Override seconds for this slide
+  // Message slide fields
+  title?: string;
+  body?: string;
+  color?: 'blue' | 'yellow' | 'red' | 'green' | 'white';
 }
 
 export interface ToastMessage {
