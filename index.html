@@ -31,11 +31,73 @@
                 }
         </script>
         <style>
-                body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+                /* Theme CSS variables */
+                :root {
+                  --bg-body: #09090b;
+                  --bg-surface: rgba(24,24,27,0.5);
+                  --bg-elevated: #18181b;
+                  --bg-input: #09090b;
+                  --text-primary: #f8fafc;
+                  --text-secondary: #a1a1aa;
+                  --text-muted: #71717a;
+                  --border-color: rgba(255,255,255,0.05);
+                  --border-hover: rgba(255,255,255,0.1);
+                  --scrollbar-track: #18181b;
+                  --scrollbar-thumb: #3f3f46;
+                }
+                .light-theme {
+                  --bg-body: #f4f4f5;
+                  --bg-surface: rgba(255,255,255,0.8);
+                  --bg-elevated: #ffffff;
+                  --bg-input: #ffffff;
+                  --text-primary: #18181b;
+                  --text-secondary: #52525b;
+                  --text-muted: #a1a1aa;
+                  --border-color: rgba(0,0,0,0.08);
+                  --border-hover: rgba(0,0,0,0.15);
+                  --scrollbar-track: #e4e4e7;
+                  --scrollbar-thumb: #a1a1aa;
+                }
+                /* Light mode overrides for Tailwind classes */
+                .light-theme { background-color: var(--bg-body) !important; color: var(--text-primary) !important; }
+                .light-theme .bg-zinc-950 { background-color: var(--bg-body) !important; }
+                .light-theme .bg-zinc-900\/50, .light-theme .bg-zinc-900\/30 { background-color: var(--bg-surface) !important; }
+                .light-theme .bg-zinc-900 { background-color: var(--bg-elevated) !important; }
+                .light-theme .bg-zinc-950\/50, .light-theme .bg-zinc-950\/40, .light-theme .bg-zinc-950\/30, .light-theme .bg-zinc-950\/20 { background-color: rgba(244,244,245,0.5) !important; }
+                .light-theme .bg-zinc-800 { background-color: #e4e4e7 !important; }
+                .light-theme .bg-zinc-800\/50 { background-color: rgba(228,228,231,0.5) !important; }
+                .light-theme .bg-black\/40, .light-theme .bg-black\/20 { background-color: rgba(244,244,245,0.6) !important; }
+                .light-theme .text-zinc-100, .light-theme .text-white { color: #18181b !important; }
+                .light-theme .text-zinc-300 { color: #3f3f46 !important; }
+                .light-theme .text-zinc-400 { color: #52525b !important; }
+                .light-theme .text-zinc-500 { color: #71717a !important; }
+                .light-theme .text-zinc-600 { color: #a1a1aa !important; }
+                .light-theme .border-white\/5, .light-theme .border-white\/10 { border-color: var(--border-color) !important; }
+                .light-theme .divide-white\/5 > * + * { border-color: var(--border-color) !important; }
+                .light-theme .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,0.03) !important; }
+                .light-theme .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.06) !important; }
+                .light-theme .bg-white\/5 { background-color: rgba(0,0,0,0.03) !important; }
+                .light-theme .bg-white\/10 { background-color: rgba(0,0,0,0.06) !important; }
+                .light-theme .shadow-lg { box-shadow: 0 10px 25px rgba(0,0,0,0.08) !important; }
+                .light-theme .shadow-2xl { box-shadow: 0 20px 50px rgba(0,0,0,0.12) !important; }
+                /* Keep accent colors visible in light mode */
+                .light-theme .text-emerald-400 { color: #059669 !important; }
+                .light-theme .text-blue-400, .light-theme .text-blue-500 { color: #2563eb !important; }
+                .light-theme .text-red-400 { color: #dc2626 !important; }
+                .light-theme .text-orange-400 { color: #ea580c !important; }
+                .light-theme .text-yellow-400 { color: #ca8a04 !important; }
+                .light-theme .text-purple-400 { color: #9333ea !important; }
+                .light-theme .text-cyan-400 { color: #0891b2 !important; }
+                .light-theme .text-green-400 { color: #16a34a !important; }
+                /* Inputs in light mode */
+                .light-theme input, .light-theme select, .light-theme textarea { background-color: var(--bg-input) !important; color: var(--text-primary) !important; border-color: var(--border-hover) !important; }
+                .light-theme .bg-zinc-950 input, .light-theme .bg-zinc-900 input { background-color: #f4f4f5 !important; }
+
+                body { font-family: 'Inter', sans-serif; background-color: var(--bg-body); color: var(--text-primary); -webkit-tap-highlight-color: transparent; }
                 .mono { font-family: 'JetBrains Mono', monospace; }
                 ::-webkit-scrollbar { width: 6px; height: 6px; }
-                ::-webkit-scrollbar-track { background: #18181b; }
-                ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+                ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+                ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
                 ::-webkit-scrollbar-thumb:hover { background: #52525b; }
                 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
                 .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
@@ -85,7 +147,7 @@
                                                                     }
                                                     });
                                       }
-                                      window.__gcalTokenClient.requestAccessToken({ prompt: window.__gcalReady ? '' : 'consent' });
+                                      window.__gcalTokenClient.requestAccessToken({ prompt: '' });
                           } catch(e) { callback(false, e.message); }
                 };
         </script>

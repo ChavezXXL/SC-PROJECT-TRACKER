@@ -91,6 +91,7 @@ const WorkerCard: React.FC<{
   onPause?: (logId: string) => void;
   onResume?: (logId: string) => void;
   isAdmin: boolean;
+  tvSettings?: SystemSettings;
 }> = ({
   log,
   job,
@@ -99,6 +100,7 @@ const WorkerCard: React.FC<{
   onPause,
   onResume,
   isAdmin,
+  tvSettings,
 }) => {
   const initials = log.userName
     .split(' ')
@@ -216,7 +218,7 @@ const WorkerCard: React.FC<{
           <LiveTicker log={log} size="lg" />
         </div>
 
-        <ElapsedBar log={log} />
+        {(tvSettings?.tvShowElapsedBar !== false) && <ElapsedBar log={log} />}
 
         {job && (
           <div className="mt-4 grid grid-cols-3 gap-3">
@@ -232,13 +234,13 @@ const WorkerCard: React.FC<{
               <p className="text-[10px] text-white/30 uppercase font-bold tracking-widest">Qty</p>
               <p className="text-white/70 text-sm mt-0.5">{job.quantity}</p>
             </div>
-            {job.customer && (
+            {(tvSettings?.tvShowCustomer !== false) && job.customer && (
               <div className="col-span-3">
                 <p className="text-[10px] text-white/30 uppercase font-bold tracking-widest">Customer</p>
                 <p className="text-purple-400 text-sm font-bold mt-0.5 truncate">{job.customer}</p>
               </div>
             )}
-            {job.jobIdsDisplay && (
+            {(tvSettings?.tvShowJobId !== false) && job.jobIdsDisplay && (
               <div className="col-span-3">
                 <p className="text-[10px] text-white/30 uppercase font-bold tracking-widest">Job #</p>
                 <p className="text-white/50 text-xs font-mono mt-0.5 truncate">{job.jobIdsDisplay}</p>
@@ -427,6 +429,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           </div>
         </div>
 
+        {/* Company header (configurable) */}
+        {settings.tvCompanyHeader !== false && (settings.companyName || settings.companyLogo) && (
+          <div className="flex items-center justify-center gap-3 px-4 py-2 border-b border-white/5">
+            {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-6 object-contain" />}
+            {settings.companyName && <span className="text-white font-bold text-sm tracking-wide">{settings.companyName}</span>}
+          </div>
+        )}
+
         {/* Stats strip */}
         <div className="flex items-center justify-center gap-6 px-4 pb-3">
           <div className="flex items-center gap-2">
@@ -478,7 +488,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         ) : compact ? (
           <div className="rounded-2xl border border-white/5 overflow-hidden bg-white/[0.01]">
             {sorted.map((log) => (
-              <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact isAdmin={isAdmin}
+              <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact isAdmin={isAdmin} tvSettings={settings}
                 onForceStop={isAdmin ? handleForceStop : undefined}
                 onPause={isAdmin ? handlePause : undefined}
                 onResume={isAdmin ? handleResume : undefined} />
@@ -487,7 +497,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         ) : (
           <div className="space-y-4">
             {sorted.map((log) => (
-              <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact={false} isAdmin={isAdmin}
+              <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact={false} isAdmin={isAdmin} tvSettings={settings}
                 onForceStop={isAdmin ? handleForceStop : undefined}
                 onPause={isAdmin ? handlePause : undefined}
                 onResume={isAdmin ? handleResume : undefined} />

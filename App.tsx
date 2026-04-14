@@ -511,15 +511,18 @@ const PrintStyles = () => (
 // --- STATUS BADGE ---
 const StatusBadge = ({ status }: { status: string }) => {
   const styles: Record<string, string> = {
-    'pending': 'bg-zinc-800 text-zinc-500 border-white/5',
+    'pending': 'bg-zinc-800 text-zinc-400 border-white/5',
     'in-progress': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
     'completed': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
     'hold': 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   };
+  const labels: Record<string, string> = {
+    'pending': 'Pending', 'in-progress': 'Active', 'completed': 'Done', 'hold': 'Hold',
+  };
   return (
-    <span className={`px-3 py-1 rounded-full text-xs uppercase font-bold tracking-wide border flex w-fit items-center gap-2 ${styles[status] || styles['pending']}`}>
-      {status === 'in-progress' && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-      {status}
+    <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold tracking-wide border flex w-fit items-center gap-1.5 whitespace-nowrap ${styles[status] || styles['pending']}`}>
+      {status === 'in-progress' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+      {labels[status] || status}
     </span>
   );
 };
@@ -636,19 +639,33 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
           </div>
         </div>
         <div className="bg-white/5 rounded-2xl p-6 border border-white/5 flex flex-col h-full opacity-90">
-          <h3 className="text-zinc-400 font-bold uppercase text-sm mb-6 flex items-center gap-2"><Info className="w-4 h-4" /> Job Details</h3>
+          <h3 className="text-zinc-400 font-bold uppercase text-sm mb-4 flex items-center gap-2"><Info className="w-4 h-4" /> Job Details</h3>
           {job ? (
             <>
-              <div className="grid grid-cols-2 gap-y-6 gap-x-4 mb-6">
-                <div><label className="text-xs text-zinc-500 uppercase font-bold">Part Number</label><div className="text-lg md:text-xl font-bold text-white mt-1 break-words">{job.partNumber}</div></div>
-                <div><label className="text-xs text-zinc-500 uppercase font-bold">PO Number</label><div className="text-lg md:text-xl font-bold text-white mt-1 break-words">{job.poNumber}</div></div>
-                <div><label className="text-xs text-zinc-500 uppercase font-bold">Quantity</label><div className="text-lg md:text-xl font-bold text-white mt-1">{job.quantity} <span className="text-sm font-normal text-zinc-500">units</span></div></div>
-                <div><label className="text-xs text-zinc-500 uppercase font-bold">Due Date</label><div className="text-lg md:text-xl font-bold text-white mt-1">{job.dueDate || 'N/A'}</div></div>
+              {/* Part photo + key info */}
+              <div className="flex gap-4 mb-4">
+                {job.partImage && (
+                  <img src={job.partImage} alt="Part" className="w-20 h-20 rounded-xl object-cover border border-white/10 flex-shrink-0" />
+                )}
+                <div className="grid grid-cols-2 gap-y-3 gap-x-4 flex-1">
+                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Part Number</label><div className="text-sm font-bold text-white break-words">{job.partNumber}</div></div>
+                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">PO Number</label><div className="text-sm font-bold text-white break-words">{job.poNumber}</div></div>
+                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Quantity</label><div className="text-sm font-bold text-white">{job.quantity} <span className="text-xs font-normal text-zinc-500">units</span></div></div>
+                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Due Date</label><div className="text-sm font-bold text-white">{job.dueDate || 'N/A'}</div></div>
+                </div>
               </div>
-              <div className="mt-auto pt-6 border-t border-white/10">
-                <label className="text-xs text-zinc-500 uppercase font-bold mb-2 block">Notes / Instructions</label>
-                <div className="text-zinc-300 text-sm leading-relaxed bg-black/20 p-4 rounded-xl border border-white/5 min-h-[80px]">
-                  {job.info || <span className="text-zinc-600 italic">No notes provided for this job.</span>}
+              {/* Special Instructions */}
+              {job.specialInstructions && (
+                <div className="mb-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-3">
+                  <label className="text-[10px] text-yellow-400 uppercase font-bold mb-1 block">Deburr Instructions</label>
+                  <div className="text-yellow-200 text-sm leading-relaxed">{job.specialInstructions}</div>
+                </div>
+              )}
+              {/* Notes */}
+              <div className="mt-auto pt-3 border-t border-white/10">
+                <label className="text-[10px] text-zinc-500 uppercase font-bold mb-1 block">Notes</label>
+                <div className="text-zinc-300 text-xs leading-relaxed bg-black/20 p-3 rounded-lg border border-white/5">
+                  {job.info || <span className="text-zinc-600 italic">No notes for this job.</span>}
                 </div>
               </div>
             </>
@@ -705,7 +722,9 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <span className="bg-zinc-950 text-zinc-400 text-xs px-2 py-1 rounded font-mono">{job.quantity} units</span>
           </div>
         </div>
-        <div className="text-sm text-zinc-500 space-y-1 mt-2">
+        <div className="flex items-start gap-3 mt-2">
+          {job.partImage && <img src={job.partImage} alt="Part" className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0" />}
+          <div className="text-sm text-zinc-500 space-y-1">
           <p>Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
           <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           {job.dueDate && (
@@ -713,6 +732,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
               {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
             </p>
           )}
+          </div>
         </div>
         {!expanded && (
           <div className="mt-4 flex items-center text-blue-400 text-xs font-bold uppercase tracking-wide">
@@ -1509,7 +1529,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                     <span className="text-xs font-bold text-zinc-400">Profit</span>
                     <div className="text-right">
                       <span className={`text-lg font-black ${weekProfit && weekProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {weekProfit !== null ? `${weekProfit >= 0 ? '+' : ''}$${weekProfit.toFixed(0)}` : '—'}
+                        {weekProfit !== null ? `${weekProfit >= 0 ? '+' : ''}$${weekProfit.toFixed(0)}` : weekTotals.cost > 0 ? `-$${weekTotals.cost.toFixed(0)}` : '$0'}
                       </span>
                       {weekMargin > 0 && <p className="text-[10px] text-zinc-500">{weekMargin.toFixed(0)}% margin</p>}
                     </div>
@@ -1880,13 +1900,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           <p className="text-zinc-500 text-sm">Manage orders and track by PO, priority, and due date.</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all"><Plus className="w-4 h-4" /> New Job Order</button>
-          <button
-            onClick={onOpenPOScanner}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 transition-all"
-          >
-            <ScanLine className="w-4 h-4" /> Scan PO
-          </button>
+          <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Plus className="w-4 h-4" /> New Job</button>
+          <button onClick={onOpenPOScanner} className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-bold border border-white/10 text-sm transition-all"><ScanLine className="w-4 h-4" /> Scan PO</button>
         </div>
       </div>
 
@@ -3002,7 +3017,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) =
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 no-print">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2 text-white"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
-          <p className="text-zinc-500 text-sm mt-1">Logs grouped by job  Active = job still open, Completed = job marked done.</p>
+          <p className="text-zinc-500 text-sm mt-1">Time entries grouped by job. Filter by date, status, or search.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors">
@@ -3023,7 +3038,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) =
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl">
           <p className="text-zinc-500 text-xs uppercase font-bold">Total Hours</p>
-          <p className="text-2xl font-bold text-blue-400">{totalHours.toFixed(2)} hrs</p>
+          <p className="text-2xl font-bold text-blue-400">{totalHours.toFixed(1)}h</p>
         </div>
         <div className="bg-zinc-900/50 border border-orange-500/10 p-4 rounded-xl">
           <p className="text-zinc-500 text-xs uppercase font-bold">Active Jobs</p>
@@ -3521,25 +3536,54 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
     addToast('success', 'User Saved');
   };
 
+  const admins = users.filter(u => u.role === 'admin');
+  const employees = users.filter(u => u.role !== 'admin');
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-white">Team</h2>
-        <button onClick={() => { setEditingUser({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl flex items-center gap-2"><Plus className="w-4 h-4" /> Add Member</button>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2"><Users className="w-5 h-5 text-blue-500" /> Team</h2>
+          <p className="text-sm text-zinc-500">{users.length} members · {admins.length} admin · {employees.length} workers</p>
+        </div>
+        <button onClick={() => { setEditingUser({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold"><Plus className="w-4 h-4" /> Add Member</button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {users.map(u => (
-          <div key={u.id} className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400"><UserIcon className="w-5 h-5" /></div>
-              <div><p className="font-bold text-white">{u.name}</p><p className="text-xs text-zinc-500">@{u.username} · {u.role}{u.hourlyRate ? <span className="text-emerald-400 ml-2">${u.hourlyRate.toFixed(2)}/hr</span> : ''}</p></div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => handleDelete(u.id)} className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-              <button onClick={() => { setEditingUser(u); setShowModal(true); }} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"><Edit2 className="w-4 h-4" /></button>
-            </div>
-          </div>
-        ))}
+
+      <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
+            <tr>
+              <th className="text-left p-3">Name</th>
+              <th className="text-left p-3">Username</th>
+              <th className="text-left p-3">Role</th>
+              <th className="text-right p-3">Rate</th>
+              <th className="text-right p-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {users.map(u => (
+              <tr key={u.id} className="hover:bg-white/5 transition-colors">
+                <td className="p-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}`}>{u.name.charAt(0)}</div>
+                    <span className="text-white font-bold">{u.name}</span>
+                  </div>
+                </td>
+                <td className="p-3 text-zinc-500 font-mono text-xs">@{u.username}</td>
+                <td className="p-3">
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-800 text-zinc-400'}`}>{u.role}</span>
+                </td>
+                <td className="p-3 text-right font-mono">{u.hourlyRate ? <span className="text-emerald-400">${u.hourlyRate.toFixed(2)}/hr</span> : <span className="text-zinc-600">—</span>}</td>
+                <td className="p-3 text-right">
+                  <div className="flex justify-end gap-1">
+                    <button onClick={() => { setEditingUser(u); setShowModal(true); }} className="p-1.5 hover:bg-white/10 rounded text-zinc-500 hover:text-white"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => handleDelete(u.id)} className="p-1.5 hover:bg-red-500/10 rounded text-zinc-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -3845,8 +3889,10 @@ const ReportsView = () => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [period, setPeriod] = useState<'week' | 'month' | 'all'>('week');
+  const [period, setPeriod] = useState<'week' | 'month' | 'custom' | 'all'>('week');
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
 
   useEffect(() => {
     const u1 = DB.subscribeLogs(setLogs);
@@ -3859,9 +3905,11 @@ const ReportsView = () => {
   const now = Date.now();
   const weekAgo = now - 7 * 86400000;
   const monthAgo = now - 30 * 86400000;
-  const cutoff = period === 'week' ? weekAgo : period === 'month' ? monthAgo : 0;
+  const customCutoffStart = customStart ? new Date(customStart).getTime() : 0;
+  const customCutoffEnd = customEnd ? new Date(customEnd + 'T23:59:59').getTime() : now;
+  const cutoff = period === 'week' ? weekAgo : period === 'month' ? monthAgo : period === 'custom' ? customCutoffStart : 0;
 
-  const completedLogs = logs.filter(l => l.endTime && l.endTime > cutoff);
+  const completedLogs = logs.filter(l => l.endTime && l.endTime > cutoff && (period !== 'custom' || l.endTime <= customCutoffEnd));
   const activeWorkers = users.filter(u => u.isActive !== false && u.role !== 'admin');
   const shopRate = settings.shopRate || 0;
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
@@ -3899,39 +3947,80 @@ const ReportsView = () => {
           <h2 className="text-xl font-bold text-white">Reports</h2>
           <p className="text-sm text-zinc-500">Worker productivity and shop performance.</p>
         </div>
-        <div className="flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5">
-          {(['week', 'month', 'all'] as const).map(p => (
-            <button key={p} onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${period === p ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
-              {p === 'week' ? 'This Week' : p === 'month' ? 'This Month' : 'All Time'}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5">
+            {(['week', 'month', 'all', 'custom'] as const).map(p => (
+              <button key={p} onClick={() => setPeriod(p)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${period === p ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                {p === 'week' ? 'Week' : p === 'month' ? 'Month' : p === 'custom' ? 'Custom' : 'All'}
+              </button>
+            ))}
+          </div>
+          {period === 'custom' && (
+            <div className="flex gap-2 items-center">
+              <input type="date" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={customStart} onChange={e => setCustomStart(e.target.value)} />
+              <span className="text-zinc-500 text-xs">to</span>
+              <input type="date" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={customEnd} onChange={e => setCustomEnd(e.target.value)} />
+            </div>
+          )}
         </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-zinc-500 uppercase font-bold">Total Hours</p>
-          <p className="text-2xl font-black text-white">{totalHrs.toFixed(1)}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-zinc-500 uppercase font-bold">Sessions</p>
-          <p className="text-2xl font-black text-white">{totalSessions}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-zinc-500 uppercase font-bold">Jobs Done</p>
-          <p className="text-2xl font-black text-emerald-400">{completedJobs.length}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-zinc-500 uppercase font-bold">Revenue</p>
-          <p className="text-2xl font-black text-green-400">${totalRevenue.toLocaleString()}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-zinc-500 uppercase font-bold">Labor Cost</p>
-          <p className="text-2xl font-black text-orange-400">${totalCost.toFixed(0)}</p>
-        </div>
-      </div>
+      {(() => {
+        const weeklyGoal = settings.weeklyGoalHours || 40;
+        const periodDays = period === 'week' ? 7 : period === 'month' ? 30 : period === 'custom' && customStart && customEnd ? Math.max(1, Math.ceil((customCutoffEnd - customCutoffStart) / 86400000)) : 365;
+        const availableHrs = activeWorkers.length * weeklyGoal * (periodDays / 7);
+        const utilization = availableHrs > 0 ? Math.min(100, (totalHrs / availableHrs) * 100) : 0;
+        const profitMargin = totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue * 100) : 0;
+        const avgHrsPerWorker = activeWorkers.length > 0 ? totalHrs / activeWorkers.length : 0;
+        return (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Total Hours</p>
+                <p className="text-2xl font-black text-white">{totalHrs.toFixed(1)}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Sessions</p>
+                <p className="text-2xl font-black text-white">{totalSessions}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Jobs Done</p>
+                <p className="text-2xl font-black text-emerald-400">{completedJobs.length}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Revenue</p>
+                <p className="text-2xl font-black text-green-400">${totalRevenue.toLocaleString()}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Labor Cost</p>
+                <p className="text-2xl font-black text-orange-400">${Math.round(totalCost).toLocaleString()}</p>
+              </div>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">Margin</p>
+                <p className={`text-2xl font-black ${profitMargin >= 20 ? 'text-emerald-400' : profitMargin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{profitMargin.toFixed(0)}%</p>
+              </div>
+            </div>
+            {/* Utilization Bar */}
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="text-sm font-bold text-white">Shop Utilization</p>
+                  <p className="text-[10px] text-zinc-500">{activeWorkers.length} workers x {weeklyGoal}h/week goal = {availableHrs.toFixed(0)}h available</p>
+                </div>
+                <div className="text-right">
+                  <p className={`text-xl font-black ${utilization >= 80 ? 'text-emerald-400' : utilization >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{utilization.toFixed(0)}%</p>
+                  <p className="text-[10px] text-zinc-500">{avgHrsPerWorker.toFixed(1)}h avg/worker</p>
+                </div>
+              </div>
+              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${utilization >= 80 ? 'bg-emerald-500' : utilization >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(100, utilization)}%` }} />
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* Worker Productivity Table */}
       <div>
@@ -4119,7 +4208,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
-  const [settingsTab, setSettingsTab] = useState<'general' | 'financial' | 'tools'>('general');
+  const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'system'>('profile');
   const [opsOpen, setOpsOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
 
@@ -4137,32 +4226,140 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
   const trueCost = (settings.shopRate || 0) + ohRate;
 
-  const stab = (id: 'general' | 'financial' | 'tools', label: string) => (
-    <button key={id} onClick={() => setSettingsTab(id)}
-      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${settingsTab === id ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
-      {label}
-    </button>
-  );
+  const sideItems: { id: typeof settingsTab; label: string; icon: any }[] = [
+    { id: 'profile', label: 'Shop Profile', icon: Briefcase },
+    { id: 'schedule', label: 'Schedule', icon: Clock },
+    { id: 'production', label: 'Production', icon: Activity },
+    { id: 'financial', label: 'Financial', icon: Calculator },
+    { id: 'system', label: 'System', icon: Settings },
+  ];
 
   return (
-    <div className="max-w-2xl w-full">
-      {/* Header + Tabs */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-white">Settings</h2>
-        <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-sm flex items-center gap-2"><Save className="w-4 h-4" /> Save</button>
-      </div>
-      <div className="flex gap-1 mb-6 bg-zinc-900/50 p-1 rounded-lg border border-white/5">
-        {stab('general', 'General')}
-        {stab('financial', 'Financial')}
-        {stab('tools', 'Tools')}
+    <div className="flex gap-6 w-full max-w-4xl">
+      {/* Left sidebar nav */}
+      <div className="w-48 flex-shrink-0 space-y-1 hidden md:block">
+        <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-3 mb-3">Settings</p>
+        {sideItems.map(item => (
+          <button key={item.id} onClick={() => setSettingsTab(item.id)}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left ${settingsTab === item.id ? 'bg-white/10 text-white font-bold' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
+            <item.icon className="w-4 h-4 flex-shrink-0" />{item.label}
+          </button>
+        ))}
+        <div className="border-t border-white/5 mt-4 pt-4">
+          <button onClick={handleSave} className="w-full bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
+        </div>
       </div>
 
+      {/* Mobile tabs */}
+      <div className="md:hidden flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5 mb-4 overflow-x-auto w-full">
+        {sideItems.map(item => (
+          <button key={item.id} onClick={() => setSettingsTab(item.id)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${settingsTab === item.id ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Right content area */}
+      <div className="flex-1 min-w-0">
+
       {/* ── TAB: General ── */}
-      {settingsTab === 'general' && (
+      {/* ── SHOP PROFILE ── */}
+      {settingsTab === 'profile' && (
         <div className="space-y-6">
-          {/* Automation */}
           <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Automation</p>
+            <h3 className="text-lg font-bold text-white mb-1">Shop Profile</h3>
+            <p className="text-sm text-zinc-500">Your company information used in headers and print travelers.</p>
+          </div>
+          <div>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Company Name</label>
+                  <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyName || ''} onChange={e => setSettings({ ...settings, companyName: e.target.value })} placeholder="SC Deburring LLC" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Phone</label>
+                  <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyPhone || ''} onChange={e => setSettings({ ...settings, companyPhone: e.target.value })} placeholder="(555) 123-4567" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-zinc-500 block mb-1">Address</label>
+                <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyAddress || ''} onChange={e => setSettings({ ...settings, companyAddress: e.target.value })} placeholder="123 Industrial Blvd, City, ST 12345" />
+              </div>
+              <div>
+                <label className="text-[10px] text-zinc-500 block mb-1">Logo URL <span className="text-zinc-600">(paste a link to your logo image)</span></label>
+                <div className="flex gap-2 items-center">
+                  <input className="flex-1 bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyLogo || ''} onChange={e => setSettings({ ...settings, companyLogo: e.target.value })} placeholder="https://yoursite.com/logo.png" />
+                  {settings.companyLogo && <img src={settings.companyLogo} alt="Logo" className="w-8 h-8 rounded object-contain bg-white/10" />}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Theme */}
+          <div>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Appearance</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white">Theme</p>
+                  <p className="text-xs text-zinc-500">Switch between dark and light mode</p>
+                </div>
+                <div className="flex gap-1 bg-zinc-800 p-0.5 rounded-lg">
+                  <button onClick={() => { setSettings({ ...settings, theme: 'dark' }); document.body.classList.remove('light-theme'); }} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${(settings.theme || 'dark') === 'dark' ? 'bg-zinc-600 text-white' : 'text-zinc-400'}`}>Dark</button>
+                  <button onClick={() => { setSettings({ ...settings, theme: 'light' }); document.body.classList.add('light-theme'); }} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${settings.theme === 'light' ? 'bg-white text-black' : 'text-zinc-400'}`}>Light</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* TV Display */}
+          <div>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Display (Live Floor)</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Show Company Header</p><p className="text-xs text-zinc-500">Display company name and logo on TV</p></div>
+                <input type="checkbox" checked={settings.tvCompanyHeader !== false} onChange={e => setSettings({ ...settings, tvCompanyHeader: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Show Customer Name</p><p className="text-xs text-zinc-500">Display customer on each worker card</p></div>
+                <input type="checkbox" checked={settings.tvShowCustomer !== false} onChange={e => setSettings({ ...settings, tvShowCustomer: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Show Job ID</p><p className="text-xs text-zinc-500">Display SC Job # on cards</p></div>
+                <input type="checkbox" checked={settings.tvShowJobId !== false} onChange={e => setSettings({ ...settings, tvShowJobId: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Show Progress Bar</p><p className="text-xs text-zinc-500">Time elapsed visual indicator</p></div>
+                <input type="checkbox" checked={settings.tvShowElapsedBar !== false} onChange={e => setSettings({ ...settings, tvShowElapsedBar: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Card Size</p><p className="text-xs text-zinc-500">Worker card size on TV display</p></div>
+                <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
+                  <option value="compact">Compact</option>
+                  <option value="normal">Normal</option>
+                  <option value="large">Large</option>
+                </select>
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Auto-Scroll</p><p className="text-xs text-zinc-500">Scroll through workers when list is long</p></div>
+                <input type="checkbox" checked={settings.tvAutoScroll || false} onChange={e => setSettings({ ...settings, tvAutoScroll: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* ── SCHEDULE ── */}
+      {settingsTab === 'schedule' && (
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-1">Schedule & Automation</h3>
+            <p className="text-sm text-zinc-500">Auto clock-out, lunch breaks, and work schedule rules.</p>
+          </div>
+          <div>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
               <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
                 <div>
@@ -4192,7 +4389,18 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
             </div>
           </div>
 
-          {/* Operations — collapsible */}
+        </div>
+      )}
+
+      {/* ── PRODUCTION ── */}
+      {settingsTab === 'production' && (
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-1">Production</h3>
+            <p className="text-sm text-zinc-500">Operations, clients, and workflow configuration.</p>
+          </div>
+
+          {/* Operations */}
           <div>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
               <button onClick={() => setOpsOpen(!opsOpen)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 rounded-xl transition-colors">
@@ -4250,11 +4458,14 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
         </div>
       )}
 
-      {/* ── TAB: Financial ── */}
+      {/* ── FINANCIAL ── */}
       {settingsTab === 'financial' && (
         <div className="space-y-6">
           <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Shop Rates</p>
+            <h3 className="text-lg font-bold text-white mb-1">Financial</h3>
+            <p className="text-sm text-zinc-500">Shop rates, overhead, and quoting tools.</p>
+          </div>
+          <div>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -4289,21 +4500,81 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
         </div>
       )}
 
-      {/* ── TAB: Tools ── */}
-      {settingsTab === 'tools' && (
+      {/* ── SYSTEM ── */}
+      {settingsTab === 'system' && (
         <div className="space-y-6">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-1">System</h3>
+            <p className="text-sm text-zinc-500">Defaults, notifications, and system information.</p>
+          </div>
+          {/* Worker Defaults */}
+          <div>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Defaults</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+                <div>
+                  <p className="text-sm text-white">Weekly Goal Hours</p>
+                  <p className="text-xs text-zinc-500">Target shown on worker stats page</p>
+                </div>
+                <input type="number" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm w-20 text-center" value={settings.weeklyGoalHours || 40} onChange={e => setSettings({ ...settings, weeklyGoalHours: Number(e.target.value) || 40 })} />
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white">Default Job Priority</p>
+                  <p className="text-xs text-zinc-500">Used when creating new jobs</p>
+                </div>
+                <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.defaultPriority || 'normal'} onChange={e => setSettings({ ...settings, defaultPriority: e.target.value })}>
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Notifications */}
           <div>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Notifications</p>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
               <PushRegistrationPanel addToast={addToast} />
             </div>
           </div>
+
+          {/* System Info */}
+          <div>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">System</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+                <div>
+                  <p className="text-sm text-white">Firebase Status</p>
+                  <p className="text-xs text-zinc-500">Database connection</p>
+                </div>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${DB.isFirebaseConnected().connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{DB.isFirebaseConnected().connected ? 'Connected' : 'Offline'}</span>
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+                <div>
+                  <p className="text-sm text-white">Active Jobs</p>
+                  <p className="text-xs text-zinc-500">Open production orders</p>
+                </div>
+                <span className="text-sm text-zinc-300 font-mono">{(settings.customOperations || []).length} operations configured</span>
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white">Version</p>
+                  <p className="text-xs text-zinc-500">SC Project Tracker</p>
+                </div>
+                <span className="text-xs text-zinc-500 font-mono">v2.0</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Bottom save */}
-      <div className="flex justify-end mt-8 pb-8">
+      {/* Mobile save */}
+      <div className="flex justify-end mt-6 pb-8 md:hidden">
         <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-sm flex items-center gap-2"><Save className="w-4 h-4" /> Save</button>
+      </div>
       </div>
     </div>
   );
@@ -4589,6 +4860,15 @@ export default function App() {
 
   // Auto lunch pause hook
   useAutoLunch(addToast);
+
+  // Theme effect — apply light/dark class to body
+  useEffect(() => {
+    const unsub = DB.subscribeSettings((s) => {
+      if (s.theme === 'light') { document.body.classList.add('light-theme'); }
+      else { document.body.classList.remove('light-theme'); }
+    });
+    return unsub;
+  }, []);
 
   // Auto clock-out sweep: runs on mount + every 60s
   useEffect(() => {

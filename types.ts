@@ -84,6 +84,24 @@ export interface SystemSettings {
   shopRate?: number;           // $/hr billed to workers
   monthlyOverhead?: number;    // Monthly fixed costs (rent, utilities, insurance, etc.)
   monthlyWorkHours?: number;   // Estimated work hours per month (for overhead calc)
+  // Shop Info
+  companyName?: string;        // Shown in header, print travelers, etc.
+  companyLogo?: string;        // URL to logo image
+  companyAddress?: string;     // For print travelers
+  companyPhone?: string;       // For print travelers
+  weeklyGoalHours?: number;    // Weekly target hours per worker (default 40)
+  defaultPriority?: string;    // Default priority for new jobs
+  // Display
+  theme?: 'dark' | 'light';   // UI theme
+  // TV Display customization
+  tvShowCustomer?: boolean;    // Show customer name on TV cards
+  tvShowJobId?: boolean;       // Show Job ID on TV cards
+  tvShowElapsedBar?: boolean;  // Show time progress bar
+  tvShowPausedBadge?: boolean; // Show paused status badge
+  tvCardSize?: 'compact' | 'normal' | 'large'; // Card size on TV
+  tvAutoScroll?: boolean;      // Auto-scroll when many workers
+  tvRefreshRate?: number;      // Seconds between ticker updates
+  tvCompanyHeader?: boolean;   // Show company name/logo at top of TV
 }
 
 export interface ToastMessage {

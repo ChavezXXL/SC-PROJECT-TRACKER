@@ -916,12 +916,11 @@ export async function sweepStaleLogs(): Promise<number> {
     const cutoffMin = parseInt(m[2], 10);
 
     const now = new Date();
+    const nowMs = Date.now();
     const cutoffToday = new Date(
       now.getFullYear(), now.getMonth(), now.getDate(),
       cutoffHour, cutoffMin, 0, 0
     ).getTime();
-
-    if (Date.now() < cutoffToday) return 0;
 
     // Gather active logs
     let activeLogs: TimeLog[] = [];
@@ -939,11 +938,26 @@ export async function sweepStaleLogs(): Promise<number> {
       activeLogs = readLS<TimeLog[]>(LS.logs, []).filter((l) => !l.endTime);
     }
 
-    // Stop every active log that STARTED before today's cutoff
-    // (Night-shift safe: if someone clocks in AFTER the cutoff, leave them alone)
     let stopped = 0;
     for (const log of activeLogs) {
-      if (log.startTime < cutoffToday) {
+      // Calculate the cutoff for the DAY the log started (not just today)
+      const logStart = new Date(log.startTime);
+      const logDayCutoff = new Date(
+        logStart.getFullYear(), logStart.getMonth(), logStart.getDate(),
+        cutoffHour, cutoffMin, 0, 0
+      ).getTime();
+
+      // Stop if: the log started before its day's cutoff AND that cutoff has passed
+      // This catches logs from previous days that were never swept
+      const shouldStop = log.startTime < logDayCutoff && nowMs > logDayCutoff;
+
+      // Also stop any log running for more than 14 hours as a safety net
+      // (handles edge cases like clock-in at 4pm, cutoff at 3:30pm — the log
+      // started AFTER that day's cutoff but has been running way too long)
+      const runningHours = (nowMs - log.startTime) / 3600000;
+      const forcedStop = runningHours > 14;
+
+      if (shouldStop || forcedStop) {
         try {
           await stopTimeLog(log.id);
           stopped++;
