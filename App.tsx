@@ -1540,9 +1540,9 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <div className="space-y-3">
                   {activeJobsWithCosts.map(j => (
                     <div key={j.id} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-1">
                         <span className="text-white font-bold">{j.poNumber} <span className="text-zinc-500 font-normal">{j.partNumber}</span></span>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs">
                           <span className="text-zinc-500">Spent: <span className="text-orange-400 font-mono">${j.cost.toFixed(0)}</span></span>
                           <span className="text-zinc-500">Budget: <span className="text-zinc-300 font-mono">${(j.quoteAmount || 0).toLocaleString()}</span></span>
                           <span className={`font-bold font-mono ${j.remaining >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.remaining >= 0 ? '+' : ''}${j.remaining.toFixed(0)}</span>
@@ -1963,7 +1963,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         const selectedDateStr = calSelectedDay ? new Date(yr, mo, calSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
 
         const cells = [];
-        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[80px] bg-zinc-950/20 rounded" />);
+        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[60px] md:min-h-[80px] bg-zinc-950/20 rounded" />);
         for (let d = 1; d <= daysInMonth; d++) {
           const dayJobs = jobsByDay[d] || [];
           const past = dateNum(`${String(mo+1).padStart(2,'0')}/${String(d).padStart(2,'0')}/${yr}`) < dateNum(todayStr);
@@ -1971,7 +1971,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           const hasOverdue = dayJobs.some(j => j.status !== 'completed') && past;
           cells.push(
             <div key={d} onClick={() => setCalSelectedDay(selected ? null : d)}
-              className={`min-h-[80px] border p-1.5 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
+              className={`min-h-[60px] md:min-h-[80px] border p-1 md:p-1.5 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
               <div className="flex items-center justify-between mb-1">
                 <span className={`text-xs font-bold ${selected ? 'text-blue-300' : isToday(d) ? 'text-blue-400' : past ? 'text-zinc-600' : 'text-zinc-400'}`}>{d}</span>
                 {dayJobs.length > 0 && (
@@ -1997,7 +1997,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         return (
           <div className="animate-fade-in">
             {/* Month Stats Bar */}
-            <div className="grid grid-cols-4 gap-2 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
               <div className="bg-zinc-900/50 border border-white/5 rounded-lg p-2 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase">Pending</p>
                 <p className="text-lg font-black text-zinc-300">{pendingCount}</p>
@@ -2034,7 +2034,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               </div>
             </div>
 
-            <div className="flex gap-4">
+            <div className="flex flex-col md:flex-row gap-4">
               {/* Calendar Grid */}
               <div className={`${calSelectedDay ? 'flex-1' : 'w-full'} transition-all`}>
                 <div className="grid grid-cols-7 gap-1 mb-1">
@@ -2047,7 +2047,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
 
               {/* Day Detail Panel */}
               {calSelectedDay && (
-                <div className="w-80 bg-zinc-900/50 border border-white/5 rounded-xl p-4 animate-fade-in flex-shrink-0 max-h-[520px] overflow-y-auto">
+                <div className="w-full md:w-80 bg-zinc-900/50 border border-white/5 rounded-xl p-4 animate-fade-in flex-shrink-0 max-h-[400px] md:max-h-[520px] overflow-y-auto">
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <p className="text-white font-bold">{selectedDateStr}</p>
@@ -3893,8 +3893,8 @@ const ReportsView = () => {
   const maxOpMins = opBreakdown.length > 0 ? opBreakdown[0][1] : 1;
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="max-w-4xl w-full space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-white">Reports</h2>
           <p className="text-sm text-zinc-500">Worker productivity and shop performance.</p>
@@ -3936,8 +3936,8 @@ const ReportsView = () => {
       {/* Worker Productivity Table */}
       <div>
         <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Productivity</h3>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
               <tr>
                 <th className="text-left p-3">Worker</th>
@@ -4044,8 +4044,8 @@ const ReportsView = () => {
         return (
           <div>
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Customer Breakdown</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
+              <table className="w-full text-sm min-w-[400px]">
                 <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
                   <tr>
                     <th className="text-left p-3">Customer</th>
@@ -4084,8 +4084,8 @@ const ReportsView = () => {
         return (
           <div>
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Job Profitability</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
+              <table className="w-full text-sm min-w-[500px]">
                 <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
                   <tr>
                     <th className="text-left p-3">PO / Part</th>
@@ -4145,7 +4145,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   );
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl w-full">
       {/* Header + Tabs */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-white">Settings</h2>
@@ -4256,7 +4256,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
           <div>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Shop Rates</p>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-4">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] text-zinc-500 block mb-1">Rate ($/hr)</label>
                   <div className="relative"><span className="absolute left-2 top-1.5 text-zinc-600 text-xs">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded py-1.5 pl-5 pr-2 text-white text-sm font-mono" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /></div>
@@ -4271,7 +4271,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 </div>
               </div>
               {trueCost > 0 && (
-                <div className="bg-zinc-800/50 rounded-lg p-3 grid grid-cols-3 text-center text-xs">
+                <div className="bg-zinc-800/50 rounded-lg p-3 grid grid-cols-3 sm:grid-cols-3 text-center text-xs">
                   <div><span className="text-zinc-500">Rate</span><p className="text-white font-bold">${(settings.shopRate || 0).toFixed(2)}/hr</p></div>
                   <div><span className="text-zinc-500">Overhead</span><p className="text-yellow-400 font-bold">${ohRate.toFixed(2)}/hr</p></div>
                   <div><span className="text-zinc-500">True Cost</span><p className="text-emerald-400 font-bold">${trueCost.toFixed(2)}/hr</p></div>
