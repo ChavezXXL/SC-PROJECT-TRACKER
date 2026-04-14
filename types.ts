@@ -102,6 +102,10 @@ export interface SystemSettings {
   tvAutoScroll?: boolean;      // Auto-scroll when many workers
   tvRefreshRate?: number;      // Seconds between ticker updates
   tvCompanyHeader?: boolean;   // Show company name/logo at top of TV
+  tvAnnouncement?: string;     // Custom scrolling message on TV
+  tvAnnouncementColor?: string; // Banner color: 'blue' | 'yellow' | 'red' | 'green'
+  tvShowClock?: boolean;       // Show current time on TV header
+  tvShowStats?: boolean;       // Show stats strip (workers/running/paused)
 }
 
 export interface ToastMessage {

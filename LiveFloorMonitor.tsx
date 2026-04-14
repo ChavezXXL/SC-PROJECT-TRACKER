@@ -437,8 +437,22 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           </div>
         )}
 
+        {/* Live clock */}
+        {settings.tvShowClock !== false && (() => {
+          const [now, setNow] = React.useState(new Date());
+          React.useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
+          return <div className="text-center py-1 text-white/40 text-xs font-mono tracking-widest">{now.toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit',second:'2-digit'})}</div>;
+        })()}
+
+        {/* Announcement banner */}
+        {settings.tvAnnouncement && (
+          <div className={`px-4 py-2 text-center text-sm font-bold ${(settings.tvAnnouncementColor || 'blue') === 'red' ? 'bg-red-500/20 text-red-300' : (settings.tvAnnouncementColor || 'blue') === 'yellow' ? 'bg-yellow-500/20 text-yellow-300' : (settings.tvAnnouncementColor || 'blue') === 'green' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-blue-500/20 text-blue-300'}`}>
+            {settings.tvAnnouncement}
+          </div>
+        )}
+
         {/* Stats strip */}
-        <div className="flex items-center justify-center gap-6 px-4 pb-3">
+        {settings.tvShowStats !== false && <div className="flex items-center justify-center gap-6 px-4 pb-3">
           <div className="flex items-center gap-2">
             <Users className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-white font-bold text-sm">{workerCount}</span>
@@ -460,7 +474,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
               </div>
             </>
           )}
-        </div>
+        </div>}
 
         {/* Auto-lunch banner */}
         {inLunch && (

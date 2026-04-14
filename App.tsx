@@ -4317,25 +4317,79 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
           {/* TV Display */}
           <div>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Display (Live Floor)</p>
+
+            {/* Live Mini Preview */}
+            <div className="bg-black rounded-xl border border-white/10 p-3 mb-4 overflow-hidden">
+              <p className="text-[9px] text-zinc-600 uppercase tracking-widest mb-2">Live Preview</p>
+              <div className="bg-zinc-950 rounded-lg border border-white/5 overflow-hidden" style={{fontSize: '6px'}}>
+                {/* Preview header */}
+                {settings.tvCompanyHeader !== false && (settings.companyName || settings.companyLogo) && (
+                  <div className="flex items-center justify-center gap-1 px-2 py-1 border-b border-white/5">
+                    {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-3 object-contain" />}
+                    <span className="text-white font-bold" style={{fontSize:'7px'}}>{settings.companyName || 'Your Company'}</span>
+                  </div>
+                )}
+                {settings.tvShowClock !== false && (
+                  <div className="text-center py-0.5 text-zinc-500" style={{fontSize:'6px'}}>{new Date().toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'})}</div>
+                )}
+                {/* Preview announcement */}
+                {settings.tvAnnouncement && (
+                  <div className={`px-2 py-0.5 text-center font-bold ${settings.tvAnnouncementColor === 'red' ? 'bg-red-500/20 text-red-400' : settings.tvAnnouncementColor === 'yellow' ? 'bg-yellow-500/20 text-yellow-400' : settings.tvAnnouncementColor === 'green' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`} style={{fontSize:'6px'}}>
+                    {settings.tvAnnouncement}
+                  </div>
+                )}
+                {/* Preview stats */}
+                {settings.tvShowStats !== false && (
+                  <div className="flex justify-center gap-3 px-2 py-1 text-zinc-500" style={{fontSize:'5px'}}>
+                    <span>4 workers</span><span>3 running</span><span>1 paused</span>
+                  </div>
+                )}
+                {/* Preview worker cards */}
+                <div className="px-2 py-1 space-y-1">
+                  {['Jesse P — Deburring', 'Chris F — Stamping', 'Bryan F — Cutting'].map((w, i) => (
+                    <div key={i} className="bg-white/[0.02] border border-white/5 rounded px-1.5 py-1 flex items-center justify-between">
+                      <div>
+                        <span className="text-white font-bold" style={{fontSize:'6px'}}>{w.split(' — ')[0]}</span>
+                        <span className="text-blue-400 ml-1" style={{fontSize:'5px'}}>{w.split(' — ')[1]}</span>
+                      </div>
+                      <span className="text-white font-mono" style={{fontSize:'7px'}}>0{i+1}:2{i}:0{i*3}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* TV Settings Grid */}
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl divide-y divide-white/5">
+              {/* Header section */}
               <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Show Company Header</p><p className="text-xs text-zinc-500">Display company name and logo on TV</p></div>
+                <div><p className="text-sm text-white">Company Header</p><p className="text-xs text-zinc-500">Show name + logo at top</p></div>
                 <input type="checkbox" checked={settings.tvCompanyHeader !== false} onChange={e => setSettings({ ...settings, tvCompanyHeader: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Show Customer Name</p><p className="text-xs text-zinc-500">Display customer on each worker card</p></div>
+                <div><p className="text-sm text-white">Live Clock</p><p className="text-xs text-zinc-500">Current time in header</p></div>
+                <input type="checkbox" checked={settings.tvShowClock !== false} onChange={e => setSettings({ ...settings, tvShowClock: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Stats Bar</p><p className="text-xs text-zinc-500">Worker count, running, paused</p></div>
+                <input type="checkbox" checked={settings.tvShowStats !== false} onChange={e => setSettings({ ...settings, tvShowStats: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+              </div>
+
+              {/* Card content */}
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div><p className="text-sm text-white">Customer Name</p></div>
                 <input type="checkbox" checked={settings.tvShowCustomer !== false} onChange={e => setSettings({ ...settings, tvShowCustomer: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Show Job ID</p><p className="text-xs text-zinc-500">Display SC Job # on cards</p></div>
+                <div><p className="text-sm text-white">Job ID</p></div>
                 <input type="checkbox" checked={settings.tvShowJobId !== false} onChange={e => setSettings({ ...settings, tvShowJobId: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Show Progress Bar</p><p className="text-xs text-zinc-500">Time elapsed visual indicator</p></div>
+                <div><p className="text-sm text-white">Progress Bar</p></div>
                 <input type="checkbox" checked={settings.tvShowElapsedBar !== false} onChange={e => setSettings({ ...settings, tvShowElapsedBar: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Card Size</p><p className="text-xs text-zinc-500">Worker card size on TV display</p></div>
+                <div><p className="text-sm text-white">Card Size</p></div>
                 <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
                   <option value="compact">Compact</option>
                   <option value="normal">Normal</option>
@@ -4343,9 +4397,35 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 </select>
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
-                <div><p className="text-sm text-white">Auto-Scroll</p><p className="text-xs text-zinc-500">Scroll through workers when list is long</p></div>
+                <div><p className="text-sm text-white">Auto-Scroll</p></div>
                 <input type="checkbox" checked={settings.tvAutoScroll || false} onChange={e => setSettings({ ...settings, tvAutoScroll: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
+            </div>
+          </div>
+
+          {/* Announcement Banner */}
+          <div>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">TV Announcement</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-3">
+              <div>
+                <label className="text-[10px] text-zinc-500 block mb-1">Message <span className="text-zinc-600">(leave empty to hide)</span></label>
+                <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.tvAnnouncement || ''} onChange={e => setSettings({ ...settings, tvAnnouncement: e.target.value })} placeholder="e.g. Safety Week — Wear PPE at all times" />
+              </div>
+              <div>
+                <label className="text-[10px] text-zinc-500 block mb-1">Banner Color</label>
+                <div className="flex gap-2">
+                  {[{id:'blue',label:'Blue',cls:'bg-blue-500'},{id:'yellow',label:'Yellow',cls:'bg-yellow-500'},{id:'red',label:'Red',cls:'bg-red-500'},{id:'green',label:'Green',cls:'bg-emerald-500'}].map(c => (
+                    <button key={c.id} onClick={() => setSettings({ ...settings, tvAnnouncementColor: c.id })}
+                      className={`w-8 h-8 rounded-lg ${c.cls} transition-all ${(settings.tvAnnouncementColor || 'blue') === c.id ? 'ring-2 ring-white ring-offset-2 ring-offset-zinc-900 scale-110' : 'opacity-50 hover:opacity-80'}`}
+                      title={c.label} />
+                  ))}
+                </div>
+              </div>
+              {settings.tvAnnouncement && (
+                <div className={`rounded-lg px-3 py-2 text-center text-sm font-bold ${(settings.tvAnnouncementColor || 'blue') === 'red' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : (settings.tvAnnouncementColor || 'blue') === 'yellow' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : (settings.tvAnnouncementColor || 'blue') === 'green' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'}`}>
+                  {settings.tvAnnouncement}
+                </div>
+              )}
             </div>
           </div>
 
