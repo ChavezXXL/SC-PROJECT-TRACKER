@@ -46,52 +46,73 @@
                   --scrollbar-thumb: #3f3f46;
                 }
                 .light-theme {
-                  --bg-body: #f4f4f5;
-                  --bg-surface: rgba(255,255,255,0.8);
+                  --bg-body: #f8f9fa;
+                  --bg-surface: #ffffff;
                   --bg-elevated: #ffffff;
-                  --bg-input: #ffffff;
-                  --text-primary: #18181b;
-                  --text-secondary: #52525b;
-                  --text-muted: #a1a1aa;
-                  --border-color: rgba(0,0,0,0.08);
-                  --border-hover: rgba(0,0,0,0.15);
-                  --scrollbar-track: #e4e4e7;
-                  --scrollbar-thumb: #a1a1aa;
+                  --bg-input: #f1f3f5;
+                  --text-primary: #1a1a2e;
+                  --text-secondary: #495057;
+                  --text-muted: #868e96;
+                  --border-color: #e9ecef;
+                  --border-hover: #dee2e6;
+                  --scrollbar-track: #f1f3f5;
+                  --scrollbar-thumb: #ced4da;
                 }
-                /* Light mode overrides for Tailwind classes */
+                /* Light mode — comprehensive overrides */
                 .light-theme { background-color: var(--bg-body) !important; color: var(--text-primary) !important; }
+                /* Backgrounds */
                 .light-theme .bg-zinc-950 { background-color: var(--bg-body) !important; }
-                .light-theme .bg-zinc-900\/50, .light-theme .bg-zinc-900\/30 { background-color: var(--bg-surface) !important; }
+                .light-theme .bg-zinc-900\/50, .light-theme .bg-zinc-900\/30 { background-color: var(--bg-surface) !important; border: 1px solid var(--border-color) !important; }
                 .light-theme .bg-zinc-900 { background-color: var(--bg-elevated) !important; }
-                .light-theme .bg-zinc-950\/50, .light-theme .bg-zinc-950\/40, .light-theme .bg-zinc-950\/30, .light-theme .bg-zinc-950\/20 { background-color: rgba(244,244,245,0.5) !important; }
-                .light-theme .bg-zinc-800 { background-color: #e4e4e7 !important; }
-                .light-theme .bg-zinc-800\/50 { background-color: rgba(228,228,231,0.5) !important; }
-                .light-theme .bg-black\/40, .light-theme .bg-black\/20 { background-color: rgba(244,244,245,0.6) !important; }
-                .light-theme .text-zinc-100, .light-theme .text-white { color: #18181b !important; }
-                .light-theme .text-zinc-300 { color: #3f3f46 !important; }
-                .light-theme .text-zinc-400 { color: #52525b !important; }
-                .light-theme .text-zinc-500 { color: #71717a !important; }
-                .light-theme .text-zinc-600 { color: #a1a1aa !important; }
-                .light-theme .border-white\/5, .light-theme .border-white\/10 { border-color: var(--border-color) !important; }
+                .light-theme .bg-zinc-950\/50, .light-theme .bg-zinc-950\/40, .light-theme .bg-zinc-950\/30, .light-theme .bg-zinc-950\/20, .light-theme .bg-zinc-950\/90 { background-color: var(--bg-body) !important; }
+                .light-theme .bg-zinc-800 { background-color: #e9ecef !important; }
+                .light-theme .bg-zinc-800\/50 { background-color: #f1f3f5 !important; }
+                .light-theme .bg-black\/40, .light-theme .bg-black\/20, .light-theme .bg-black\/80 { background-color: rgba(0,0,0,0.5) !important; }
+                .light-theme .bg-white\/5, .light-theme .bg-white\/\[0\.02\] { background-color: rgba(0,0,0,0.02) !important; }
+                .light-theme .bg-white\/10 { background-color: rgba(0,0,0,0.04) !important; }
+                /* Text */
+                .light-theme .text-zinc-100 { color: #1a1a2e !important; }
+                .light-theme .text-white { color: #1a1a2e !important; }
+                .light-theme .text-zinc-200 { color: #343a40 !important; }
+                .light-theme .text-zinc-300 { color: #495057 !important; }
+                .light-theme .text-zinc-400 { color: #6c757d !important; }
+                .light-theme .text-zinc-500 { color: #868e96 !important; }
+                .light-theme .text-zinc-600 { color: #adb5bd !important; }
+                .light-theme .text-white\/30, .light-theme .text-white\/40, .light-theme .text-white\/60 { color: #868e96 !important; }
+                /* Borders */
+                .light-theme .border-white\/5, .light-theme .border-white\/10, .light-theme .border-white\/20 { border-color: var(--border-color) !important; }
                 .light-theme .divide-white\/5 > * + * { border-color: var(--border-color) !important; }
-                .light-theme .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,0.03) !important; }
-                .light-theme .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.06) !important; }
-                .light-theme .bg-white\/5 { background-color: rgba(0,0,0,0.03) !important; }
-                .light-theme .bg-white\/10 { background-color: rgba(0,0,0,0.06) !important; }
-                .light-theme .shadow-lg { box-shadow: 0 10px 25px rgba(0,0,0,0.08) !important; }
-                .light-theme .shadow-2xl { box-shadow: 0 20px 50px rgba(0,0,0,0.12) !important; }
-                /* Keep accent colors visible in light mode */
+                .light-theme .border-r { border-color: var(--border-color) !important; }
+                .light-theme .border-b { border-color: var(--border-color) !important; }
+                /* Hover states */
+                .light-theme .hover\:bg-white\/5:hover, .light-theme .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.04) !important; }
+                .light-theme .hover\:bg-zinc-800:hover { background-color: #e9ecef !important; }
+                .light-theme .hover\:text-white:hover { color: #1a1a2e !important; }
+                /* Shadows */
+                .light-theme .shadow-lg { box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important; }
+                .light-theme .shadow-2xl { box-shadow: 0 8px 30px rgba(0,0,0,0.12) !important; }
+                /* Accent colors — darker for light backgrounds */
                 .light-theme .text-emerald-400 { color: #059669 !important; }
-                .light-theme .text-blue-400, .light-theme .text-blue-500 { color: #2563eb !important; }
+                .light-theme .text-blue-400 { color: #2563eb !important; }
+                .light-theme .text-blue-500 { color: #1d4ed8 !important; }
                 .light-theme .text-red-400 { color: #dc2626 !important; }
+                .light-theme .text-red-500 { color: #b91c1c !important; }
                 .light-theme .text-orange-400 { color: #ea580c !important; }
                 .light-theme .text-yellow-400 { color: #ca8a04 !important; }
-                .light-theme .text-purple-400 { color: #9333ea !important; }
+                .light-theme .text-purple-400 { color: #7c3aed !important; }
                 .light-theme .text-cyan-400 { color: #0891b2 !important; }
                 .light-theme .text-green-400 { color: #16a34a !important; }
-                /* Inputs in light mode */
+                /* Inputs */
                 .light-theme input, .light-theme select, .light-theme textarea { background-color: var(--bg-input) !important; color: var(--text-primary) !important; border-color: var(--border-hover) !important; }
-                .light-theme .bg-zinc-950 input, .light-theme .bg-zinc-900 input { background-color: #f4f4f5 !important; }
+                /* Sidebar */
+                .light-theme aside { background-color: #ffffff !important; border-color: var(--border-color) !important; }
+                /* Cards with rounded borders */
+                .light-theme .rounded-2xl, .light-theme .rounded-xl, .light-theme .rounded-3xl { box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+                /* Scrollbar */
+                .light-theme ::-webkit-scrollbar-track { background: var(--scrollbar-track) !important; }
+                .light-theme ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb) !important; }
+                /* Active sidebar button */
+                .light-theme .bg-white\/10 { background-color: #e9ecef !important; }
 
                 body { font-family: 'Inter', sans-serif; background-color: var(--bg-body); color: var(--text-primary); -webkit-tap-highlight-color: transparent; }
                 .mono { font-family: 'JetBrains Mono', monospace; }
