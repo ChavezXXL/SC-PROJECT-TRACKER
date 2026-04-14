@@ -751,7 +751,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           <div className="grid grid-cols-2 gap-2">
             {operations.map(op => (
               <button key={op} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
-                className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-2 px-3 rounded-lg text-sm text-zinc-300 transition-colors font-medium">
+                className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-4 rounded-xl text-sm text-zinc-300 transition-colors font-bold active:scale-95">
                 {op}
               </button>
             ))}
@@ -1397,11 +1397,11 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Live Activity</p><h3 className="text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-xs text-blue-400 mt-1">Jobs running now</p></div>
+          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Live Activity</p><h3 className="text-2xl sm:text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-xs text-blue-400 mt-1">Jobs running now</p></div>
           <Activity className={`w-10 h-10 text-blue-500 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Open Jobs</p><h3 className="text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-xs text-zinc-500 mt-1">Total open jobs</p></div>
+          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Open Jobs</p><h3 className="text-2xl sm:text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-xs text-zinc-500 mt-1">Total open jobs</p></div>
           <Briefcase className="text-zinc-600 w-10 h-10" />
         </div>
         <div className={`p-6 rounded-2xl flex justify-between items-center border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
@@ -1409,11 +1409,11 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <AlertTriangle className={`w-10 h-10 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p><h3 className="text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-xs text-zinc-500 mt-1">Active Operators</p></div>
+          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p><h3 className="text-2xl sm:text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-xs text-zinc-500 mt-1">Active Operators</p></div>
           <Users className="text-emerald-500 w-10 h-10" />
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Today</p><h3 className="text-3xl font-black text-white">{todayHrsDisplay}</h3><p className="text-xs text-zinc-500 mt-1">Hours logged</p></div>
+          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Today</p><h3 className="text-2xl sm:text-3xl font-black text-white">{todayHrsDisplay}</h3><p className="text-xs text-zinc-500 mt-1">Hours logged</p></div>
           <Clock className="text-blue-400 w-10 h-10 opacity-60" />
         </div>
       </div>
@@ -1491,12 +1491,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Monthly Revenue</p>
-                <p className="text-2xl font-black text-emerald-400">${monthTotals.revenue.toLocaleString()}</p>
+                <p className="text-xl sm:text-2xl font-black text-emerald-400">${monthTotals.revenue.toLocaleString()}</p>
                 <p className="text-[10px] text-zinc-600">{monthTotals.jobs} jobs completed</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Monthly Costs</p>
-                <p className="text-2xl font-black text-orange-400">${monthTotals.cost.toFixed(0)}</p>
+                <p className="text-xl sm:text-2xl font-black text-orange-400">${monthTotals.cost.toFixed(0)}</p>
                 <p className="text-[10px] text-zinc-600">{monthTotals.hrs.toFixed(0)}h labor + overhead</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
@@ -1508,7 +1508,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">$/Hour Earned</p>
-                <p className="text-2xl font-black text-blue-400">${avgRevenuePerHr.toFixed(0)}</p>
+                <p className="text-xl sm:text-2xl font-black text-blue-400">${avgRevenuePerHr.toFixed(0)}</p>
                 <p className="text-[10px] text-zinc-600">Cost: ${avgCostPerHr.toFixed(0)}/hr</p>
               </div>
             </div>
@@ -1922,9 +1922,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
 
       {activeTab === 'completed' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in">
-          <div className="bg-zinc-900/50 border border-emerald-500/20 p-4 rounded-2xl"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wider mb-1">Completed This Week</p><p className="text-3xl font-black text-white">{stats.week}</p></div>
-          <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Month</p><p className="text-3xl font-black text-white">{stats.month}</p></div>
-          <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Year</p><p className="text-3xl font-black text-white">{stats.year}</p></div>
+          <div className="bg-zinc-900/50 border border-emerald-500/20 p-4 rounded-2xl"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wider mb-1">Completed This Week</p><p className="text-2xl sm:text-3xl font-black text-white">{stats.week}</p></div>
+          <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Month</p><p className="text-2xl sm:text-3xl font-black text-white">{stats.month}</p></div>
+          <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-2xl"><p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Completed This Year</p><p className="text-2xl sm:text-3xl font-black text-white">{stats.year}</p></div>
         </div>
       )}
 
@@ -3819,10 +3819,10 @@ const QuoteCalculator = ({ settings }: { settings: SystemSettings }) => {
           <div className="bg-gradient-to-br from-emerald-500/10 to-blue-500/10 border border-emerald-500/20 rounded-2xl p-6">
             <div className="text-center space-y-1 mb-4">
               <p className="text-xs text-zinc-400 uppercase font-bold tracking-wider">Recommended Quote ({markup}% markup)</p>
-              <p className="text-5xl font-black text-emerald-400">${priceAtMarkup.toFixed(0)}</p>
+              <p className="text-3xl sm:text-5xl font-black text-emerald-400">${priceAtMarkup.toFixed(0)}</p>
               <p className="text-lg font-bold text-zinc-300">${pricePerPart.toFixed(2)} per part</p>
             </div>
-            <div className="grid grid-cols-3 gap-4 text-center pt-4 border-t border-white/10">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center pt-4 border-t border-white/10">
               <div>
                 <p className="text-xs text-zinc-500">Your Cost</p>
                 <p className="text-lg font-bold text-red-400">${totalCost.toFixed(0)}</p>
@@ -3979,23 +3979,23 @@ const ReportsView = () => {
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Total Hours</p>
-                <p className="text-2xl font-black text-white">{totalHrs.toFixed(1)}</p>
+                <p className="text-xl sm:text-2xl font-black text-white">{totalHrs.toFixed(1)}</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Sessions</p>
-                <p className="text-2xl font-black text-white">{totalSessions}</p>
+                <p className="text-xl sm:text-2xl font-black text-white">{totalSessions}</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Jobs Done</p>
-                <p className="text-2xl font-black text-emerald-400">{completedJobs.length}</p>
+                <p className="text-xl sm:text-2xl font-black text-emerald-400">{completedJobs.length}</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Revenue</p>
-                <p className="text-2xl font-black text-green-400">${totalRevenue.toLocaleString()}</p>
+                <p className="text-xl sm:text-2xl font-black text-green-400">${totalRevenue.toLocaleString()}</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Labor Cost</p>
-                <p className="text-2xl font-black text-orange-400">${Math.round(totalCost).toLocaleString()}</p>
+                <p className="text-xl sm:text-2xl font-black text-orange-400">${Math.round(totalCost).toLocaleString()}</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Margin</p>
@@ -4782,7 +4782,7 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center">
           <p className="text-2xl font-bold text-blue-400">{fmtHours(weekHrsCalc)}</p>
           <p className="text-xs text-zinc-500 mt-1">This Week</p>
