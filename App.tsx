@@ -4403,10 +4403,15 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'documents' | 'tv' | 'system'>('profile');
   const [opsOpen, setOpsOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
+  // Live data for TV preview
+  const [tvActiveLogs, setTvActiveLogs] = useState<TimeLog[]>([]);
+  const [tvJobs, setTvJobs] = useState<Job[]>([]);
 
   useEffect(() => {
     const unsub = DB.subscribeSettings((s) => setSettings(s));
-    return unsub;
+    const unsub2 = DB.subscribeActiveLogs(setTvActiveLogs);
+    const unsub3 = DB.subscribeJobs(setTvJobs);
+    return () => { unsub(); unsub2(); unsub3(); };
   }, []);
 
   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
@@ -5089,7 +5094,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
             </details>
           </div>
 
-          {/* RIGHT: Live TV Preview */}
+          {/* RIGHT: REAL Live TV Preview */}
           <div className="flex-1 hidden lg:block min-w-0">
             <div className="sticky top-4 bg-black rounded-2xl shadow-2xl overflow-hidden border border-white/10">
               <div className="bg-zinc-950 p-6" style={{ minHeight: 400 }}>
@@ -5104,44 +5109,64 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 {settings.tvShowClock !== false && (
                   <div className="text-center text-zinc-500 text-xs font-mono mb-2">{new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', second:'2-digit'})}</div>
                 )}
-                {/* Stats */}
-                {settings.tvShowStats !== false && (
-                  <div className="flex justify-center gap-6 text-[10px] text-zinc-500 mb-4">
-                    <span>👥 8 workers</span><span>⚡ 6 running</span><span>⏸ 2 paused</span>
-                  </div>
-                )}
-                {/* Worker Cards */}
-                <div className="space-y-2">
-                  {[
-                    { name: 'Alex M', op: 'Deburring', time: '01:45:22', po: 'PO-78432', part: 'BRK-1200', customer: 'Acme Mfg', color: 'blue' },
-                    { name: 'Sarah K', op: 'Polishing', time: '02:12:08', po: 'PO-91100', part: 'SHF-400', customer: 'Delta Corp', color: 'emerald' },
-                    { name: 'Mike R', op: 'Stamping', time: '00:33:41', po: 'PO-55021', part: 'PLT-880', customer: 'Nova Inc', color: 'purple' },
-                  ].map((w, i) => (
-                    <div key={i} className={`bg-white/[0.03] border border-white/5 rounded-xl p-3 ${settings.tvCardSize === 'compact' ? 'py-2' : settings.tvCardSize === 'large' ? 'p-4' : ''}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-8 h-8 rounded-full bg-${w.color}-500/20 flex items-center justify-center text-${w.color}-400 text-xs font-bold`}>{w.name.charAt(0)}</div>
-                          <div>
-                            <span className="text-white font-bold text-sm">{w.name}</span>
-                            <span className={`text-${w.color}-400 text-xs ml-2`}>{w.op}</span>
-                          </div>
-                        </div>
-                        <span className="text-white font-mono font-bold text-lg">{w.time}</span>
-                      </div>
-                      {settings.tvShowElapsedBar !== false && (
-                        <div className="h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
-                          <div className={`h-full bg-${w.color}-500 rounded-full`} style={{ width: `${30 + i * 25}%` }} />
-                        </div>
-                      )}
-                      {(settings.tvShowCustomer !== false || settings.tvShowJobId !== false) && (
-                        <div className="flex gap-3 mt-2 text-[10px] text-zinc-500">
-                          {settings.tvShowJobId !== false && <span>PO: {w.po}</span>}
-                          <span>Part: {w.part}</span>
-                          {settings.tvShowCustomer !== false && <span className="text-blue-400">{w.customer}</span>}
-                        </div>
-                      )}
+                {/* Real Stats */}
+                {settings.tvShowStats !== false && (() => {
+                  const running = tvActiveLogs.filter(l => l.status !== 'paused').length;
+                  const paused = tvActiveLogs.filter(l => l.status === 'paused').length;
+                  const workers = new Set(tvActiveLogs.map(l => l.userId)).size;
+                  return (
+                    <div className="flex justify-center gap-6 text-[10px] text-zinc-500 mb-4">
+                      <span>👥 {workers} worker{workers !== 1 ? 's' : ''}</span>
+                      <span>⚡ {running} running</span>
+                      <span>⏸ {paused} paused</span>
                     </div>
-                  ))}
+                  );
+                })()}
+                {/* Real Worker Cards */}
+                <div className="space-y-2">
+                  {tvActiveLogs.length === 0 && (
+                    <div className="text-center text-zinc-600 py-8">
+                      <p className="text-sm">No active workers</p>
+                      <p className="text-[10px] text-zinc-700 mt-1">Floor is quiet — workers will appear here when timers start</p>
+                    </div>
+                  )}
+                  {tvActiveLogs.slice(0, 6).map((log) => {
+                    const job = tvJobs.find(j => j.id === log.jobId);
+                    const elapsed = DB.getWorkingElapsedMs(log);
+                    const secs = Math.floor(elapsed / 1000);
+                    const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+                    const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+                    const s = String(secs % 60).padStart(2, '0');
+                    const isPaused = log.status === 'paused';
+                    const pct = Math.min(100, secs / 36); // rough progress
+                    return (
+                      <div key={log.id} className={`bg-white/[0.03] border border-white/5 rounded-xl ${settings.tvCardSize === 'compact' ? 'p-2' : settings.tvCardSize === 'large' ? 'p-4' : 'p-3'} ${isPaused ? 'opacity-60' : ''}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 text-xs font-bold shrink-0">{log.userName.charAt(0)}</div>
+                            <div className="min-w-0">
+                              <span className="text-white font-bold text-sm">{log.userName}</span>
+                              <span className="text-blue-400 text-xs ml-2">{log.operation}</span>
+                              {isPaused && <span className="text-yellow-400 text-[9px] ml-1">PAUSED</span>}
+                            </div>
+                          </div>
+                          <span className="text-white font-mono font-bold text-lg shrink-0">{h}:{m}:{s}</span>
+                        </div>
+                        {settings.tvShowElapsedBar !== false && (
+                          <div className="h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+                          </div>
+                        )}
+                        {(settings.tvShowCustomer !== false || settings.tvShowJobId !== false) && (
+                          <div className="flex gap-3 mt-2 text-[10px] text-zinc-500 flex-wrap">
+                            {settings.tvShowJobId !== false && job && <span>PO: {job.poNumber}</span>}
+                            {job?.partNumber && <span>Part: {job.partNumber}</span>}
+                            {settings.tvShowCustomer !== false && job?.customer && <span className="text-blue-400">{job.customer}</span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
