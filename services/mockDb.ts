@@ -313,6 +313,39 @@ export async function reopenJob(id: string) {
   }
 }
 
+// Advance a job to the next workflow stage
+export async function advanceJobStage(id: string, stageId: string, userId: string, userName: string, isComplete?: boolean) {
+  const updates: any = {
+    currentStage: stageId,
+    stageHistory: arrayUnion({ stageId, timestamp: Date.now(), userId, userName }),
+  };
+  if (isComplete) {
+    updates.status = 'completed';
+    updates.completedAt = Date.now();
+  } else if (stageId === 'in-progress') {
+    updates.status = 'in-progress';
+  }
+  if (stageId === 'shipped') {
+    updates.shippedAt = Date.now();
+  }
+  if (dbInstance) {
+    try {
+      await updateDoc(doc(dbInstance, COL.jobs, id), updates);
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === id);
+  if (idx >= 0) {
+    const j = jobs[idx] as any;
+    const history = j.stageHistory || [];
+    history.push({ stageId, timestamp: Date.now(), userId, userName });
+    jobs[idx] = { ...j, currentStage: stageId, stageHistory: history, ...(isComplete ? { status: 'completed', completedAt: Date.now() } : {}), ...(stageId === 'shipped' ? { shippedAt: Date.now() } : {}), ...(stageId === 'in-progress' ? { status: 'in-progress' } : {}) } as Job;
+    writeLS(LS.jobs, jobs);
+  }
+}
+
 // --------------------
 // LOGS
 // --------------------
@@ -1035,10 +1068,11 @@ export async function deleteQuote(id: string) {
   writeLS(LS.quotes, readLS<Quote[]>(LS.quotes, []).filter(q => q.id !== id));
 }
 
-export function getNextQuoteNumber(quotes: Quote[]): string {
+export function getNextQuoteNumber(quotes: Quote[], prefix?: string): string {
+  const pfx = prefix || 'Q-';
   const nums = quotes.map(q => parseInt(q.quoteNumber?.replace(/\D/g, '') || '0', 10)).filter(n => !isNaN(n));
   const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-  return `Q-${String(next).padStart(3, '0')}`;
+  return `${pfx}${String(next).padStart(3, '0')}`;
 }
 
 // --------------------

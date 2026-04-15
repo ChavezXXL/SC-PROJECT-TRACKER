@@ -96,7 +96,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     setBillTo(emptyContact());
     setShipTo(emptyContact());
     setShipToDifferent(false);
-    const nextNum = DB.getNextQuoteNumber(quotes);
+    const nextNum = DB.getNextQuoteNumber(quotes, settings.quotePrefix);
     setForm({ jobDescription: '', notes: '', terms: settings.defaultPaymentTerms || 'Net 30', validUntil: '', markupPct: 25, discountPct: 0, taxRate: settings.taxRate || 0, depositRequired: false, depositPct: 50, quoteNumber: nextNum });
     const pf: Record<string, string> = {};
     (settings.customProjectFields || ['Purchase Order', 'Part No.']).forEach(f => pf[f] = '');
@@ -146,7 +146,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     const validItems = items.filter(i => i.description.trim()).map(i => ({ ...i, total: i.qty * i.unitPrice }));
     const quote: Quote = {
       id: editing?.id || `QT-${Date.now()}`,
-      quoteNumber: form.quoteNumber || editing?.quoteNumber || DB.getNextQuoteNumber(quotes),
+      quoteNumber: form.quoteNumber || editing?.quoteNumber || DB.getNextQuoteNumber(quotes, settings.quotePrefix),
       customer: billTo.name,
       billTo,
       shipTo: shipToDifferent ? shipTo : undefined,
@@ -255,7 +255,7 @@ ${settings.companyPhone || ''}`.trim()
   };
 
   const duplicateQuote = async (q: Quote) => {
-    const dup: Quote = { ...q, id: `QT-${Date.now()}`, quoteNumber: DB.getNextQuoteNumber(quotes), status: 'draft', createdAt: Date.now(), sentAt: undefined, acceptedAt: undefined, declinedAt: undefined, linkedJobId: undefined };
+    const dup: Quote = { ...q, id: `QT-${Date.now()}`, quoteNumber: DB.getNextQuoteNumber(quotes, settings.quotePrefix), status: 'draft', createdAt: Date.now(), sentAt: undefined, acceptedAt: undefined, declinedAt: undefined, linkedJobId: undefined };
     await DB.saveQuote(dup);
     addToast('success', `Duplicated as ${dup.quoteNumber}`);
     setActionMenuId(null);

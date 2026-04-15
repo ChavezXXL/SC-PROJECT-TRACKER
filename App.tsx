@@ -515,8 +515,54 @@ const PrintStyles = () => (
   `}</style>
 );
 
-// --- STATUS BADGE ---
-const StatusBadge = ({ status }: { status: string }) => {
+// --- DEFAULT WORKFLOW STAGES ---
+const DEFAULT_STAGES: JobStage[] = [
+  { id: 'pending', label: 'Pending', color: '#71717a', order: 0 },
+  { id: 'in-progress', label: 'In Progress', color: '#3b82f6', order: 1 },
+  { id: 'qc', label: 'QC', color: '#f59e0b', order: 2 },
+  { id: 'packing', label: 'Packing', color: '#8b5cf6', order: 3 },
+  { id: 'shipped', label: 'Shipped', color: '#06b6d4', order: 4 },
+  { id: 'completed', label: 'Completed', color: '#10b981', order: 5, isComplete: true },
+];
+
+function getStages(settings: SystemSettings): JobStage[] {
+  return (settings.jobStages && settings.jobStages.length > 0)
+    ? [...settings.jobStages].sort((a, b) => a.order - b.order)
+    : DEFAULT_STAGES;
+}
+
+function getJobStage(job: Job, stages: JobStage[]): JobStage {
+  if (job.currentStage) {
+    const found = stages.find(s => s.id === job.currentStage);
+    if (found) return found;
+  }
+  // Legacy fallback: map old status to stage
+  const legacyMap: Record<string, string> = { 'pending': 'pending', 'in-progress': 'in-progress', 'completed': 'completed', 'hold': 'pending' };
+  const mapped = legacyMap[job.status] || 'pending';
+  return stages.find(s => s.id === mapped) || stages[0];
+}
+
+function getNextStage(job: Job, stages: JobStage[]): JobStage | null {
+  const current = getJobStage(job, stages);
+  const idx = stages.findIndex(s => s.id === current.id);
+  if (idx < 0 || idx >= stages.length - 1) return null;
+  return stages[idx + 1];
+}
+
+// --- STATUS BADGE (stage-aware) ---
+const StatusBadge = ({ status, job, stages }: { status: string; job?: Job; stages?: JobStage[] }) => {
+  // If we have a job and stages, use the stage system
+  if (job && stages && stages.length > 0) {
+    const stage = getJobStage(job, stages);
+    return (
+      <span className="px-2.5 py-1 rounded-full text-[10px] uppercase font-bold tracking-wide border flex w-fit items-center gap-1.5 whitespace-nowrap"
+        style={{ background: `${stage.color}15`, color: stage.color, borderColor: `${stage.color}30` }}>
+        {stage.id === 'in-progress' && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: stage.color }} />}
+        {stage.label}
+      </span>
+    );
+  }
+  // Legacy fallback
   const styles: Record<string, string> = {
     'pending': 'bg-zinc-800 text-zinc-400 border-white/5',
     'in-progress': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
@@ -1947,6 +1993,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       quoteAmount: editingJob.quoteAmount || undefined,
       specialInstructions: editingJob.specialInstructions || '',
       partImage: editingJob.partImage || undefined,
+      // Shipping
+      shippingMethod: editingJob.shippingMethod || undefined,
+      trackingNumber: editingJob.trackingNumber || undefined,
+      shippingNotes: editingJob.shippingNotes || undefined,
+      shippedAt: editingJob.shippedAt || undefined,
+      // Stage
+      currentStage: editingJob.currentStage || undefined,
+      stageHistory: editingJob.stageHistory || undefined,
     };
     try {
       const isNew = !editingJob.id;
@@ -2363,16 +2417,35 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                   </td>
                   <td className="p-4 font-mono text-zinc-300">{j.quantity}</td>
                   <td className="p-4"><PriorityBadge priority={j.priority} /></td>
-                  <td className="p-4"><StatusBadge status={j.status} /></td>
+                  <td className="p-4"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
                   <td className={`p-4 font-mono whitespace-nowrap font-bold ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
                     {fmt(j.dueDate)}
                   </td>
                   <td className="p-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
                       <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" /></button>
-                      {activeTab === 'active' && (
-                        <button onClick={() => confirm({ title: "Complete Job", message: "Mark as finished?", onConfirm: () => DB.completeJob(j.id) })} className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-colors" title="Complete Job"><CheckCircle className="w-4 h-4" /></button>
-                      )}
+                      {activeTab === 'active' && (() => {
+                        const stages = getStages(shopSettings);
+                        const nextStage = getNextStage(j, stages);
+                        if (nextStage) {
+                          return (
+                            <button onClick={() => confirm({
+                              title: `Advance to ${nextStage.label}`,
+                              message: `Move this job to "${nextStage.label}"?`,
+                              onConfirm: async () => {
+                                await DB.advanceJobStage(j.id, nextStage.id, user.id, user.name, nextStage.isComplete);
+                                addToast('success', `Job advanced to ${nextStage.label}`);
+                              }
+                            })}
+                              className="p-2 rounded-lg transition-colors hover:text-white"
+                              style={{ background: `${nextStage.color}15`, color: nextStage.color }}
+                              title={`Advance to ${nextStage.label}`}>
+                              <ArrowRight className="w-4 h-4" />
+                            </button>
+                          );
+                        }
+                        return null;
+                      })()}
                       {j.dueDate && (
                         <button onClick={() => {
                           const url = getCalendarUrl(j);
@@ -2406,6 +2479,44 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
             </div>
             <div className="p-8 overflow-y-auto space-y-8">
+              {/* ── Stage Pipeline (for existing jobs) ── */}
+              {editingJob.id && (() => {
+                const stages = getStages(shopSettings);
+                const currentStage = getJobStage(editingJob as Job, stages);
+                const currentIdx = stages.findIndex(s => s.id === currentStage.id);
+                const nextStage = getNextStage(editingJob as Job, stages);
+                return (
+                  <div className="bg-zinc-800/30 rounded-xl p-4 border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Job Progress</p>
+                      {nextStage && (
+                        <button onClick={async () => {
+                          await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, nextStage.isComplete);
+                          setEditingJob({ ...editingJob, currentStage: nextStage.id });
+                          addToast('success', `Advanced to ${nextStage.label}`);
+                        }} className="text-xs font-bold px-3 py-1.5 rounded-lg transition-colors hover:brightness-110" style={{ background: `${nextStage.color}20`, color: nextStage.color }}>
+                          Advance to {nextStage.label} →
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {stages.map((stage, i) => {
+                        const isActive = i <= currentIdx;
+                        const isCurrent = i === currentIdx;
+                        return (
+                          <div key={stage.id} className="flex-1 flex flex-col items-center gap-1">
+                            <div className={`h-2.5 w-full rounded-full transition-all ${isCurrent ? 'ring-1 ring-white/30' : ''}`}
+                              style={{ background: isActive ? stage.color : '#27272a', opacity: isActive ? 1 : 0.3 }} />
+                            <span className={`text-[9px] font-bold transition-colors ${isCurrent ? 'text-white' : isActive ? '' : 'text-zinc-600'}`}
+                              style={isActive ? { color: stage.color } : {}}>{stage.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="space-y-5">
                 <h4 className="text-xs font-black text-blue-400 uppercase tracking-[0.2em] border-b border-blue-500/20 pb-2 flex items-center gap-2">
                   <span className="bg-blue-500/10 text-blue-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">1</span>
@@ -2506,10 +2617,49 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 </div>
               </div>
 
-              {/* Part Photo */}
+              {/* Shipping */}
+              {editingJob.id && (
               <div className="space-y-5">
                 <h4 className="text-xs font-black text-cyan-400 uppercase tracking-[0.2em] border-b border-cyan-500/20 pb-2 flex items-center gap-2">
                   <span className="bg-cyan-500/10 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">5</span>
+                  Shipping <span className="text-zinc-600 normal-case font-normal text-[10px]">(optional)</span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Shipping Method</label>
+                    <select className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-cyan-500/50" value={editingJob.shippingMethod || ''} onChange={e => setEditingJob({ ...editingJob, shippingMethod: e.target.value })}>
+                      <option value="">— Select —</option>
+                      <option value="pickup">Customer Pickup</option>
+                      <option value="standard">Standard Shipping</option>
+                      <option value="express">Express</option>
+                      <option value="fedex">FedEx</option>
+                      <option value="ups">UPS</option>
+                      <option value="freight">Freight / LTL</option>
+                      <option value="hand-deliver">Hand Deliver</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Tracking Number</label>
+                    <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-cyan-500/50 font-mono" value={editingJob.trackingNumber || ''} onChange={e => setEditingJob({ ...editingJob, trackingNumber: e.target.value })} placeholder="Enter tracking number" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Shipping Notes</label>
+                  <textarea className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-cyan-500/50 min-h-[60px] text-sm" value={editingJob.shippingNotes || ''} onChange={e => setEditingJob({ ...editingJob, shippingNotes: e.target.value })} placeholder="Special delivery instructions, address notes, etc." />
+                </div>
+                {editingJob.shippingMethod && (
+                  <div className="flex gap-3">
+                    <button onClick={() => { printPackingSlipPDF(editingJob as Job, shopSettings); }} className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Packing Slip</button>
+                    <button onClick={() => { printJobTravelerPDF(editingJob as Job, shopSettings); }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
+                  </div>
+                )}
+              </div>
+              )}
+
+              {/* Part Photo */}
+              <div className="space-y-5">
+                <h4 className="text-xs font-black text-cyan-400 uppercase tracking-[0.2em] border-b border-cyan-500/20 pb-2 flex items-center gap-2">
+                  <span className="bg-cyan-500/10 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">6</span>
                   Part Photo <span className="text-zinc-600 normal-case font-normal text-[10px]">(optional)</span>
                 </h4>
                 <input ref={imageInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
@@ -4636,6 +4786,91 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
           <div>
             <h3 className="text-lg font-bold text-white mb-1">Production</h3>
             <p className="text-sm text-zinc-500">Operations, clients, and workflow configuration.</p>
+          </div>
+
+          {/* Workflow Stages */}
+          <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white">Workflow Stages</h4>
+                <p className="text-[10px] text-zinc-500">Define the stages a job moves through from start to finish.</p>
+              </div>
+              <button onClick={() => {
+                const stages = [...(settings.jobStages || DEFAULT_STAGES)];
+                const newId = `stage_${Date.now()}`;
+                stages.splice(stages.length - 1, 0, { id: newId, label: 'New Stage', color: '#8b5cf6', order: stages.length - 1 });
+                // Reorder
+                stages.forEach((s, i) => s.order = i);
+                setSettings({ ...settings, jobStages: stages });
+              }} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg font-bold">+ Add Stage</button>
+            </div>
+            {/* Stage Pipeline Preview */}
+            <div className="flex items-center gap-1 bg-zinc-950 rounded-xl p-3">
+              {(settings.jobStages || DEFAULT_STAGES).sort((a, b) => a.order - b.order).map((stage, i, arr) => (
+                <React.Fragment key={stage.id}>
+                  <div className="flex-1 text-center">
+                    <div className="h-2 rounded-full mb-1" style={{ background: stage.color }} />
+                    <span className="text-[9px] font-bold" style={{ color: stage.color }}>{stage.label}</span>
+                  </div>
+                  {i < arr.length - 1 && <ChevronRight className="w-3 h-3 text-zinc-700 shrink-0" />}
+                </React.Fragment>
+              ))}
+            </div>
+            {/* Stage List */}
+            <div className="space-y-2">
+              {(settings.jobStages || DEFAULT_STAGES).sort((a, b) => a.order - b.order).map((stage, idx) => (
+                <div key={stage.id} className="flex items-center gap-3 bg-zinc-800/30 rounded-xl p-3 border border-white/5">
+                  <div className="w-4 h-4 rounded-full shrink-0" style={{ background: stage.color }} />
+                  <input className="flex-1 bg-transparent text-white text-sm font-bold outline-none border-b border-transparent focus:border-white/20" value={stage.label} onChange={e => {
+                    const stages = [...(settings.jobStages || DEFAULT_STAGES)];
+                    const si = stages.findIndex(s => s.id === stage.id);
+                    if (si >= 0) { stages[si] = { ...stages[si], label: e.target.value }; setSettings({ ...settings, jobStages: stages }); }
+                  }} />
+                  {/* Color picker */}
+                  <div className="flex gap-1">
+                    {['#71717a', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316'].map(c => (
+                      <button key={c} onClick={() => {
+                        const stages = [...(settings.jobStages || DEFAULT_STAGES)];
+                        const si = stages.findIndex(s => s.id === stage.id);
+                        if (si >= 0) { stages[si] = { ...stages[si], color: c }; setSettings({ ...settings, jobStages: stages }); }
+                      }} className={`w-4 h-4 rounded-full transition-all ${stage.color === c ? 'ring-2 ring-white scale-125' : 'opacity-40 hover:opacity-80'}`} style={{ background: c }} />
+                    ))}
+                  </div>
+                  {/* Move up/down */}
+                  <button onClick={() => {
+                    if (idx === 0) return;
+                    const stages = [...(settings.jobStages || DEFAULT_STAGES)].sort((a, b) => a.order - b.order);
+                    [stages[idx - 1], stages[idx]] = [stages[idx], stages[idx - 1]];
+                    stages.forEach((s, i) => s.order = i);
+                    setSettings({ ...settings, jobStages: stages });
+                  }} className="text-zinc-600 hover:text-white" title="Move Up"><ChevronUp className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => {
+                    const stages = [...(settings.jobStages || DEFAULT_STAGES)].sort((a, b) => a.order - b.order);
+                    if (idx >= stages.length - 1) return;
+                    [stages[idx], stages[idx + 1]] = [stages[idx + 1], stages[idx]];
+                    stages.forEach((s, i) => s.order = i);
+                    setSettings({ ...settings, jobStages: stages });
+                  }} className="text-zinc-600 hover:text-white" title="Move Down"><ChevronDown className="w-3.5 h-3.5" /></button>
+                  {/* Mark as complete stage */}
+                  <label className="flex items-center gap-1 text-[9px] text-zinc-500 cursor-pointer shrink-0" title="Reaching this stage completes the job">
+                    <input type="checkbox" checked={stage.isComplete || false} onChange={e => {
+                      const stages = [...(settings.jobStages || DEFAULT_STAGES)];
+                      const si = stages.findIndex(s => s.id === stage.id);
+                      if (si >= 0) { stages[si] = { ...stages[si], isComplete: e.target.checked }; setSettings({ ...settings, jobStages: stages }); }
+                    }} className="w-3 h-3 rounded accent-emerald-500" />
+                    Done
+                  </label>
+                  {/* Delete (only if not a built-in) */}
+                  {!['pending', 'in-progress', 'completed'].includes(stage.id) && (
+                    <button onClick={() => {
+                      const stages = (settings.jobStages || DEFAULT_STAGES).filter(s => s.id !== stage.id);
+                      stages.forEach((s, i) => s.order = i);
+                      setSettings({ ...settings, jobStages: stages });
+                    }} className="text-zinc-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Operations */}
