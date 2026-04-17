@@ -44,19 +44,10 @@ export function initFirebaseFromLocalStorage() {
     }
 
     let app;
-    const fb = firebaseApp;
-    const getApps = fb.getApps || (fb.default && fb.default.getApps);
-    const getApp = fb.getApp || (fb.default && fb.default.getApp);
-    const initializeApp = fb.initializeApp || (fb.default && fb.default.initializeApp);
-
-    if (!initializeApp) {
-      throw new Error("Firebase initializeApp not found in import");
-    }
-
-    if (getApps && getApps().length > 0) {
-      app = getApp();
+    if (firebaseApp.getApps().length > 0) {
+      app = firebaseApp.getApp();
     } else {
-      app = initializeApp(config);
+      app = firebaseApp.initializeApp(config);
     }
 
     try {

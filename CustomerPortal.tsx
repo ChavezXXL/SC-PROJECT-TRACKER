@@ -68,7 +68,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
     try {
       await DB.saveQuote({ ...linkedQuote, status: 'accepted', acceptedAt: Date.now() });
       setApprovalDone(true);
-    } catch {}
+    } catch (e) {
+      console.error('Failed to approve quote:', e);
+      alert('Something went wrong approving this quote. Please try again or contact us.');
+    }
   };
 
   const handleDecline = async () => {
@@ -76,7 +79,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
     try {
       await DB.saveQuote({ ...linkedQuote, status: 'declined', declinedAt: Date.now() });
       setApprovalDone(true);
-    } catch {}
+    } catch (e) {
+      console.error('Failed to decline quote:', e);
+      alert('Something went wrong. Please try again or contact us.');
+    }
   };
 
   return (
@@ -243,18 +249,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                     const stageIdx = getStageIndex(job, stages);
                     const isOverdue = job.dueDate && new Date(job.dueDate).getTime() < Date.now();
                     return (
-                      <div key={job.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5 space-y-4">
+                      <div key={job.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 space-y-4">
                         <div className="flex items-start justify-between gap-3">
-                          <div>
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-white font-black text-lg">{job.poNumber}</span>
+                              <span className="text-white font-black text-base sm:text-lg truncate max-w-[180px] sm:max-w-none">{job.poNumber}</span>
                               {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> OVERDUE</span>}
                             </div>
-                            <p className="text-sm text-zinc-400">{job.partNumber}</p>
+                            <p className="text-xs sm:text-sm text-zinc-400 truncate">{job.partNumber}</p>
                           </div>
                           <div className="text-right shrink-0">
-                            <p className="text-sm text-zinc-500">Qty: <span className="text-white font-bold">{job.quantity}</span></p>
-                            {job.dueDate && <p className="text-xs text-zinc-500">Due: <span className={isOverdue ? 'text-red-400' : 'text-zinc-300'}>{job.dueDate}</span></p>}
+                            <p className="text-xs sm:text-sm text-zinc-500">Qty: <span className="text-white font-bold">{job.quantity}</span></p>
+                            {job.dueDate && <p className="text-[10px] sm:text-xs text-zinc-500">Due: <span className={isOverdue ? 'text-red-400' : 'text-zinc-300'}>{job.dueDate}</span></p>}
                           </div>
                         </div>
                         {/* Stage Pipeline */}

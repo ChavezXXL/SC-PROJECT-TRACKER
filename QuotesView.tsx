@@ -460,15 +460,37 @@ ${settings.companyPhone || ''}`.trim()
                     <span>Description</span><span className="text-center">Qty</span><span className="text-center">Unit</span><span className="text-right">Rate ($)</span><span className="text-right">Total</span><span></span>
                   </div>
                   {items.map((item, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_60px_60px_80px_70px_24px] gap-2 items-center">
-                      <input value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none min-w-0" placeholder="Item description" />
-                      <input type="number" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseInt(e.target.value) || 0)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" />
-                      <select value={item.unit || 'ea'} onChange={e => updateItem(i, 'unit', e.target.value)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-xs outline-none">
-                        {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                      </select>
-                      <input type="number" value={item.unitPrice || ''} onChange={e => updateItem(i, 'unitPrice', parseFloat(e.target.value) || 0)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-right" step="0.01" placeholder="0.00" />
-                      <div className="text-right text-sm font-mono text-zinc-300">${(item.qty * item.unitPrice).toFixed(2)}</div>
-                      {items.length > 1 ? <button onClick={() => removeItem(i)} className="text-zinc-600 hover:text-red-400"><X className="w-4 h-4" /></button> : <div />}
+                    <div key={i}>
+                      {/* Mobile stacked card */}
+                      <div className="sm:hidden bg-zinc-950 border border-white/10 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-zinc-500 uppercase font-bold">Item #{i + 1}</span>
+                          {items.length > 1 && <button onClick={() => removeItem(i)} className="text-zinc-500 hover:text-red-400 p-1"><X className="w-4 h-4" /></button>}
+                        </div>
+                        <input value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm outline-none" placeholder="Description" />
+                        <div className="grid grid-cols-[70px_70px_1fr] gap-2">
+                          <input type="number" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseInt(e.target.value) || 0)} className="bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" placeholder="Qty" />
+                          <select value={item.unit || 'ea'} onChange={e => updateItem(i, 'unit', e.target.value)} className="bg-black/40 border border-white/10 rounded-lg p-2 text-white text-xs outline-none">
+                            {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                          <input type="number" value={item.unitPrice || ''} onChange={e => updateItem(i, 'unitPrice', parseFloat(e.target.value) || 0)} className="bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-right" step="0.01" placeholder="Rate $" />
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                          <span className="text-[10px] text-zinc-500 uppercase font-bold">Total</span>
+                          <span className="text-sm font-mono font-bold text-emerald-400">${(item.qty * item.unitPrice).toFixed(2)}</span>
+                        </div>
+                      </div>
+                      {/* Desktop grid row */}
+                      <div className="hidden sm:grid grid-cols-[1fr_60px_60px_80px_70px_24px] gap-2 items-center">
+                        <input value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none min-w-0" placeholder="Item description" />
+                        <input type="number" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseInt(e.target.value) || 0)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" />
+                        <select value={item.unit || 'ea'} onChange={e => updateItem(i, 'unit', e.target.value)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-xs outline-none">
+                          {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                        <input type="number" value={item.unitPrice || ''} onChange={e => updateItem(i, 'unitPrice', parseFloat(e.target.value) || 0)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-right" step="0.01" placeholder="0.00" />
+                        <div className="text-right text-sm font-mono text-zinc-300">${(item.qty * item.unitPrice).toFixed(2)}</div>
+                        {items.length > 1 ? <button onClick={() => removeItem(i)} className="text-zinc-600 hover:text-red-400"><X className="w-4 h-4" /></button> : <div />}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -478,7 +500,7 @@ ${settings.companyPhone || ''}`.trim()
               {/* §4 — Pricing */}
               <div>
                 <SectionLabel num={5} title="Pricing & Adjustments" sub="Markup, discount, and tax" />
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Markup %</label>
                     <div className="flex gap-1 flex-wrap">
@@ -558,8 +580,8 @@ ${settings.companyPhone || ''}`.trim()
 
             {/* ══ PREVIEW TAB ══ */}
             {modalTab === 'preview' && (
-              <div className="p-5 overflow-y-auto flex-1">
-                <div className="bg-white text-black rounded-xl p-8 max-w-xl mx-auto shadow-lg" style={{ fontFamily: '-apple-system, sans-serif' }}>
+              <div className="p-3 sm:p-5 overflow-y-auto flex-1">
+                <div className="bg-white text-black rounded-xl p-4 sm:p-8 max-w-xl mx-auto shadow-lg" style={{ fontFamily: '-apple-system, sans-serif' }}>
                   {/* Company Header */}
                   <div className="flex justify-between items-start mb-6">
                     <div>
@@ -592,14 +614,16 @@ ${settings.companyPhone || ''}`.trim()
                     </div>
                   )}
                   {/* Items Table */}
-                  <table className="w-full text-xs mb-4">
-                    <thead><tr className="border-b-2 border-gray-200 text-gray-500 text-[10px] uppercase"><th className="text-left py-2">Description</th><th className="text-center py-2">Qty</th><th className="text-center py-2">Unit</th><th className="text-right py-2">Rate</th><th className="text-right py-2">Amount</th></tr></thead>
-                    <tbody>
-                      {items.filter(i => i.description).map((item, i) => (
-                        <tr key={i} className="border-b border-gray-100"><td className="py-2 text-gray-800">{item.description}</td><td className="py-2 text-center text-gray-600">{item.qty}</td><td className="py-2 text-center text-gray-400">{item.unit || 'ea'}</td><td className="py-2 text-right text-gray-600">${item.unitPrice.toFixed(2)}</td><td className="py-2 text-right font-bold text-gray-800">${(item.qty * item.unitPrice).toFixed(2)}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="overflow-x-auto -mx-1 px-1">
+                    <table className="w-full text-xs mb-4 min-w-[380px]">
+                      <thead><tr className="border-b-2 border-gray-200 text-gray-500 text-[10px] uppercase"><th className="text-left py-2">Description</th><th className="text-center py-2">Qty</th><th className="text-center py-2">Unit</th><th className="text-right py-2">Rate</th><th className="text-right py-2">Amount</th></tr></thead>
+                      <tbody>
+                        {items.filter(i => i.description).map((item, i) => (
+                          <tr key={i} className="border-b border-gray-100"><td className="py-2 text-gray-800">{item.description}</td><td className="py-2 text-center text-gray-600">{item.qty}</td><td className="py-2 text-center text-gray-400">{item.unit || 'ea'}</td><td className="py-2 text-right text-gray-600">${item.unitPrice.toFixed(2)}</td><td className="py-2 text-right font-bold text-gray-800">${(item.qty * item.unitPrice).toFixed(2)}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                   {/* Totals */}
                   {(() => { const t = calcTotals(); return (
                     <div className="flex justify-end">

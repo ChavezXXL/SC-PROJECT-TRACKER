@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, CartesianGrid, Legend
+  PieChart, Pie, Cell, LineChart, Line, CartesianGrid, Legend, Sector
 } from 'recharts';
 
 import {
@@ -12,7 +12,8 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText
+  Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
+  Share2, Link, Copy, Radio
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage } from './types';
@@ -67,6 +68,26 @@ const formatDuration = (mins: number | undefined) => {
   const m = Math.round(mins % 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+};
+
+/** Hook: track viewport width for responsive chart sizing */
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return isMobile;
+};
+
+/** Compute accurate duration minutes from a log's actual timestamps */
+const getLogDurationMins = (log: { startTime: number; endTime?: number | null; totalPausedMs?: number; durationMinutes?: number | null }) => {
+  if (!log.endTime) return undefined;
+  const wallMs = log.endTime - log.startTime;
+  const pausedMs = log.totalPausedMs || 0;
+  const workingMs = Math.max(0, wallMs - pausedMs);
+  return Math.ceil(workingMs / 1000 / 60);
 };
 
 const toDateTimeLocal = (ts: number | undefined | null) => {
@@ -743,8 +764,11 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
   const [newNote, setNewNote] = useState('');
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (defaultExpanded && cardRef.current) {
-      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (defaultExpanded) {
+      setExpanded(true);
+      if (cardRef.current) {
+        setTimeout(() => cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+      }
     }
   }, [defaultExpanded]);
   const today = todayFmt();
@@ -761,7 +785,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
   const borderClass = isOverdue ? 'border-red-500/40 bg-red-500/5' : priorityColors[job.priority || 'normal'];
 
   return (
-    <div ref={cardRef} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-blue-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''} ${defaultExpanded ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-500/10' : ''}`}>
+    <div ref={cardRef} data-job-id={job.id} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-blue-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''} ${defaultExpanded ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-500/10' : ''}`}>
       <div className="p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-1">
           <div>
@@ -894,6 +918,16 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
   const [scannedJobId, setScannedJobId] = useState<string | null>(null);
+  const activePanelRef = useRef<HTMLDivElement>(null);
+  const [shouldScrollToTimer, setShouldScrollToTimer] = useState(false);
+
+  // Scroll to active timer panel when it appears after starting an operation
+  useEffect(() => {
+    if (shouldScrollToTimer && activeLog && activePanelRef.current) {
+      activePanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setShouldScrollToTimer(false);
+    }
+  }, [shouldScrollToTimer, activeLog]);
 
   // Auto-open job from QR scan — reads from sessionStorage (set on page load before login)
   useEffect(() => {
@@ -1001,7 +1035,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     try {
       await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
       addToast('success', 'Timer Started');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setShouldScrollToTimer(true);
     } catch (e) {
       addToast('error', 'Failed to start timer');
     }
@@ -1017,6 +1051,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       if (stoppedJobId) {
         setScannedJobId(stoppedJobId);
         setTab('jobs');
+        // Scroll to the job card after a brief delay for re-render
+        setTimeout(() => {
+          const jobCard = document.querySelector(`[data-job-id="${stoppedJobId}"]`);
+          if (jobCard) jobCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
       }
     } catch (e: any) {
       console.error('[EmployeeDashboard] Stop failed:', e);
@@ -1091,10 +1130,10 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         </div>
       )}
 
-      {activeLog && <ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob}
+      {activeLog && <div ref={activePanelRef}><ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob}
         onPause={async (id) => { try { await DB.pauseTimeLog(id, 'manual'); swPost({ type: 'TIMER_PAUSE' }); addToast('info', 'Timer Paused'); } catch { addToast('error', 'Failed to pause'); } }}
         onResume={async (id) => { try { await DB.resumeTimeLog(id); swPost({ type: 'TIMER_RESUME' }); addToast('success', 'Timer Resumed'); } catch { addToast('error', 'Failed to resume'); } }}
-      />}
+      /></div>}
 
       <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
         <div className="flex gap-2">
@@ -1360,6 +1399,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [shopSettings, setShopSettings] = useState<SystemSettings>(DB.getSettings());
   const [dashWorkers, setDashWorkers] = useState<User[]>([]);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
@@ -1448,26 +1488,26 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Live Activity</p><h3 className="text-2xl sm:text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-xs text-blue-400 mt-1">Jobs running now</p></div>
-          <Activity className={`w-10 h-10 text-blue-500 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Live Activity</p><h3 className="text-xl sm:text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] sm:text-xs text-blue-400 mt-1 truncate">Jobs running now</p></div>
+          <Activity className={`w-7 h-7 sm:w-10 sm:h-10 text-blue-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Open Jobs</p><h3 className="text-2xl sm:text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-xs text-zinc-500 mt-1">Total open jobs</p></div>
-          <Briefcase className="text-zinc-600 w-10 h-10" />
+        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Total open jobs</p></div>
+          <Briefcase className="text-zinc-600 w-7 h-7 sm:w-10 sm:h-10 shrink-0" />
         </div>
-        <div className={`p-6 rounded-2xl flex justify-between items-center border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
-          <div><p className={`text-sm font-bold uppercase tracking-wider ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-3xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-xs mt-1 ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due date</p></div>
-          <AlertTriangle className={`w-10 h-10 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
+        <div className={`p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0"><p className={`text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-3xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] sm:text-xs mt-1 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due date</p></div>
+          <AlertTriangle className={`w-7 h-7 sm:w-10 sm:h-10 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Floor Staff</p><h3 className="text-2xl sm:text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-xs text-zinc-500 mt-1">Active Operators</p></div>
-          <Users className="text-emerald-500 w-10 h-10" />
+        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Floor Staff</p><h3 className="text-xl sm:text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Active Operators</p></div>
+          <Users className="text-emerald-500 w-7 h-7 sm:w-10 sm:h-10 shrink-0" />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl flex justify-between items-center">
-          <div><p className="text-zinc-500 text-sm font-bold uppercase tracking-wider">Today</p><h3 className="text-2xl sm:text-3xl font-black text-white">{todayHrsDisplay}</h3><p className="text-xs text-zinc-500 mt-1">Hours logged</p></div>
-          <Clock className="text-blue-400 w-10 h-10 opacity-60" />
+        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Today</p><h3 className="text-xl sm:text-3xl font-black text-white truncate">{todayHrsDisplay}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Hours logged</p></div>
+          <Clock className="text-blue-400 w-7 h-7 sm:w-10 sm:h-10 opacity-60 shrink-0" />
         </div>
       </div>
 
@@ -1542,27 +1582,27 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <div className="space-y-4">
             {/* Top KPI Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Monthly Revenue</p>
-                <p className="text-xl sm:text-2xl font-black text-emerald-400">${monthTotals.revenue.toLocaleString()}</p>
-                <p className="text-[10px] text-zinc-600">{monthTotals.jobs} jobs completed</p>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">Monthly Revenue</p>
+                <p className="text-base sm:text-xl md:text-2xl font-black text-emerald-400 truncate">${monthTotals.revenue >= 10000 ? `${(monthTotals.revenue/1000).toFixed(1)}k` : monthTotals.revenue.toLocaleString()}</p>
+                <p className="text-[10px] text-zinc-600 truncate">{monthTotals.jobs} jobs completed</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Monthly Costs</p>
-                <p className="text-xl sm:text-2xl font-black text-orange-400">${monthTotals.cost.toFixed(0)}</p>
-                <p className="text-[10px] text-zinc-600">{monthTotals.hrs.toFixed(0)}h labor + overhead</p>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">Monthly Costs</p>
+                <p className="text-base sm:text-xl md:text-2xl font-black text-orange-400 truncate">${monthTotals.cost >= 10000 ? `${(monthTotals.cost/1000).toFixed(1)}k` : monthTotals.cost.toFixed(0)}</p>
+                <p className="text-[10px] text-zinc-600 truncate">{monthTotals.hrs.toFixed(0)}h labor + overhead</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Net Profit</p>
-                <p className={`text-2xl font-black ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {monthProfit !== null ? `${monthProfit >= 0 ? '+' : ''}$${monthProfit.toFixed(0)}` : '—'}
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">Net Profit</p>
+                <p className={`text-base sm:text-xl md:text-2xl font-black truncate ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {monthProfit !== null ? `${monthProfit >= 0 ? '+' : ''}$${Math.abs(monthProfit) >= 10000 ? `${(monthProfit/1000).toFixed(1)}k` : monthProfit.toFixed(0)}` : '—'}
                 </p>
-                <p className="text-[10px] text-zinc-600">{monthMargin > 0 ? `${monthMargin.toFixed(0)}% margin` : 'No quoted jobs'}</p>
+                <p className="text-[10px] text-zinc-600 truncate">{monthMargin > 0 ? `${monthMargin.toFixed(0)}% margin` : 'No quoted jobs'}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">$/Hour Earned</p>
-                <p className="text-xl sm:text-2xl font-black text-blue-400">${avgRevenuePerHr.toFixed(0)}</p>
-                <p className="text-[10px] text-zinc-600">Cost: ${avgCostPerHr.toFixed(0)}/hr</p>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">$/Hour Earned</p>
+                <p className="text-base sm:text-xl md:text-2xl font-black text-blue-400 truncate">${avgRevenuePerHr.toFixed(0)}</p>
+                <p className="text-[10px] text-zinc-600 truncate">Cost: ${avgCostPerHr.toFixed(0)}/hr</p>
               </div>
             </div>
 
@@ -1572,8 +1612,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <h3 className="font-bold text-white text-sm flex items-center gap-2"><Calculator className="w-4 h-4 text-emerald-400" /> Profit & Loss</h3>
                 {unquoted.length > 0 && <span className="text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded-lg font-bold">{unquoted.length} missing quote</span>}
               </div>
-              <div className="grid grid-cols-2 divide-x divide-white/5">
-                <div className="p-4 space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-white/5">
+                <div className="p-3 sm:p-4 space-y-2">
                   <p className="text-[10px] font-bold text-zinc-500 uppercase">This Week</p>
                   <div className="flex justify-between text-xs"><span className="text-zinc-500">Revenue</span><span className="text-emerald-400 font-mono">${weekTotals.revenue.toLocaleString()}</span></div>
                   <div className="flex justify-between text-xs"><span className="text-zinc-500">Labor</span><span className="text-orange-400 font-mono">${weekTotals.cost.toFixed(0)}</span></div>
@@ -1588,7 +1628,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                     </div>
                   </div>
                 </div>
-                <div className="p-4 space-y-2">
+                <div className="p-3 sm:p-4 space-y-2">
                   <p className="text-[10px] font-bold text-zinc-500 uppercase">This Month</p>
                   <div className="flex justify-between text-xs"><span className="text-zinc-500">Revenue</span><span className="text-emerald-400 font-mono">${monthTotals.revenue.toLocaleString()}</span></div>
                   <div className="flex justify-between text-xs"><span className="text-zinc-500">Labor</span><span className="text-orange-400 font-mono">${monthTotals.cost.toFixed(0)}</span></div>
@@ -1642,72 +1682,91 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 margin: data.revenue > 0 ? parseFloat(((data.revenue - data.cost) / data.revenue * 100).toFixed(0)) : 0,
               }));
               const totalCustRev = custChartData.reduce((a, d) => a + d.revenue, 0);
-              const ttStyle = { contentStyle: { background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.6)', padding: '10px 14px' }, itemStyle: { color: '#e4e4e7', padding: '2px 0' }, labelStyle: { color: '#f4f4f5', fontWeight: 700, marginBottom: 4 } };
+              // Active shape for customer pie hover
+              const custActiveShape = (props: any) => {
+                const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, value } = props;
+                const pct = totalCustRev > 0 ? ((value / totalCustRev) * 100).toFixed(0) : '0';
+                return (
+                  <g>
+                    <Sector cx={cx} cy={cy} innerRadius={innerRadius - 3} outerRadius={outerRadius + 8} startAngle={startAngle} endAngle={endAngle} fill={fill} cornerRadius={5} />
+                    <Sector cx={cx} cy={cy} innerRadius={outerRadius + 12} outerRadius={outerRadius + 15} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.5} />
+                    <text x={cx} y={cy - 16} textAnchor="middle" fill="#f4f4f5" fontSize={12} fontWeight={800}>{payload.fullName}</text>
+                    <text x={cx} y={cy + 6} textAnchor="middle" fill="#e4e4e7" fontSize={20} fontWeight={900}>${value >= 1000 ? `${(value/1000).toFixed(1)}k` : value}</text>
+                    <text x={cx} y={cy + 24} textAnchor="middle" fill="#71717a" fontSize={11}>{pct}%</text>
+                  </g>
+                );
+              };
               return (
                 <>
-                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
                   <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Top Customers (This Month)</h3>
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ResponsiveContainer width="100%" height={isMobile ? 260 : 340}>
                     <PieChart>
-                      <defs>
-                        {custChartData.map((_, i) => (
-                          <filter key={`cg${i}`} id={`cg${i}`}><feDropShadow dx="0" dy="0" stdDeviation="3" floodColor={CUST_COLORS[i % CUST_COLORS.length]} floodOpacity="0.3" /></filter>
-                        ))}
-                      </defs>
-                      <Pie data={custChartData} cx="50%" cy="45%" innerRadius={70} outerRadius={120} paddingAngle={2} dataKey="revenue" nameKey="fullName" stroke="none" animationBegin={0} animationDuration={1000} animationEasing="ease-out" cornerRadius={4}>
-                        {custChartData.map((_, i) => <Cell key={i} fill={CUST_COLORS[i % CUST_COLORS.length]} stroke="none" style={{ filter: `url(#cg${i})` }} />)}
+                      <Pie data={custChartData} cx="50%" cy="45%" innerRadius={isMobile ? 50 : 75} outerRadius={isMobile ? 95 : 130} paddingAngle={2} dataKey="revenue" nameKey="fullName" stroke="rgba(0,0,0,0.3)" strokeWidth={1} isAnimationActive={true} animationDuration={800} animationEasing="ease-out" cornerRadius={5} activeIndex={undefined} activeShape={custActiveShape}>
+                        {custChartData.map((_, i) => <Cell key={i} fill={CUST_COLORS[i % CUST_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip cursor={false} {...ttStyle} formatter={(value: number) => [`$${value.toLocaleString()}`, 'Revenue']} />
-                      <text x="50%" y="43%" textAnchor="middle" dominantBaseline="middle" fill="#f4f4f5" fontSize={24} fontWeight={800}>${totalCustRev >= 1000 ? `${(totalCustRev/1000).toFixed(1)}k` : totalCustRev}</text>
-                      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#71717a" fontSize={10} fontWeight={600}>REVENUE</text>
+                      <Tooltip cursor={false} content={(props: any) => {
+                        if (!props.active || !props.payload?.length) return null;
+                        const d = props.payload[0].payload;
+                        return (
+                          <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '14px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
+                            <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 4 }}>{d.fullName}</p>
+                            <p style={{ color: '#3b82f6', fontSize: 20, fontWeight: 900 }}>${d.revenue.toLocaleString()}</p>
+                          </div>
+                        );
+                      }} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-1 pb-1">
                     {custChartData.map((d, i) => (
                       <div key={d.name} className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: CUST_COLORS[i % CUST_COLORS.length], boxShadow: `0 0 6px ${CUST_COLORS[i % CUST_COLORS.length]}40` }} />
+                        <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: CUST_COLORS[i % CUST_COLORS.length] }} />
                         <span className="text-[11px] text-zinc-400">{d.fullName}</span>
                         <span className="text-[10px] text-zinc-600 font-mono">${d.revenue.toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
                 </div>
-                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
                   <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Revenue vs Cost</h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={custChartData} margin={{ top: 5, right: 10, left: 0, bottom: 35 }}>
+                  <ResponsiveContainer width="100%" height={isMobile ? 240 : 300}>
+                    <BarChart data={custChartData} margin={{ top: 5, right: 10, left: 0, bottom: isMobile ? 50 : 40 }}>
                       <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                      <XAxis dataKey="name" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" height={55} />
-                      <YAxis tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
-                      <Tooltip cursor={false}
+                      <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: isMobile ? 10 : 11 }} axisLine={false} tickLine={false} interval={0} angle={-35} textAnchor="end" height={isMobile ? 55 : 60} />
+                      <YAxis tick={{ fill: '#52525b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
+                      <Tooltip cursor={{ fill: 'rgba(255,255,255,0.04)', radius: 8 }}
                         content={({ active, payload, label }: any) => {
                           if (!active || !payload?.length) return null;
                           const item = custChartData.find(d => d.name === label);
+                          const rev = payload.find((p: any) => p.dataKey === 'revenue')?.value || 0;
+                          const cost = payload.find((p: any) => p.dataKey === 'cost')?.value || 0;
                           return (
-                            <div style={{ background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)', fontSize: 12 }}>
-                              <p style={{ color: '#f4f4f5', fontWeight: 700, marginBottom: 6 }}>{item?.fullName || label}</p>
-                              {payload.map((p: any, idx: number) => (
-                                <p key={idx} style={{ color: '#e4e4e7', padding: '2px 0' }}>
-                                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: idx === 0 ? CUST_COLORS[payload[0]?.payload ? custChartData.indexOf(payload[0].payload) : 0] : '#71717a', marginRight: 6 }} />
-                                  {p.dataKey === 'revenue' ? 'Revenue' : 'Cost'}: <strong>${Number(p.value).toLocaleString()}</strong>
+                            <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '16px 20px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
+                              <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 15, marginBottom: 10 }}>{item?.fullName || label}</p>
+                              <div style={{ display: 'flex', gap: 20 }}>
+                                <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>REVENUE</p><p style={{ color: '#3b82f6', fontSize: 18, fontWeight: 900 }}>${Number(rev).toLocaleString()}</p></div>
+                                <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>COST</p><p style={{ color: '#f59e0b', fontSize: 18, fontWeight: 900 }}>${Number(cost).toLocaleString()}</p></div>
+                              </div>
+                              {item && <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 8, marginTop: 10 }}>
+                                <p style={{ color: item.margin >= 20 ? '#10b981' : item.margin >= 0 ? '#f59e0b' : '#ef4444', fontSize: 13, fontWeight: 800 }}>
+                                  {item.margin >= 0 ? '↑' : '↓'} {item.margin}% margin · ${(rev - cost).toLocaleString()} profit
                                 </p>
-                              ))}
-                              {item && item.margin !== 0 && <p style={{ color: item.margin >= 20 ? '#10b981' : item.margin >= 0 ? '#f59e0b' : '#ef4444', fontSize: 11, marginTop: 4, fontWeight: 600 }}>{item.margin}% margin</p>}
+                              </div>}
                             </div>
                           );
                         }}
                       />
                       <Legend content={() => (
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: 20, paddingTop: 8 }}>
-                          <span style={{ color: '#a1a1aa', fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#3b82f6', display: 'inline-block' }} /> Revenue</span>
-                          <span style={{ color: '#a1a1aa', fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'rgba(59,130,246,0.3)', display: 'inline-block' }} /> Cost</span>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: 24, paddingTop: 10 }}>
+                          <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: '#3b82f6', display: 'inline-block' }} /> Revenue</span>
+                          <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: 'rgba(59,130,246,0.3)', display: 'inline-block' }} /> Cost</span>
                         </div>
                       )} />
-                      <Bar dataKey="revenue" radius={[6, 6, 0, 0]} barSize={20} name="Revenue" animationBegin={0} animationDuration={800} animationEasing="ease-out">
+                      <Bar dataKey="revenue" radius={[8, 8, 0, 0]} barSize={24} name="Revenue" isAnimationActive={true} animationDuration={800} animationEasing="ease-out">
                         {custChartData.map((_, i) => <Cell key={`r${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} />)}
                       </Bar>
-                      <Bar dataKey="cost" radius={[6, 6, 0, 0]} barSize={20} name="Cost" animationBegin={200} animationDuration={800} animationEasing="ease-out">
-                        {custChartData.map((_, i) => <Cell key={`c${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} fillOpacity={0.3} />)}
+                      <Bar dataKey="cost" radius={[8, 8, 0, 0]} barSize={24} name="Cost" isAnimationActive={true} animationDuration={800} animationEasing="ease-out">
+                        {custChartData.map((_, i) => <Cell key={`c${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} fillOpacity={0.25} />)}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
@@ -2101,7 +2160,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         const selectedDateStr = calSelectedDay ? new Date(yr, mo, calSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
 
         const cells = [];
-        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[60px] md:min-h-[80px] bg-zinc-950/20 rounded" />);
+        for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="min-h-[80px] md:min-h-[110px] bg-zinc-950/20 rounded" />);
         for (let d = 1; d <= daysInMonth; d++) {
           const dayJobs = jobsByDay[d] || [];
           const past = dateNum(`${String(mo+1).padStart(2,'0')}/${String(d).padStart(2,'0')}/${yr}`) < dateNum(todayStr);
@@ -2109,24 +2168,24 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           const hasOverdue = dayJobs.some(j => j.status !== 'completed') && past;
           cells.push(
             <div key={d} onClick={() => setCalSelectedDay(selected ? null : d)}
-              className={`min-h-[60px] md:min-h-[80px] border p-1 md:p-1.5 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-bold ${selected ? 'text-blue-300' : isToday(d) ? 'text-blue-400' : past ? 'text-zinc-600' : 'text-zinc-400'}`}>{d}</span>
+              className={`min-h-[80px] md:min-h-[110px] border p-1.5 md:p-2 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className={`text-sm font-bold ${selected ? 'text-blue-300' : isToday(d) ? 'text-blue-400' : past ? 'text-zinc-600' : 'text-zinc-400'}`}>{d}</span>
                 {dayJobs.length > 0 && (
-                  <div className="flex gap-0.5">
-                    {hasOverdue && <span className="w-1.5 h-1.5 rounded-full bg-red-500" />}
-                    <span className="text-[9px] bg-zinc-700/80 text-zinc-300 px-1 rounded">{dayJobs.length}</span>
+                  <div className="flex gap-0.5 items-center">
+                    {hasOverdue && <span className="w-2 h-2 rounded-full bg-red-500" />}
+                    <span className="text-[10px] bg-zinc-700/80 text-zinc-300 px-1.5 py-0.5 rounded font-bold">{dayJobs.length}</span>
                   </div>
                 )}
               </div>
-              <div className="space-y-0.5 overflow-hidden max-h-[48px]">
-                {dayJobs.slice(0, 3).map(j => (
-                  <div key={j.id} className="flex items-center gap-1 text-[9px] truncate">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColor(j.status)}`} />
-                    <span className={`truncate ${j.status === 'completed' ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>{j.poNumber}</span>
+              <div className="space-y-0.5 overflow-hidden max-h-[64px]">
+                {dayJobs.slice(0, 4).map(j => (
+                  <div key={j.id} className="flex items-center gap-1 text-[10px] truncate">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColor(j.status)}`} />
+                    <span className={`truncate font-medium ${j.status === 'completed' ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>{j.poNumber}</span>
                   </div>
                 ))}
-                {dayJobs.length > 3 && <p className="text-[8px] text-zinc-600">+{dayJobs.length - 3} more</p>}
+                {dayJobs.length > 4 && <p className="text-[9px] text-zinc-600 font-bold">+{dayJobs.length - 4} more</p>}
               </div>
             </div>
           );
@@ -2135,31 +2194,31 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         return (
           <div className="animate-fade-in">
             {/* Month Stats Bar */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-              <div className="bg-zinc-900/50 border border-white/5 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase">Pending</p>
-                <p className="text-lg font-black text-zinc-300">{pendingCount}</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+                <p className="text-xs text-zinc-500 uppercase font-bold tracking-wider">Pending</p>
+                <p className="text-2xl font-black text-zinc-300">{pendingCount}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-blue-500/20 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-blue-400 uppercase">In Progress</p>
-                <p className="text-lg font-black text-blue-400">{inProgressCount}</p>
+              <div className="bg-zinc-900/50 border border-blue-500/20 rounded-xl p-3 text-center">
+                <p className="text-xs text-blue-400 uppercase font-bold tracking-wider">In Progress</p>
+                <p className="text-2xl font-black text-blue-400">{inProgressCount}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-emerald-500/20 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-emerald-400 uppercase">Completed</p>
-                <p className="text-lg font-black text-emerald-400">{completedCount}</p>
+              <div className="bg-zinc-900/50 border border-emerald-500/20 rounded-xl p-3 text-center">
+                <p className="text-xs text-emerald-400 uppercase font-bold tracking-wider">Completed</p>
+                <p className="text-2xl font-black text-emerald-400">{completedCount}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-red-500/20 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-red-400 uppercase">Overdue</p>
-                <p className="text-lg font-black text-red-400">{overdueCount}</p>
+              <div className="bg-zinc-900/50 border border-red-500/20 rounded-xl p-3 text-center">
+                <p className="text-xs text-red-400 uppercase font-bold tracking-wider">Overdue</p>
+                <p className="text-2xl font-black text-red-400">{overdueCount}</p>
               </div>
             </div>
 
             {/* Month nav */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></button>
-                <h3 className="text-lg font-bold text-white min-w-[200px] text-center">{monthName}</h3>
-                <button onClick={nextMonth} className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronRight className="w-4 h-4" /></button>
+                <button onClick={prevMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronLeft className="w-5 h-5" /></button>
+                <h3 className="text-xl font-black text-white min-w-[220px] text-center">{monthName}</h3>
+                <button onClick={nextMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronRight className="w-5 h-5" /></button>
               </div>
               <div className="flex items-center gap-3">
                 <button onClick={goToday} className="text-xs text-blue-400 hover:text-blue-300 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-500/10 border border-blue-500/20">Today</button>
@@ -2175,9 +2234,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
             <div className="flex flex-col md:flex-row gap-4">
               {/* Calendar Grid */}
               <div className={`${calSelectedDay ? 'flex-1' : 'w-full'} transition-all`}>
-                <div className="grid grid-cols-7 gap-1 mb-1">
+                <div className="grid grid-cols-7 gap-1 mb-2">
                   {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
-                    <div key={d} className="text-center text-[10px] font-bold text-zinc-500 uppercase py-1">{d}</div>
+                    <div key={d} className="text-center text-xs font-bold text-zinc-500 uppercase py-1.5">{d}</div>
                   ))}
                 </div>
                 <div className="grid grid-cols-7 gap-1">{cells}</div>
@@ -2185,7 +2244,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
 
               {/* Day Detail Panel */}
               {calSelectedDay && (
-                <div className="w-full md:w-80 bg-zinc-900/50 border border-white/5 rounded-xl p-4 animate-fade-in flex-shrink-0 max-h-[400px] md:max-h-[520px] overflow-y-auto">
+                <div className="w-full md:w-96 bg-zinc-900/50 border border-white/5 rounded-xl p-5 animate-fade-in flex-shrink-0 max-h-[500px] md:max-h-[620px] overflow-y-auto">
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <p className="text-white font-bold">{selectedDateStr}</p>
@@ -2341,16 +2400,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       </div>
 
       <div className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-x-auto shadow-sm">
-        <table className="w-full text-sm text-left min-w-[800px]">
+        <table className="w-full text-sm text-left min-w-[560px]">
           <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-xs">
             <tr>
-              <th className="p-4">PO Number / Job ID</th>
-              <th className="p-4">Part Details</th>
-              <th className="p-4">Qty</th>
-              <th className="p-4">Priority</th>
-              <th className="p-4">Status</th>
-              <th className="p-4">Due</th>
-              <th className="p-4 text-right">Actions</th>
+              <th className="p-3 sm:p-4">PO / Job</th>
+              <th className="p-3 sm:p-4 hidden md:table-cell">Part Details</th>
+              <th className="p-3 sm:p-4 hidden sm:table-cell">Qty</th>
+              <th className="p-3 sm:p-4 hidden lg:table-cell">Priority</th>
+              <th className="p-3 sm:p-4 hidden md:table-cell">Status</th>
+              <th className="p-3 sm:p-4">Due</th>
+              <th className="p-3 sm:p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -2374,14 +2433,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
                 <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
-                  <td className="p-4">
+                  <td className="p-3 sm:p-4">
                     <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-black text-xl">{j.poNumber}</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-white font-black text-base sm:text-xl">{j.poNumber}</span>
                         {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
                         {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
                       </div>
-                      <span className="text-zinc-600 font-mono text-[11px]">Job ID: {j.jobIdsDisplay}</span>
+                      <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[200px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
+                      {/* Mobile-only: show customer + part inline since column is hidden */}
+                      <span className="md:hidden text-zinc-400 text-xs truncate max-w-[220px]">{j.partNumber} · {user.role === 'admin' ? j.customer : '***'}</span>
                       {j.status === 'completed' && totalMins > 0 && (
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[10px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{totalHrs.toFixed(1)}h · ${totalCost.toFixed(0)} cost</span>
@@ -2394,7 +2455,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                       )}
                     </div>
                   </td>
-                  <td className="p-4">
+                  <td className="p-3 sm:p-4 hidden md:table-cell">
                     <div className="flex items-center gap-2.5">
                       {j.partImage ? (
                         <img src={j.partImage} alt="Part" className="w-10 h-10 rounded-lg object-cover border border-white/10 cursor-pointer hover:border-cyan-500/50 hover:scale-110 transition-all flex-shrink-0" onClick={(e) => { e.stopPropagation(); setLightboxImg(j.partImage!); }} />
@@ -2415,36 +2476,53 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                       </div>
                     </div>
                   </td>
-                  <td className="p-4 font-mono text-zinc-300">{j.quantity}</td>
-                  <td className="p-4"><PriorityBadge priority={j.priority} /></td>
-                  <td className="p-4"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
-                  <td className={`p-4 font-mono whitespace-nowrap font-bold ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
+                  <td className="p-3 sm:p-4 font-mono text-zinc-300 hidden sm:table-cell">{j.quantity}</td>
+                  <td className="p-3 sm:p-4 hidden lg:table-cell"><PriorityBadge priority={j.priority} /></td>
+                  <td className="p-3 sm:p-4 hidden md:table-cell"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
+                  <td className={`p-3 sm:p-4 font-mono sm:whitespace-nowrap font-bold text-xs sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
                     {fmt(j.dueDate)}
                   </td>
-                  <td className="p-4 text-right" onClick={e => e.stopPropagation()}>
+                  <td className="p-3 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
                       <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" /></button>
                       {activeTab === 'active' && (() => {
                         const stages = getStages(shopSettings);
                         const nextStage = getNextStage(j, stages);
-                        if (nextStage) {
-                          return (
-                            <button onClick={() => confirm({
-                              title: `Advance to ${nextStage.label}`,
-                              message: `Move this job to "${nextStage.label}"?`,
-                              onConfirm: async () => {
-                                await DB.advanceJobStage(j.id, nextStage.id, user.id, user.name, nextStage.isComplete);
-                                addToast('success', `Job advanced to ${nextStage.label}`);
-                              }
-                            })}
-                              className="p-2 rounded-lg transition-colors hover:text-white"
-                              style={{ background: `${nextStage.color}15`, color: nextStage.color }}
-                              title={`Advance to ${nextStage.label}`}>
-                              <ArrowRight className="w-4 h-4" />
-                            </button>
-                          );
-                        }
-                        return null;
+                        const completedStage = stages.find(s => s.isComplete);
+                        const isAlreadyComplete = j.status === 'completed';
+                        return (
+                          <>
+                            {nextStage && (
+                              <button onClick={() => confirm({
+                                title: `Advance to ${nextStage.label}`,
+                                message: `Move this job to "${nextStage.label}"?`,
+                                onConfirm: async () => {
+                                  await DB.advanceJobStage(j.id, nextStage.id, user.id, user.name, nextStage.isComplete);
+                                  addToast('success', `Job advanced to ${nextStage.label}`);
+                                }
+                              })}
+                                className="p-2 rounded-lg transition-colors hover:text-white"
+                                style={{ background: `${nextStage.color}15`, color: nextStage.color }}
+                                title={`Advance to ${nextStage.label}`}>
+                                <ArrowRight className="w-4 h-4" />
+                              </button>
+                            )}
+                            {!isAlreadyComplete && completedStage && (
+                              <button onClick={() => confirm({
+                                title: 'Complete Job',
+                                message: `Mark "${j.poNumber}" as completed?`,
+                                onConfirm: async () => {
+                                  await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true);
+                                  addToast('success', `✅ Job "${j.poNumber}" completed!`);
+                                }
+                              })}
+                                className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors"
+                                title="Complete Job">
+                                <CheckCircle className="w-4 h-4" />
+                              </button>
+                            )}
+                          </>
+                        );
                       })()}
                       {j.dueDate && (
                         <button onClick={() => {
@@ -2456,6 +2534,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                         }} className={`p-2 rounded-lg transition-colors ${calAdded.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-blue-500/10 text-zinc-500 hover:text-blue-400'}`} title={calAdded.includes(j.id) ? 'Already in Google Calendar' : 'Add to Google Calendar'}>
                           {calAdded.includes(j.id) ? <CheckCircle className="w-4 h-4" /> : <Calendar className="w-4 h-4" />}
                         </button>
+                      )}
+                      {j.customer && (
+                        <button onClick={() => {
+                          const url = `${window.location.origin}?portal=${encodeURIComponent(j.customer || '')}`;
+                          navigator.clipboard.writeText(url).then(() => addToast('success', 'Portal link copied!')).catch(() => prompt('Copy this link:', url));
+                        }} className="p-2 hover:bg-purple-500/10 rounded-lg text-purple-400 hover:text-purple-300 transition-colors" title="Copy Customer Portal Link"><Share2 className="w-4 h-4" /></button>
                       )}
                       <button onClick={() => setPrintable(j)} className={`p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" /></button>
                       <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" /></button>
@@ -2472,47 +2556,101 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       </>}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
-              <h3 className="font-bold text-white text-lg">{editingJob.id ? 'Edit Job' : 'Create New Job'}</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4 animate-fade-in">
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh]">
+            <div className="p-3 sm:p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0">
+              <h3 className="font-bold text-white text-base sm:text-lg">{editingJob.id ? 'Edit Job' : 'Create New Job'}</h3>
               <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
             </div>
-            <div className="p-8 overflow-y-auto space-y-8">
+            <div className="p-4 sm:p-8 overflow-y-auto space-y-5 sm:space-y-8">
               {/* ── Stage Pipeline (for existing jobs) ── */}
               {editingJob.id && (() => {
                 const stages = getStages(shopSettings);
                 const currentStage = getJobStage(editingJob as Job, stages);
                 const currentIdx = stages.findIndex(s => s.id === currentStage.id);
                 const nextStage = getNextStage(editingJob as Job, stages);
+                const completedStage = stages.find(s => s.isComplete);
+                const isJobComplete = (editingJob as Job).status === 'completed';
                 return (
                   <div className="bg-zinc-800/30 rounded-xl p-4 border border-white/5 space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Job Progress</p>
-                      {nextStage && (
-                        <button onClick={async () => {
-                          await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, nextStage.isComplete);
-                          setEditingJob({ ...editingJob, currentStage: nextStage.id });
-                          addToast('success', `Advanced to ${nextStage.label}`);
-                        }} className="text-xs font-bold px-3 py-1.5 rounded-lg transition-colors hover:brightness-110" style={{ background: `${nextStage.color}20`, color: nextStage.color }}>
-                          Advance to {nextStage.label} →
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {/* Stage dropdown — jump to any stage */}
+                        <select
+                          value={currentStage.id}
+                          onChange={async (e) => {
+                            const targetStage = stages.find(s => s.id === e.target.value);
+                            if (!targetStage || targetStage.id === currentStage.id) return;
+                            await DB.advanceJobStage(editingJob.id, targetStage.id, user.id, user.name, targetStage.isComplete);
+                            setEditingJob({ ...editingJob, currentStage: targetStage.id, status: targetStage.isComplete ? 'completed' : targetStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                            addToast('success', `Moved to ${targetStage.label}`);
+                          }}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors"
+                        >
+                          {stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                        </select>
+                        {nextStage && (
+                          <button onClick={async () => {
+                            await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, nextStage.isComplete);
+                            setEditingJob({ ...editingJob, currentStage: nextStage.id, status: nextStage.isComplete ? 'completed' : nextStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                            addToast('success', `Advanced to ${nextStage.label}`);
+                          }} className="text-xs font-bold px-3 py-1.5 rounded-lg transition-colors hover:brightness-110" style={{ background: `${nextStage.color}20`, color: nextStage.color }}>
+                            Next: {nextStage.label} →
+                          </button>
+                        )}
+                        {!isJobComplete && completedStage && (
+                          <button onClick={async () => {
+                            await DB.advanceJobStage(editingJob.id, completedStage.id, user.id, user.name, true);
+                            setEditingJob({ ...editingJob, currentStage: completedStage.id, status: 'completed' });
+                            addToast('success', `✅ Job completed!`);
+                          }} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors">
+                            ✓ Complete
+                          </button>
+                        )}
+                      </div>
                     </div>
+                    {/* Visual pipeline */}
                     <div className="flex items-center gap-1">
                       {stages.map((stage, i) => {
                         const isActive = i <= currentIdx;
                         const isCurrent = i === currentIdx;
                         return (
-                          <div key={stage.id} className="flex-1 flex flex-col items-center gap-1">
-                            <div className={`h-2.5 w-full rounded-full transition-all ${isCurrent ? 'ring-1 ring-white/30' : ''}`}
+                          <button key={stage.id} className="flex-1 flex flex-col items-center gap-1 cursor-pointer group" onClick={async () => {
+                            if (stage.id === currentStage.id) return;
+                            await DB.advanceJobStage(editingJob.id, stage.id, user.id, user.name, stage.isComplete);
+                            setEditingJob({ ...editingJob, currentStage: stage.id, status: stage.isComplete ? 'completed' : stage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                            addToast('success', `Moved to ${stage.label}`);
+                          }}>
+                            <div className={`h-3 w-full rounded-full transition-all group-hover:scale-y-125 ${isCurrent ? 'ring-2 ring-white/40 ring-offset-1 ring-offset-zinc-900' : ''}`}
                               style={{ background: isActive ? stage.color : '#27272a', opacity: isActive ? 1 : 0.3 }} />
-                            <span className={`text-[9px] font-bold transition-colors ${isCurrent ? 'text-white' : isActive ? '' : 'text-zinc-600'}`}
+                            <span className={`text-[9px] font-bold transition-colors ${isCurrent ? 'text-white' : isActive ? '' : 'text-zinc-600'} group-hover:text-white`}
                               style={isActive ? { color: stage.color } : {}}>{stage.label}</span>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
+                    {/* Share with Customer */}
+                    {(editingJob as Job).customer && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <button onClick={() => {
+                          const base = window.location.origin;
+                          const url = `${base}?portal=${encodeURIComponent((editingJob as Job).customer || '')}`;
+                          navigator.clipboard.writeText(url).then(() => addToast('success', 'Customer portal link copied!')).catch(() => {
+                            prompt('Copy this link:', url);
+                          });
+                        }} className="flex items-center gap-1.5 text-[11px] font-bold text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 px-3 py-1.5 rounded-lg transition-all">
+                          <Share2 className="w-3.5 h-3.5" /> Share Portal Link
+                        </button>
+                        <button onClick={() => {
+                          const base = window.location.origin;
+                          const url = `${base}?portal=${encodeURIComponent((editingJob as Job).customer || '')}`;
+                          window.open(url, '_blank');
+                        }} className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-all">
+                          <ExternalLink className="w-3.5 h-3.5" /> Preview
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2934,6 +3072,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) =
       customer: string;
       dueDate: string;
       poNumber: string;
+      quantity: number;
       jobIsCompleted: boolean;
       completedAt: number | null;
       logs: TimeLog[];
@@ -3270,19 +3409,19 @@ const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) =
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-zinc-900 border border-white/10 rounded-2xl p-4 space-y-4 no-print">
-        <div className="flex flex-wrap items-end gap-3">
+      <div className="bg-zinc-900 border border-white/10 rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-4 no-print">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-2 sm:gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-[10px] uppercase font-bold text-zinc-500">Start Date</label>
-            <input type="date" value={dateRange.start} onChange={e => setDateRange({ ...dateRange, start: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white min-w-[130px]" />
+            <input type="date" value={dateRange.start} onChange={e => setDateRange({ ...dateRange, start: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white w-full sm:min-w-[130px]" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] uppercase font-bold text-zinc-500">End Date</label>
-            <input type="date" value={dateRange.end} onChange={e => setDateRange({ ...dateRange, end: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white min-w-[130px]" />
+            <input type="date" value={dateRange.end} onChange={e => setDateRange({ ...dateRange, end: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white w-full sm:min-w-[130px]" />
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 col-span-2 sm:col-span-1">
             {(['today', 'week', 'month'] as const).map(p => (
-              <button key={p} onClick={() => setPreset(p)} className="px-3 py-2 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors capitalize">{p}</button>
+              <button key={p} onClick={() => setPreset(p)} className="flex-1 sm:flex-initial px-3 py-2 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors capitalize">{p}</button>
             ))}
           </div>
         </div>
@@ -3450,7 +3589,7 @@ const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) =
                           : <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Live</span>
                         }
                       </td>
-                      <td className="p-3 text-right pr-6 font-mono text-zinc-300 font-bold">{formatDuration(log.durationMinutes)}</td>
+                      <td className="p-3 text-right pr-6 font-mono text-zinc-300 font-bold">{formatDuration(getLogDurationMins(log) ?? log.durationMinutes)}</td>
                       <td className="p-3 text-right pr-6 no-print opacity-0 group-hover/row:opacity-100 transition-opacity">
                         <button onClick={() => handleEditLog(log)} className="text-blue-500 hover:text-white p-1 rounded hover:bg-blue-500/20 transition-colors" title="Edit log"><Edit2 className="w-3 h-3" /></button>
                       </td>
@@ -4112,6 +4251,7 @@ const ReportsView = () => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const u1 = DB.subscribeLogs(setLogs);
@@ -4208,13 +4348,13 @@ const ReportsView = () => {
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Jobs Done</p>
                 <p className="text-xl sm:text-2xl font-black text-emerald-400">{completedJobs.length}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center overflow-hidden">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Revenue</p>
-                <p className="text-xl sm:text-2xl font-black text-green-400">${totalRevenue.toLocaleString()}</p>
+                <p className="text-lg sm:text-2xl font-black text-green-400 truncate">${totalRevenue >= 10000 ? `${(totalRevenue/1000).toFixed(1)}k` : totalRevenue.toLocaleString()}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center overflow-hidden">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Labor Cost</p>
-                <p className="text-xl sm:text-2xl font-black text-orange-400">${Math.round(totalCost).toLocaleString()}</p>
+                <p className="text-lg sm:text-2xl font-black text-orange-400 truncate">${totalCost >= 10000 ? `${(totalCost/1000).toFixed(1)}k` : Math.round(totalCost).toLocaleString()}</p>
               </div>
               <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold">Margin</p>
@@ -4293,25 +4433,70 @@ const ReportsView = () => {
 
       {(() => {
         const VIVID = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#a855f7', '#eab308', '#64748b', '#e11d48', '#84cc16', '#0ea5e9'];
-        const workerChartData = workerStats.filter(w => w.totalHrs > 0).map(w => ({ name: w.user.name.split(' ')[0], hours: parseFloat(w.totalHrs.toFixed(1)), cost: Math.round(w.cost) }));
-        const pieData = opBreakdown.map(([op, mins]) => ({ name: op, value: parseFloat((mins / 60).toFixed(1)) }));
+        const workerChartData = workerStats.filter(w => w.totalHrs > 0).sort((a, b) => b.totalHrs - a.totalHrs).map(w => ({ name: w.user.name.split(' ')[0], hours: parseFloat(w.totalHrs.toFixed(1)), cost: Math.round(w.cost), sessions: w.sessions }));
+        const pieData = opBreakdown.map(([op, mins]) => ({ name: op, value: parseFloat((mins / 60).toFixed(1)), sessions: completedLogs.filter(l => l.operation === op).length }));
         const totalOpHrs = pieData.reduce((a, d) => a + d.value, 0);
-        const tooltipStyle = { contentStyle: { background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', padding: '10px 14px' }, itemStyle: { color: '#e4e4e7', padding: '2px 0' }, labelStyle: { color: '#f4f4f5', fontWeight: 700, marginBottom: 4 } };
+        const totalSess = pieData.reduce((a, d) => a + d.sessions, 0);
+        // Active shape for donut hover — pops slice out with outer ring, no center text (HTML overlay handles that)
+        const renderActiveShape = (props: any) => {
+          const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
+          return (
+            <g>
+              <Sector cx={cx} cy={cy} innerRadius={innerRadius - 3} outerRadius={outerRadius + 8} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={1} cornerRadius={6} />
+              <Sector cx={cx} cy={cy} innerRadius={outerRadius + 12} outerRadius={outerRadius + 15} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.5} />
+            </g>
+          );
+        };
+        // Active bar hover — brighter + shadow
+        const renderActiveBar = (props: any) => {
+          const { x, y, width, height, fill } = props;
+          return <rect x={x} y={y - 2} width={width} height={height + 4} rx={10} fill={fill} opacity={1} style={{ filter: 'brightness(1.3) drop-shadow(0 0 8px rgba(255,255,255,0.15))' }} />;
+        };
+        // Custom bar label
+        const renderBarLabel = (props: any) => {
+          const { x, y, width, value, height } = props;
+          if (!value) return null;
+          return <text x={x + width + 8} y={y + height / 2} fill="#e4e4e7" fontSize={12} fontWeight={800} dominantBaseline="middle">{value}h</text>;
+        };
         return (
           <>
           {/* Worker Hours — Full Width Bar Chart */}
           <div>
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Worker Hours</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 overflow-hidden" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
               {workerChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={Math.max(280, workerChartData.length * 48)}>
-                  <BarChart layout="vertical" data={workerChartData} margin={{ top: 5, right: 50, left: 5, bottom: 5 }}>
+                <ResponsiveContainer width="100%" height={Math.max(isMobile ? 260 : 320, workerChartData.length * (isMobile ? 42 : 56))}>
+                  <BarChart layout="vertical" data={workerChartData} margin={{ top: 5, right: isMobile ? 40 : 70, left: 0, bottom: 5 }}>
+                    <defs>
+                      {workerChartData.map((_, i) => (
+                        <linearGradient key={`wg${i}`} id={`wGrad${i}`} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor={VIVID[i % VIVID.length]} stopOpacity={0.35} />
+                          <stop offset="30%" stopColor={VIVID[i % VIVID.length]} stopOpacity={0.7} />
+                          <stop offset="100%" stopColor={VIVID[i % VIVID.length]} stopOpacity={1} />
+                        </linearGradient>
+                      ))}
+                    </defs>
                     <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                    <XAxis type="number" tick={{ fill: '#52525b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" tick={{ fill: '#d4d4d8', fontSize: 13, fontWeight: 700 }} axisLine={false} tickLine={false} width={80} />
-                    <Tooltip cursor={false} {...tooltipStyle} formatter={(value: number) => [`${value}h`, 'Hours']} />
-                    <Bar dataKey="hours" radius={[0, 8, 8, 0]} barSize={30} animationBegin={0} animationDuration={800} animationEasing="ease-out">
-                      {workerChartData.map((_, i) => <Cell key={i} fill={VIVID[i % VIVID.length]} fillOpacity={0.85} />)}
+                    <XAxis type="number" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}h`} />
+                    <YAxis type="category" dataKey="name" tick={{ fill: '#d4d4d8', fontSize: isMobile ? 11 : 13, fontWeight: 700 }} axisLine={false} tickLine={false} width={isMobile ? 50 : 85} />
+                    <Tooltip cursor={false}
+                      content={(props: any) => {
+                        if (!props.active || !props.payload?.length) return null;
+                        const d = props.payload[0].payload;
+                        return (
+                          <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '16px 20px', boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05)' }}>
+                            <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 15, marginBottom: 8 }}>{d.name}</p>
+                            <div style={{ display: 'flex', gap: 16 }}>
+                              <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>HOURS</p><p style={{ color: '#3b82f6', fontSize: 18, fontWeight: 900 }}>{d.hours}h</p></div>
+                              <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>SESSIONS</p><p style={{ color: '#a1a1aa', fontSize: 18, fontWeight: 900 }}>{d.sessions}</p></div>
+                              {d.cost > 0 && <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>COST</p><p style={{ color: '#f59e0b', fontSize: 18, fontWeight: 900 }}>${d.cost}</p></div>}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="hours" radius={[0, 10, 10, 0]} barSize={36} isAnimationActive={true} animationDuration={800} animationEasing="ease-out" label={renderBarLabel} activeBar={renderActiveBar}>
+                      {workerChartData.map((_, i) => <Cell key={i} fill={`url(#wGrad${i})`} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -4319,35 +4504,51 @@ const ReportsView = () => {
             </div>
           </div>
 
-          {/* Operations Breakdown — Large Donut with center label */}
+          {/* Operations Breakdown — Large Donut */}
           <div>
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Operations Breakdown</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5 relative" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 relative overflow-hidden" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
               {pieData.length > 0 ? (
                 <>
-                <ResponsiveContainer width="100%" height={340}>
+                <ResponsiveContainer width="100%" height={isMobile ? 280 : 420}>
                   <PieChart>
-                    <defs>
-                      {pieData.map((_, i) => (
-                        <filter key={`glow${i}`} id={`glow${i}`}><feDropShadow dx="0" dy="0" stdDeviation="3" floodColor={VIVID[i % VIVID.length]} floodOpacity="0.3" /></filter>
-                      ))}
-                    </defs>
-                    <Pie data={pieData} cx="50%" cy="45%" innerRadius={75} outerRadius={130} paddingAngle={2} dataKey="value" stroke="none" animationBegin={0} animationDuration={1000} animationEasing="ease-out" cornerRadius={4}>
-                      {pieData.map((_, i) => <Cell key={i} fill={VIVID[i % VIVID.length]} stroke="none" style={{ filter: `url(#glow${i})` }} />)}
+                    <Pie data={pieData} cx="50%" cy="48%" innerRadius={isMobile ? 55 : 80} outerRadius={isMobile ? 100 : 145} paddingAngle={2} dataKey="value" stroke="rgba(0,0,0,0.3)" strokeWidth={1} isAnimationActive={true} animationDuration={1000} animationEasing="ease-out" cornerRadius={5} activeIndex={undefined} activeShape={renderActiveShape}>
+                      {pieData.map((_, i) => <Cell key={i} fill={VIVID[i % VIVID.length]} />)}
                     </Pie>
-                    <Tooltip cursor={false} {...tooltipStyle} formatter={(value: number) => [`${value}h`, 'Hours']} />
-                    <text x="50%" y="43%" textAnchor="middle" dominantBaseline="middle" fill="#f4f4f5" fontSize={28} fontWeight={800}>{totalOpHrs.toFixed(0)}</text>
-                    <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#71717a" fontSize={11} fontWeight={600}>TOTAL HOURS</text>
+                    <Tooltip cursor={false} content={(props: any) => {
+                      if (!props.active || !props.payload?.length) return null;
+                      const d = props.payload[0].payload;
+                      const pct = totalOpHrs > 0 ? ((d.value / totalOpHrs) * 100).toFixed(1) : '0';
+                      return (
+                        <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '14px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
+                          <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 6 }}>{d.name}</p>
+                          <p style={{ color: '#e4e4e7', fontSize: 20, fontWeight: 900 }}>{d.value}h <span style={{ color: '#71717a', fontSize: 13, fontWeight: 600 }}>({pct}%)</span></p>
+                          <p style={{ color: '#71717a', fontSize: 11, marginTop: 4 }}>{d.sessions} session{d.sessions !== 1 ? 's' : ''}</p>
+                        </div>
+                      );
+                    }} />
                   </PieChart>
                 </ResponsiveContainer>
-                <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-2 pb-1">
-                  {pieData.map((d, i) => (
-                    <div key={d.name} className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: VIVID[i % VIVID.length], boxShadow: `0 0 6px ${VIVID[i % VIVID.length]}40` }} />
-                      <span className="text-[11px] text-zinc-400">{d.name}</span>
-                      <span className="text-[10px] text-zinc-600 font-mono">{d.value}h</span>
-                    </div>
-                  ))}
+                {/* Center text overlay — position matches the donut (cy=48%) not parent */}
+                <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none" style={{ top: 0, height: isMobile ? 280 : 420 }}>
+                  <div className="text-center" style={{ transform: 'translateY(-2%)' }}>
+                    <p className={`${isMobile ? 'text-2xl' : 'text-4xl'} font-black text-white`} style={{ textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>{totalOpHrs.toFixed(0)}</p>
+                    <p className="text-[9px] sm:text-[10px] font-bold text-zinc-500 uppercase tracking-[3px]">Total Hours</p>
+                    <p className="text-[9px] sm:text-[10px] text-zinc-600 mt-0.5">{totalSess} sessions</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-center gap-x-5 gap-y-2 mt-1 pb-2">
+                  {pieData.map((d, i) => {
+                    const pct = totalOpHrs > 0 ? ((d.value / totalOpHrs) * 100).toFixed(0) : '0';
+                    return (
+                      <div key={d.name} className="flex items-center gap-1.5 group cursor-default">
+                        <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: VIVID[i % VIVID.length] }} />
+                        <span className="text-xs text-zinc-300 font-semibold group-hover:text-white transition-colors">{d.name}</span>
+                        <span className="text-[11px] text-zinc-500 font-mono">{d.value}h</span>
+                        <span className="text-[10px] text-zinc-600">({pct}%)</span>
+                      </div>
+                    );
+                  })}
                 </div>
                 </>
               ) : <p className="text-zinc-500 text-sm text-center py-8">No data.</p>}
@@ -4380,22 +4581,22 @@ const ReportsView = () => {
           <div>
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Customer Breakdown</h3>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-              <table className="w-full text-sm min-w-[400px]">
+              <table className="w-full text-sm">
                 <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
                   <tr>
-                    <th className="text-left p-3">Customer</th>
-                    <th className="text-right p-3">Jobs</th>
-                    <th className="text-right p-3">Hours</th>
-                    <th className="text-right p-3">Revenue</th>
+                    <th className="text-left p-2 sm:p-3">Customer</th>
+                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Jobs</th>
+                    <th className="text-right p-2 sm:p-3">Hours</th>
+                    <th className="text-right p-2 sm:p-3">Revenue</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {custBreakdown.map(([cust, data]) => (
                     <tr key={cust} className="hover:bg-white/5">
-                      <td className="p-3 text-white font-bold">{cust}</td>
-                      <td className="p-3 text-right font-mono text-zinc-300">{data.jobs}</td>
-                      <td className="p-3 text-right font-mono text-zinc-300">{data.hours.toFixed(1)}h</td>
-                      <td className="p-3 text-right font-mono text-emerald-400">{data.revenue > 0 ? `$${data.revenue.toLocaleString()}` : '-'}</td>
+                      <td className="p-2 sm:p-3 text-white font-bold truncate max-w-[140px] sm:max-w-none">{cust}</td>
+                      <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 hidden sm:table-cell">{data.jobs}</td>
+                      <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 text-xs sm:text-sm">{data.hours.toFixed(1)}h</td>
+                      <td className="p-2 sm:p-3 text-right font-mono text-emerald-400 text-xs sm:text-sm">{data.revenue > 0 ? `$${data.revenue.toLocaleString()}` : '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4420,24 +4621,29 @@ const ReportsView = () => {
           <div>
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Job Profitability</h3>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-              <table className="w-full text-sm min-w-[500px]">
+              <table className="w-full text-sm">
                 <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
                   <tr>
-                    <th className="text-left p-3">PO / Part</th>
-                    <th className="text-right p-3">Quote</th>
-                    <th className="text-right p-3">Cost</th>
-                    <th className="text-right p-3">Profit</th>
-                    <th className="text-right p-3">Margin</th>
+                    <th className="text-left p-2 sm:p-3">PO / Part</th>
+                    <th className="text-right p-2 sm:p-3 hidden md:table-cell">Quote</th>
+                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Cost</th>
+                    <th className="text-right p-2 sm:p-3">Profit</th>
+                    <th className="text-right p-2 sm:p-3">Margin</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {profitableJobs.map(j => (
                     <tr key={j.id} className="hover:bg-white/5">
-                      <td className="p-3"><span className="text-white font-bold">{j.poNumber}</span> <span className="text-zinc-500 text-xs">{j.partNumber}</span></td>
-                      <td className="p-3 text-right font-mono text-zinc-300">${(j.quoteAmount || 0).toLocaleString()}</td>
-                      <td className="p-3 text-right font-mono text-orange-400">${j.cost.toFixed(0)}</td>
-                      <td className={`p-3 text-right font-mono font-bold ${j.profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.profit >= 0 ? '+' : ''}${j.profit.toFixed(0)}</td>
-                      <td className={`p-3 text-right font-mono text-xs ${j.margin >= 20 ? 'text-emerald-400' : j.margin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{j.margin.toFixed(0)}%</td>
+                      <td className="p-2 sm:p-3">
+                        <div className="flex flex-col">
+                          <span className="text-white font-bold text-xs sm:text-sm">{j.poNumber}</span>
+                          <span className="text-zinc-500 text-[10px] sm:text-xs truncate max-w-[140px] sm:max-w-none">{j.partNumber}</span>
+                        </div>
+                      </td>
+                      <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 text-xs sm:text-sm hidden md:table-cell">${(j.quoteAmount || 0).toLocaleString()}</td>
+                      <td className="p-2 sm:p-3 text-right font-mono text-orange-400 text-xs sm:text-sm hidden sm:table-cell">${j.cost.toFixed(0)}</td>
+                      <td className={`p-2 sm:p-3 text-right font-mono font-bold text-xs sm:text-sm ${j.profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.profit >= 0 ? '+' : ''}${j.profit.toFixed(0)}</td>
+                      <td className={`p-2 sm:p-3 text-right font-mono text-[10px] sm:text-xs ${j.margin >= 20 ? 'text-emerald-400' : j.margin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{j.margin.toFixed(0)}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4495,20 +4701,41 @@ const ReportsView = () => {
               </div>
             </div>
             {barData.some(d => d.estimated > 0) && (
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
                 <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest mb-3">Hours: Estimated vs Actual</p>
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={barData} margin={{ top: 5, right: 10, left: 0, bottom: 30 }}>
+                <ResponsiveContainer width="100%" height={isMobile ? 240 : 320}>
+                  <BarChart data={barData} margin={{ top: 10, right: 10, left: 0, bottom: isMobile ? 45 : 35 }}>
+                    <defs>
+                      <linearGradient id="estGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#93c5fd" /><stop offset="50%" stopColor="#60a5fa" /><stop offset="100%" stopColor="#3b82f6" /></linearGradient>
+                      <linearGradient id="actGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fde68a" /><stop offset="50%" stopColor="#fbbf24" /><stop offset="100%" stopColor="#f59e0b" /></linearGradient>
+                    </defs>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                    <XAxis dataKey="name" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" height={50} />
-                    <YAxis tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}h`} />
-                    <Tooltip cursor={false}
-                      contentStyle={{ background: 'rgba(9,9,11,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.6)', padding: '10px 14px' }}
-                      formatter={(value: number, name: string) => [`${value}h`, name === 'estimated' ? 'Estimated' : 'Actual']}
+                    <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" height={55} />
+                    <YAxis tick={{ fill: '#52525b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}h`} />
+                    <Tooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                      content={(props: any) => {
+                        if (!props.active || !props.payload?.length) return null;
+                        const d = props.payload;
+                        const est = d.find((e: any) => e.dataKey === 'estimated')?.value || 0;
+                        const act = d.find((e: any) => e.dataKey === 'actual')?.value || 0;
+                        const diff = act - est;
+                        return (
+                          <div style={{ background: 'rgba(9,9,11,0.96)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: '14px 18px', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}>
+                            <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 8 }}>{props.label}</p>
+                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>📐 Estimated: <span style={{ color: '#60a5fa', fontWeight: 800 }}>{est}h</span></p>
+                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>⏱ Actual: <span style={{ color: '#fbbf24', fontWeight: 800 }}>{act}h</span></p>
+                            {est > 0 && <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 6, marginTop: 6 }}>
+                              <p style={{ color: diff > 0 ? '#ef4444' : '#10b981', fontSize: 12, fontWeight: 700 }}>
+                                {diff > 0 ? '⚠ Over by' : '✅ Under by'} {Math.abs(diff).toFixed(1)}h ({est > 0 ? Math.abs(diff / est * 100).toFixed(0) : 0}%)
+                              </p>
+                            </div>}
+                          </div>
+                        );
+                      }}
                     />
-                    <Legend formatter={(v: string) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v === 'estimated' ? 'Estimated' : 'Actual'}</span>} />
-                    <Bar dataKey="estimated" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={16} name="estimated" />
-                    <Bar dataKey="actual" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={16} name="actual" />
+                    <Legend formatter={(v: string) => <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600 }}>{v === 'estimated' ? '📐 Estimated' : '⏱ Actual'}</span>} />
+                    <Bar dataKey="estimated" fill="url(#estGrad)" radius={[8, 8, 0, 0]} barSize={22} name="estimated" isAnimationActive={true} animationDuration={800} animationEasing="ease-out" />
+                    <Bar dataKey="actual" fill="url(#actGrad)" radius={[8, 8, 0, 0]} barSize={22} name="actual" isAnimationActive={true} animationDuration={800} animationEasing="ease-out" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -5138,7 +5365,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
               </summary>
               <div className="px-4 pb-4">
-                <div className="grid grid-cols-8 gap-2">
+                <div className="grid grid-cols-6 sm:grid-cols-8 gap-2">
                   {[
                     '#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#22c55e','#10b981','#14b8a6',
                     '#06b6d4','#0ea5e9','#3b82f6','#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899',
@@ -5245,6 +5472,37 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
         <div className="flex gap-4 flex-col lg:flex-row">
           {/* LEFT: TV Controls */}
           <div className="w-full lg:w-[280px] xl:w-[300px] shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+
+            {/* TV Stream Link */}
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Radio className="w-4 h-4 text-red-500" />
+                <span className="text-sm font-bold text-white">TV Stream Link</span>
+              </div>
+              <p className="text-[10px] text-zinc-500">Open this URL on any TV or browser — no login needed. Each account gets their own private link.</p>
+              {(() => {
+                const token = settings.tvToken || '';
+                const tvUrl = token ? `${window.location.origin}?tv=${token}` : '';
+                return (
+                  <>
+                    {token ? (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <input readOnly value={tvUrl} className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono truncate" />
+                          <button onClick={() => { navigator.clipboard.writeText(tvUrl); addToast('success', 'TV link copied!'); }} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors shrink-0">Copy</button>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => window.open(tvUrl, '_blank')} className="flex-1 px-3 py-2 bg-white/5 hover:bg-white/10 text-white text-xs font-bold rounded-lg transition-colors">Open in New Tab</button>
+                          <button onClick={() => { if (confirm('Generate a new TV link? The old one will stop working.')) { setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) }); } }} className="px-3 py-2 bg-white/5 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 text-xs font-bold rounded-lg transition-colors">Reset</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) })} className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-colors">Generate TV Link</button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
 
             {/* Display Options */}
             <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
@@ -5710,6 +5968,12 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
 }
 
 export default function App() {
+  // Check for TV mode (?tv=TOKEN — standalone fullscreen TV for any account)
+  const [tvToken] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('tv') || null;
+  });
+
   // Check for Customer Portal mode (?portal=CUSTOMER_NAME&quote=QUOTE_ID)
   const [portalCustomer] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -5742,12 +6006,17 @@ export default function App() {
   const [confirm, setConfirm] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPOScanner, setShowPOScanner] = useState(false);
+  const [appSettings, setAppSettings] = useState<SystemSettings>(DB.getSettings());
   // For notifications  track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
   const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user);
 
-  // Subscribe globally for notification checks
+  // Subscribe globally for notification checks + settings
+  useEffect(() => {
+    const unsubS = DB.subscribeSettings(s => setAppSettings(s));
+    return unsubS;
+  }, []);
   useEffect(() => {
     if (!user) return;
     const unsub1 = DB.subscribeJobs(jobs => setAllJobs(jobs));
@@ -5803,6 +6072,11 @@ export default function App() {
   }, []);
 
   // ── Customer Portal Mode ──
+  // Standalone TV mode — no login needed, loads account data via token
+  if (tvToken) {
+    return <LiveFloorMonitor standalone />;
+  }
+
   if (portalCustomer) {
     return <CustomerPortal customerFilter={portalCustomer} quoteId={portalQuoteId} />;
   }
@@ -5944,10 +6218,9 @@ export default function App() {
 
      {showPOScanner && (
   <POScanner
-    geminiApiKey={import.meta.env.VITE_GEMINI_API_KEY || ''}
     onJobCreate={handlePOJobCreate}
     onClose={() => setShowPOScanner(false)}
-    clients={settings.clients || []}
+    clients={appSettings.clients || []}
   />
 )}
             <div className="fixed bottom-6 right-6 z-50 pointer-events-none">

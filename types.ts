@@ -211,6 +211,7 @@ export interface SystemSettings {
   tvSlides?: TvSlide[];        // Ordered list of slides for TV rotation
   tvSlideDuration?: number;    // Default seconds per slide (default 15)
   tvSlideshowEnabled?: boolean; // Enable slideshow rotation
+  tvToken?: string;            // Unique token for shareable TV URL (?tv=TOKEN)
 }
 
 export interface TvSlide {

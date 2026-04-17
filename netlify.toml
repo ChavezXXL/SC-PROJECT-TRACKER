@@ -1,6 +1,10 @@
 [build]
   publish = "dist"
   command = "npm run build"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
 
 # Cache hashed assets for 1 year (Vite fingerprints filenames on every build)
 [[headers]]

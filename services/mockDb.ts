@@ -519,7 +519,10 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
 export async function updateTimeLog(log: TimeLog) {
   // Recalculate duration if end time exists
   if (log.endTime) {
-     log.durationSeconds = Math.max(0, Math.floor((log.endTime - log.startTime) / 1000));
+     const wallMs = log.endTime - log.startTime;
+     const pausedMs = log.totalPausedMs || 0;
+     const workingMs = Math.max(0, wallMs - pausedMs);
+     log.durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
      log.durationMinutes = Math.ceil(log.durationSeconds / 60);
      log.status = 'completed';
   } else {
@@ -1009,7 +1012,7 @@ export async function sweepStaleLogs(): Promise<number> {
 
 // ── Web Push Subscriptions ────────────────────────────────────────
 export async function savePushSubscription(userId: string, subscription: any): Promise<void> {
-  const db = getDb();
+  const db = dbInstance;
   if (!db) return;
   // Key by userId + endpoint hash so one user can have multiple devices
   const endpoint: string = subscription.endpoint || '';

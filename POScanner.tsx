@@ -40,7 +40,6 @@ interface POScannerProps {
     info: string;
     specialInstructions?: string;
   }) => Promise<void>;
-  geminiApiKey: string;
   onClose: () => void;
   clients?: string[];
 }
@@ -239,144 +238,75 @@ async function addToGoogleCalendar(data: ExtractedPOData, jobId: string): Promis
 
 async function extractPODataWithGemini(
   imageBase64: string,
-  mimeType: string,
-  apiKey: string
+  mimeType: string
 ): Promise<ExtractedPOData> {
-  // ===== EARLY BAIL: No API key = immediate clear error =====
-  if (!apiKey || apiKey.trim().length < 10) {
-    throw new Error(
-      'Gemini API key is missing. Check that VITE_GEMINI_API_KEY (or GEMINI_API_KEY) is set in your Netlify environment variables, then redeploy.'
-    );
-  }
+  // Prompt kept concise — every token costs money
+  const prompt = `Extract PO fields from this manufacturing Purchase Order / Work Order image. Return ONLY this JSON, no other text:
+{"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"","customerName":"","confidence":"high|medium|low","notes":"","specialInstructions":""}
 
-  const prompt = `You are an expert at reading aerospace and defense manufacturing Purchase Orders (POs), Work Orders, and Travelers. Extract every field you can find.
+Field mapping:
+- poNumber: PO#, P.O., Order#, SO#, Release#, Contract#
+- jobNumber: Job#, WO#, Work Order, Traveler# ("" if none)
+- partNumber: Part#, P/N, PN, Item#, Drawing#, NSN
+- partName: Description / Nomenclature
+- quantity: Qty, Quantity, Pcs, Ea
+- dueDate: Due/Required/Need-By/Ship — format MM/DD/YYYY
+- customerName: company name / Bill To / Sold To
+- specialInstructions: ONLY deburring-relevant (edge breaks, deburr callouts, blending, Scotch-Brite warnings, "don't nick") — SHORT. Skip material, heat treat, certs, shipping.
+- confidence: "high" if 5+ fields, "medium" if 3-4, "low" if <3
 
-FIELD MAPPING — look for ALL of these label variants:
-- poNumber: "PO#", "P.O.", "P.O.#", "Purchase Order", "Order #", "Order No", "SO#", "Release#", "Contract#", "Blanket PO"
-- jobNumber: "Job#", "Job No", "WO#", "Work Order", "Traveler#", "Router#", "Op#" — use "" if none
-- partNumber: "Part#", "Part No", "P/N", "PN", "Item#", "Drawing#", "Dwg#", "Part Number", "NSN"
-- partName: Description, Name, Nomenclature, Item Description — what the part is called
-- quantity: "Qty", "QTY", "Quantity", "Units", "Pcs", "Pieces", "Ea", "EA", "Order Qty"
-- dueDate: "Due Date", "Required Date", "Need By", "Delivery Date", "Ship Date", "Required By", "Must Ship", "Sched Date"
-- customerName: Company name, customer name, "Bill To", "Sold To", "Ordered By" — who sent the PO
+Use "" for anything not found. Search headers, footers, tables, fine print.`;
 
-SPECIAL INSTRUCTIONS — this is for a DEBURRING SHOP. Only extract notes relevant to deburring work:
-- Edge break / deburr callouts: e.g. ".005-.015 edge break", "Deburr all edges", "Remove all burrs", "Deburr complete"
-- Cut sizes / tolerances for deburring: e.g. ".003-.005 max", "Break sharp edges .010-.015"
-- Blending requirements: e.g. "Blend all tool marks", "Smooth blend radius"
-- Surface finish related to deburring: e.g. "125 Ra max", "No scratches", "No nicks or dings"
-- Scotch-Brite warnings: e.g. "NO Scotch-Brite", "Scotch-Brite prohibited on flow passages"
-- Protection notes for deburring: e.g. "DO NOT nick", "Protect surfaces"
-- DO NOT include: material specs, heat treat, certifications, DFARS, shipping info, payment terms, or general manufacturing notes that are not about deburring
-- Keep it SHORT — just the deburring-relevant instructions, not full paragraphs
+  // Single call to our Netlify function — key stays on server, no retry loop in client
+  const response = await fetch('/.netlify/functions/gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, imageBase64, mimeType }),
+  });
 
-RULES:
-1. NEVER return empty strings if the information exists anywhere on the document
-2. Search the entire image including headers, footers, tables, boxes, and fine print
-3. confidence = "high" if 5+ fields found, "medium" if 3-4, "low" if under 3
-4. Return dueDate in MM/DD/YYYY format
-5. Keep specialInstructions SHORT — only deburring-relevant callouts, no full paragraphs
-6. notes field = only use for extraction warnings or ambiguities, NOT for instructions
-
-Return ONLY this exact JSON, no other text:
-{"poNumber":"","jobNumber":"","partNumber":"","partName":"","quantity":"","dueDate":"","customerName":"","confidence":"high|medium|low","notes":"","specialInstructions":""}`;
-
-  // Updated model fallback list — current as of early 2026
-  const models = [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-  ];
-  let lastError: any;
-
-  for (const model of models) {
-    try {
-      console.log(`[POScanner] Trying model: ${model}`);
-
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: prompt },
-                  { inline_data: { mime_type: mimeType, data: imageBase64 } }
-                ]
-              }
-            ],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 4096,
-            },
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        const errMsg = err?.error?.message || 'API error';
-        console.warn(`[POScanner] ${model} returned ${response.status}: ${errMsg}`);
-        throw new Error(`${response.status}: ${errMsg}`);
-      }
-
-      const result = await response.json();
-      let text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-
-      console.log(`[POScanner] ${model} raw response:`, text.substring(0, 300));
-
-      text = text.replace(/[\u0000-\u001F]+/g, ' ');
-      text = text
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/```\s*$/i, '')
-        .trim();
-
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        text = jsonMatch[0];
-      }
-
-      let parsed: Partial<ExtractedPOData> = {};
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new Error('Gemini returned invalid JSON.');
-      }
-
-      const normalized = normalizeExtractedPOData(parsed);
-
-      // Sanity check: did Gemini find ANY field? If literally every field is
-      // empty, the parse probably failed or the image is unreadable — try
-      // the next model. But if even one field came through, trust it and return.
-      const anyField = normalized.poNumber || normalized.jobNumber || normalized.partNumber
-        || normalized.partName || normalized.quantity || normalized.dueDate
-        || normalized.customerName || normalized.specialInstructions;
-      if (anyField) {
-        console.log(`[POScanner] ${model} extraction successful:`, normalized);
-      } else {
-        console.warn(`[POScanner] ${model} returned all empty fields — trying next model`);
-        throw new Error('All fields came back empty — likely a bad parse');
-      }
-
-      return normalized;
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`[POScanner] Model ${model} failed:`, err.message);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const code = err?.code || '';
+    const msg = err?.error || `HTTP ${response.status}`;
+    // Billing/quota errors get flagged for the UI to show the friendly billing screen
+    if (code === 'BILLING' || response.status === 429) {
+      throw new Error(`BILLING: Gemini API spending cap reached. Go to https://ai.studio/billing to raise your limit. (${msg})`);
     }
+    if (code === 'AUTH') {
+      throw new Error('BILLING: Gemini API key invalid or not configured. Check Netlify env vars.');
+    }
+    throw new Error(`Scan failed: ${msg}`);
   }
 
-  // All models failed — throw a real error so the UI shows the error screen
-  // instead of proceeding to the review step with a blank form.
-  throw new Error(
-    `Scan failed: ${lastError?.message || 'All Gemini models failed.'} Try a clearer photo or fill in fields manually.`
-  );
+  const { text } = await response.json();
+
+  // Clean + parse JSON
+  let cleaned = (text || '').replace(/[\u0000-\u001F]+/g, ' ').trim();
+  cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonMatch) cleaned = jsonMatch[0];
+
+  let parsed: Partial<ExtractedPOData> = {};
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error('Scanner returned invalid data. Try a clearer photo.');
+  }
+
+  const normalized = normalizeExtractedPOData(parsed);
+  const anyField = normalized.poNumber || normalized.jobNumber || normalized.partNumber
+    || normalized.partName || normalized.quantity || normalized.dueDate
+    || normalized.customerName || normalized.specialInstructions;
+
+  if (!anyField) {
+    throw new Error('Could not read any fields from this image. Try a clearer, well-lit photo.');
+  }
+
+  return normalized;
 }
 
-function compressImage(file: File, maxWidth = 2000): Promise<{ base64: string; mimeType: string }> {
+// 1280px is plenty for OCR/text extraction and cuts token cost ~60% vs 2000px
+function compressImage(file: File, maxWidth = 1280): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
@@ -403,7 +333,8 @@ function compressImage(file: File, maxWidth = 2000): Promise<{ base64: string; m
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+        // 0.82 quality is visually fine for text and cuts file size ~40% vs 0.95
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
         resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
       };
 
@@ -461,7 +392,6 @@ function matchClient(scanned: string, clients: string[]): string {
 
 export const POScanner: React.FC<POScannerProps> = ({
   onJobCreate,
-  geminiApiKey,
   onClose,
   clients = []
 }) => {
@@ -487,9 +417,10 @@ export const POScanner: React.FC<POScannerProps> = ({
 
     try {
       const { base64, mimeType } = await compressImage(file);
+      // Single call, no retries — server handles model fallbacks. Prevents cost blowout on errors.
       const data = await geminiRun(
-        () => extractPODataWithGemini(base64, mimeType, geminiApiKey),
-        { cooldownMs: 2000, maxRetries: 3 }
+        () => extractPODataWithGemini(base64, mimeType),
+        { cooldownMs: 3000, maxRetries: 0 }
       );
 
       // Match scanned customer name to existing clients list
@@ -499,10 +430,10 @@ export const POScanner: React.FC<POScannerProps> = ({
       setEditedData({ ...data });
       setStep('review');
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to process image. Check your Gemini API key.');
+      setErrorMsg(err?.message || 'Failed to process image.');
       setStep('error');
     }
-  }, [geminiApiKey, geminiRun, clients]);
+  }, [geminiRun, clients]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -583,16 +514,6 @@ export const POScanner: React.FC<POScannerProps> = ({
           </div>
 
           <div className="p-5 space-y-4">
-            {/* Warn if API key looks missing */}
-            {(!geminiApiKey || geminiApiKey.length < 10) && (
-              <div className="bg-red-900/30 border border-red-500/40 rounded-xl p-3 text-center">
-                <p className="text-red-400 text-xs font-bold">Gemini API Key not detected</p>
-                <p className="text-red-400/70 text-[11px] mt-1">
-                  Set VITE_GEMINI_API_KEY in Netlify env vars and redeploy.
-                </p>
-              </div>
-            )}
-
             <button
               onClick={() => cameraInputRef.current?.click()}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl p-4 flex items-center justify-center gap-3 font-semibold"
@@ -872,15 +793,30 @@ export const POScanner: React.FC<POScannerProps> = ({
   }
 
   if (step === 'error') {
+    const isBilling = errorMsg.startsWith('BILLING:');
+    const displayMsg = isBilling ? errorMsg.replace(/^BILLING:\s*/, '') : errorMsg;
     return (
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-gray-900 border border-red-800/50 rounded-2xl w-full max-w-sm shadow-2xl p-8 text-center">
-          <div className="w-16 h-16 bg-red-900/40 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-8 h-8 text-red-400" />
+        <div className={`bg-gray-900 border rounded-2xl w-full max-w-md shadow-2xl p-8 text-center ${isBilling ? 'border-amber-500/50' : 'border-red-800/50'}`}>
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isBilling ? 'bg-amber-900/40' : 'bg-red-900/40'}`}>
+            <AlertCircle className={`w-8 h-8 ${isBilling ? 'text-amber-400' : 'text-red-400'}`} />
           </div>
 
-          <h3 className="text-white font-bold text-xl mb-2">Something went wrong</h3>
-          <p className="text-gray-400 text-sm mb-6">{errorMsg}</p>
+          <h3 className="text-white font-bold text-xl mb-2">
+            {isBilling ? 'Gemini Billing Issue' : 'Something went wrong'}
+          </h3>
+          <p className="text-gray-300 text-sm mb-6 leading-relaxed">{displayMsg}</p>
+
+          {isBilling && (
+            <a
+              href="https://ai.studio/billing"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full py-2.5 mb-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-sm transition-colors"
+            >
+              Open Google AI Studio Billing →
+            </a>
+          )}
 
           <div className="flex gap-3">
             <button
@@ -894,7 +830,7 @@ export const POScanner: React.FC<POScannerProps> = ({
               onClick={onClose}
               className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold text-sm"
             >
-              Cancel
+              Close
             </button>
           </div>
         </div>
