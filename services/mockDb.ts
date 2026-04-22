@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry } from "../types";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -139,8 +139,13 @@ function readLS<T>(key: string, fallback: T): T {
   }
 }
 
+// Observer registry — localSubscribe callers get notified immediately after any writeLS.
+// This makes pause/resume/edit feel instant in localStorage mode instead of waiting for the 2s poll.
+const localSubscribers = new Set<() => void>();
 function writeLS<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
+  // Notify in a microtask so writes complete before reads
+  queueMicrotask(() => localSubscribers.forEach(n => { try { n(); } catch {} }));
 }
 
 function ensureSeedUsers() {
@@ -177,8 +182,10 @@ function ensureSeedUsers() {
 
 function localSubscribe<T>(getter: () => T, cb: (v: T) => void) {
   cb(getter());
-  const i = setInterval(() => cb(getter()), 1000);
-  return () => clearInterval(i);
+  const notify = () => cb(getter());
+  localSubscribers.add(notify);
+  const i = setInterval(notify, 3000); // slower fallback in case a write came from another tab
+  return () => { localSubscribers.delete(notify); clearInterval(i); };
 }
 
 const COL = {
@@ -239,6 +246,38 @@ export async function saveJob(job: Job) {
   if (idx >= 0) jobs[idx] = job;
   else jobs.push(job);
   writeLS(LS.jobs, jobs);
+}
+
+// Rename customer on every matching job. Case-sensitive match for `oldNames`.
+// Used by Settings → Customers merge tool.
+export async function renameCustomer(oldNames: string[], newName: string): Promise<number> {
+  const oldSet = new Set(oldNames);
+  let count = 0;
+  if (dbInstance) {
+    try {
+      const snap = await getDocs(collection(dbInstance, COL.jobs));
+      const writes: Promise<any>[] = [];
+      snap.forEach((d: any) => {
+        const j = d.data() as Job;
+        if (j.customer && oldSet.has(j.customer) && j.customer !== newName) {
+          writes.push(setDoc(doc(dbInstance, COL.jobs, j.id), { ...j, customer: newName }, { merge: true }));
+          count++;
+        }
+      });
+      await Promise.all(writes);
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return count;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const updated = jobs.map(j => {
+    if (j.customer && oldSet.has(j.customer) && j.customer !== newName) { count++; return { ...j, customer: newName }; }
+    return j;
+  });
+  writeLS(LS.jobs, updated);
+  return count;
 }
 
 export async function deleteJob(id: string) {
@@ -652,7 +691,6 @@ export function getSettings(): SystemSettings {
   const fallback: SystemSettings = {
     lunchStart: "12:00",
     lunchEnd: "12:30",
-    lunchDeductionMinutes: 30,
     autoClockOutTime: "17:30",
     autoClockOutEnabled: false,
     customOperations: ['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'],
@@ -671,7 +709,6 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
   const fallback: SystemSettings = {
     lunchStart: "12:00",
     lunchEnd: "12:30",
-    lunchDeductionMinutes: 30,
     autoClockOutTime: "17:30",
     autoClockOutEnabled: false,
     customOperations: ['Cutting', 'Deburring', 'Polishing', 'Assembly', 'QC', 'Packing'],
@@ -1130,6 +1167,61 @@ export async function deleteSample(id: string): Promise<void> {
   }
   const samples = readLS<Sample[]>(LS_SAMPLES, []).filter(s => s.id !== id);
   writeLS(LS_SAMPLES, samples);
+}
+
+// ── REWORK ENTRIES ────────────────────────────────────────────────
+const LS_REWORK = "nexus_rework";
+
+export function subscribeRework(cb: (entries: ReworkEntry[]) => void): () => void {
+  if (dbInstance) {
+    const colRef = collection(dbInstance, "rework");
+    return onSnapshot(colRef,
+      (snap: any) => {
+        firebaseStatus = { connected: true };
+        const entries = snap.docs.map((d: any) => d.data() as ReworkEntry).sort((a: ReworkEntry, b: ReworkEntry) => b.createdAt - a.createdAt);
+        cb(entries);
+      },
+      (err: any) => {
+        handleError(err);
+        cb(readLS<ReworkEntry[]>(LS_REWORK, []).sort((a, b) => b.createdAt - a.createdAt));
+      }
+    );
+  }
+  return localSubscribe(
+    () => readLS<ReworkEntry[]>(LS_REWORK, []).sort((a, b) => b.createdAt - a.createdAt),
+    cb
+  );
+}
+
+export async function saveRework(entry: ReworkEntry): Promise<void> {
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, "rework", entry.id), sanitize(entry), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const list = readLS<ReworkEntry[]>(LS_REWORK, []);
+  const idx = list.findIndex(r => r.id === entry.id);
+  if (idx >= 0) list[idx] = entry;
+  else list.push(entry);
+  writeLS(LS_REWORK, list);
+}
+
+export async function deleteRework(id: string): Promise<void> {
+  if (dbInstance) {
+    try {
+      await deleteDoc(doc(dbInstance, "rework", id));
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      throw handleError(e);
+    }
+    return;
+  }
+  const list = readLS<ReworkEntry[]>(LS_REWORK, []).filter(r => r.id !== id);
+  writeLS(LS_REWORK, list);
 }
 
 export async function startSampleWork(

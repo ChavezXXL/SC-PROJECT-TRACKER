@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Package, Clock, CheckCircle, Truck, AlertTriangle, Search, FileText, Check, X, DollarSign } from 'lucide-react';
-import type { Job, SystemSettings, JobStage, Quote } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Package, Clock, CheckCircle, Truck, AlertTriangle, Search, FileText, Check, X, DollarSign, Copy, Link2, Phone, Mail } from 'lucide-react';
+import type { Job, SystemSettings, JobStage, Quote, QuoteViewEvent } from './types';
 import * as DB from './services/mockDb';
 
 interface CustomerPortalProps {
@@ -48,18 +48,81 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
   // Find the specific quote if linked
   const linkedQuote = quoteId ? quotes.find(q => q.id === quoteId) : null;
 
-  // Filter jobs for this customer
-  const customerJobs = jobs.filter(j => {
-    if (!customerFilter) return false;
-    const cf = customerFilter.toLowerCase();
-    return (j.customer?.toLowerCase().includes(cf)) || j.id.toLowerCase() === cf || j.poNumber.toLowerCase() === cf;
-  }).filter(j => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    return j.poNumber.toLowerCase().includes(s) || j.partNumber.toLowerCase().includes(s);
-  }).sort((a, b) => b.createdAt - a.createdAt);
+  // ─── ENGAGEMENT TRACKING (Round 2 #14) ─────────────────────────
+  // Log a view event when a customer opens the quote link. Dedupes per tab via
+  // a session ID stored on the window object (not persistent — new tab = new session).
+  const viewLoggedRef = useRef(false);
+  const viewStartRef = useRef<number>(Date.now());
+  const viewSessionIdRef = useRef<string>(`sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+  useEffect(() => {
+    if (!linkedQuote || viewLoggedRef.current) return;
+    viewLoggedRef.current = true;
+    const now = Date.now();
+    const sessionId = viewSessionIdRef.current;
+    const newEvent: QuoteViewEvent = {
+      at: now,
+      sessionId,
+      userAgent: navigator.userAgent.slice(0, 120),
+    };
+    // Append + update counters. Skip if this session already logged (defensive).
+    const history = linkedQuote.viewHistory || [];
+    if (history.some(h => h.sessionId === sessionId)) return;
+    const updated: Quote = {
+      ...linkedQuote,
+      viewedAt: linkedQuote.viewedAt || now,
+      lastViewedAt: now,
+      viewCount: (linkedQuote.viewCount || 0) + 1,
+      viewHistory: [...history, newEvent].slice(-50), // cap history at 50 entries
+    };
+    DB.saveQuote(updated).catch(() => {});
+  }, [linkedQuote?.id]);
 
-  const customerName = linkedQuote?.billTo?.name || linkedQuote?.customer || customerJobs[0]?.customer || customerFilter;
+  // Flush a duration update when tab closes so admins can see how long a customer spent
+  useEffect(() => {
+    if (!linkedQuote) return;
+    const handler = () => {
+      try {
+        const durationMs = Date.now() - viewStartRef.current;
+        const sessionId = viewSessionIdRef.current;
+        const history = (linkedQuote.viewHistory || []).map(h =>
+          h.sessionId === sessionId ? { ...h, durationMs } : h
+        );
+        // Use sendBeacon-friendly synchronous path via localStorage writeLS flow
+        DB.saveQuote({ ...linkedQuote, viewHistory: history }).catch(() => {});
+      } catch {}
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => { handler(); window.removeEventListener('beforeunload', handler); };
+  }, [linkedQuote?.id]);
+
+  // Filter jobs for this customer — TWO STAGES:
+  // Stage 1: All jobs for this customer (never changes with search) — drives "should we show search input?"
+  // Stage 2: Apply the search query on top — drives the visible list
+  // This split prevents the "input vanishes mid-typing" glitch that was happening when
+  // searching narrowed results below the "show input" threshold, causing the input to unmount.
+  const customerJobsAll = React.useMemo(() => {
+    if (!customerFilter) return [];
+    const cf = customerFilter.toLowerCase();
+    return jobs
+      .filter(j => (j.customer?.toLowerCase().includes(cf)) || j.id.toLowerCase() === cf || j.poNumber.toLowerCase() === cf)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [jobs, customerFilter]);
+
+  const customerJobs = React.useMemo(() => {
+    if (!search.trim()) return customerJobsAll;
+    const s = search.trim().toLowerCase();
+    return customerJobsAll.filter(j =>
+      j.poNumber.toLowerCase().includes(s) ||
+      j.partNumber.toLowerCase().includes(s) ||
+      (j.info?.toLowerCase().includes(s) ?? false)
+    );
+  }, [customerJobsAll, search]);
+
+  const customerName = linkedQuote?.billTo?.name || linkedQuote?.customer || customerJobsAll[0]?.customer || customerFilter;
+  // Totals across ALL customer jobs — used for the summary at the top (shouldn't shrink when searching)
+  const totalActive = customerJobsAll.filter(j => j.status !== 'completed').length;
+  const totalCompleted = customerJobsAll.filter(j => j.status === 'completed').length;
+  // Filtered lists — what actually renders below the search
   const activeJobs = customerJobs.filter(j => j.status !== 'completed');
   const completedJobs = customerJobs.filter(j => j.status === 'completed');
 
@@ -85,16 +148,45 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
     }
   };
 
+  // Current portal URL — canonical short form if a slug is defined for this customer
+  const canonicalUrl = (() => {
+    const base = window.location.origin + window.location.pathname;
+    const slug = settings.clientSlugs?.[customerName];
+    if (slug) return `${base}?c=${slug}${quoteId ? `&q=${quoteId}` : ''}`;
+    return `${base}?portal=${encodeURIComponent(customerName)}${quoteId ? `&quote=${quoteId}` : ''}`;
+  })();
+
+  const [copied, setCopied] = useState(false);
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(canonicalUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('Copy this link:', canonicalUrl);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       {/* ── Header ── */}
-      <div className="bg-zinc-900 border-b border-white/5 px-6 py-5">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold">{settings.companyName || 'SC Deburring'}</h1>
-            <p className="text-sm text-zinc-500">Customer Portal</p>
+      <div className="bg-zinc-900 border-b border-white/5 px-4 sm:px-6 py-4 sm:py-5 sticky top-0 z-20 backdrop-blur-xl">
+        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            {settings.companyLogo && <img src={settings.companyLogo} className="h-9 sm:h-10 object-contain shrink-0" alt="Logo" />}
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-xl font-bold truncate">{settings.companyName || 'SC Deburring'}</h1>
+              <p className="text-xs text-zinc-500">Customer Portal</p>
+            </div>
           </div>
-          {settings.companyLogo && <img src={settings.companyLogo} className="h-10 object-contain" alt="Logo" />}
+          {/* Copy link — bookmarkable, shareable */}
+          <button
+            onClick={handleCopyLink}
+            className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-all shrink-0 ${copied ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' : 'bg-zinc-800/80 border border-white/10 text-zinc-300 hover:bg-zinc-800 hover:text-white'}`}
+            title="Copy this page's link to clipboard"
+          >
+            {copied ? <><Check className="w-3.5 h-3.5" aria-hidden="true" /> Copied!</> : <><Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copy Link</>}
+          </button>
         </div>
       </div>
 
@@ -105,8 +197,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
           <h2 className="text-2xl font-black text-white mt-1">{customerName}</h2>
           {linkedQuote?.billTo?.contactPerson && <p className="text-sm text-zinc-400 mt-1">{linkedQuote.billTo.contactPerson}</p>}
           <div className="flex gap-4 mt-3">
-            <div className="text-sm"><span className="text-zinc-500">Active Jobs:</span> <span className="text-blue-400 font-bold">{activeJobs.length}</span></div>
-            <div className="text-sm"><span className="text-zinc-500">Completed:</span> <span className="text-emerald-400 font-bold">{completedJobs.length}</span></div>
+            <div className="text-sm"><span className="text-zinc-500">Active Jobs:</span> <span className="text-blue-400 font-bold">{totalActive}</span></div>
+            <div className="text-sm"><span className="text-zinc-500">Completed:</span> <span className="text-emerald-400 font-bold">{totalCompleted}</span></div>
           </div>
         </div>
 
@@ -136,27 +228,75 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                 <p className="text-red-400 font-bold text-lg">Quote Declined</p>
                 <p className="text-zinc-400 text-sm mt-1">Contact us if you'd like to discuss revisions.</p>
               </div>
-            ) : (
-              /* Active quote — show approve/decline buttons */
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-5">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div>
-                    <p className="text-blue-400 font-bold">Quote Ready for Review</p>
-                    <p className="text-zinc-400 text-xs mt-0.5">Review the details below, then approve or decline.</p>
+            ) : (() => {
+                // Expiration countdown — urgency badge driven by days remaining
+                const validDate = linkedQuote.validUntil
+                  ? (() => {
+                      const raw = linkedQuote.validUntil;
+                      // Accept both MM/DD/YYYY and YYYY-MM-DD
+                      const us = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                      if (us) return new Date(+us[3], +us[1] - 1, +us[2], 23, 59, 59);
+                      const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                      if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3], 23, 59, 59);
+                      const d = new Date(raw);
+                      return isNaN(d.getTime()) ? null : d;
+                    })()
+                  : null;
+                const msLeft = validDate ? validDate.getTime() - Date.now() : null;
+                const daysLeft = msLeft !== null ? Math.ceil(msLeft / 86400000) : null;
+                const isExpired = daysLeft !== null && daysLeft < 0;
+                const isUrgent = daysLeft !== null && daysLeft >= 0 && daysLeft <= 3;
+
+                if (isExpired) {
+                  return (
+                    <div className="bg-zinc-800/40 border border-zinc-600/30 rounded-2xl p-6 text-center">
+                      <Clock className="w-12 h-12 text-zinc-500 mx-auto mb-2" aria-hidden="true" />
+                      <p className="text-zinc-400 font-bold text-lg">Quote Expired</p>
+                      <p className="text-zinc-500 text-sm mt-1">This quote has passed its validity date. Please contact us for an updated quote.</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className={`bg-gradient-to-br ${isUrgent ? 'from-orange-500/15 to-red-500/5 border-orange-500/30' : 'from-blue-500/10 to-indigo-500/5 border-blue-500/20'} border rounded-2xl p-5`}>
+                    {isUrgent && daysLeft !== null && (
+                      <div className="flex items-center gap-2 mb-3 px-3 py-1.5 bg-orange-500/15 border border-orange-500/30 rounded-lg">
+                        <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 animate-pulse" aria-hidden="true" />
+                        <p className="text-xs font-black text-orange-400 uppercase tracking-widest">
+                          {daysLeft === 0 ? 'Expires today!' : daysLeft === 1 ? 'Expires tomorrow!' : `Expires in ${daysLeft} days`}
+                        </p>
+                      </div>
+                    )}
+                    {!isUrgent && daysLeft !== null && daysLeft <= 30 && (
+                      <p className="text-[11px] font-bold text-blue-400 mb-3 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" aria-hidden="true" /> Valid for {daysLeft} more days
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div>
+                        <p className="text-blue-400 font-bold">Quote Ready for Review</p>
+                        <p className="text-zinc-400 text-xs mt-0.5">Review the details below, then approve or decline.</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={handleApprove} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20"><Check className="w-4 h-4" /> Approve Quote</button>
+                        <button onClick={handleDecline} className="bg-zinc-700 hover:bg-zinc-600 text-zinc-300 px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2"><X className="w-4 h-4" /> Decline</button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={handleApprove} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20"><Check className="w-4 h-4" /> Approve Quote</button>
-                    <button onClick={handleDecline} className="bg-zinc-700 hover:bg-zinc-600 text-zinc-300 px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2"><X className="w-4 h-4" /> Decline</button>
-                  </div>
-                </div>
-              </div>
-            )}
+                );
+              })()}
 
             {/* Quote Details Card */}
             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
               <div className="p-5 border-b border-white/5 flex items-center justify-between">
                 <div>
-                  <p className="text-white font-bold text-lg">{linkedQuote.quoteNumber}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-white font-bold text-lg">{linkedQuote.quoteNumber}</p>
+                    {(linkedQuote.revisions?.length || 0) > 0 && (
+                      <span className="text-[9px] font-black text-purple-400 bg-purple-500/10 border border-purple-500/25 px-1.5 py-0.5 rounded uppercase tracking-widest" title={`This quote has been revised ${linkedQuote.revisions!.length} time(s) since it was first sent.`}>
+                        Version {linkedQuote.revisions!.length + 1} (updated)
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-zinc-500">Created {new Date(linkedQuote.createdAt).toLocaleDateString()}{linkedQuote.validUntil ? ` · Valid until ${linkedQuote.validUntil}` : ''}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-xs font-bold border ${linkedQuote.status === 'accepted' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : linkedQuote.status === 'declined' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
@@ -224,19 +364,45 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
         {/* ══════════════════════════════════════ */}
         {tab === 'jobs' && (
           <>
-            {/* Search */}
-            {customerJobs.length > 3 && (
+            {/* Search — show whenever there's more than 3 TOTAL jobs, regardless of current filter.
+                Using customerJobsAll (not customerJobs) so the input doesn't unmount mid-typing. */}
+            {customerJobsAll.length > 3 && (
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by PO or part number..." className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-10 pr-4 text-white text-sm outline-none focus:ring-2 focus:ring-blue-500/50" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" aria-hidden="true" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by PO, part number, or notes…"
+                  className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-10 pr-10 text-white text-sm outline-none focus:ring-2 focus:ring-blue-500/50"
+                  aria-label="Search jobs"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    aria-label="Clear search"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white p-1 rounded transition-colors"
+                  >
+                    <X className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                )}
               </div>
             )}
 
-            {customerJobs.length === 0 && (
+            {/* Search result summary when filtering */}
+            {search.trim() && customerJobsAll.length > 0 && (
+              <p className="text-xs text-zinc-500 -mt-3">
+                {customerJobs.length === 0
+                  ? <>No matches for <strong className="text-zinc-300">"{search}"</strong> · <button onClick={() => setSearch('')} className="text-blue-400 hover:text-blue-300 font-semibold">clear search</button></>
+                  : <>Showing <strong className="text-zinc-300">{customerJobs.length}</strong> of {customerJobsAll.length} job{customerJobsAll.length !== 1 ? 's' : ''}</>}
+              </p>
+            )}
+
+            {customerJobsAll.length === 0 && (
               <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-12 text-center">
-                <Package className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
-                <p className="text-zinc-400 font-bold">No jobs found</p>
-                <p className="text-zinc-600 text-sm mt-1">No active jobs for this customer.</p>
+                <Package className="w-12 h-12 text-zinc-600 mx-auto mb-3" aria-hidden="true" />
+                <p className="text-zinc-400 font-bold">No jobs yet</p>
+                <p className="text-zinc-600 text-sm mt-1">No active orders on file. Check back later or contact us to place a new order.</p>
               </div>
             )}
 
@@ -310,10 +476,28 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
           </>
         )}
 
+        {/* ── Contact / Questions CTA ── */}
+        {(settings.companyPhone || settings.companyAddress) && (
+          <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 text-center">
+            <p className="text-sm font-bold text-white mb-1">Questions about your order?</p>
+            <p className="text-xs text-zinc-500 mb-3">We're here to help.</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {settings.companyPhone && (
+                <a href={`tel:${settings.companyPhone}`} className="flex items-center gap-2 text-sm font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 px-4 py-2 rounded-xl transition-all">
+                  <Phone className="w-4 h-4" aria-hidden="true" /> {settings.companyPhone}
+                </a>
+              )}
+              {settings.companyAddress && (
+                <span className="text-xs text-zinc-500 px-3 py-2">{settings.companyAddress}</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── Footer ── */}
-        <div className="text-center pt-8 pb-4">
-          <p className="text-zinc-600 text-xs">Powered by <span className="text-zinc-500 font-bold">SC Tracker</span></p>
-          {settings.companyPhone && <p className="text-zinc-600 text-xs mt-1">Questions? Call {settings.companyPhone}</p>}
+        <div className="text-center pt-4 pb-4">
+          <p className="text-zinc-600 text-xs">Powered by <span className="text-zinc-500 font-bold">{settings.companyName || 'SC Tracker'}</span></p>
+          <p className="text-zinc-700 text-[10px] mt-1 font-mono truncate max-w-md mx-auto px-2">{canonicalUrl}</p>
         </div>
       </div>
     </div>

@@ -78,17 +78,42 @@ self.addEventListener('push', event => {
     icon: '/icon-192.png',
     badge: '/icon-72.png',
     tag: data.tag || 'sc-tracker',
-    data: { url: data.url || '/' },
+    data: { url: data.url || '/', logId: data.logId, action: data.action },
     vibrate: [200, 100, 200],
+    requireInteraction: data.requireInteraction || false,
     actions: data.actions || [],
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// ── Notification click: open/focus app ───────────────────────────
+// ── Notification click: open/focus app + handle action buttons ───
+// Action buttons (Pause / Resume / Stop) can be tapped without opening the app
 self.addEventListener('notificationclick', event => {
+  const { action } = event;
+  const { url = '/', logId } = event.notification.data || {};
   event.notification.close();
-  const targetUrl = event.notification.data?.url || '/';
+
+  // If an action button was tapped, post a message to any open client
+  // so the main app can dispatch the pause/resume/stop
+  if (action && logId) {
+    event.waitUntil((async () => {
+      const allClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+      // Notify all open clients — message shape matches existing TIMER_ACTION handler
+      for (const c of allClients) {
+        c.postMessage({ type: 'TIMER_ACTION', action, logId });
+      }
+      // If no client is open, open the app with the action in the URL
+      if (allClients.length === 0) {
+        const target = `${url}${url.includes('?') ? '&' : '?'}action=${action}&logId=${encodeURIComponent(logId)}`;
+        return clients.openWindow(target);
+      }
+      // Focus the first open client
+      if ('focus' in allClients[0]) return allClients[0].focus();
+    })());
+    return;
+  }
+
+  // No action = just open/focus the app
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
       for (const client of clientList) {
@@ -96,22 +121,31 @@ self.addEventListener('notificationclick', event => {
           return client.focus();
         }
       }
-      return clients.openWindow(targetUrl);
+      return clients.openWindow(url);
     })
   );
 });
 
-// ── Background sync / message handler ────────────────────────────
+// ── Message handler: let the app schedule + trigger notifications ──
+// The app posts `{type:'NOTIFY', title, body, tag, url, actions, logId}` to show a notification
+// or `{type:'SCHEDULE', at, payload}` to schedule one for later (stored in IndexedDB)
 self.addEventListener('message', event => {
-  if (event.data?.type === 'NOTIFY') {
-    const { title, body, tag, url } = event.data;
+  const data = event.data;
+  if (!data) return;
+  if (data.type === 'NOTIFY') {
+    const { title, body, tag, url, actions, logId, requireInteraction } = data;
     self.registration.showNotification(title, {
       body,
       icon: '/icon-192.png',
       badge: '/icon-72.png',
       tag: tag || 'sc-tracker',
-      data: { url: url || '/' },
+      data: { url: url || '/', logId, action: data.action },
       vibrate: [200, 100, 200],
+      requireInteraction: !!requireInteraction,
+      actions: actions || [],
     });
+  }
+  if (data.type === 'CANCEL_NOTIFICATION' && data.tag) {
+    self.registration.getNotifications({ tag: data.tag }).then(list => list.forEach(n => n.close()));
   }
 });

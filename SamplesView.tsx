@@ -151,11 +151,11 @@ const EditEntryModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
           <h3 className="font-bold text-white text-lg">Edit Work Entry</h3>
-          <button onClick={onClose}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+          <button aria-label="Close dialog" onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
         </div>
         <div className="p-5 space-y-4">
           <div>
@@ -207,14 +207,14 @@ const WorkHistoryModal: React.FC<{
   const [editingEntry, setEditingEntry] = useState<SampleWorkEntry | null>(null);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
           <div>
             <h3 className="font-bold text-white text-lg">Work History</h3>
             <p className="text-zinc-500 text-xs">{sample.partNumber} — {sample.companyName}</p>
           </div>
-          <button onClick={onClose}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+          <button aria-label="Close dialog" onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {entries.length === 0 ? (
@@ -324,7 +324,7 @@ const StartWorkModal: React.FC<{
   const [op, setOp] = useState(operations[0] || 'Deburring');
   const [qty, setQty] = useState<number>(0);
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
         <div className="p-5 border-b border-white/10 bg-zinc-800/50">
           <h3 className="font-bold text-white text-lg">Start Working</h3>
@@ -431,11 +431,11 @@ const SampleModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
           <h3 className="font-bold text-white text-lg">{form.id ? 'Edit Sample' : 'Add Sample'}</h3>
-          <button onClick={onClose}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+          <button aria-label="Close dialog" onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
           {/* Photo */}
@@ -836,19 +836,19 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
                                 </button>
                               )}
                               {(s.workEntries?.length || 0) > 0 && (
-                                <button onClick={() => setHistSample(s)}
-                                  className="text-xs text-zinc-400 bg-zinc-800 border border-white/10 px-3 py-1.5 rounded-lg hover:bg-zinc-700 font-bold flex items-center justify-center gap-1 transition-colors">
-                                  <History className="w-3 h-3" />
+                                <button aria-label={`View work history for ${s.partNumber}`} onClick={() => setHistSample(s)} title="History"
+                                  className="text-xs text-zinc-400 bg-zinc-800 border border-white/10 px-3 py-2 rounded-lg hover:bg-zinc-700 font-bold flex items-center justify-center gap-1 transition-colors min-h-[32px] min-w-[32px]">
+                                  <History className="w-3 h-3" aria-hidden="true" />
                                 </button>
                               )}
-                              <button onClick={() => { setEditingSample(s); setShowModal(true); }}
-                                className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg hover:bg-blue-500/20 font-bold flex items-center justify-center gap-1 transition-colors">
-                                <Edit2 className="w-3 h-3" />
+                              <button aria-label={`Edit ${s.partNumber}`} onClick={() => { setEditingSample(s); setShowModal(true); }} title="Edit"
+                                className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-2 rounded-lg hover:bg-blue-500/20 font-bold flex items-center justify-center gap-1 transition-colors min-h-[32px] min-w-[32px]">
+                                <Edit2 className="w-3 h-3" aria-hidden="true" />
                               </button>
                               {!isActive && (
-                                <button onClick={() => handleDelete(s.id)}
-                                  className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 font-bold flex items-center justify-center gap-1 transition-colors">
-                                  <Trash2 className="w-3 h-3" />
+                                <button aria-label={`Delete ${s.partNumber}`} onClick={() => handleDelete(s.id)} title="Delete"
+                                  className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg hover:bg-red-500/20 font-bold flex items-center justify-center gap-1 transition-colors min-h-[32px] min-w-[32px]">
+                                  <Trash2 className="w-3 h-3" aria-hidden="true" />
                                 </button>
                               )}
                             </div>

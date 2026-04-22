@@ -21,12 +21,143 @@ import {
   TrendingUp,
   Trophy,
   Users,
-  Wind,
   Zap,
 } from 'lucide-react';
 
-import { Job, TimeLog, SystemSettings, TvSlide } from './types';
+import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, GoalPeriod } from './types';
 import * as DB from './services/mockDb';
+
+// ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
+const DEFAULT_STAGES: JobStage[] = [
+  { id: 'pending', label: 'Pending', color: '#71717a', order: 0 },
+  { id: 'in-progress', label: 'In Progress', color: '#3b82f6', order: 1 },
+  { id: 'qc', label: 'QC', color: '#f59e0b', order: 2 },
+  { id: 'packing', label: 'Packing', color: '#8b5cf6', order: 3 },
+  { id: 'shipped', label: 'Shipped', color: '#06b6d4', order: 4 },
+  { id: 'completed', label: 'Completed', color: '#10b981', order: 5, isComplete: true },
+];
+function getStages(settings: SystemSettings): JobStage[] {
+  return (settings.jobStages && settings.jobStages.length > 0)
+    ? [...settings.jobStages].sort((a, b) => a.order - b.order)
+    : DEFAULT_STAGES;
+}
+function getJobStage(job: Job, stages: JobStage[]): JobStage {
+  if (job.currentStage) {
+    const found = stages.find(s => s.id === job.currentStage);
+    if (found) return found;
+  }
+  const legacyMap: Record<string, string> = { 'pending': 'pending', 'in-progress': 'in-progress', 'completed': 'completed', 'hold': 'pending' };
+  const mapped = legacyMap[job.status] || 'pending';
+  return stages.find(s => s.id === mapped) || stages[0];
+}
+
+// ── DUE DATE HELPERS ── robust against MM/DD/YYYY, YYYY-MM-DD, blanks, or garbage strings
+function parseDueDate(raw?: string | null): Date | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  // MM/DD/YYYY
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (us) {
+    const d = new Date(Number(us[3]), Number(us[1]) - 1, Number(us[2]), 12, 0, 0);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // YYYY-MM-DD (ISO)
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12, 0, 0);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Fallback native parse
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Shared auto-scroll hook for TV lists. Seamless infinite loop.
+ *  - Scrolls down continuously via setInterval at a constant pace.
+ *  - Assumes the caller duplicates the content (clone + aria-hidden) so scrolling
+ *    past the first copy reveals the duplicate seamlessly — then we reset to 0 invisibly.
+ *  - Pauses for 8s when the user manually scrolls/wheels/touches.
+ */
+function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | 'normal' | 'fast' | 'off', _itemCount: number) {
+  const pauseUntilRef = useRef<number>(0);
+  const lastScrollRef = useRef<number>(0);
+  // px per 50ms tick — normal ≈ 30px/sec, enough to notice but not dizzying
+  const pxPerTick = speed === 'off' ? 0 : speed === 'slow' ? 0.75 : speed === 'fast' ? 3 : 1.5;
+
+  useEffect(() => {
+    if (pxPerTick === 0) return;
+    const tick = () => {
+      const el = ref.current;
+      if (!el) return;
+      if (Date.now() < pauseUntilRef.current) return;
+      // Seamless loop: the caller duplicates the content. When we pass the first
+      // copy, instantly rewind by its height — user sees no jump because the
+      // content at (height/2) looks identical to the content at 0.
+      const halfway = el.scrollHeight / 2;
+      if (halfway > el.clientHeight) {
+        if (el.scrollTop >= halfway) {
+          el.scrollTop = el.scrollTop - halfway;
+        } else {
+          el.scrollTop += pxPerTick;
+        }
+      } else if (el.scrollHeight > el.clientHeight + 2) {
+        // Fallback: content only fits once, use classic bottom-to-top with pause.
+        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 2) {
+          pauseUntilRef.current = Date.now() + 1500;
+          el.scrollTop = 0;
+        } else {
+          el.scrollTop += pxPerTick;
+        }
+      }
+      lastScrollRef.current = el.scrollTop;
+    };
+    const id = window.setInterval(tick, 50);
+    return () => window.clearInterval(id);
+  }, [pxPerTick, ref]);
+
+  return {
+    onScroll: () => {
+      const el = ref.current;
+      if (!el) return;
+      const delta = Math.abs(el.scrollTop - lastScrollRef.current);
+      if (delta > 3) pauseUntilRef.current = Date.now() + 8000;
+      lastScrollRef.current = el.scrollTop;
+    },
+    onWheel: () => { pauseUntilRef.current = Date.now() + 8000; },
+    onTouchStart: () => { pauseUntilRef.current = Date.now() + 8000; },
+  };
+}
+
+/** Returns { dueText, daysLeft, overdue, urgency } — dueText is pretty for TV, like "Apr 25" */
+function formatDueForTv(raw?: string | null): { dueText: string; daysLeft: number | null; overdue: boolean; urgency: 'late' | 'today' | 'soon' | 'normal' | 'none' } {
+  const due = parseDueDate(raw);
+  if (!due) return { dueText: '', daysLeft: null, overdue: false, urgency: 'none' };
+  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+  const startDue = new Date(due); startDue.setHours(0, 0, 0, 0);
+  const daysLeft = Math.round((startDue.getTime() - startToday.getTime()) / 86400000);
+  const overdue = daysLeft < 0;
+  const urgency: 'late' | 'today' | 'soon' | 'normal' = overdue ? 'late' : daysLeft === 0 ? 'today' : daysLeft <= 3 ? 'soon' : 'normal';
+  // Friendly label: "Apr 25", include year only if far future/past
+  const sameYear = due.getFullYear() === startToday.getFullYear();
+  const dueText = due.toLocaleDateString('en-US', sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
+  return { dueText, daysLeft, overdue, urgency };
+}
+
+// ── LIVE CLOCK — big, always ticking ──
+const LiveClock = ({ size = 'xl' }: { size?: 'md' | 'lg' | 'xl' | 'huge' }) => {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
+  const sz = { md: 'text-2xl', lg: 'text-4xl', xl: 'text-6xl', huge: 'text-8xl' }[size];
+  const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+  const [clockTime, ampm] = time.split(' ');
+  return (
+    <div className="flex items-baseline gap-3">
+      <span className={`${sz} font-black text-white tabular tracking-tight leading-none`} style={{ textShadow: '0 0 40px rgba(59,130,246,0.3)' }}>{clockTime}</span>
+      {ampm && <span className="text-white/40 font-bold text-2xl">{ampm}</span>}
+    </div>
+  );
+};
 
 // ── LIVE TICKER (pause-aware) ───────────────────────────────────
 const LiveTicker = ({ log, size = 'lg' }: { log: TimeLog; size?: 'sm' | 'lg' | 'xl' }) => {
@@ -161,11 +292,11 @@ const WorkerCard: React.FC<{
           {isAdmin && (
             <div className="flex gap-2">
               {isPaused && onResume ? (
-                <button onClick={() => onResume(log.id)} className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all" title="Resume"><Play className="w-4 h-4" /></button>
+                <button aria-label={`Resume ${log.userName || 'timer'}`} onClick={() => onResume(log.id)} className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all min-w-[36px] min-h-[36px]" title="Resume"><Play className="w-4 h-4" aria-hidden="true" /></button>
               ) : onPause ? (
-                <button onClick={() => onPause(log.id)} className="p-2 rounded-xl bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500 hover:text-white transition-all" title="Pause"><Pause className="w-4 h-4" /></button>
+                <button aria-label={`Pause ${log.userName || 'timer'}`} onClick={() => onPause(log.id)} className="p-2 rounded-xl bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500 hover:text-white transition-all min-w-[36px] min-h-[36px]" title="Pause"><Pause className="w-4 h-4" aria-hidden="true" /></button>
               ) : null}
-              {onForceStop && <button onClick={() => onForceStop(log.id)} className="p-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all" title="Force Stop"><StopCircle className="w-4 h-4" /></button>}
+              {onForceStop && <button aria-label={`Force stop ${log.userName || 'timer'}`} onClick={() => onForceStop(log.id)} className="p-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all min-w-[36px] min-h-[36px]" title="Force Stop"><StopCircle className="w-4 h-4" aria-hidden="true" /></button>}
             </div>
           )}
         </div>
@@ -234,91 +365,102 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
 }
 
 // ── BIG CLOCK ───────────────────────────────────────────────────
-const BigClock = () => {
-  const [now, setNow] = useState(new Date());
-  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
-  const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-  const date = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  return (
-    <div className="text-center">
-      <div className="text-7xl md:text-8xl font-black text-white font-mono tabular-nums tracking-wider">{time}</div>
-      <div className="text-lg text-white/40 font-medium mt-2">{date}</div>
-    </div>
-  );
-};
+// ── Compact inline TV-mode weather pill ──
+// ── WEATHER HELPERS ──
+// Single shared weather fetcher so we don't ping the API from each component.
+type WeatherCurrent = { temp: number; code: number };
+type WeatherDay = { dateMs: number; dayLabel: string; tMin: number; tMax: number; code: number };
+type WeatherData = { current: WeatherCurrent | null; forecast: WeatherDay[] };
 
-// ── WEATHER WIDGET ──────────────────────────────────────────────
-const WeatherWidget = () => {
-  const [weather, setWeather] = useState<any>(null);
+function weatherIcon(code: number, className = 'w-6 h-6') {
+  if (code <= 3) return <Sun className={`${className} text-yellow-400`} aria-hidden="true" />;
+  if (code <= 48) return <Cloud className={`${className} text-zinc-400`} aria-hidden="true" />;
+  if (code <= 67) return <CloudRain className={`${className} text-blue-400`} aria-hidden="true" />;
+  if (code <= 77) return <CloudSnow className={`${className} text-cyan-300`} aria-hidden="true" />;
+  return <CloudRain className={`${className} text-blue-500`} aria-hidden="true" />;
+}
+function weatherLabel(code: number) {
+  if (code <= 1) return 'Clear';
+  if (code <= 3) return 'Partly cloudy';
+  if (code <= 48) return 'Overcast';
+  if (code <= 57) return 'Drizzle';
+  if (code <= 67) return 'Rain';
+  if (code <= 77) return 'Snow';
+  if (code <= 82) return 'Showers';
+  return 'Storm';
+}
 
+// Module-level cache + subscribers: one geolocation fetch feeds every useWeather() caller.
+// Before cache: each slide mount re-fetched → TV mode Weather slide stuck loading.
+let weatherCache: WeatherData = { current: null, forecast: [] };
+let weatherFetchPromise: Promise<void> | null = null;
+let weatherLastFetch = 0;
+const weatherSubs = new Set<(d: WeatherData) => void>();
+
+function fetchWeather(): Promise<void> {
+  if (weatherFetchPromise) return weatherFetchPromise;
+  if (!navigator.geolocation) return Promise.resolve();
+  weatherFetchPromise = new Promise<void>((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+          `&current=temperature_2m,weather_code` +
+          `&daily=weather_code,temperature_2m_max,temperature_2m_min` +
+          `&temperature_unit=fahrenheit&timezone=auto&forecast_days=5`
+        ).then(r => r.json()).then(d => {
+          const current = d.current ? { temp: Math.round(d.current.temperature_2m), code: d.current.weather_code } : null;
+          const forecast: WeatherDay[] = [];
+          if (d.daily?.time) {
+            for (let i = 0; i < d.daily.time.length; i++) {
+              const day = new Date(d.daily.time[i]);
+              forecast.push({
+                dateMs: day.getTime(),
+                dayLabel: i === 0 ? 'Today' : day.toLocaleDateString('en-US', { weekday: 'short' }),
+                tMin: Math.round(d.daily.temperature_2m_min[i]),
+                tMax: Math.round(d.daily.temperature_2m_max[i]),
+                code: d.daily.weather_code[i],
+              });
+            }
+          }
+          weatherCache = { current, forecast };
+          weatherLastFetch = Date.now();
+          weatherSubs.forEach(s => s(weatherCache));
+        }).catch(() => {}).finally(() => { weatherFetchPromise = null; resolve(); });
+      },
+      () => { weatherFetchPromise = null; resolve(); },
+      { timeout: 8000 }
+    );
+  });
+  return weatherFetchPromise;
+}
+
+function useWeather(): WeatherData {
+  const [data, setData] = useState<WeatherData>(weatherCache);
   useEffect(() => {
-    // Use browser geolocation + open-meteo (free, no API key)
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const { latitude, longitude } = pos.coords;
-        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`);
-        const data = await res.json();
-        if (data.current) {
-          setWeather({
-            temp: Math.round(data.current.temperature_2m),
-            code: data.current.weather_code,
-            wind: Math.round(data.current.wind_speed_10m),
-            humidity: data.current.relative_humidity_2m,
-            location: data.timezone?.replace('_', ' ')?.split('/')?.pop() || '',
-          });
-        }
-      } catch { /* ignore */ }
-    }, () => { /* denied */ }, { timeout: 5000 });
+    const sub = (d: WeatherData) => setData(d);
+    weatherSubs.add(sub);
+    // Fetch if cache is empty or stale (> 10 min old)
+    if (!weatherCache.current || Date.now() - weatherLastFetch > 10 * 60 * 1000) {
+      fetchWeather();
+    }
+    return () => { weatherSubs.delete(sub); };
   }, []);
+  return data;
+}
 
-  if (!weather) return null;
-
-  const getIcon = (code: number) => {
-    if (code <= 3) return <Sun className="w-12 h-12 text-yellow-400" />;
-    if (code <= 48) return <Cloud className="w-12 h-12 text-zinc-400" />;
-    if (code <= 67) return <CloudRain className="w-12 h-12 text-blue-400" />;
-    if (code <= 77) return <CloudSnow className="w-12 h-12 text-cyan-300" />;
-    return <CloudRain className="w-12 h-12 text-blue-500" />;
-  };
-
-  const getLabel = (code: number) => {
-    if (code === 0) return 'Clear Sky';
-    if (code <= 3) return 'Partly Cloudy';
-    if (code <= 48) return 'Cloudy';
-    if (code <= 55) return 'Drizzle';
-    if (code <= 67) return 'Rain';
-    if (code <= 77) return 'Snow';
-    return 'Showers';
-  };
-
+const TVWeather = () => {
+  const { current } = useWeather();
+  if (!current) return null;
   return (
-    <div className="flex items-center gap-6 bg-white/5 rounded-2xl p-6">
-      {getIcon(weather.code)}
-      <div>
-        <div className="text-5xl font-black text-white">{weather.temp}°F</div>
-        <div className="text-white/50 text-sm font-medium">{getLabel(weather.code)}</div>
-      </div>
-      <div className="ml-auto text-right space-y-1">
-        <div className="flex items-center gap-2 text-white/40 text-sm"><Wind className="w-4 h-4" />{weather.wind} mph</div>
-        <div className="text-white/40 text-sm">💧 {weather.humidity}%</div>
-        {weather.location && <div className="text-white/30 text-xs">{weather.location}</div>}
-      </div>
+    <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 backdrop-blur-xl" title="Outside">
+      {weatherIcon(current.code, 'w-7 h-7')}
+      <div className="text-3xl font-black text-white tabular leading-none">{current.temp}°</div>
+      <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">F</span>
     </div>
   );
 };
-
-// ── SLIDE INDICATORS ────────────────────────────────────────────
-const SlideIndicators = ({ slides, currentIdx, labels }: { slides: any[]; currentIdx: number; labels: string[] }) => (
-  <div className="fixed bottom-4 left-0 right-0 flex justify-center gap-2 z-50">
-    {slides.map((_, i) => (
-      <div key={i} className="flex items-center gap-1.5">
-        <div className={`h-2 rounded-full transition-all duration-500 ${i === currentIdx ? 'w-10 bg-blue-500' : 'w-2 bg-white/20'}`} />
-        {i === currentIdx && <span className="text-[10px] text-white/40 font-medium">{labels[i]}</span>}
-      </div>
-    ))}
-  </div>
-);
 
 // ── MAIN COMPONENT ──────────────────────────────────────────────
 interface LiveFloorMonitorProps {
@@ -328,6 +470,605 @@ interface LiveFloorMonitorProps {
   standalone?: boolean; // true when accessed via ?tv=TOKEN URL (no login, no back button)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ── FULL-SCREEN TV SLIDES ─ each one takes the whole TV viewport
+// ═══════════════════════════════════════════════════════════════════
+
+type LeaderRow = { userId: string; name: string; hours: number; jobs: number; sessions: number; topOp: string };
+
+// Leaderboard — ranked workers, big podium + medal bars
+const TvLeaderboardSlide: React.FC<{
+  data: LeaderRow[];
+  period: 'today' | 'week' | 'month';
+  count: number;
+  metric: 'hours' | 'jobs' | 'mixed';
+}> = ({ data, period, count, metric }) => {
+  const rows = data.slice(0, count);
+  const maxH = Math.max(1, ...rows.map(r => r.hours));
+  const maxJ = Math.max(1, ...rows.map(r => r.jobs));
+  const periodLabel = period === 'today' ? 'Today' : period === 'month' ? 'This Month' : 'This Week';
+  const totalHrs = rows.reduce((a, r) => a + r.hours, 0);
+  const totalJobs = rows.reduce((a, r) => a + r.jobs, 0);
+  return (
+    <div className="h-full flex flex-col items-center justify-center p-8 sm:p-12">
+      <div className="w-full max-w-5xl">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <p className="text-xs font-black text-amber-400/80 uppercase tracking-[0.3em] flex items-center gap-2">
+              <Trophy className="w-4 h-4" aria-hidden="true" /> Shop Leaderboard
+            </p>
+            <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight mt-2">{periodLabel}'s Top Workers</h2>
+          </div>
+          <div className="text-right hidden sm:block">
+            <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Total Logged</p>
+            <p className="text-3xl font-black text-white tabular">{totalHrs.toFixed(1)}h</p>
+            <p className="text-[11px] text-white/50">{totalJobs} jobs</p>
+          </div>
+        </div>
+        {rows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center py-24">
+            <div className="w-24 h-24 rounded-3xl bg-zinc-800/60 flex items-center justify-center mb-4">
+              <Award className="w-12 h-12 text-zinc-600" aria-hidden="true" />
+            </div>
+            <p className="text-zinc-400 text-2xl font-bold">No data yet</p>
+            <p className="text-zinc-600 text-sm mt-1">{periodLabel.toLowerCase()}'s leaderboard will fill as workers clock time.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((r, idx) => {
+              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
+              const medalColor = idx === 0 ? 'from-amber-400 to-yellow-600' : idx === 1 ? 'from-zinc-300 to-zinc-500' : idx === 2 ? 'from-orange-500 to-amber-700' : 'from-zinc-600 to-zinc-800';
+              const pctH = (r.hours / maxH) * 100;
+              const pctJ = (r.jobs / maxJ) * 100;
+              return (
+                <div key={r.userId} className={`rounded-2xl p-4 sm:p-5 border ${idx === 0 ? 'bg-gradient-to-r from-amber-500/10 to-transparent border-amber-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
+                  <div className="flex items-center gap-4">
+                    {/* Rank */}
+                    <div className={`shrink-0 w-14 h-14 rounded-xl flex items-center justify-center font-black text-2xl text-white shadow-xl bg-gradient-to-br ${medalColor}`}>
+                      {medal || `#${idx + 1}`}
+                    </div>
+                    {/* Avatar + Name */}
+                    <div className={`shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-xl ${idx === 0 ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>
+                      {r.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-2xl sm:text-3xl font-black text-white tracking-tight truncate">{r.name}</p>
+                      {r.topOp && <p className="text-[11px] text-white/40 uppercase tracking-widest font-bold mt-0.5">most: {r.topOp}</p>}
+                    </div>
+                    {/* Stats */}
+                    <div className="shrink-0 text-right flex items-center gap-6">
+                      {(metric === 'hours' || metric === 'mixed') && (
+                        <div>
+                          <div className="text-4xl font-black text-white tabular tracking-tight">{r.hours.toFixed(1)}<span className="text-xl text-white/50">h</span></div>
+                          <div className="h-1 bg-white/10 rounded-full mt-1 w-24 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" style={{ width: `${pctH}%` }} /></div>
+                        </div>
+                      )}
+                      {(metric === 'jobs' || metric === 'mixed') && (
+                        <div>
+                          <div className="text-4xl font-black text-emerald-400 tabular tracking-tight">{r.jobs}<span className="text-xl text-emerald-400/60 ml-1">jobs</span></div>
+                          <div className="h-1 bg-white/10 rounded-full mt-1 w-24 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${pctJ}%` }} /></div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Weather forecast — current + next 5 days
+const TvWeatherSlide: React.FC = () => {
+  const { current, forecast } = useWeather();
+  const today = forecast[0];
+  return (
+    <div className="h-full flex flex-col items-center justify-center p-8 sm:p-12">
+      <div className="w-full max-w-5xl">
+        <p className="text-xs font-black text-blue-400/80 uppercase tracking-[0.3em] text-center">Outside · Live</p>
+        <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight text-center mt-2">Weather Forecast</h2>
+        {!current && !forecast.length ? (
+          <div className="flex flex-col items-center justify-center text-center py-24">
+            <Cloud className="w-24 h-24 text-zinc-700 mb-4" aria-hidden="true" />
+            <p className="text-zinc-400 text-xl font-bold">Grant location to see forecast</p>
+            <p className="text-zinc-600 text-sm mt-1">The TV needs browser location permission.</p>
+          </div>
+        ) : (
+          <>
+            {/* CURRENT */}
+            {current && (
+              <div className="mt-10 bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl p-8 flex items-center justify-around">
+                <div className="text-center">
+                  <div className="flex items-center justify-center mb-2">{weatherIcon(current.code, 'w-20 h-20')}</div>
+                  <p className="text-2xl font-bold text-white/80">{weatherLabel(current.code)}</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-9xl font-black text-white tabular leading-none">{current.temp}°</div>
+                  <p className="text-xl text-white/50 mt-2">Right now</p>
+                </div>
+                {today && (
+                  <div className="text-center">
+                    <p className="text-sm font-black text-white/50 uppercase tracking-widest">Today</p>
+                    <p className="text-3xl font-black text-white tabular mt-1">{today.tMax}° <span className="text-xl text-blue-400">/ {today.tMin}°</span></p>
+                    <p className="text-xs text-white/40 mt-1">high / low</p>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* 5-DAY */}
+            {forecast.length > 1 && (
+              <div className="mt-6 grid grid-cols-5 gap-3">
+                {forecast.slice(0, 5).map((d, i) => (
+                  <div key={d.dateMs} className={`rounded-2xl p-4 border text-center ${i === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
+                    <p className={`text-xs font-black uppercase tracking-widest mb-2 ${i === 0 ? 'text-blue-400' : 'text-white/40'}`}>{d.dayLabel}</p>
+                    <div className="flex items-center justify-center mb-3">{weatherIcon(d.code, 'w-12 h-12')}</div>
+                    <p className="text-3xl font-black text-white tabular">{d.tMax}°</p>
+                    <p className="text-sm font-bold text-blue-400 tabular mt-0.5">{d.tMin}°</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Weekly stats — bar graphs of hours/jobs by day
+const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: Job[]; showRevenue?: boolean; showCustomers?: boolean }> = ({ allLogs, weekStart, jobs, showRevenue = false, showCustomers = true }) => {
+  // Group by day-of-week
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const daily = dayNames.map((name, i) => {
+    const start = new Date(weekStart); start.setDate(weekStart.getDate() + i); start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setDate(start.getDate() + 1);
+    const logs = allLogs.filter(l => l.startTime >= start.getTime() && l.startTime < end.getTime() && l.endTime);
+    const hours = logs.reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+    const dayJobs = new Set(logs.map(l => l.jobId)).size;
+    const sessions = logs.length;
+    return { name, hours, jobs: dayJobs, sessions, isToday: new Date().toDateString() === start.toDateString() };
+  });
+  const maxH = Math.max(1, ...daily.map(d => d.hours));
+  const totalH = daily.reduce((a, d) => a + d.hours, 0);
+  const totalSessions = daily.reduce((a, d) => a + d.sessions, 0);
+  const weekJobIds = new Set(allLogs.filter(l => l.startTime >= weekStart.getTime()).map(l => l.jobId));
+  const totalJobs = weekJobIds.size;
+  const uniqueWorkers = new Set(allLogs.filter(l => l.startTime >= weekStart.getTime()).map(l => l.userId)).size;
+  const avgPerJob = totalJobs > 0 ? totalH / totalJobs : 0;
+  // Jobs completed this week
+  const completedThisWeek = jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= weekStart.getTime());
+  const completedCount = completedThisWeek.length;
+  // On-time count
+  const onTimeCount = completedThisWeek.filter(j => {
+    const d = parseDueDate(j.dueDate);
+    return d && j.completedAt && j.completedAt <= d.getTime() + 86400000;
+  }).length;
+  const onTimePct = completedCount > 0 ? Math.round((onTimeCount / completedCount) * 100) : 0;
+  // Top customer
+  const customerCounts = new Map<string, number>();
+  completedThisWeek.forEach(j => { if (j.customer) customerCounts.set(j.customer, (customerCounts.get(j.customer) || 0) + 1); });
+  let topCustomer = '—'; let topCustCount = 0;
+  customerCounts.forEach((c, name) => { if (c > topCustCount) { topCustCount = c; topCustomer = name; } });
+  // Revenue this week
+  const revenue = completedThisWeek.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+
+  return (
+    <div className="h-full overflow-y-auto p-6 sm:p-10">
+      <div className="w-full max-w-6xl mx-auto">
+        <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
+          <TrendingUp className="w-4 h-4" aria-hidden="true" /> Weekly Output
+        </p>
+        <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight text-center mt-2">This Week at a Glance</h2>
+
+        {/* Primary metrics — hero row. Revenue card only shows if admin opts-in (money is sensitive) */}
+        <div className={`mt-6 grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+          <div className="bg-gradient-to-br from-blue-500/15 to-blue-500/[0.02] border border-blue-500/20 rounded-2xl p-4 text-center">
+            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Hours Logged</p>
+            <p className="text-4xl font-black text-white tabular mt-1.5">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
+          </div>
+          <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl p-4 text-center">
+            <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Jobs Completed</p>
+            <p className="text-4xl font-black text-white tabular mt-1.5">{completedCount}</p>
+            <p className="text-[9px] text-white/40 mt-0.5">{totalJobs} touched</p>
+          </div>
+          <div className="bg-gradient-to-br from-cyan-500/15 to-cyan-500/[0.02] border border-cyan-500/20 rounded-2xl p-4 text-center">
+            <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">On-Time</p>
+            <p className="text-4xl font-black text-white tabular mt-1.5">{onTimePct}<span className="text-xl text-white/50">%</span></p>
+            <p className="text-[9px] text-white/40 mt-0.5">{onTimeCount} of {completedCount}</p>
+          </div>
+          {showRevenue && (
+            <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-4 text-center">
+              <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Revenue</p>
+              <p className="text-4xl font-black text-white tabular mt-1.5">${Math.round(revenue).toLocaleString()}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Secondary metrics — smaller row */}
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+            <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Active Workers</p>
+            <p className="text-2xl font-black text-white tabular mt-1">{uniqueWorkers}</p>
+          </div>
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+            <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Sessions</p>
+            <p className="text-2xl font-black text-white tabular mt-1">{totalSessions}</p>
+          </div>
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+            <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Avg / Job</p>
+            <p className="text-2xl font-black text-white tabular mt-1">{avgPerJob.toFixed(1)}<span className="text-base text-white/50">h</span></p>
+          </div>
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center min-w-0">
+            <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">{showCustomers ? 'Top Customer' : 'Top Contributor'}</p>
+            <p className="text-base font-black text-white truncate mt-1" title={showCustomers ? topCustomer : 'hidden'}>{showCustomers ? topCustomer : '—'}</p>
+            <p className="text-[9px] text-white/40">{topCustCount} {topCustCount === 1 ? 'job' : 'jobs'}</p>
+          </div>
+        </div>
+
+        {/* Bar chart */}
+        <div className="mt-5 bg-zinc-900/50 border border-white/5 rounded-3xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Hours by Day</p>
+            <p className="text-[10px] text-white/30">Peak: {Math.max(...daily.map(d => d.hours)).toFixed(1)}h · Avg: {(totalH / 7).toFixed(1)}h/day</p>
+          </div>
+          <div className="flex items-end justify-around gap-3 h-44">
+            {daily.map((d) => {
+              const pct = (d.hours / maxH) * 100;
+              return (
+                <div key={d.name} className="flex flex-col items-center gap-1.5 flex-1 h-full">
+                  <div className="text-[11px] font-black text-white tabular">{d.hours > 0 ? d.hours.toFixed(1) + 'h' : ''}</div>
+                  <div className="w-full flex-1 flex items-end min-h-0">
+                    <div
+                      className={`w-full rounded-t-xl transition-all ${d.isToday ? 'bg-gradient-to-t from-blue-500 to-indigo-400 shadow-lg shadow-blue-500/40' : 'bg-gradient-to-t from-zinc-700 to-zinc-600'}`}
+                      style={{ height: d.hours > 0 ? `${Math.max(4, pct)}%` : '2%' }}
+                    />
+                  </div>
+                  <div className={`text-[10px] font-black uppercase tracking-widest ${d.isToday ? 'text-blue-400' : 'text-white/40'}`}>{d.name}</div>
+                  {d.sessions > 0 && <div className="text-[9px] text-white/30 tabular">{d.sessions}×</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Safety slide — full-screen, bold, attention-grabbing
+const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, icon, cycleInfo }) => {
+  const palette: Record<string, { from: string; border: string; text: string }> = {
+    red: { from: 'from-red-500/20', border: 'border-red-500/40', text: 'text-red-400' },
+    yellow: { from: 'from-yellow-500/20', border: 'border-yellow-500/40', text: 'text-yellow-400' },
+    orange: { from: 'from-orange-500/20', border: 'border-orange-500/40', text: 'text-orange-400' },
+    blue: { from: 'from-blue-500/20', border: 'border-blue-500/40', text: 'text-blue-400' },
+    green: { from: 'from-emerald-500/20', border: 'border-emerald-500/40', text: 'text-emerald-400' },
+    white: { from: 'from-white/15', border: 'border-white/40', text: 'text-white' },
+  };
+  const p = palette[color || 'yellow'] || palette.yellow;
+  return (
+    <div className="h-full flex items-center justify-center p-8 sm:p-16">
+      <div className={`w-full max-w-5xl bg-gradient-to-br ${p.from} to-transparent border-2 ${p.border} rounded-[48px] p-12 sm:p-20 text-center relative overflow-hidden`}>
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
+        <div className="relative">
+          <p className={`text-xs font-black uppercase tracking-[0.4em] ${p.text} mb-6 flex items-center justify-center gap-3`}>
+            <span>⚠ Safety Reminder</span>
+            {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
+          </p>
+          <div className="text-8xl sm:text-9xl mb-6">{icon || '⚠️'}</div>
+          <h2 className="text-5xl sm:text-7xl font-black text-white tracking-tight leading-tight">{title || 'Think Safety First'}</h2>
+          {body && <p className="text-xl sm:text-2xl text-white/70 mt-6 leading-relaxed max-w-3xl mx-auto">{body}</p>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Message slide — announcement
+const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, cycleInfo }) => {
+  const palette: Record<string, string> = {
+    blue: 'from-blue-500/20 border-blue-500/40 text-blue-400',
+    yellow: 'from-yellow-500/20 border-yellow-500/40 text-yellow-400',
+    red: 'from-red-500/20 border-red-500/40 text-red-400',
+    green: 'from-emerald-500/20 border-emerald-500/40 text-emerald-400',
+    white: 'from-white/15 border-white/40 text-white',
+    orange: 'from-orange-500/20 border-orange-500/40 text-orange-400',
+  };
+  const cls = palette[color || 'blue'] || palette.blue;
+  return (
+    <div className="h-full flex items-center justify-center p-8 sm:p-16">
+      <div className={`w-full max-w-5xl bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-[48px] p-16 sm:p-24 text-center`}>
+        <p className={`text-xs font-black uppercase tracking-[0.4em] ${cls.split(' ')[2]} mb-6 flex items-center justify-center gap-3`}>
+          <span>Announcement</span>
+          {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
+        </p>
+        <h2 className="text-6xl sm:text-8xl font-black text-white tracking-tight leading-tight">{title || 'Message'}</h2>
+        {body && <p className="text-2xl sm:text-3xl text-white/70 mt-8 leading-relaxed max-w-3xl mx-auto">{body}</p>}
+      </div>
+    </div>
+  );
+};
+
+// Goal calculation helpers come from utils/goals.ts — same logic used by Settings editor
+import { computeGoalProgress, formatGoalValue, goalUnit } from './utils/goals';
+
+// ── Full-screen GOALS slide with progress gauges
+const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; reworkCount: number; showRevenue?: boolean }> = ({ goals, jobs, logs, reworkCount, showRevenue = false }) => {
+  // Filter out revenue goals if user has TV revenue hidden
+  const visible = goals.filter(g => g.enabled && g.showOnTv !== false && (showRevenue || g.metric !== 'revenue'));
+  if (visible.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center p-12">
+        <div className="text-center max-w-xl">
+          <div className="w-24 h-24 mx-auto rounded-3xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/25 flex items-center justify-center mb-4">
+            <Zap className="w-12 h-12 text-emerald-400" aria-hidden="true" />
+          </div>
+          <p className="text-zinc-200 text-3xl font-black">No goals set yet</p>
+          <p className="text-zinc-400 text-base mt-3 leading-relaxed">Set targets that matter to your shop — jobs per week, revenue, on-time delivery, and more.</p>
+          <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20">
+            <span className="text-blue-400 text-sm font-bold">📍 Settings → Goals → Add Goal</span>
+          </div>
+          <div className="mt-8 grid grid-cols-3 gap-3 text-left max-w-2xl mx-auto">
+            {[
+              { icn: '✅', lbl: 'Jobs / Week' },
+              { icn: '💰', lbl: 'Revenue' },
+              { icn: '🎯', lbl: 'On-Time %' },
+              { icn: '⏱️', lbl: 'Hours Logged' },
+              { icn: '🔧', lbl: 'Rework < N' },
+              { icn: '👥', lbl: 'Customer Jobs' },
+            ].map(s => (
+              <div key={s.lbl} className="bg-zinc-900/50 border border-white/5 rounded-xl px-3 py-2.5 flex items-center gap-2">
+                <span className="text-xl" aria-hidden="true">{s.icn}</span>
+                <span className="text-xs font-bold text-zinc-400">{s.lbl}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const palette: Record<string, { ring: string; bar: string; text: string; bg: string }> = {
+    blue:    { ring: 'ring-blue-500/30', bar: 'from-blue-500 to-indigo-500', text: 'text-blue-400', bg: 'from-blue-500/10' },
+    emerald: { ring: 'ring-emerald-500/30', bar: 'from-emerald-500 to-teal-500', text: 'text-emerald-400', bg: 'from-emerald-500/10' },
+    amber:   { ring: 'ring-amber-500/30', bar: 'from-amber-500 to-orange-500', text: 'text-amber-400', bg: 'from-amber-500/10' },
+    purple:  { ring: 'ring-purple-500/30', bar: 'from-purple-500 to-pink-500', text: 'text-purple-400', bg: 'from-purple-500/10' },
+    red:     { ring: 'ring-red-500/30', bar: 'from-red-500 to-rose-500', text: 'text-red-400', bg: 'from-red-500/10' },
+    cyan:    { ring: 'ring-cyan-500/30', bar: 'from-cyan-500 to-sky-500', text: 'text-cyan-400', bg: 'from-cyan-500/10' },
+  };
+
+  return (
+    <div className="h-full flex flex-col items-center justify-center p-8 sm:p-12 overflow-y-auto">
+      <div className="w-full max-w-6xl">
+        <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
+          <Zap className="w-4 h-4" aria-hidden="true" /> Shop Goals
+        </p>
+        <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight text-center mt-2">How we're tracking</h2>
+        <div className={`mt-8 grid gap-5 ${visible.length === 1 ? 'grid-cols-1' : visible.length <= 3 ? 'md:grid-cols-' + visible.length : 'md:grid-cols-3'}`}>
+          {visible.map(g => {
+            const { current, pct } = computeGoalProgress(g, jobs, logs, reworkCount);
+            const p = palette[g.color || 'blue'];
+            const achieved = g.lowerIsBetter ? current <= g.target : current >= g.target;
+            return (
+              <div key={g.id} className={`bg-gradient-to-br ${p.bg} to-transparent border-2 border-white/5 rounded-3xl p-6 relative overflow-hidden ${achieved ? 'ring-2 ' + p.ring : ''}`}>
+                <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className={`text-[11px] font-black uppercase tracking-widest ${p.text}`}>{g.period} · {g.metric.replace(/-/g, ' ')}</p>
+                    {achieved && <span className="text-xs font-black uppercase tracking-widest text-emerald-400 flex items-center gap-1">✓ Hit</span>}
+                  </div>
+                  <h3 className="text-2xl font-black text-white tracking-tight leading-tight mb-3">{g.label}</h3>
+                  {/* Big number */}
+                  <div className="flex items-baseline gap-2 mb-4">
+                    <span className="text-6xl font-black text-white tabular leading-none">{formatGoalValue(g, current)}</span>
+                    <span className="text-xl text-white/40 font-bold">/ {formatGoalValue(g, g.target)} {goalUnit(g)}</span>
+                  </div>
+                  {/* Progress bar */}
+                  <div className="h-3 rounded-full bg-white/5 overflow-hidden border border-white/5">
+                    <div
+                      className={`h-full rounded-full bg-gradient-to-r ${p.bar} transition-all duration-1000 shadow-lg`}
+                      style={{ width: `${pct}%`, boxShadow: achieved ? `0 0 12px currentColor` : undefined }}
+                    />
+                  </div>
+                  <div className="flex justify-between mt-2 text-xs font-bold">
+                    <span className={p.text}>{Math.round(pct)}% {g.lowerIsBetter ? 'under target' : 'to goal'}</span>
+                    <span className="text-white/40">{g.lowerIsBetter
+                      ? (current <= g.target ? 'On track' : `${current - g.target} over`)
+                      : (current >= g.target ? '🎯 Achieved!' : `${formatGoalValue(g, g.target - current)} to go`)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Workers + Jobs combined (the default TV layout)
+const TvWorkersJobsSlide: React.FC<{
+  sorted: TimeLog[];
+  jobs: Job[];
+  jobsForBelt: Job[];
+  stages: JobStage[];
+  runningCount: number;
+  speed: 'slow' | 'normal' | 'fast' | 'off';
+  showJobsBelt: boolean;
+}> = ({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt }) => (
+  <div className={`h-full grid grid-cols-1 ${showJobsBelt ? 'lg:grid-cols-2' : ''} min-h-0 gap-0`}>
+    <TvWorkersColumn sorted={sorted} jobs={jobs} stages={stages} runningCount={runningCount} speed={speed} />
+    {showJobsBelt && <TvJobsBelt jobs={jobsForBelt} stages={stages} speed={speed} />}
+  </div>
+);
+
+// ── TV Jobs Belt — scrollable, auto-advances, pauses on manual scroll ──
+// ── TV Currently-Running Workers column with the same auto-scroll behavior as the jobs belt
+const TvWorkersColumn: React.FC<{
+  sorted: TimeLog[];
+  jobs: Job[];
+  stages: JobStage[];
+  runningCount: number;
+  speed: 'slow' | 'normal' | 'fast' | 'off';
+  showCustomers?: boolean;
+}> = ({ sorted, jobs, stages, runningCount, speed, showCustomers = true }) => {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const handlers = useTvAutoScroll(scrollRef, speed, sorted.length);
+  return (
+    <div className="h-full border-r border-white/5 overflow-hidden flex flex-col relative">
+      <div className="px-8 py-4 border-b border-white/5 flex items-center justify-between shrink-0">
+        <h2 className="text-sm font-black text-white/60 uppercase tracking-[0.3em]">● Currently Running</h2>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-white/40 font-mono">{runningCount} active</span>
+          {speed !== 'off' && sorted.length > 3 && (
+            <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto-scroll</span>
+          )}
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden relative">
+        {sorted.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8">
+            <div className="w-20 h-20 rounded-3xl bg-zinc-800/60 border border-white/5 flex items-center justify-center mb-4">
+              <Activity className="w-10 h-10 text-zinc-600" aria-hidden="true" />
+            </div>
+            <p className="text-zinc-400 text-xl font-bold">Floor is quiet</p>
+            <p className="text-zinc-600 text-sm mt-1">No active timers right now.</p>
+          </div>
+        ) : (
+          <div
+            ref={scrollRef}
+            {...handlers}
+            className="absolute inset-0 overflow-y-auto p-8 space-y-4"
+            style={{ scrollBehavior: 'auto' }}
+          >
+            {/* Duplicate content for seamless infinite scroll loop */}
+            {[0, 1].map(copy => (
+              <React.Fragment key={copy}>
+                {sorted.map(log => {
+                  const job = jobs.find(j => j.id === log.jobId);
+                  const stage = job ? getJobStage(job, stages) : null;
+                  const isPaused = !!log.pausedAt;
+                  return (
+                    <div key={`${copy}-${log.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-gradient-to-br rounded-3xl p-5 border transition-all ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`}>
+                      <div className="flex items-center gap-4">
+                        <div className={`shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>
+                          {log.userName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-2xl font-black text-white tracking-tight truncate">{log.userName}</p>
+                          <p className="text-sm text-blue-300 font-semibold truncate">{log.operation}</p>
+                          {job && (
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              <p className="text-xs text-white/40 truncate">PO {job.poNumber} · {job.partNumber}</p>
+                              {job.quantity && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded tabular shrink-0">Qty {job.quantity.toLocaleString()}</span>}
+                              {log.sessionQty && <span className="text-[10px] font-black text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded tabular shrink-0">Session {log.sessionQty}</span>}
+                            </div>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="text-4xl font-black text-white tabular tracking-tight"><LiveTicker log={log} size="lg" /></div>
+                          {stage && <div className="mt-1 inline-block text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border" style={{ background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</div>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+        <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-10 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
+        <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
+      </div>
+    </div>
+  );
+};
+
+const TvJobsBelt: React.FC<{ jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'normal' | 'fast' | 'off'; showCustomers?: boolean }> = ({ jobs, stages, speed, showCustomers = true }) => {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const handlers = useTvAutoScroll(scrollRef, speed, jobs.length);
+
+  return (
+    <div className="h-full overflow-hidden flex flex-col relative">
+      <div className="px-8 py-4 border-b border-white/5 flex items-center justify-between shrink-0">
+        <h2 className="text-sm font-black text-white/60 uppercase tracking-[0.3em]">All Open Jobs</h2>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-white/40 font-mono">{jobs.length} on the floor</span>
+          {speed !== 'off' && <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto-scroll</span>}
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden relative">
+        {jobs.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-zinc-600 text-sm">No open jobs</div>
+        ) : (
+          <div
+            ref={scrollRef}
+            {...handlers}
+            className="absolute inset-0 overflow-y-auto p-8 space-y-3"
+            style={{ scrollBehavior: 'auto' }}
+          >
+            {/* Duplicate content for seamless infinite scroll loop */}
+            {[0, 1].map(copy => (
+              <React.Fragment key={copy}>
+                {jobs.map(j => {
+                  const stage = getJobStage(j, stages);
+                  const stageIdx = stages.findIndex(s => s.id === stage.id);
+                  const progressPct = stages.length > 1 ? Math.round((stageIdx / (stages.length - 1)) * 100) : 0;
+                  const { dueText, daysLeft, overdue, urgency } = formatDueForTv(j.dueDate);
+                  const dueColor = urgency === 'late' ? 'text-red-400' : urgency === 'today' ? 'text-orange-300' : urgency === 'soon' ? 'text-orange-400' : 'text-white/60';
+                  const dueTint = urgency === 'late' ? 'bg-red-500/10 border-red-500/25' : urgency === 'today' ? 'bg-orange-500/10 border-orange-500/25' : urgency === 'soon' ? 'bg-orange-500/10 border-orange-500/20' : 'bg-white/[0.03] border-white/5';
+                  return (
+                    <div key={`${copy}-${j.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-zinc-900/50 border rounded-2xl px-5 py-4 backdrop-blur-xl ${overdue ? 'border-red-500/30' : 'border-white/5'}`}>
+                      <div className="flex items-center justify-between gap-4 mb-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xl font-black text-white tabular">{j.poNumber}</span>
+                            {overdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                            {j.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">URGENT</span>}
+                          </div>
+                          <p className="text-sm text-white/70 truncate mt-0.5">{j.partNumber}{j.customer && showCustomers ? ` · ${j.customer}` : ''}</p>
+                        </div>
+                        <div className="shrink-0 text-right flex flex-col items-end gap-1">
+                          <div className="text-xs font-mono text-white/80 tabular">{j.quantity || '—'} pc</div>
+                          {dueText ? (
+                            <div className={`inline-flex items-center gap-1.5 text-[11px] font-bold tabular border rounded-md px-2 py-0.5 ${dueColor} ${dueTint}`}>
+                              <Clock className="w-3 h-3" aria-hidden="true" />
+                              <span>{dueText}</span>
+                              {daysLeft !== null && (
+                                <span className="opacity-80 font-black">
+                                  {urgency === 'late' ? `· ${Math.abs(daysLeft)}d late` : urgency === 'today' ? '· today' : `· ${daysLeft}d`}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-white/30 italic">no due date</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 relative h-2 rounded-full bg-zinc-800 overflow-hidden">
+                          <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700" style={{ width: `${progressPct}%`, background: stage.color, boxShadow: `0 0 8px ${stage.color}80` }} />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border shrink-0" style={{ background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+        <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-10 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
+        <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
+      </div>
+    </div>
+  );
+};
+
 export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack, addToast: addToastProp, standalone }) => {
   const addToast = addToastProp || (() => {});
   const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
@@ -336,18 +1077,62 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [compact, setCompact] = useState(false);
   const [dimMode, setDimMode] = useState(false);
+  const [tvMode, setTvMode] = useState(false);
   const prevLogIdsRef = useRef<Set<string>>(new Set());
-  const [currentSlideIdx, setCurrentSlideIdx] = useState(0);
-  const [fadeIn, setFadeIn] = useState(true);
 
   const isAdmin = !standalone && user?.role === 'admin';
 
+  // TV Mode effects: fullscreen, body class, Esc to exit
+  useEffect(() => {
+    if (tvMode) {
+      document.body.classList.add('tv-mode');
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    } else {
+      document.body.classList.remove('tv-mode');
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+    return () => {
+      document.body.classList.remove('tv-mode');
+    };
+  }, [tvMode]);
+
+  const [tvPaused, setTvPaused] = useState(false);
+  // Ref updated each render so keyboard handler always sees current slide count without re-binding
+  const slideCountRef = useRef(1);
+  useEffect(() => {
+    if (!tvMode) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setTvMode(false); return; }
+      const n = Math.max(1, slideCountRef.current);
+      if (e.key === 'ArrowRight') {
+        setTvFade(false);
+        setTimeout(() => { setTvSlideIdx(prev => (prev + 1) % n); setTvFade(true); }, 300);
+      } else if (e.key === 'ArrowLeft') {
+        setTvFade(false);
+        setTimeout(() => { setTvSlideIdx(prev => (prev - 1 + n) % n); setTvFade(true); }, 300);
+      } else if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        setTvPaused(p => !p);
+      }
+    };
+    const fsChange = () => { if (!document.fullscreenElement) setTvMode(false); };
+    window.addEventListener('keydown', h);
+    document.addEventListener('fullscreenchange', fsChange);
+    return () => { window.removeEventListener('keydown', h); document.removeEventListener('fullscreenchange', fsChange); };
+  }, [tvMode]);
+
+  const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
     const unsub2 = DB.subscribeJobs(setJobs);
     const unsub3 = DB.subscribeSettings(setSettings);
     const unsub4 = DB.subscribeLogs(setAllLogs);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+    // subscribeRework may not exist in all builds — optional
+    const maybeSub = (DB as any).subscribeRework;
+    const unsub5 = typeof maybeSub === 'function'
+      ? maybeSub((entries: any[]) => setOpenReworkCount((entries || []).filter((r: any) => r.status === 'open' || r.status === 'in-rework').length))
+      : () => {};
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
   }, []);
 
   // Detect start/stop and fire push notifications
@@ -407,29 +1192,69 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const inLunch = settings.autoLunchPauseEnabled && hhmm >= (settings.lunchStart || '12:00') && hhmm < (settings.lunchEnd || '12:30');
 
-  // ── BASE SLIDES (always present) + custom message slides ──────
-  const BASE_SLIDE_LABELS = ['Live Workers', 'Shop Stats', 'Leaderboard', 'Clock & Weather', 'Job Board'];
-  const baseSlideCount = 5;
-
-  // Custom message slides from settings
-  const customSlides = (settings.tvSlides || []).filter(s => s.enabled && s.type === 'message');
-
-  const totalSlides = baseSlideCount + customSlides.length;
-  const allLabels = [...BASE_SLIDE_LABELS, ...customSlides.map(s => s.title || 'Message')];
+  // ─── TV MODE SLIDES ────────────────────────────────────────────
+  // If user has defined tvSlides, use those. Otherwise, use sensible defaults.
+  // Default lineup: Workers+Jobs · Leaderboard · Weather · Weekly Stats
+  // Default TV slides — each tab gets its own dedicated full-screen slide.
+  // Users can customize in Settings → TV Display → Slides.
+  const DEFAULT_TV_SLIDES: TvSlide[] = [
+    { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
+    { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
+    { id: 'default-leaderboard', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+    { id: 'default-goals', type: 'goals', enabled: true },
+    { id: 'default-stats-week', type: 'stats-week', enabled: true },
+    { id: 'default-weather', type: 'weather', enabled: true },
+  ];
+  // Dedup enabled slides by id (prevents "same slide shows twice" bugs from legacy configs)
+  const configuredTvSlides = React.useMemo(() => {
+    const enabled = (settings.tvSlides || []).filter(s => s.enabled);
+    if (enabled.length === 0) return DEFAULT_TV_SLIDES;
+    const seen = new Set<string>();
+    const deduped: TvSlide[] = [];
+    for (const s of enabled) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      deduped.push(s);
+    }
+    return deduped;
+  }, [settings.tvSlides]);
+  // Keep the ref in sync so the keyboard handler can read the count without re-binding
+  slideCountRef.current = configuredTvSlides.length;
 
   const slideDuration = (settings.tvSlideDuration || 15) * 1000;
+  const [tvSlideIdx, setTvSlideIdx] = useState(0);
+  const [tvFade, setTvFade] = useState(true);
 
-  // Auto-rotate with fade transition
+  // Auto-rotate through TV slides (only while in TV mode, and not paused via Spacebar)
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setFadeIn(false);
+    if (!tvMode || tvPaused || configuredTvSlides.length <= 1) return;
+    const thisSlide = configuredTvSlides[tvSlideIdx];
+    const dur = (thisSlide?.duration || settings.tvSlideDuration || 15) * 1000;
+    const t = setTimeout(() => {
+      setTvFade(false);
       setTimeout(() => {
-        setCurrentSlideIdx(prev => (prev + 1) % totalSlides);
-        setFadeIn(true);
+        setTvSlideIdx(prev => (prev + 1) % configuredTvSlides.length);
+        setTvFade(true);
       }, 400);
-    }, slideDuration);
-    return () => clearTimeout(timer);
-  }, [currentSlideIdx, totalSlides, slideDuration]);
+    }, dur);
+    return () => clearTimeout(t);
+  }, [tvMode, tvPaused, tvSlideIdx, configuredTvSlides.length, settings.tvSlideDuration]);
+
+  // Reset slide index when entering TV mode
+  useEffect(() => { if (tvMode) { setTvSlideIdx(0); setTvFade(true); } }, [tvMode]);
+
+  // Per-slide sub-index for rotating messages within a single slide (e.g. 10 safety messages cycle one at a time)
+  const [slideCycleCounts, setSlideCycleCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!tvMode) return;
+    // Each time we land on a slide, bump its cycle counter so sub-messages rotate
+    setSlideCycleCounts(prev => {
+      const slide = configuredTvSlides[tvSlideIdx];
+      if (!slide) return prev;
+      return { ...prev, [slide.id]: (prev[slide.id] || 0) + 1 };
+    });
+  }, [tvSlideIdx, tvMode]);
+
 
   // ── WEEKLY LEADERBOARD DATA ───────────────────────────────────
   const weekStart = new Date();
@@ -437,46 +1262,260 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   weekStart.setHours(0, 0, 0, 0);
   const weekCutoff = weekStart.getTime();
 
-  const weeklyData = React.useMemo(() => {
-    const userMap = new Map<string, { name: string; hours: number; sessions: number; topOp: string }>();
-    allLogs.filter(l => l.startTime >= weekCutoff && l.endTime).forEach(l => {
-      const cur = userMap.get(l.userId) || { name: l.userName, hours: 0, sessions: 0, topOp: '' };
+  // Shared leaderboard builder that takes a cutoff timestamp
+  const buildLeaderboard = React.useCallback((cutoffMs: number): LeaderRow[] => {
+    const userMap = new Map<string, { userId: string; name: string; hours: number; jobIds: Set<string>; sessions: number; topOp: string }>();
+    allLogs.filter(l => l.startTime >= cutoffMs && l.endTime).forEach(l => {
+      const cur = userMap.get(l.userId) || { userId: l.userId, name: l.userName, hours: 0, jobIds: new Set(), sessions: 0, topOp: '' };
       cur.hours += (l.durationMinutes || 0) / 60;
       cur.sessions += 1;
+      cur.jobIds.add(l.jobId);
       cur.name = l.userName;
       userMap.set(l.userId, cur);
     });
-    // Also count active logs
-    activeLogs.forEach(l => {
-      const cur = userMap.get(l.userId) || { name: l.userName, hours: 0, sessions: 0, topOp: '' };
+    activeLogs.filter(l => l.startTime >= cutoffMs).forEach(l => {
+      const cur = userMap.get(l.userId) || { userId: l.userId, name: l.userName, hours: 0, jobIds: new Set(), sessions: 0, topOp: '' };
       cur.hours += DB.getWorkingElapsedMs(l) / 3600000;
       if (!allLogs.find(al => al.id === l.id && al.endTime)) cur.sessions += 1;
+      cur.jobIds.add(l.jobId);
       cur.name = l.userName;
       userMap.set(l.userId, cur);
     });
-    // Find top operation per user
-    allLogs.filter(l => l.startTime >= weekCutoff).forEach(l => {
-      const cur = userMap.get(l.userId);
-      if (cur) {
-        const opCounts = new Map<string, number>();
-        allLogs.filter(ll => ll.userId === l.userId && ll.startTime >= weekCutoff).forEach(ll => {
-          opCounts.set(ll.operation, (opCounts.get(ll.operation) || 0) + 1);
-        });
-        let maxOp = ''; let maxCount = 0;
-        opCounts.forEach((c, op) => { if (c > maxCount) { maxCount = c; maxOp = op; } });
-        cur.topOp = maxOp;
-      }
+    // Top operation per user within cutoff
+    userMap.forEach((cur, userId) => {
+      const opCounts = new Map<string, number>();
+      allLogs.filter(ll => ll.userId === userId && ll.startTime >= cutoffMs).forEach(ll => {
+        opCounts.set(ll.operation, (opCounts.get(ll.operation) || 0) + 1);
+      });
+      let maxOp = ''; let maxCount = 0;
+      opCounts.forEach((c, op) => { if (c > maxCount) { maxCount = c; maxOp = op; } });
+      cur.topOp = maxOp;
     });
-    return Array.from(userMap.values()).sort((a, b) => b.hours - a.hours);
-  }, [allLogs, activeLogs, weekCutoff]);
+    return Array.from(userMap.values())
+      .map(u => ({ userId: u.userId, name: u.name, hours: u.hours, jobs: u.jobIds.size, sessions: u.sessions, topOp: u.topOp }))
+      .sort((a, b) => b.hours - a.hours);
+  }, [allLogs, activeLogs]);
+
+  const weeklyData = React.useMemo(() => buildLeaderboard(weekCutoff), [buildLeaderboard, weekCutoff]);
 
   // ── OPEN JOBS ─────────────────────────────────────────────────
+  // Sort by parsed due date (soonest first). Jobs without a due date fall to the end.
   const openJobs = jobs.filter(j => j.status !== 'completed').sort((a, b) => {
-    if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-    return 0;
+    const da = parseDueDate(a.dueDate)?.getTime() ?? Infinity;
+    const db = parseDueDate(b.dueDate)?.getTime() ?? Infinity;
+    return da - db;
   });
 
-  const MEDAL_COLORS = ['#fbbf24', '#94a3b8', '#d97706'];
+  const stages = getStages(settings);
+
+  // ── TV MODE VIEW — full-screen immersive, auto-scroll, always-on clock + weather ──
+  if (tvMode) {
+    const jobsForBelt = openJobs.length > 0 ? openJobs : jobs.filter(j => j.status !== 'completed').slice(0, 30);
+    const currentSlide = configuredTvSlides[tvSlideIdx] || configuredTvSlides[0];
+
+    // Compute leaderboard based on slide period
+    const leaderboardForSlide = (slide: TvSlide): LeaderRow[] => {
+      const now = new Date();
+      let cutoff: number;
+      if (slide.leaderboardPeriod === 'today') {
+        const d = new Date(); d.setHours(0, 0, 0, 0); cutoff = d.getTime();
+      } else if (slide.leaderboardPeriod === 'month') {
+        const d = new Date(now.getFullYear(), now.getMonth(), 1); cutoff = d.getTime();
+      } else {
+        cutoff = weekCutoff;
+      }
+      return buildLeaderboard(cutoff);
+    };
+
+    const renderSlide = (slide: TvSlide) => {
+      switch (slide.type) {
+        case 'workers':
+          // Full-screen live workers view — no jobs belt on this slide. Jobs get their own 'jobs' slide.
+          return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={false} />;
+        case 'jobs':
+          return <div className="h-full flex flex-col"><TvJobsBelt jobs={jobsForBelt} stages={stages} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} /></div>;
+        case 'leaderboard':
+          return <TvLeaderboardSlide data={leaderboardForSlide(slide)} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} />;
+        case 'weather':
+          return <TvWeatherSlide />;
+        case 'stats-week':
+        case 'stats':
+          return <TvWeeklyStatsSlide
+            allLogs={allLogs}
+            weekStart={weekStart}
+            jobs={jobs}
+            showRevenue={settings.tvShowRevenue === true}
+            showCustomers={settings.tvShowCustomerNames !== false}
+          />;
+        case 'goals':
+          return <TvGoalsSlide
+            goals={settings.shopGoals || []}
+            jobs={jobs}
+            logs={allLogs}
+            reworkCount={openReworkCount}
+            showRevenue={settings.tvShowRevenue === true}
+          />;
+        case 'safety': {
+          // Safety slide cycles through multiple messages — one per TV rotation
+          const msgs = (slide.messages && slide.messages.length > 0)
+            ? slide.messages
+            : [{ id: 'legacy', title: slide.title, body: slide.body, color: slide.color, icon: slide.icon }];
+          const i = (slideCycleCounts[slide.id] || 1) - 1;
+          const m = msgs[i % msgs.length];
+          return <TvSafetySlide title={m.title} body={m.body} color={m.color} icon={m.icon} cycleInfo={msgs.length > 1 ? { current: (i % msgs.length) + 1, total: msgs.length } : undefined} />;
+        }
+        case 'message': {
+          // Announcement slide cycles through multiple messages
+          const msgs = (slide.messages && slide.messages.length > 0)
+            ? slide.messages
+            : [{ id: 'legacy', title: slide.title, body: slide.body, color: slide.color }];
+          const i = (slideCycleCounts[slide.id] || 1) - 1;
+          const m = msgs[i % msgs.length];
+          return <TvMessageSlide title={m.title} body={m.body} color={m.color} cycleInfo={msgs.length > 1 ? { current: (i % msgs.length) + 1, total: msgs.length } : undefined} />;
+        }
+        default:
+          return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={settings.tvShowJobsBelt !== false} />;
+      }
+    };
+
+    const slideLabel = (slide: TvSlide): string => {
+      switch (slide.type) {
+        case 'workers': return 'Live Workers';
+        case 'jobs': return 'Open Jobs';
+        case 'leaderboard': return 'Leaderboard';
+        case 'weather': return 'Weather';
+        case 'stats-week': case 'stats': return 'Week Stats';
+        case 'goals': return 'Goals';
+        case 'safety': return slide.title || 'Safety';
+        case 'message': return slide.title || 'Message';
+        default: return 'Slide';
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 z-[9999] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 text-white overflow-hidden">
+        {/* Ambient glow */}
+        <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[120px]" />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-600/10 blur-[120px]" />
+        </div>
+
+        {/* Exit chrome — always visible, with keyboard-shortcut chips + FAB-style Exit */}
+        <div className="tv-chrome absolute top-4 right-4 z-[10001] flex items-center gap-2">
+          {tvPaused && (
+            <div className="flex items-center gap-1.5 text-[11px] text-yellow-400 uppercase tracking-widest font-black bg-yellow-500/15 border border-yellow-500/30 rounded-lg px-2.5 py-1.5 animate-pulse">
+              <Pause className="w-3 h-3" aria-hidden="true" /> Paused
+            </div>
+          )}
+          <button
+            aria-label="Exit TV Mode"
+            onClick={() => setTvMode(false)}
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-500/80 to-red-600/80 hover:from-red-500 hover:to-red-600 text-white text-sm font-black border border-red-400/30 transition-all flex items-center gap-2 backdrop-blur-xl shadow-lg shadow-red-900/40 active:scale-95"
+          >
+            <Minimize2 className="w-4 h-4" aria-hidden="true" /> Exit TV Mode
+          </button>
+        </div>
+
+        {/* Bottom keyboard-shortcut hint bar */}
+        <div className="tv-chrome absolute bottom-4 left-1/2 -translate-x-1/2 z-[10001] flex items-center gap-3 bg-black/50 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2 pointer-events-none">
+          <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
+            <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">Esc</kbd> exit
+          </span>
+          <span className="w-px h-3 bg-white/10" />
+          <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
+            <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">←</kbd>
+            <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">→</kbd>
+            skip
+          </span>
+          <span className="w-px h-3 bg-white/10" />
+          <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
+            <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">Space</kbd>
+            {tvPaused ? 'resume' : 'pause'}
+          </span>
+        </div>
+
+        <div className="relative h-full flex flex-col">
+          {/* TOP BAR — Shop name + Clock + Stats + Weather */}
+          <div className="shrink-0 px-8 py-6 flex items-center justify-between gap-6 border-b border-white/5 backdrop-blur-xl bg-black/20">
+            {/* Left — shop */}
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-12 object-contain" />}
+              <div className="min-w-0">
+                {settings.companyName && <p className="text-2xl font-black text-white tracking-tight truncate">{settings.companyName}</p>}
+                <div className="flex items-center gap-2 mt-1">
+                  <Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" aria-hidden="true" />
+                  <span className="text-[11px] font-black text-white/60 uppercase tracking-[0.3em]">Live Shop Floor</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Center — clock */}
+            <div className="shrink-0 text-center">
+              <LiveClock size="huge" />
+              <p className="text-white/40 text-sm font-semibold mt-2">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+            </div>
+
+            {/* Right — stats + weather */}
+            <div className="shrink-0 flex items-center gap-6 min-w-0 flex-1 justify-end">
+              <div className="flex items-center gap-5">
+                <div className="text-center">
+                  <div className="flex items-center gap-1.5 justify-center">
+                    <Users className="w-4 h-4 text-emerald-400" aria-hidden="true" />
+                    <span className="text-3xl font-black text-white tabular leading-none">{workerCount}</span>
+                  </div>
+                  <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mt-1">Workers</p>
+                </div>
+                <div className="w-px h-10 bg-white/10" />
+                <div className="text-center">
+                  <div className="flex items-center gap-1.5 justify-center">
+                    <Activity className="w-4 h-4 text-blue-400 animate-pulse" aria-hidden="true" />
+                    <span className="text-3xl font-black text-white tabular leading-none">{runningCount}</span>
+                  </div>
+                  <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mt-1">Running</p>
+                </div>
+                <div className="w-px h-10 bg-white/10" />
+                <div className="text-center">
+                  <div className="flex items-center gap-1.5 justify-center">
+                    <Briefcase className="w-4 h-4 text-purple-400" aria-hidden="true" />
+                    <span className="text-3xl font-black text-white tabular leading-none">{openJobs.length}</span>
+                  </div>
+                  <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mt-1">Open</p>
+                </div>
+              </div>
+              {/* Weather — compact inline */}
+              {settings.tvShowWeather !== false && <TVWeather />}
+            </div>
+          </div>
+
+          {/* MAIN — Rotating slides (fades between) */}
+          <div className={`flex-1 min-h-0 transition-opacity duration-400 ${tvFade ? 'opacity-100' : 'opacity-0'}`}>
+            {renderSlide(currentSlide)}
+          </div>
+
+          {/* Slide indicators + slide label — bottom of screen */}
+          {configuredTvSlides.length > 1 && (
+            <div className="tv-chrome shrink-0 px-8 py-3 border-t border-white/5 bg-black/40 backdrop-blur-xl flex items-center justify-center gap-2">
+              {configuredTvSlides.map((s, i) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => { setTvFade(false); setTimeout(() => { setTvSlideIdx(i); setTvFade(true); }, 300); }}
+                  aria-label={`Show ${slideLabel(s)}`}
+                  aria-current={i === tvSlideIdx ? 'true' : undefined}
+                  className="group flex items-center gap-1.5"
+                >
+                  <span className={`h-1.5 rounded-full transition-all duration-500 ${i === tvSlideIdx ? 'w-12 bg-blue-500' : 'w-1.5 bg-white/20 group-hover:bg-white/40'}`} />
+                  {i === tvSlideIdx && (
+                    <span className="text-[10px] text-white/60 font-black uppercase tracking-widest">{slideLabel(s)}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen transition-all duration-500 ${dimMode ? 'bg-black' : 'bg-zinc-950'}`}>
@@ -493,20 +1532,27 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           <div className="flex items-center gap-2">
             <Radio className="w-4 h-4 text-red-500 animate-pulse" />
             <span className="text-white font-black text-sm tracking-wide">LIVE FLOOR</span>
-            <span className="text-white/20 text-xs ml-2">{allLabels[currentSlideIdx]}</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <button onClick={() => setDimMode(!dimMode)} className={`p-2 rounded-lg transition-colors ${dimMode ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40 hover:text-white'}`} title={dimMode ? 'Normal' : 'Dim'}>
-              {dimMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <button aria-label={dimMode ? 'Exit dim mode' : 'Enter dim mode'} aria-pressed={dimMode} onClick={() => setDimMode(!dimMode)} className={`p-2 rounded-lg transition-colors min-w-[36px] min-h-[36px] ${dimMode ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40 hover:text-white'}`} title={dimMode ? 'Normal' : 'Dim'}>
+              {dimMode ? <Sun className="w-4 h-4" aria-hidden="true" /> : <Moon className="w-4 h-4" aria-hidden="true" />}
             </button>
-            <button onClick={() => setCompact(!compact)} className={`p-2 rounded-lg transition-colors ${compact ? 'bg-white/10 text-white' : 'bg-white/5 text-white/40 hover:text-white'}`} title={compact ? 'Expand' : 'Compact'}>
-              {compact ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+            <button aria-label={compact ? 'Expand layout' : 'Compact layout'} aria-pressed={compact} onClick={() => setCompact(!compact)} className={`p-2 rounded-lg transition-colors min-w-[36px] min-h-[36px] ${compact ? 'bg-white/10 text-white' : 'bg-white/5 text-white/40 hover:text-white'}`} title={compact ? 'Expand' : 'Compact'}>
+              {compact ? <Maximize2 className="w-4 h-4" aria-hidden="true" /> : <Minimize2 className="w-4 h-4" aria-hidden="true" />}
             </button>
-            <button onClick={() => {
+            <button aria-label="Toggle fullscreen" onClick={() => {
               if (document.fullscreenElement) document.exitFullscreen();
               else document.documentElement.requestFullscreen().catch(() => {});
-            }} className="p-2 rounded-lg transition-colors bg-white/5 text-white/40 hover:text-white hover:bg-blue-500/20" title="Fullscreen">
-              <Smartphone className="w-4 h-4" />
+            }} className="p-2 rounded-lg transition-colors bg-white/5 text-white/40 hover:text-white hover:bg-blue-500/20 min-w-[36px] min-h-[36px]" title="Fullscreen">
+              <Smartphone className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <button
+              aria-label="Enter TV Mode"
+              onClick={() => setTvMode(true)}
+              className="ml-1 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-blue-900/40 min-h-[36px] transition-all"
+              title="Full-screen TV mode — hides sidebar, auto-scrolls"
+            >
+              <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" /> TV Mode
             </button>
           </div>
         </div>
@@ -536,238 +1582,65 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         )}
       </div>
 
-      {/* ── SLIDE CONTENT with fade ── */}
-      <div className={`transition-opacity duration-400 ${fadeIn ? 'opacity-100' : 'opacity-0'}`} style={{ minHeight: 'calc(100vh - 140px)' }}>
-
-        {/* SLIDE 0: Workers Live View */}
-        {currentSlideIdx === 0 && (
-          <div className={`p-4 ${compact ? 'max-w-2xl' : 'max-w-3xl'} mx-auto pb-16`}>
-            {activeLogs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center text-center py-24 px-6">
-                <div className="w-20 h-20 rounded-full bg-white/[0.03] flex items-center justify-center mb-6"><Clock className="w-10 h-10 text-white/10" /></div>
-                <h2 className="text-white/60 font-bold text-xl mb-2">Floor is quiet</h2>
-                <p className="text-white/20 text-sm max-w-xs">When workers start timers, their live activity will appear here.</p>
+      {/* ── LIVE WORKERS VIEW — admin-focused; for slideshow (Leaderboard, Goals, Weather, Stats) click "TV Mode" ── */}
+      <div className="pb-16">
+        {/* CTA banner — teaches users what TV Mode does (only show when there's activity to broadcast) */}
+        {activeLogs.length > 0 && (
+          <div className="px-4 pt-4 max-w-3xl mx-auto">
+            <button
+              onClick={() => setTvMode(true)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-500/20 hover:border-blue-500/40 hover:from-blue-500/15 hover:to-indigo-500/10 transition-all text-left group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0 group-hover:bg-blue-500/30 transition-colors">
+                  <Radio className="w-5 h-5 text-blue-400 animate-pulse" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white">Put this on the shop TV</p>
+                  <p className="text-[11px] text-white/50 truncate">Full-screen slideshow: Workers · Jobs · Leaderboard · Goals · Weather · Weekly Stats</p>
+                </div>
               </div>
-            ) : compact ? (
-              <div className="rounded-2xl border border-white/5 overflow-hidden bg-white/[0.01]">
-                {sorted.map(log => (
-                  <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact isAdmin={isAdmin} tvSettings={settings}
-                    onForceStop={isAdmin ? handleForceStop : undefined} onPause={isAdmin ? handlePause : undefined} onResume={isAdmin ? handleResume : undefined} />
-                ))}
+              <div className="flex items-center gap-1.5 text-blue-400 text-xs font-bold shrink-0 group-hover:text-blue-300">
+                <Maximize2 className="w-4 h-4" aria-hidden="true" /> TV Mode
               </div>
-            ) : (
-              <div className="space-y-4">
-                {sorted.map(log => (
-                  <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact={false} isAdmin={isAdmin} tvSettings={settings}
-                    onForceStop={isAdmin ? handleForceStop : undefined} onPause={isAdmin ? handlePause : undefined} onResume={isAdmin ? handleResume : undefined} />
-                ))}
-              </div>
-            )}
+            </button>
           </div>
         )}
 
-        {/* SLIDE 1: Shop Stats Overview */}
-        {currentSlideIdx === 1 && (
-          <div className="flex flex-col items-center justify-center p-8 pb-16">
-            <div className="max-w-3xl w-full space-y-8">
-              <h2 className="text-3xl font-black text-white text-center flex items-center justify-center gap-3"><TrendingUp className="w-8 h-8 text-blue-400" /> Shop Overview</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-white/5 rounded-2xl p-6 text-center border border-white/5">
-                  <p className="text-white/40 text-xs uppercase font-bold mb-1">Active Workers</p>
-                  <p className="text-5xl font-black text-emerald-400">{workerCount}</p>
-                </div>
-                <div className="bg-white/5 rounded-2xl p-6 text-center border border-white/5">
-                  <p className="text-white/40 text-xs uppercase font-bold mb-1">Running</p>
-                  <p className="text-5xl font-black text-blue-400">{runningCount}</p>
-                </div>
-                <div className="bg-white/5 rounded-2xl p-6 text-center border border-white/5">
-                  <p className="text-white/40 text-xs uppercase font-bold mb-1">Paused</p>
-                  <p className="text-5xl font-black text-yellow-400">{pausedCount}</p>
-                </div>
-                <div className="bg-white/5 rounded-2xl p-6 text-center border border-white/5">
-                  <p className="text-white/40 text-xs uppercase font-bold mb-1">Open Jobs</p>
-                  <p className="text-5xl font-black text-purple-400">{openJobs.length}</p>
-                </div>
+        {/* Active workers list — the admin-controllable view */}
+        <div className={`p-4 ${compact ? 'max-w-2xl' : 'max-w-3xl'} mx-auto`}>
+          {activeLogs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center py-20 px-6">
+              <div className="w-20 h-20 rounded-full bg-white/[0.03] flex items-center justify-center mb-6">
+                <Clock className="w-10 h-10 text-white/10" aria-hidden="true" />
               </div>
-              <div className="bg-white/5 rounded-2xl p-6 border border-white/5">
-                <h3 className="text-white/40 text-xs uppercase font-bold mb-4">Currently Active</h3>
-                <div className="space-y-3">
-                  {sorted.slice(0, 8).map(log => {
-                    const job = getJob(log.jobId);
-                    return (
-                      <div key={log.id} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${log.pausedAt ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}`}>{log.userName.charAt(0)}</div>
-                          <div>
-                            <span className="text-white font-bold text-sm">{log.userName}</span>
-                            <span className="text-white/40 text-xs ml-2">{log.operation}</span>
-                          </div>
-                        </div>
-                        <div className="text-right flex items-center gap-3">
-                          <LiveTicker log={log} size="sm" />
-                          {job && <p className="text-white/30 text-[10px] w-20 truncate text-right">{job.poNumber}</p>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {sorted.length === 0 && <p className="text-white/20 text-sm text-center py-4">No active workers</p>}
-                </div>
-              </div>
+              <h2 className="text-white/60 font-bold text-xl mb-2">Floor is quiet</h2>
+              <p className="text-white/20 text-sm max-w-xs mb-6">When workers start timers, their live activity will appear here.</p>
+              <button
+                onClick={() => setTvMode(true)}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-900/40 transition-all"
+              >
+                <Maximize2 className="w-4 h-4" aria-hidden="true" /> Preview TV Slideshow
+              </button>
+              <p className="text-[10px] text-white/20 mt-3">Shows leaderboard, goals, weather, and weekly stats even without active workers.</p>
             </div>
-          </div>
-        )}
-
-        {/* SLIDE 2: Employee Leaderboard */}
-        {currentSlideIdx === 2 && (
-          <div className="flex flex-col items-center justify-center p-8 pb-16">
-            <div className="max-w-3xl w-full space-y-6">
-              <h2 className="text-3xl font-black text-white text-center flex items-center justify-center gap-3"><Trophy className="w-8 h-8 text-yellow-400" /> Weekly Leaderboard</h2>
-              <p className="text-white/30 text-sm text-center">Top performers this week</p>
-              <div className="space-y-3">
-                {weeklyData.slice(0, 10).map((w, i) => {
-                  const initials = w.name.split(' ').map(x => x[0]).join('').toUpperCase().slice(0, 2);
-                  const pct = weeklyData[0]?.hours > 0 ? (w.hours / weeklyData[0].hours) * 100 : 0;
-                  return (
-                    <div key={w.name} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${i === 0 ? 'bg-yellow-500/5 border-yellow-500/20' : i === 1 ? 'bg-zinc-500/5 border-zinc-500/20' : i === 2 ? 'bg-orange-500/5 border-orange-500/20' : 'bg-white/[0.02] border-white/5'}`}>
-                      <div className="w-8 text-center">
-                        {i < 3 ? (
-                          <Award className="w-6 h-6 mx-auto" style={{ color: MEDAL_COLORS[i] }} />
-                        ) : (
-                          <span className="text-white/30 font-bold text-lg">{i + 1}</span>
-                        )}
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-sm font-black text-white/80">{initials}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-white font-bold text-base">{w.name}</span>
-                          <span className="text-white font-black text-lg">{w.hours.toFixed(1)}h</span>
-                        </div>
-                        <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${pct}%`, background: i === 0 ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : i === 1 ? 'linear-gradient(90deg, #94a3b8, #64748b)' : i === 2 ? 'linear-gradient(90deg, #d97706, #b45309)' : 'linear-gradient(90deg, #3b82f6, #2563eb)' }} />
-                        </div>
-                        <div className="flex items-center gap-3 mt-1">
-                          <span className="text-white/30 text-xs">{w.sessions} sessions</span>
-                          {w.topOp && <span className="text-blue-400/60 text-xs">{w.topOp}</span>}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {weeklyData.length === 0 && <p className="text-white/20 text-sm text-center py-8">No data this week yet</p>}
-              </div>
+          ) : compact ? (
+            <div className="rounded-2xl border border-white/5 overflow-hidden bg-white/[0.01]">
+              {sorted.map(log => (
+                <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact isAdmin={isAdmin} tvSettings={settings}
+                  onForceStop={isAdmin ? handleForceStop : undefined} onPause={isAdmin ? handlePause : undefined} onResume={isAdmin ? handleResume : undefined} />
+              ))}
             </div>
-          </div>
-        )}
-
-        {/* SLIDE 3: Clock & Weather */}
-        {currentSlideIdx === 3 && (
-          <div className="flex flex-col items-center justify-center p-8 pb-16" style={{ minHeight: 'calc(100vh - 140px)' }}>
-            <div className="max-w-2xl w-full space-y-10">
-              <BigClock />
-              <WeatherWidget />
-              {/* Quick stats below */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-white/5 rounded-2xl p-5 text-center border border-white/5">
-                  <p className="text-white/30 text-[10px] uppercase font-bold">Today's Hours</p>
-                  <p className="text-2xl font-black text-blue-400 mt-1">
-                    {(() => {
-                      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-                      const todayMs = todayStart.getTime();
-                      const mins = allLogs.filter(l => l.startTime >= todayMs && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0), 0);
-                      const activeMins = activeLogs.reduce((a, l) => a + DB.getWorkingElapsedMs(l) / 60000, 0);
-                      return ((mins + activeMins) / 60).toFixed(1);
-                    })()}h
-                  </p>
-                </div>
-                <div className="bg-white/5 rounded-2xl p-5 text-center border border-white/5">
-                  <p className="text-white/30 text-[10px] uppercase font-bold">Jobs Due Today</p>
-                  <p className="text-2xl font-black text-orange-400 mt-1">
-                    {jobs.filter(j => {
-                      const today = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-                      return j.dueDate === today && j.status !== 'completed';
-                    }).length}
-                  </p>
-                </div>
-                <div className="bg-white/5 rounded-2xl p-5 text-center border border-white/5">
-                  <p className="text-white/30 text-[10px] uppercase font-bold">Completed Today</p>
-                  <p className="text-2xl font-black text-emerald-400 mt-1">
-                    {(() => {
-                      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-                      return jobs.filter(j => j.completedAt && j.completedAt >= todayStart.getTime()).length;
-                    })()}
-                  </p>
-                </div>
-              </div>
+          ) : (
+            <div className="space-y-4">
+              {sorted.map(log => (
+                <WorkerCard key={log.id} log={log} job={getJob(log.jobId)} compact={false} isAdmin={isAdmin} tvSettings={settings}
+                  onForceStop={isAdmin ? handleForceStop : undefined} onPause={isAdmin ? handlePause : undefined} onResume={isAdmin ? handleResume : undefined} />
+              ))}
             </div>
-          </div>
-        )}
-
-        {/* SLIDE 4: Job Board */}
-        {currentSlideIdx === 4 && (
-          <div className="p-4 max-w-5xl mx-auto pb-16">
-            <h2 className="text-2xl font-black text-white mb-4 flex items-center gap-3"><Briefcase className="w-6 h-6 text-purple-400" /> Open Jobs ({openJobs.length})</h2>
-            <div className="rounded-2xl border border-white/5 overflow-hidden">
-              <div className="grid grid-cols-[1fr_1fr_80px_100px_100px_80px] gap-0 text-xs font-bold text-white/30 uppercase tracking-widest bg-white/5 px-4 py-3">
-                <span>PO Number</span><span>Part / Customer</span><span className="text-center">Qty</span><span className="text-center">Due Date</span><span className="text-center">Status</span><span className="text-center">Priority</span>
-              </div>
-              <div className="divide-y divide-white/5 max-h-[60vh] overflow-y-auto">
-                {openJobs.slice(0, 30).map(job => {
-                  const todayN = Date.now();
-                  const dueMs = job.dueDate ? new Date(job.dueDate).getTime() : Infinity;
-                  const isOverdue = dueMs < todayN && job.status !== 'completed';
-                  const isDueSoon = !isOverdue && dueMs - todayN < 3 * 86400000;
-                  return (
-                    <div key={job.id} className={`grid grid-cols-[1fr_1fr_80px_100px_100px_80px] gap-0 px-4 py-3 items-center ${isOverdue ? 'bg-red-500/5' : ''}`}>
-                      <div>
-                        <span className="text-white font-bold text-sm">{job.poNumber}</span>
-                        {job.jobIdsDisplay && <span className="text-white/20 text-[10px] ml-2">{job.jobIdsDisplay}</span>}
-                      </div>
-                      <div>
-                        <span className="text-white/70 text-sm">{job.partNumber}</span>
-                        {job.customer && <span className="text-purple-400/60 text-xs ml-2">{job.customer}</span>}
-                      </div>
-                      <span className="text-center text-white font-bold">{job.quantity}</span>
-                      <span className={`text-center text-sm font-medium ${isOverdue ? 'text-red-400 font-bold' : isDueSoon ? 'text-yellow-400' : 'text-white/50'}`}>
-                        {job.dueDate || '-'}
-                      </span>
-                      <div className="text-center">
-                        <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${job.status === 'in-progress' ? 'bg-blue-500/20 text-blue-400' : job.status === 'hold' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/5 text-white/40'}`}>
-                          {job.status}
-                        </span>
-                      </div>
-                      <div className="text-center">
-                        {job.priority && job.priority !== 'normal' && (
-                          <span className={`text-[10px] font-black uppercase ${job.priority === 'urgent' ? 'text-red-400' : job.priority === 'high' ? 'text-orange-400' : 'text-white/30'}`}>
-                            {job.priority}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* CUSTOM MESSAGE SLIDES */}
-        {currentSlideIdx >= baseSlideCount && (() => {
-          const customIdx = currentSlideIdx - baseSlideCount;
-          const slide = customSlides[customIdx];
-          if (!slide) return null;
-          return (
-            <div className="flex flex-col items-center justify-center p-8" style={{ minHeight: 'calc(100vh - 140px)' }}>
-              <div className={`max-w-2xl text-center ${slide.color === 'red' ? 'text-red-400' : slide.color === 'yellow' ? 'text-yellow-400' : slide.color === 'green' ? 'text-emerald-400' : slide.color === 'white' ? 'text-white' : 'text-blue-400'}`}>
-                {slide.title && <h1 className="text-4xl md:text-6xl font-black mb-6 leading-tight">{slide.title}</h1>}
-                {slide.body && <p className="text-xl md:text-2xl opacity-80 leading-relaxed">{slide.body}</p>}
-              </div>
-            </div>
-          );
-        })()}
+          )}
+        </div>
       </div>
-
-      {/* Slide indicators */}
-      <SlideIndicators slides={Array(totalSlides).fill(0)} currentIdx={currentSlideIdx} labels={allLabels} />
 
       {/* Bottom pulse line */}
       {activeLogs.length > 0 && (

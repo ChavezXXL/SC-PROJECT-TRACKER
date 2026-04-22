@@ -25,3 +25,10 @@ dist-ssr
 
 # Local Netlify folder
 .netlify
+
+# Claude agent scratch space
+.claude/worktrees/
+.claude/settings.local.json
+
+# Accidental self-nested extract
+/SC-PROJECT-TRACKER-main/

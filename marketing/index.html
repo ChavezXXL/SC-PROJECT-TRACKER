@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shop OS — Shop-floor software that doesn't charge per operator</title>
+  <meta name="description" content="Run your machine shop, finishing shop, or fabrication floor on flat-rate software. Unlimited operators. Live TV, quote-to-job, portal, and reporting built for how shops actually work." />
+  <meta name="theme-color" content="#09090b" />
+  <meta property="og:title" content="Shop OS — Shop-floor software that doesn't charge per operator" />
+  <meta property="og:description" content="Unlimited floor seats, flat pricing. Live TV, quote-to-job, customer portal, PDF quotes, push alerts. Built for finishing shops, machine shops, and fabricators." />
+  <meta property="og:type" content="website" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { zinc: { 950: '#09090b' } },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body class="bg-zinc-950 text-zinc-100">
+
+  <!-- ═══════════════════════════════════ NAV ═══════════════════════════════════ -->
+  <nav class="nav-root">
+    <div class="container-lg flex items-center justify-between h-16">
+      <a href="/" class="flex items-center gap-2.5 font-bold text-lg tracking-tight">
+        <span class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-lg shadow-blue-500/30">SO</span>
+        <span>Shop OS</span>
+      </a>
+
+      <!-- Desktop nav -->
+      <div class="hidden md:flex items-center gap-1">
+        <a href="features.html" class="nav-link">Features</a>
+        <a href="pricing.html" class="nav-link">Pricing</a>
+        <a href="#customers" class="nav-link">Customers</a>
+        <a href="contact.html" class="nav-link">Contact</a>
+      </div>
+
+      <div class="hidden md:flex items-center gap-2">
+        <a href="https://app.yourdomain.com" class="nav-link">Log in</a>
+        <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-sm">
+          Start free trial
+          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </a>
+      </div>
+
+      <!-- Mobile toggle -->
+      <button class="md:hidden p-2 rounded-lg hover:bg-white/5" data-nav-toggle aria-label="Menu" aria-expanded="false">
+        <i data-lucide="menu" class="w-6 h-6" data-icon-open></i>
+        <i data-lucide="x" class="w-6 h-6" data-icon-close style="display:none"></i>
+      </button>
+    </div>
+
+    <!-- Mobile drawer -->
+    <div class="mobile-nav" data-mobile-nav>
+      <a href="features.html">Features</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="#customers">Customers</a>
+      <a href="contact.html">Contact</a>
+      <div class="h-px bg-white/5 my-2"></div>
+      <a href="https://app.yourdomain.com">Log in</a>
+      <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-md mt-2">Start free trial</a>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════════════════ HERO ═══════════════════════════════════ -->
+  <section class="relative pt-16 pb-20 md:pt-24 md:pb-32 overflow-hidden">
+    <div class="hero-glow"></div>
+    <div class="absolute inset-0 grid-bg opacity-40 pointer-events-none"></div>
+
+    <div class="container-lg relative z-10">
+      <div class="flex justify-center mb-6 reveal">
+        <a href="#customers" class="chip chip-primary hover:border-blue-400/40 transition-colors">
+          <span class="dot"></span>
+          New: Quote-to-Job sync with QuickBooks
+          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+        </a>
+      </div>
+
+      <h1 class="reveal text-center text-5xl sm:text-6xl md:text-7xl lg:text-[5.5rem] font-extrabold tracking-tighter leading-[1.02] max-w-5xl mx-auto">
+        Your shop floor.<br />
+        <span class="text-gradient">Not theirs.</span>
+      </h1>
+
+      <p class="reveal mt-7 text-center text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto leading-relaxed">
+        Shop-floor software that doesn't charge per operator.<br class="hidden md:block" />
+        Flat pricing, unlimited floor seats, and every tool your team actually uses.
+      </p>
+
+      <div class="reveal mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
+        <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-lg w-full sm:w-auto">
+          Start free trial
+          <i data-lucide="arrow-right" class="w-5 h-5"></i>
+        </a>
+        <a href="#demo" class="btn btn-secondary btn-lg w-full sm:w-auto">
+          <i data-lucide="play-circle" class="w-5 h-5"></i>
+          Watch demo
+        </a>
+      </div>
+
+      <p class="reveal mt-5 text-center text-sm text-zinc-500">
+        14-day free trial · No credit card · Cancel anytime
+      </p>
+
+      <!-- Hero screenshot -->
+      <div id="demo" class="reveal mt-16 md:mt-20 max-w-6xl mx-auto">
+        <div class="screenshot-framed">
+          <div class="screenshot screenshot-lg">
+            SCREENSHOT — LIVE FLOOR DASHBOARD
+          </div>
+        </div>
+      </div>
+
+      <!-- Logo strip -->
+      <div class="reveal mt-16 md:mt-24">
+        <p class="text-center text-xs uppercase tracking-[0.2em] text-zinc-600 mb-6 font-semibold">Trusted by shops across North America</p>
+        <div class="logo-strip">
+          <span class="logo-item">ACME&nbsp;MFG</span>
+          <span class="logo-item">STEELRIVER</span>
+          <span class="logo-item">PRECISION&nbsp;CO</span>
+          <span class="logo-item">NORTH&nbsp;METAL</span>
+          <span class="logo-item">VERTEX&nbsp;FAB</span>
+          <span class="logo-item">IRONWORK&nbsp;LLC</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ BUILT-FOR ═══════════════════════════════════ -->
+  <section class="py-20 md:py-28">
+    <div class="container-lg grid lg:grid-cols-2 gap-12 md:gap-16 items-center">
+      <div class="reveal">
+        <span class="chip chip-primary">For finishing shops</span>
+        <h2 class="mt-5 text-4xl md:text-5xl font-extrabold tracking-tight">
+          Built for the shops<br />software usually forgets.
+        </h2>
+        <p class="mt-6 text-lg text-zinc-400 leading-relaxed">
+          ERP vendors build for machine shops running $500k CNCs. Shop OS was built by a deburring shop owner who got tired of software that didn't understand racks, batches, rework, or the realities of finishing work.
+        </p>
+        <ul class="mt-8 space-y-4">
+          <li class="flex gap-3">
+            <span class="feature-icon"><i data-lucide="sparkles" class="w-5 h-5"></i></span>
+            <div>
+              <div class="font-semibold text-white">Deburring, plating, anodizing packs</div>
+              <div class="text-zinc-400 text-sm mt-1">Industry-specific workflows that actually match how your floor runs — not generic "work orders".</div>
+            </div>
+          </li>
+          <li class="flex gap-3">
+            <span class="feature-icon"><i data-lucide="layers" class="w-5 h-5"></i></span>
+            <div>
+              <div class="font-semibold text-white">Batch &amp; rack tracking</div>
+              <div class="text-zinc-400 text-sm mt-1">Handle multi-part batches without creating 40 phantom work orders. First-class for finishing.</div>
+            </div>
+          </li>
+          <li class="flex gap-3">
+            <span class="feature-icon"><i data-lucide="shield-check" class="w-5 h-5"></i></span>
+            <div>
+              <div class="font-semibold text-white">ISO-ready audit trail</div>
+              <div class="text-zinc-400 text-sm mt-1">Every status change, every part move, every note — timestamped and exportable.</div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <div class="reveal">
+        <div class="screenshot screenshot-lg">SCREENSHOT — FINISHING PACK</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ FEATURES ═══════════════════════════════════ -->
+  <section class="py-20 md:py-28">
+    <div class="container-lg">
+      <div class="reveal text-center max-w-2xl mx-auto mb-16">
+        <span class="chip chip-primary">Everything you need</span>
+        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">
+          One app for the whole shop.
+        </h2>
+        <p class="mt-5 text-lg text-zinc-400 leading-relaxed">
+          Stop stitching together a quoting tool, a spreadsheet, a whiteboard, and four text threads. Shop OS covers the whole job lifecycle.
+        </p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Card 1 -->
+        <div class="card card-hover p-6 reveal">
+          <div class="feature-icon"><i data-lucide="monitor" class="w-5 h-5"></i></div>
+          <h3 class="mt-5 text-xl font-bold">Live TV mode</h3>
+          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
+            Cast a floor dashboard to any shop TV. Rotating slides, live job queue, safety messages, and stats — zero config.
+          </p>
+          <a href="features.html#tv" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
+            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="card card-hover p-6 reveal">
+          <div class="feature-icon"><i data-lucide="file-text" class="w-5 h-5"></i></div>
+          <h3 class="mt-5 text-xl font-bold">Quote to job in one click</h3>
+          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
+            Quote a customer, they approve, and the job lands on the floor with every spec intact. No re-entry, no typos.
+          </p>
+          <a href="features.html#quotes" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
+            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="card card-hover p-6 reveal">
+          <div class="feature-icon"><i data-lucide="history" class="w-5 h-5"></i></div>
+          <h3 class="mt-5 text-xl font-bold">Part history &amp; recall</h3>
+          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
+            Every part you've ever processed, searchable by customer, PO, or part number. Rerun setups in seconds.
+          </p>
+          <a href="features.html#history" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
+            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="card card-hover p-6 reveal">
+          <div class="feature-icon"><i data-lucide="layers-3" class="w-5 h-5"></i></div>
+          <h3 class="mt-5 text-xl font-bold">Bulk operations</h3>
+          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
+            Move 40 jobs to shipping, tag by customer, update due dates — all in one pass. Built for shops that run real volume.
+          </p>
+          <a href="features.html#bulk" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
+            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+        </div>
+
+        <!-- Card 5 -->
+        <div class="card card-hover p-6 reveal">
+          <div class="feature-icon"><i data-lucide="users" class="w-5 h-5"></i></div>
+          <h3 class="mt-5 text-xl font-bold">Customer portal</h3>
+          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
+            Give your customers a magic-link page to see their job status, download invoices, and submit new POs. No account setup on their end.
+          </p>
+          <a href="features.html#portal" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
+            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+        </div>
+
+        <!-- Card 6 -->
+        <div class="card card-hover p-6 reveal">
+          <div class="feature-icon"><i data-lucide="bell" class="w-5 h-5"></i></div>
+          <h3 class="mt-5 text-xl font-bold">Push alerts</h3>
+          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
+            The moment a job flips to "ready to ship" or a customer replies — your phone lights up. iOS, Android, desktop.
+          </p>
+          <a href="features.html#alerts" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
+            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ COMPARISON ═══════════════════════════════════ -->
+  <section class="py-20 md:py-28">
+    <div class="container-lg">
+      <div class="reveal text-center max-w-2xl mx-auto mb-14">
+        <span class="chip chip-primary">Why we're different</span>
+        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">
+          Flat pricing. Unlimited seats.<br class="hidden md:block" />
+          No per-operator tax.
+        </h2>
+        <p class="mt-5 text-lg text-zinc-400 leading-relaxed">
+          Most shop-floor ERPs charge $50–$150 per user per month. Add 10 operators and you're paying $15,000/year before you ship a single part.
+        </p>
+      </div>
+
+      <div class="reveal overflow-x-auto">
+        <table class="comparison-table min-w-[720px]">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th class="col-us">Shop&nbsp;OS</th>
+              <th>Katana</th>
+              <th>Fulcrum</th>
+              <th>JobBOSS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>Unlimited floor operators</th>
+              <td class="col-us"><span class="check-yes">✓</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-no">✕</span></td>
+            </tr>
+            <tr>
+              <th>Flat monthly price</th>
+              <td class="col-us"><span class="check-yes">✓</span> From $29/mo</td>
+              <td>Per-user</td>
+              <td>Per-user</td>
+              <td>Quote-only</td>
+            </tr>
+            <tr>
+              <th>Live TV / floor display</th>
+              <td class="col-us"><span class="check-yes">✓</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-partial">Add-on</span></td>
+              <td><span class="check-no">✕</span></td>
+            </tr>
+            <tr>
+              <th>Customer portal</th>
+              <td class="col-us"><span class="check-yes">✓</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-yes">✓</span></td>
+              <td><span class="check-partial">Add-on</span></td>
+            </tr>
+            <tr>
+              <th>Finishing-shop workflows</th>
+              <td class="col-us"><span class="check-yes">✓</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-no">✕</span></td>
+            </tr>
+            <tr>
+              <th>Works offline on the floor</th>
+              <td class="col-us"><span class="check-yes">✓</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-no">✕</span></td>
+              <td><span class="check-no">✕</span></td>
+            </tr>
+            <tr>
+              <th>Onboarding time</th>
+              <td class="col-us"><span class="check-yes">✓</span> Under an hour</td>
+              <td>2–4 weeks</td>
+              <td>4–8 weeks</td>
+              <td>3+ months</td>
+            </tr>
+            <tr>
+              <th>Setup / implementation fee</th>
+              <td class="col-us"><span class="check-yes">✓</span> $0</td>
+              <td>$500+</td>
+              <td>$5,000+</td>
+              <td>$10,000+</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="reveal mt-6 text-center text-sm text-zinc-500">
+        Based on publicly listed pricing and documentation as of 2025. <a href="#" class="text-blue-400 hover:text-blue-300">See full comparison →</a>
+      </p>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ PRICING ═══════════════════════════════════ -->
+  <section id="pricing" class="py-20 md:py-28">
+    <div class="container-lg">
+      <div class="reveal text-center max-w-2xl mx-auto mb-12">
+        <span class="chip chip-primary">Simple pricing</span>
+        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Pay for the shop. Not the seats.</h2>
+        <p class="mt-5 text-lg text-zinc-400">Every plan includes unlimited floor operators. Upgrade only when you need more features.</p>
+      </div>
+
+      <div class="reveal flex justify-center mb-10">
+        <div class="price-toggle" data-price-toggle>
+          <button type="button" data-billing="monthly" class="active">Monthly</button>
+          <button type="button" data-billing="yearly">
+            Yearly <span class="save-chip">SAVE 20%</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-5 md:gap-6">
+        <!-- Solo -->
+        <div class="pricing-card reveal">
+          <div>
+            <div class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Solo</div>
+            <p class="mt-1 text-sm text-zinc-500">Owner-operator or 1-user shops</p>
+          </div>
+          <div class="pricing-price">
+            <span class="amount" data-price-monthly>$29</span>
+            <span class="amount" data-price-yearly style="display:none">$23</span>
+            <span class="cents">/ month</span>
+          </div>
+          <a href="https://app.yourdomain.com/signup?plan=solo" class="btn btn-secondary btn-md w-full justify-center">Start free trial</a>
+          <ul class="feature-list">
+            <li>1 user</li>
+            <li>Unlimited jobs &amp; customers</li>
+            <li>Core job tracker &amp; POs</li>
+            <li>Mobile + offline mode</li>
+            <li>Email support</li>
+            <li class="no" style="color:#71717a">Customer portal</li>
+            <li class="no" style="color:#71717a">Live TV mode</li>
+          </ul>
+        </div>
+
+        <!-- Shop (featured) -->
+        <div class="pricing-card featured reveal">
+          <div>
+            <div class="text-sm font-semibold text-blue-300 uppercase tracking-wider">Shop</div>
+            <p class="mt-1 text-sm text-zinc-400">Growing shops up to 10 users</p>
+          </div>
+          <div class="pricing-price">
+            <span class="amount" data-price-monthly>$79</span>
+            <span class="amount" data-price-yearly style="display:none">$63</span>
+            <span class="cents">/ month</span>
+          </div>
+          <a href="https://app.yourdomain.com/signup?plan=shop" class="btn btn-primary btn-md w-full justify-center">Start free trial</a>
+          <ul class="feature-list">
+            <li>10 users + unlimited floor operators</li>
+            <li>Customer portal (magic-link)</li>
+            <li>PDF quotes &amp; branded invoices</li>
+            <li>Live TV floor display</li>
+            <li>QuickBooks sync</li>
+            <li>Push alerts (iOS / Android)</li>
+            <li>Automated customer reminders</li>
+          </ul>
+        </div>
+
+        <!-- Scale -->
+        <div class="pricing-card reveal">
+          <div>
+            <div class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Scale</div>
+            <p class="mt-1 text-sm text-zinc-500">Multi-line shops that need everything</p>
+          </div>
+          <div class="pricing-price">
+            <span class="amount" data-price-monthly>$149</span>
+            <span class="amount" data-price-yearly style="display:none">$119</span>
+            <span class="cents">/ month</span>
+          </div>
+          <a href="https://app.yourdomain.com/signup?plan=scale" class="btn btn-secondary btn-md w-full justify-center">Start free trial</a>
+          <ul class="feature-list">
+            <li>Unlimited users &amp; floor operators</li>
+            <li>All industry packs (deburring, plating, anodizing)</li>
+            <li>ISO-ready audit trail</li>
+            <li>API access &amp; webhooks</li>
+            <li>Priority onboarding</li>
+            <li>SSO (SAML / Google)</li>
+            <li>Dedicated customer success</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="reveal mt-8 text-center text-sm text-zinc-500">
+        Need something custom? <a href="contact.html" class="text-blue-400 hover:text-blue-300">Talk to sales →</a>
+      </p>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ HOW IT WORKS ═══════════════════════════════════ -->
+  <section class="py-20 md:py-28">
+    <div class="container-lg">
+      <div class="reveal text-center max-w-2xl mx-auto mb-16">
+        <span class="chip chip-primary">How it works</span>
+        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Up and running in under an hour.</h2>
+        <p class="mt-5 text-lg text-zinc-400">No consultants. No implementation contracts. Just sign up and start tracking.</p>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-6 md:gap-8">
+        <div class="reveal">
+          <div class="step-number">1</div>
+          <h3 class="mt-5 text-xl font-bold">Create your shop profile</h3>
+          <p class="mt-2 text-zinc-400 leading-relaxed">
+            Add your shop name, logo, and industry pack. We'll preload the right workflows automatically.
+          </p>
+        </div>
+        <div class="reveal">
+          <div class="step-number">2</div>
+          <h3 class="mt-5 text-xl font-bold">Add your operators</h3>
+          <p class="mt-2 text-zinc-400 leading-relaxed">
+            Invite the team. They log in with a PIN on any phone or shop tablet — no accounts required.
+          </p>
+        </div>
+        <div class="reveal">
+          <div class="step-number">3</div>
+          <h3 class="mt-5 text-xl font-bold">Run your first job</h3>
+          <p class="mt-2 text-zinc-400 leading-relaxed">
+            Import a PO, assign it, track it on the floor. By lunch you'll wonder how you ran without it.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ TESTIMONIALS ═══════════════════════════════════ -->
+  <section id="customers" class="py-20 md:py-28">
+    <div class="container-lg">
+      <div class="reveal text-center max-w-2xl mx-auto mb-14">
+        <span class="chip chip-primary">Customers</span>
+        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Shops running on Shop OS today.</h2>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-5 md:gap-6">
+        <figure class="testimonial reveal">
+          <div class="text-blue-400 text-2xl leading-none">&ldquo;</div>
+          <blockquote class="testimonial-quote">
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. The TV mode alone saved us from printing paper travelers every morning. Whole floor knows what's next at a glance.
+          </blockquote>
+          <figcaption class="testimonial-author">
+            <span class="testimonial-avatar">JM</span>
+            <div>
+              <div class="font-semibold text-white">Jordan M.</div>
+              <div class="text-xs text-zinc-500">Owner · Midwest Deburring LLC</div>
+            </div>
+          </figcaption>
+        </figure>
+
+        <figure class="testimonial reveal">
+          <div class="text-blue-400 text-2xl leading-none">&ldquo;</div>
+          <blockquote class="testimonial-quote">
+            We were paying $1,400/mo for another system that nobody on the floor would actually open. Switched, cut the bill by 80%, and the operators are scanning jobs themselves now.
+          </blockquote>
+          <figcaption class="testimonial-author">
+            <span class="testimonial-avatar">SP</span>
+            <div>
+              <div class="font-semibold text-white">Sarah P.</div>
+              <div class="text-xs text-zinc-500">Operations · Vertex Fab</div>
+            </div>
+          </figcaption>
+        </figure>
+
+        <figure class="testimonial reveal">
+          <div class="text-blue-400 text-2xl leading-none">&ldquo;</div>
+          <blockquote class="testimonial-quote">
+            The customer portal is a sales tool. Buyers log in, see jobs moving, stop calling us for updates. Closed two new accounts who specifically asked for this.
+          </blockquote>
+          <figcaption class="testimonial-author">
+            <span class="testimonial-avatar">RT</span>
+            <div>
+              <div class="font-semibold text-white">Rick T.</div>
+              <div class="text-xs text-zinc-500">GM · Ironwork Anodizing</div>
+            </div>
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ FAQ ═══════════════════════════════════ -->
+  <section class="py-20 md:py-28">
+    <div class="container-lg max-w-3xl">
+      <div class="reveal text-center mb-12">
+        <span class="chip chip-primary">Questions</span>
+        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Frequently asked.</h2>
+      </div>
+
+      <div class="reveal">
+        <div class="faq-item">
+          <button class="faq-trigger" aria-expanded="false">
+            <span>How is pricing really flat? What's the catch?</span>
+            <i data-lucide="chevron-down" class="faq-chevron"></i>
+          </button>
+          <div class="faq-body">
+            No catch. You pay one flat monthly rate per shop, and every operator on your floor can scan, view jobs, and update status — without counting toward a seat cap. Admin/office users are capped by tier (1 on Solo, 10 on Shop, unlimited on Scale), but floor operators are always free.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-trigger" aria-expanded="false">
+            <span>Do you really charge zero per operator?</span>
+            <i data-lucide="chevron-down" class="faq-chevron"></i>
+          </button>
+          <div class="faq-body">
+            Yes. If you have 40 operators scanning jobs on tablets, you pay exactly the same $79/mo as a shop with 2 operators. The industry standard is to charge per user, which punishes growing shops. We think that's backwards.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-trigger" aria-expanded="false">
+            <span>What integrations are included?</span>
+            <i data-lucide="chevron-down" class="faq-chevron"></i>
+          </button>
+          <div class="faq-body">
+            QuickBooks Online (Shop &amp; Scale), Google Calendar, email &amp; SMS notifications (Twilio), Stripe for customer payments, and a full REST API + webhooks on Scale. More on the roadmap — request any missing one on our contact page.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-trigger" aria-expanded="false">
+            <span>Does it work offline on the floor?</span>
+            <i data-lucide="chevron-down" class="faq-chevron"></i>
+          </button>
+          <div class="faq-body">
+            Yes. Shop OS is a PWA — it caches your data on-device so operators can keep scanning and updating jobs even when WiFi drops. Everything syncs the moment the connection returns. No lost work, ever.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-trigger" aria-expanded="false">
+            <span>Is this ISO / AS9100 friendly?</span>
+            <i data-lucide="chevron-down" class="faq-chevron"></i>
+          </button>
+          <div class="faq-body">
+            Every action is logged with a user, timestamp, and before/after state. The Scale tier exposes the audit trail in a dedicated view and lets you export signed reports for auditors. We're not a certified QMS, but we give you the receipts.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-trigger" aria-expanded="false">
+            <span>Does it work on a phone or just a computer?</span>
+            <i data-lucide="chevron-down" class="faq-chevron"></i>
+          </button>
+          <div class="faq-body">
+            Both, plus tablets and shop TVs. Shop OS is responsive from 375px (iPhone SE) up to 4K displays. Operators usually use the phone UI or a shop-mounted tablet; owners use the desktop dashboard for reporting.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ═══════════════════════════════════ CTA ═══════════════════════════════════ -->
+  <section class="py-20 md:py-28 relative overflow-hidden">
+    <div class="hero-glow" style="opacity:0.6"></div>
+    <div class="container-lg relative z-10 text-center max-w-3xl">
+      <h2 class="reveal text-4xl md:text-6xl font-extrabold tracking-tighter">
+        Take back your<br />
+        <span class="text-gradient">shop floor.</span>
+      </h2>
+      <p class="reveal mt-6 text-lg md:text-xl text-zinc-400">
+        Free for 14 days. No credit card. No sales call. Be running your first job by tomorrow morning.
+      </p>
+      <div class="reveal mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
+        <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-lg w-full sm:w-auto">
+          Start free trial
+          <i data-lucide="arrow-right" class="w-5 h-5"></i>
+        </a>
+        <a href="contact.html" class="btn btn-secondary btn-lg w-full sm:w-auto">
+          <i data-lucide="calendar" class="w-5 h-5"></i>
+          Book a demo
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════ FOOTER ═══════════════════════════════════ -->
+  <footer class="border-t border-white/5 pt-16 pb-10">
+    <div class="container-lg">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-8 md:gap-10 mb-12">
+        <div class="col-span-2 md:col-span-2">
+          <div class="flex items-center gap-2.5 font-bold text-lg">
+            <span class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-black text-sm">SO</span>
+            <span>Shop OS</span>
+          </div>
+          <p class="mt-4 text-sm text-zinc-500 leading-relaxed max-w-xs">
+            Shop-floor software that doesn't charge per operator. Built by shop owners, for shop owners.
+          </p>
+          <div class="mt-6 flex items-center gap-3">
+            <a href="#" class="footer-link" aria-label="Twitter"><i data-lucide="twitter" class="w-5 h-5"></i></a>
+            <a href="#" class="footer-link" aria-label="LinkedIn"><i data-lucide="linkedin" class="w-5 h-5"></i></a>
+            <a href="#" class="footer-link" aria-label="YouTube"><i data-lucide="youtube" class="w-5 h-5"></i></a>
+            <a href="#" class="footer-link" aria-label="GitHub"><i data-lucide="github" class="w-5 h-5"></i></a>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-4">Product</div>
+          <ul class="space-y-3">
+            <li><a href="features.html" class="footer-link">Features</a></li>
+            <li><a href="pricing.html" class="footer-link">Pricing</a></li>
+            <li><a href="#" class="footer-link">Changelog</a></li>
+            <li><a href="#" class="footer-link">Roadmap</a></li>
+            <li><a href="#" class="footer-link">Integrations</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-4">Industries</div>
+          <ul class="space-y-3">
+            <li><a href="#" class="footer-link">Deburring</a></li>
+            <li><a href="#" class="footer-link">Plating &amp; anodizing</a></li>
+            <li><a href="#" class="footer-link">Machine shops</a></li>
+            <li><a href="#" class="footer-link">Fabrication</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-4">Company</div>
+          <ul class="space-y-3">
+            <li><a href="#" class="footer-link">About</a></li>
+            <li><a href="contact.html" class="footer-link">Contact</a></li>
+            <li><a href="#" class="footer-link">Privacy</a></li>
+            <li><a href="#" class="footer-link">Terms</a></li>
+            <li><a href="#" class="footer-link">Security</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="border-t border-white/5 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-zinc-500">
+        <div>&copy; <span data-year>2026</span> Shop OS. All rights reserved.</div>
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-green-500"></span>
+          All systems operational
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Lucide icons + site JS -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

@@ -13,10 +13,13 @@ import {
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
-  Share2, Link, Copy, Radio
+  Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
+  PanelLeftClose, PanelLeftOpen, Cloud
 } from 'lucide-react';
 import { Toast } from './components/Toast';
-import { Job, User, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage } from './types';
+import { PwaInstallPrompt } from './components/PwaInstallPrompt';
+import { OnboardingWizard } from './components/OnboardingWizard';
+import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, SlideMessage, Quote, JobStage, ReworkEntry, ReworkReason, ReworkStatus, ShopGoal, GoalMetric, GoalPeriod, ProcessTemplate, QuoteSnippet } from './types';
 import * as DB from './services/mockDb';
 import { parseJobDetails } from './services/geminiService';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
@@ -24,54 +27,20 @@ import { SamplesView } from './SamplesView';
 import { POScanner } from './POScanner';
 import { QuotesView } from './QuotesView';
 import { CustomerPortal } from './CustomerPortal';
+import { ReportsView } from './views/ReportsView';
+import { JobBoardView } from './views/JobBoardView';
+import { QualityView, ReworkModal } from './views/QualityView';
+import { LogsView } from './views/LogsView';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
-
-function fmt(d?: string | null): string {
-  if (!d) return '';
-  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[2]}/${m[3]}/${m[1]}`;
-  return d;
-}
-function todayFmt(): string {
-  const d = new Date();
-  return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`;
-}
-
-function normDate(raw: string | null | undefined): string {
-  if (!raw) return '';
-  const s = raw.trim();
-  // Already MM/DD/YYYY
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) return s;
-  // YYYY-MM-DD
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return iso[2] + '/' + iso[3] + '/' + iso[1];
-  // Try native parse
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) {
-    return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
-  }
-  return s;
-}
-
-// Convert MM/DD/YYYY to numeric YYYYMMDD for safe comparisons
-// (string comparison of MM/DD/YYYY is broken: "04/05/2026" < "12/31/2025")
-function dateNum(mmddyyyy: string): number {
-  const m = mmddyyyy.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return 0;
-  return parseInt(m[3]) * 10000 + parseInt(m[1]) * 100 + parseInt(m[2]);
-}
-
-// --- UTILS ---
-const formatDuration = (mins: number | undefined) => {
-  if (mins === undefined || mins === null) return 'Running...';
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-};
+// Pure helpers — extracted to utils/ so each file has a single responsibility
+import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
+import { makeClientSlug, buildPortalUrl } from './utils/url';
+import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
+import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
+import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder } from './services/reminders';
 
 /** Hook: track viewport width for responsive chart sizing */
-const useIsMobile = () => {
+export const useIsMobile = () => {
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 640);
@@ -79,27 +48,6 @@ const useIsMobile = () => {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   return isMobile;
-};
-
-/** Compute accurate duration minutes from a log's actual timestamps */
-const getLogDurationMins = (log: { startTime: number; endTime?: number | null; totalPausedMs?: number; durationMinutes?: number | null }) => {
-  if (!log.endTime) return undefined;
-  const wallMs = log.endTime - log.startTime;
-  const pausedMs = log.totalPausedMs || 0;
-  const workingMs = Math.max(0, wallMs - pausedMs);
-  return Math.ceil(workingMs / 1000 / 60);
-};
-
-const toDateTimeLocal = (ts: number | undefined | null) => {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  const year = d.getFullYear();
-  const month = pad(d.getMonth() + 1);
-  const day = pad(d.getDate());
-  const hour = pad(d.getHours());
-  const min = pad(d.getMinutes());
-  return `${year}-${month}-${day}T${hour}:${min}`;
 };
 
 const getDates = () => {
@@ -279,42 +227,82 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
 };
 
 //  NOTIFICATION BELL COMPONENT
-const NotificationBell = ({ permission, requestPermission, userId, alerts, markRead, markAllRead, clearAll }: any) => {
+const NotificationBell = ({ permission, requestPermission, userId, alerts, markRead, markAllRead, clearAll, align }: any) => {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; right: number } | null>(null);
   const unread = alerts.filter((a: any) => !a.read).length;
   const ref = useRef<HTMLButtonElement>(null);
+  const isMobile = useIsMobile();
 
-  const typeColors: Record<string, string> = {
-    overdue: 'text-red-400 bg-red-500/10 border-red-500/20',
-    'due-soon': 'text-orange-400 bg-orange-500/10 border-orange-500/20',
-    urgent: 'text-red-400 bg-red-500/10 border-red-500/20',
-    'long-timer': 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
-    'new-urgent': 'text-red-400 bg-red-500/10 border-red-500/20',
+  // Position the panel relative to the bell button (anchored, not fixed to corner)
+  useEffect(() => {
+    if (!open || !ref.current) return;
+    const update = () => {
+      const rect = ref.current!.getBoundingClientRect();
+      setPos({ top: rect.bottom + 8, left: rect.left, right: window.innerWidth - rect.right });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [open]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [open]);
+
+  const iconFor = (type: string) => {
+    if (type === 'overdue' || type === 'urgent' || type === 'new-urgent') return { Icon: AlertTriangle, color: '#f87171', tint: 'bg-red-500/10' };
+    if (type === 'due-soon') return { Icon: Clock, color: '#fb923c', tint: 'bg-orange-500/10' };
+    if (type === 'long-timer') return { Icon: Activity, color: '#facc15', tint: 'bg-yellow-500/10' };
+    return { Icon: Bell, color: '#60a5fa', tint: 'bg-blue-500/10' };
   };
 
   const timeAgo = (ts: number) => {
     const mins = Math.floor((Date.now() - ts) / 60000);
     if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;
-    return `${Math.floor(mins / 60)}h ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
   };
+
+  // Panel positioning:
+  // - Mobile: bottom sheet style (full width, anchored to bottom)
+  // - Desktop: attached to bell. If bell is on left side (sidebar), open to the right of it
+  //   If bell is on right side (mobile top bar), open below-right
+  const openOnRight = align === 'left' || (pos && pos.left < 200); // bell is on left → panel opens rightward
+  const panelStyle: React.CSSProperties = isMobile
+    ? { left: 8, right: 8, top: 'auto', bottom: 8, maxHeight: 'calc(100vh - 80px)' }
+    : pos
+      ? openOnRight
+        ? { top: pos.top, left: Math.min(pos.left, window.innerWidth - 392), width: 384, maxHeight: 'calc(100vh - 120px)' }
+        : { top: pos.top, right: Math.max(pos.right, 12), width: 384, maxHeight: 'calc(100vh - 120px)' }
+      : { top: 64, right: 12, width: 384, maxHeight: 'calc(100vh - 120px)' };
 
   return (
     <>
       {/* Bell button */}
       <button
         ref={ref as any}
+        aria-label={unread > 0 ? `Notifications — ${unread} unread` : 'Notifications'}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         onClick={() => { setOpen(!open); if (!open && unread > 0) markAllRead(); }}
-        className={`relative p-2 rounded-xl transition-all ${
+        className={`relative p-2 rounded-xl transition-all min-h-[40px] min-w-[40px] ${
           unread > 0
             ? 'bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
             : 'bg-zinc-800 border border-white/5 text-zinc-400 hover:text-white'
         }`}
         title="Notifications"
       >
-        {unread > 0 ? <BellRing className="w-5 h-5 animate-pulse" /> : <Bell className="w-5 h-5" />}
+        {unread > 0 ? <BellRing className="w-5 h-5 animate-pulse" aria-hidden="true" /> : <Bell className="w-5 h-5" aria-hidden="true" />}
         {unread > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg">
+          <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg ring-2 ring-zinc-950">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
@@ -322,48 +310,58 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
 
       {open && createPortal(
         <>
-          {/* Backdrop — rendered at document.body level, escapes all stacking contexts */}
+          {/* Click-catcher backdrop — transparent on desktop, dim on mobile */}
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-[99998]"
+            className={`fixed inset-0 z-[99998] ${isMobile ? 'bg-black/60 backdrop-blur-sm' : ''}`}
             onClick={() => setOpen(false)}
+            aria-hidden="true"
           />
 
-          {/* Panel — also at body level, always on top */}
-          <div className="fixed right-3 top-[4.5rem] w-[22rem] max-w-[calc(100vw-1.5rem)] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl z-[99999] overflow-hidden flex flex-col animate-fade-in"
-               style={{ maxHeight: 'calc(100vh - 6rem)' }}>
-
+          {/* Panel */}
+          <div
+            role="dialog"
+            aria-label="Notifications"
+            className={`fixed bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-[99999] overflow-hidden flex flex-col ${isMobile ? 'animate-slide-up' : 'animate-fade-in'}`}
+            style={{ ...panelStyle, boxShadow: '0 24px 60px -12px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Header */}
-            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between bg-zinc-800/80 shrink-0">
-              <div className="flex items-center gap-2">
-                <Bell className="w-4 h-4 text-blue-400 shrink-0" />
-                <span className="font-bold text-white text-sm">Notifications</span>
-                {unread > 0 && (
-                  <span className="bg-blue-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">{unread}</span>
-                )}
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/60 to-transparent shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+                  <Bell className="w-4 h-4 text-blue-400" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white leading-none">Notifications</p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">{unread > 0 ? `${unread} unread · ${alerts.length} total` : alerts.length === 0 ? 'All caught up' : `${alerts.length} total`}</p>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 shrink-0">
                 {alerts.length > 0 && (
-                  <button onClick={clearAll} className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors font-medium">
+                  <button onClick={clearAll} aria-label="Clear all notifications" className="text-[11px] text-zinc-400 hover:text-red-400 transition-colors font-semibold px-2 py-1 rounded hover:bg-white/5">
                     Clear all
                   </button>
                 )}
-                <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-white transition-colors w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10">
-                  <X className="w-4 h-4" />
+                <button onClick={() => setOpen(false)} aria-label="Close notifications" className="text-zinc-400 hover:text-white transition-colors w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/10">
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </div>
 
             {/* Permission banner */}
             {permission !== 'granted' && (
-              <div className="mx-3 mt-3 rounded-xl bg-blue-500/10 border border-blue-500/20 p-3 flex items-center gap-3 shrink-0">
-                <BellRing className="w-5 h-5 text-blue-400 shrink-0" />
+              <div className="mx-3 mt-3 rounded-xl bg-gradient-to-br from-blue-500/15 to-indigo-500/10 border border-blue-500/25 p-3 flex items-center gap-3 shrink-0">
+                <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0">
+                  <BellRing className="w-4 h-4 text-blue-400" aria-hidden="true" />
+                </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-blue-300">Enable notifications</p>
-                  <p className="text-[10px] text-blue-400/70 mt-0.5">Get alerts for overdue jobs & long timers</p>
+                  <p className="text-xs font-bold text-blue-200 leading-tight">Get desktop alerts</p>
+                  <p className="text-[10px] text-blue-300/70 mt-0.5 leading-snug">Overdue jobs &amp; long timers alert even when the tab is closed.</p>
                 </div>
                 <button
                   onClick={() => requestPermission(userId)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold px-3 py-2 rounded-lg shrink-0 transition-all"
+                  aria-label="Enable desktop notifications"
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shrink-0 transition-all shadow-lg shadow-blue-900/40"
                 >
                   Enable
                 </button>
@@ -371,36 +369,49 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
             )}
 
             {/* Alert list — scrollable */}
-            <div className="overflow-y-auto flex-1 mt-1 pb-2">
+            <div className="overflow-y-auto flex-1 py-1">
               {alerts.length === 0 ? (
-                <div className="py-12 text-center text-zinc-500">
-                  <Bell className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm font-medium">All caught up!</p>
-                  <p className="text-xs mt-1 opacity-60">Overdue jobs, due dates & timer alerts appear here</p>
+                <div className="py-14 px-6 text-center">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-3">
+                    <CheckCircle className="w-6 h-6 text-emerald-400" aria-hidden="true" />
+                  </div>
+                  <p className="text-sm font-bold text-white">You're all caught up</p>
+                  <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed">Overdue jobs, due dates &amp; long timers will show up here when they happen.</p>
                 </div>
               ) : (
-                alerts.map((alert: any) => (
-                  <div
-                    key={alert.id}
-                    onClick={() => markRead(alert.id)}
-                    className={`px-4 py-3 border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors flex items-start gap-3 ${!alert.read ? 'bg-blue-500/5' : ''}`}
-                  >
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded border shrink-0 mt-0.5 ${typeColors[alert.type] || 'text-zinc-400 bg-zinc-800 border-white/10'}`}>
-                      {alert.type === 'overdue' ? 'OVERDUE' :
-                       alert.type === 'due-soon' ? 'DUE SOON' :
-                       alert.type === 'urgent' ? 'URGENT' :
-                       alert.type === 'long-timer' ? 'TIMER' : 'ALERT'}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-white leading-tight">{alert.title}</p>
-                      <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">{alert.body}</p>
-                      <p className="text-[10px] text-zinc-600 mt-1">{timeAgo(alert.time)}</p>
-                    </div>
-                    {!alert.read && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
-                  </div>
-                ))
+                alerts.map((alert: any) => {
+                  const { Icon, color, tint } = iconFor(alert.type);
+                  return (
+                    <button
+                      key={alert.id}
+                      type="button"
+                      onClick={() => markRead(alert.id)}
+                      aria-label={`${alert.title}: ${alert.body}`}
+                      className={`w-full text-left px-3 py-3 border-b border-white/5 last:border-b-0 hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!alert.read ? 'bg-blue-500/[0.04]' : ''}`}
+                    >
+                      {!alert.read && <span aria-hidden="true" className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-blue-500" />}
+                      <div className={`w-9 h-9 rounded-lg ${tint} border border-white/5 flex items-center justify-center shrink-0`}>
+                        <Icon className="w-4 h-4" style={{ color }} aria-hidden="true" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[13px] font-bold text-white leading-tight truncate">{alert.title}</p>
+                          <span className="text-[10px] text-zinc-500 tabular shrink-0 mt-0.5">{timeAgo(alert.time)}</span>
+                        </div>
+                        <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed line-clamp-2">{alert.body}</p>
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
+
+            {/* Footer */}
+            {alerts.length > 0 && (
+              <div className="px-4 py-2 border-t border-white/5 bg-zinc-950/40 shrink-0">
+                <p className="text-[10px] text-zinc-600 text-center">Tap any notification to mark it read · <kbd className="font-mono text-zinc-500">Esc</kbd> to close</p>
+              </div>
+            )}
           </div>
         </>,
         document.body
@@ -546,13 +557,13 @@ const DEFAULT_STAGES: JobStage[] = [
   { id: 'completed', label: 'Completed', color: '#10b981', order: 5, isComplete: true },
 ];
 
-function getStages(settings: SystemSettings): JobStage[] {
+export function getStages(settings: SystemSettings): JobStage[] {
   return (settings.jobStages && settings.jobStages.length > 0)
     ? [...settings.jobStages].sort((a, b) => a.order - b.order)
     : DEFAULT_STAGES;
 }
 
-function getJobStage(job: Job, stages: JobStage[]): JobStage {
+export function getJobStage(job: Job, stages: JobStage[]): JobStage {
   if (job.currentStage) {
     const found = stages.find(s => s.id === job.currentStage);
     if (found) return found;
@@ -563,7 +574,7 @@ function getJobStage(job: Job, stages: JobStage[]): JobStage {
   return stages.find(s => s.id === mapped) || stages[0];
 }
 
-function getNextStage(job: Job, stages: JobStage[]): JobStage | null {
+export function getNextStage(job: Job, stages: JobStage[]): JobStage | null {
   const current = getJobStage(job, stages);
   const idx = stages.findIndex(s => s.id === current.id);
   if (idx < 0 || idx >= stages.length - 1) return null;
@@ -630,10 +641,11 @@ const LiveTimer = ({ startTime, pausedAt, totalPausedMs }: { startTime: number, 
 // --- ACTIVE JOB PANEL ---
 const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | null, log: TimeLog, onStop: (id: string) => Promise<void>, onPause?: (id: string) => Promise<void>, onResume?: (id: string) => Promise<void> }) => {
   const [isStopping, setIsStopping] = useState(false);
-  const [isPausing, setIsPausing] = useState(false);
   const isMounted = useRef(true);
   useEffect(() => () => { isMounted.current = false; }, []);
 
+  // Drive the UI purely from the log state. The subscription updates log within
+  // ~100-500ms after pause/resume, which is fast enough for perceived-instant feedback.
   const isPaused = !!log.pausedAt;
 
   const handleStopClick = async () => {
@@ -656,19 +668,15 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
   };
 
   const handlePauseClick = async () => {
-    if (isPausing || !onPause) return;
-    setIsPausing(true);
+    if (!onPause) return;
     try { await onPause(log.id); }
     catch (e) { console.error('[ActiveJobPanel] Pause failed:', e); }
-    finally { if (isMounted.current) setIsPausing(false); }
   };
 
   const handleResumeClick = async () => {
-    if (isPausing || !onResume) return;
-    setIsPausing(true);
+    if (!onResume) return;
     try { await onResume(log.id); }
     catch (e) { console.error('[ActiveJobPanel] Resume failed:', e); }
-    finally { if (isMounted.current) setIsPausing(false); }
   };
 
   return (
@@ -696,19 +704,21 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
           </div>
           <div className="flex gap-3 w-full max-w-sm">
             {isPaused ? (
-              <button onClick={handleResumeClick} disabled={isPausing}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-6 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer">
-                {isPausing ? 'Resuming...' : <><Play className="w-6 h-6" /> Resume</>}
+              <button aria-label="Resume timer" onClick={handleResumeClick}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 active:scale-[0.97] transition-transform">
+                <Play className="w-5 h-5" aria-hidden="true" /> Resume
               </button>
             ) : onPause ? (
-              <button onClick={handlePauseClick} disabled={isPausing}
-                className="bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 text-white px-6 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 shadow-lg shadow-yellow-900/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer">
-                {isPausing ? '...' : <><Pause className="w-6 h-6" /></>}
+              <button aria-label="Pause timer" onClick={handlePauseClick}
+                className="flex-1 bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-yellow-900/20 active:scale-[0.97] transition-transform">
+                <Pause className="w-5 h-5" aria-hidden="true" /> Pause
               </button>
             ) : null}
-            <button onClick={handleStopClick} disabled={isStopping}
-              className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 shadow-lg shadow-red-900/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer">
-              {isStopping ? 'Stopping...' : <><StopCircle className="w-6 h-6" /> Stop Timer</>}
+            <button aria-label="Stop timer" onClick={handleStopClick} disabled={isStopping}
+              className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-red-900/20 active:scale-[0.97] transition-transform">
+              {isStopping
+                ? <><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Stopping…</>
+                : <><StopCircle className="w-5 h-5" aria-hidden="true" /> Stop</>}
             </button>
           </div>
         </div>
@@ -762,6 +772,8 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
   const [expanded, setExpanded] = useState(defaultExpanded || false);
   const [showNotes, setShowNotes] = useState(false);
   const [newNote, setNewNote] = useState('');
+  // Workers can click the part photo to view a big lightbox version (user request)
+  const [showImageLightbox, setShowImageLightbox] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (defaultExpanded) {
@@ -800,17 +812,67 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           </div>
         </div>
         <div className="flex items-start gap-3 mt-2">
-          {job.partImage && <img src={job.partImage} alt="Part" className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0" />}
-          <div className="text-sm text-zinc-500 space-y-1">
-          <p>Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
+          {job.partImage && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowImageLightbox(true); }}
+              className="relative group shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-lg"
+              aria-label="View part photo full size"
+            >
+              <img src={job.partImage} alt="Part reference photo" className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 border-cyan-500/30 group-hover:border-cyan-400 transition-all" />
+              <span className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg">
+                <Image className="w-5 h-5 text-white" aria-hidden="true" />
+              </span>
+            </button>
+          )}
+          <div className="text-sm text-zinc-500 space-y-1 min-w-0 flex-1">
+          <p className="truncate">Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
           <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
               {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
             </p>
           )}
+          {/* Show progress indicators when present */}
+          {((job.checklist?.length || 0) > 0 || (job.attachments?.length || 0) > 0) && (
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+              {(job.checklist?.length || 0) > 0 && (() => {
+                const total = job.checklist!.length;
+                const done = job.checklist!.filter(c => c.done).length;
+                return (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${done === total ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-purple-400 bg-purple-500/10 border-purple-500/20'}`}>
+                    ✓ {done}/{total} ops
+                  </span>
+                );
+              })()}
+              {(job.attachments?.length || 0) > 0 && (
+                <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded">📎 {job.attachments!.length} file{job.attachments!.length > 1 ? 's' : ''}</span>
+              )}
+            </div>
+          )}
           </div>
         </div>
+        {/* Lightbox modal — portaled to body so parent transforms can't break fixed positioning */}
+        {showImageLightbox && job.partImage && createPortal(
+          <div
+            className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 animate-fade-in"
+            onClick={() => setShowImageLightbox(false)}
+          >
+            <img src={job.partImage} alt="Part reference photo" className="max-w-full max-h-[90vh] rounded-xl shadow-2xl object-contain" onClick={e => e.stopPropagation()} />
+            <button
+              type="button"
+              onClick={() => setShowImageLightbox(false)}
+              aria-label="Close image"
+              className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full p-2.5 text-white transition-colors"
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 border border-white/10 rounded-full px-4 py-2 backdrop-blur-xl">
+              <p className="text-xs text-white/70 font-bold">{job.poNumber} · {job.partNumber}</p>
+            </div>
+          </div>,
+          document.body
+        )}
         {!expanded && (
           <div className="mt-4 flex items-center text-blue-400 text-xs font-bold uppercase tracking-wide">
             Tap to Start <ArrowRight className="w-3 h-3 ml-1" />
@@ -824,6 +886,76 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
               <span className="text-zinc-500 font-bold uppercase text-[10px]">Notes: </span>{job.info}
             </div>
           )}
+
+          {/* Operation Checklist — workers can tick off ops live on the floor */}
+          {(job.checklist?.length || 0) > 0 && (
+            <div className="mb-3 bg-purple-500/5 border border-purple-500/20 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest">✓ Operations Checklist</p>
+                {(() => {
+                  const total = job.checklist!.length;
+                  const done = job.checklist!.filter(c => c.done).length;
+                  const pct = Math.round((done / total) * 100);
+                  return <span className={`text-[10px] font-black tabular ${pct === 100 ? 'text-emerald-400' : 'text-purple-400'}`}>{done}/{total} · {pct}%</span>;
+                })()}
+              </div>
+              <div className="space-y-1">
+                {job.checklist!.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!user) return;
+                      const next = (job.checklist || []).map(c =>
+                        c.id === item.id
+                          ? (c.done
+                              ? { ...c, done: false, doneAt: undefined, doneBy: undefined, doneByName: undefined }
+                              : { ...c, done: true, doneAt: Date.now(), doneBy: user.id, doneByName: user.name })
+                          : c
+                      );
+                      DB.saveJob({ ...job, checklist: next });
+                      if (!item.done) addToast?.('success', `✓ ${item.label}`);
+                    }}
+                    className={`w-full flex items-center gap-2 p-2 rounded-lg border transition-all text-left ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900 border-white/10 hover:border-purple-400/30'}`}
+                  >
+                    <span className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${item.done ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-600'}`}>
+                      {item.done && <CheckCircle className="w-3 h-3 text-white" aria-hidden="true" />}
+                    </span>
+                    <span className={`flex-1 text-sm ${item.done ? 'text-zinc-500 line-through' : 'text-white'}`}>{item.label}</span>
+                    {item.doneByName && <span className="text-[9px] text-emerald-400/70 shrink-0">✓ {item.doneByName.split(' ')[0]}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Attachments — workers can download drawings/cert docs from the floor */}
+          {(job.attachments?.length || 0) > 0 && (
+            <div className="mb-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
+              <p className="text-[10px] text-indigo-400 uppercase font-black tracking-widest mb-2">📎 Drawings & Files ({job.attachments!.length})</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {job.attachments!.map(att => {
+                  const icon = att.category === 'drawing' ? '📐' : att.category === 'photo' ? '📷' : att.category === 'cert' ? '📜' : att.category === 'inspection' ? '🔍' : '📎';
+                  return (
+                    <a
+                      key={att.id}
+                      href={att.dataUrl}
+                      download={att.name}
+                      target="_blank"
+                      rel="noopener"
+                      onClick={e => e.stopPropagation()}
+                      className="flex items-center gap-2 bg-zinc-900 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-lg p-2 transition-all"
+                    >
+                      <span className="text-lg shrink-0">{icon}</span>
+                      <span className="text-[11px] text-white truncate flex-1">{att.name}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <p className="text-xs text-zinc-500 uppercase font-bold mb-3">Select Operation:</p>
           <div className="grid grid-cols-2 gap-2">
             {operations.map(op => (
@@ -1004,6 +1136,26 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     return () => { if (wakeLockRef.current) { wakeLockRef.current.release().catch(() => {}); wakeLockRef.current = null; } };
   }, [activeLog?.id]);
 
+  // ── Reminders: long timer, morning clock-in, end-of-shift ─────────
+  // These fire local browser notifications via the Service Worker. They run while
+  // this tab is alive; for true background notifications (closed tab), the worker
+  // needs to install the PWA AND grant notification permission — then the backend
+  // push infrastructure takes over. See services/reminders.ts for details.
+  const [shopSettingsForReminders, setShopSettingsForReminders] = useState<SystemSettings>(DB.getSettings());
+  useEffect(() => {
+    const unsub = DB.subscribeSettings(setShopSettingsForReminders);
+    return unsub;
+  }, []);
+  useEffect(() => {
+    // Only run reminders after the user has granted notification permission
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const getActive = () => (activeLog ? [activeLog] : []);
+    const stopLong = watchLongRunningTimers(getActive);
+    const stopMorning = watchClockInReminder(user, getActive);
+    const stopEndShift = watchEndOfShiftReminder(user, getActive, shopSettingsForReminders);
+    return () => { stopLong(); stopMorning(); stopEndShift(); };
+  }, [activeLog?.id, user.id, shopSettingsForReminders.autoClockOutTime]);
+
   // ── Listen for TIMER_ACTION messages from SW notification buttons ──
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -1112,20 +1264,76 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     { label: 'Older', logs: myHistory.filter(l => new Date(l.startTime) < histWeekAgo) },
   ].filter(g => g.logs.length > 0);
 
+  // Today stats for worker header
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const todayLogs = myHistory.filter(l => new Date(l.startTime) >= todayStart);
+  const todayMins = todayLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const todayHours = todayMins >= 60 ? `${Math.floor(todayMins/60)}h ${todayMins%60}m` : `${todayMins}m`;
+  const todayJobs = new Set(todayLogs.map(l => l.jobId)).size;
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
+  })();
+
   return (
-    <div className="space-y-6 max-w-5xl mx-auto h-full flex flex-col pb-20">
+    <div className="space-y-5 max-w-5xl mx-auto h-full flex flex-col pb-20">
+      {/* Worker hero — personalized greeting + today stats */}
+      <div className="card-shine bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden relative">
+        <div aria-hidden="true" className="absolute top-0 right-0 w-40 h-40 bg-blue-500/10 blur-3xl rounded-full" />
+        <div className="relative flex items-center gap-4">
+          <Avatar name={user.name} size="xl" ring dot={activeLog ? 'live' : undefined} />
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{greeting}</p>
+            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight truncate mt-0.5">{user.name}</h2>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              {user.employeeId && <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-800/60 border border-white/5 px-1.5 py-0.5 rounded">{user.employeeId}</span>}
+              <span className="text-[10px] font-bold text-zinc-500 flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${activeLog ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`} />
+                {activeLog ? 'Clocked in' : 'Not clocked in'}
+              </span>
+              <span className="text-[10px] text-zinc-600 hidden sm:inline">·</span>
+              <span className="text-[10px] text-zinc-600 hidden sm:inline">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</span>
+            </div>
+          </div>
+          {/* Today stats — right side on wider screens */}
+          <div className="hidden sm:flex items-center gap-4 pl-4 border-l border-white/10 shrink-0">
+            <div className="text-right">
+              <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Today</p>
+              <p className="text-xl font-black text-white tabular mt-0.5">{todayHours}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</p>
+              <p className="text-xl font-black text-blue-400 tabular mt-0.5">{todayJobs}</p>
+            </div>
+          </div>
+        </div>
+        {/* Mobile stats row */}
+        <div className="sm:hidden grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-white/5">
+          <div className="text-center">
+            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Today</p>
+            <p className="text-lg font-black text-white tabular mt-0.5">{todayHours}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</p>
+            <p className="text-lg font-black text-blue-400 tabular mt-0.5">{todayJobs}</p>
+          </div>
+        </div>
+      </div>
+
       {/* Morning reminder — no active timer and no logs today, shows after 5:05 AM */}
       {!activeLog && (() => {
         const now = new Date();
         const hhmm = now.getHours() * 60 + now.getMinutes();
-        const todayLogs = myHistory.filter(l => new Date(l.startTime) >= new Date(new Date().setHours(0,0,0,0)));
-        return hhmm >= 305 && hhmm < 720 && todayLogs.length === 0; // 5:05 AM to 12:00 PM
+        const tLogs = myHistory.filter(l => new Date(l.startTime) >= new Date(new Date().setHours(0,0,0,0)));
+        return hhmm >= 305 && hhmm < 720 && tLogs.length === 0; // 5:05 AM to 12:00 PM
       })() && (
         <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4 flex items-center gap-3 animate-fade-in">
-          <span className="text-3xl">⏰</span>
+          <span className="text-3xl" aria-hidden="true">⏰</span>
           <div>
             <p className="text-orange-400 font-bold">You haven't clocked in yet!</p>
-            <p className="text-orange-400/60 text-xs">It's past 5:05 AM — tap <strong>Scan</strong> below to start your first operation.</p>
+            <p className="text-orange-400/60 text-xs">It's {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} — tap <strong>Scan</strong> below to start your first operation.</p>
           </div>
         </div>
       )}
@@ -1249,7 +1457,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl">
         <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><AlertTriangle className="text-red-500" /> {title}</h3>
         <p className="text-zinc-400 text-sm mb-6">{message}</p>
@@ -1345,9 +1553,63 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
   );
 };
 
+// --- AVATAR ---
+// Colorful gradient initials avatar — deterministic from name
+const AVATAR_GRADIENTS = [
+  'from-blue-600 to-indigo-500',
+  'from-emerald-500 to-teal-500',
+  'from-purple-600 to-pink-500',
+  'from-orange-500 to-red-500',
+  'from-cyan-500 to-blue-500',
+  'from-rose-500 to-pink-600',
+  'from-amber-500 to-orange-600',
+  'from-lime-500 to-emerald-500',
+  'from-violet-600 to-purple-600',
+  'from-sky-500 to-indigo-600',
+];
+const avatarHash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+const avatarInitials = (name?: string) => {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+};
+export const Avatar = ({ name, size = 'md', className = '', ring = false, dot }: { name?: string; size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'; className?: string; ring?: boolean; dot?: 'live' | 'paused' | 'off' }) => {
+  const gradient = AVATAR_GRADIENTS[avatarHash(name || 'User') % AVATAR_GRADIENTS.length];
+  const sizeClasses: Record<string, string> = {
+    xs: 'w-6 h-6 text-[10px]',
+    sm: 'w-8 h-8 text-xs',
+    md: 'w-10 h-10 text-sm',
+    lg: 'w-12 h-12 text-base',
+    xl: 'w-16 h-16 text-lg',
+  };
+  const dotColors: Record<string, string> = {
+    live: 'bg-emerald-500 animate-pulse',
+    paused: 'bg-yellow-500',
+    off: 'bg-zinc-500',
+  };
+  return (
+    <div className={`relative shrink-0 ${sizeClasses[size]} ${className}`} title={name || 'User'}>
+      <div className={`w-full h-full rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center text-white font-black tracking-tight shadow-lg shadow-black/20 ${ring ? 'ring-2 ring-white/10' : ''}`}>
+        {avatarInitials(name)}
+      </div>
+      {dot && <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-zinc-900 ${dotColors[dot]}`} />}
+    </div>
+  );
+};
+
 // --- LOGIN ---
 const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast: any }) => {
-  const [username, setUsername] = useState('');
+  // Read ?u=<username> from URL — used by QR invite codes to pre-fill
+  const initialUsername = (() => {
+    try { return new URLSearchParams(window.location.search).get('u') || ''; } catch { return ''; }
+  })();
+  const [username, setUsername] = useState(initialUsername);
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -1399,6 +1661,11 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [shopSettings, setShopSettings] = useState<SystemSettings>(DB.getSettings());
   const [dashWorkers, setDashWorkers] = useState<User[]>([]);
+  const [reworkEntries, setReworkEntries] = useState<ReworkEntry[]>([]);
+  const [hoveredCustIdx, setHoveredCustIdx] = useState<number | null>(null);
+  const [attentionDismissed, setAttentionDismissed] = useState<boolean>(() => {
+    try { return sessionStorage.getItem('attention_dismissed') === '1'; } catch { return false; }
+  });
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -1408,7 +1675,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub4 = DB.subscribeLogs(setAllLogs);
     const unsub5 = DB.subscribeSettings(setShopSettings);
     const unsub6 = DB.subscribeUsers(setDashWorkers);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); };
+    const unsub7 = DB.subscribeRework(setReworkEntries);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); };
   }, []);
 
   const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
@@ -1434,6 +1702,18 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Page header */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-black text-white flex items-center gap-2.5 tracking-tight"><LayoutDashboard className="w-7 h-7 text-blue-500" aria-hidden="true" /> <span>Overview</span></h1>
+          <p className="text-zinc-500 text-sm mt-1">Real-time shop floor status &amp; financials</p>
+        </div>
+        <div className="text-right hidden sm:block">
+          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Today</p>
+          <p className="text-sm text-zinc-300 font-semibold">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+        </div>
+      </div>
+
       {myActiveLog && (
         <ActiveJobPanel job={myActiveJob || null} log={myActiveLog}
           onStop={async id => {
@@ -1445,31 +1725,105 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         />
       )}
 
+      {/* ── Needs Attention — aggregated smart banner ── */}
+      {!attentionDismissed && (() => {
+        const openRework = reworkEntries.filter(r => r.status !== 'resolved').length;
+        const missingQuotes = jobs.filter(j => j.status === 'completed' && !(j.quoteAmount && j.quoteAmount > 0)).length;
+        const longRunning = activeLogs.filter(l => l.startTime < Date.now() - 4 * 3600000).length;
+
+        // Customer duplicate detection (same logic as Settings)
+        const custMap = new Map<string, number>();
+        jobs.forEach(j => {
+          const c = (j.customer || '').trim();
+          if (!c) return;
+          const key = c.toLowerCase().replace(/&/g, 'and').replace(/\([^)]*\)/g, '').replace(/\b(inc|corp|co|llc|ltd|aero|industries|group|machining|mfg)\b/gi, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(t => t.length > 1).slice(0, 2).join('');
+          if (!key) return;
+          custMap.set(key, (custMap.get(key) || 0) + 1);
+        });
+        const dupGroupCount = [...custMap.values()].filter(v => v > 1).length;
+
+        const items: { label: string; count: number; color: string; icon: any; onClick: () => void }[] = [];
+        if (overdueJobs.length > 0) items.push({ label: `${overdueJobs.length} overdue job${overdueJobs.length > 1 ? 's' : ''}`, count: overdueJobs.length, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
+        if (openRework > 0) items.push({ label: `${openRework} open rework issue${openRework > 1 ? 's' : ''}`, count: openRework, color: '#f59e0b', icon: AlertTriangle, onClick: () => setView('admin-quality') });
+        if (longRunning > 0) items.push({ label: `${longRunning} timer${longRunning > 1 ? 's' : ''} running > 4h`, count: longRunning, color: '#eab308', icon: Clock, onClick: () => setView('admin-live') });
+        if (dupGroupCount > 0) items.push({ label: `${dupGroupCount} possible customer duplicate${dupGroupCount > 1 ? 's' : ''}`, count: dupGroupCount, color: '#a855f7', icon: Users, onClick: () => setView('admin-settings') });
+        if (missingQuotes > 0 && missingQuotes >= 5) items.push({ label: `${missingQuotes} completed jobs missing quote`, count: missingQuotes, color: '#3b82f6', icon: FileText, onClick: () => setView('admin-jobs') });
+
+        if (items.length === 0) return null;
+        return (
+          <div className="relative bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-red-500/10 border border-amber-500/25 rounded-2xl p-4 overflow-hidden">
+            <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-amber-500/60 to-transparent" />
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-white tracking-tight">Needs Attention</p>
+                  <p className="text-[11px] text-amber-200/70 mt-0.5">{items.length} thing{items.length !== 1 ? 's' : ''} to look at right now</p>
+                  <div className="flex flex-wrap gap-2 mt-2.5">
+                    {items.map((it, i) => {
+                      const Icon = it.icon;
+                      return (
+                        <button
+                          key={i}
+                          onClick={it.onClick}
+                          className="group flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:scale-[1.02] active:scale-[0.98]"
+                          style={{ background: `${it.color}15`, borderColor: `${it.color}40`, color: it.color }}
+                        >
+                          <Icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          <span className="text-xs font-bold">{it.label}</span>
+                          <ChevronRight className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" aria-hidden="true" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <button
+                aria-label="Dismiss attention banner for this session"
+                onClick={() => { setAttentionDismissed(true); try { sessionStorage.setItem('attention_dismissed', '1'); } catch {} }}
+                className="shrink-0 p-1.5 rounded-lg text-amber-400/60 hover:text-amber-400 hover:bg-white/5 transition-colors"
+                title="Dismiss until next session"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Overdue / Due Soon Alert Banner */}
       {(overdueJobs.length > 0 || dueSoonJobs.length > 0) && (
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {overdueJobs.length > 0 && (
-            <div className="flex-1 bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex items-center gap-4">
+            <div className="min-w-0 bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex items-center gap-4">
               <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-red-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-red-400 font-bold text-sm"> {overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
-                <p className="text-red-400/70 text-xs truncate">{overdueJobs.map(j => j.poNumber).join(', ')}</p>
+                <p className="text-red-400 font-bold text-sm">{overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
+                <p className="text-red-400/70 text-xs truncate">
+                  {overdueJobs.slice(0, 3).map(j => j.poNumber).join(' · ')}
+                  {overdueJobs.length > 3 && <span className="text-red-400/90 font-semibold"> +{overdueJobs.length - 3} more</span>}
+                </p>
               </div>
-              <button onClick={() => setView('admin-jobs')} className="text-xs text-red-400 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors shrink-0">View Jobs</button>
+              <button onClick={() => setView('admin-jobs')} className="text-xs font-medium text-red-400 hover:text-white border border-red-500/30 px-3 py-2 rounded-lg hover:bg-red-500/20 transition-colors shrink-0 min-h-[36px]">View Jobs</button>
             </div>
           )}
           {dueSoonJobs.length > 0 && (
-            <div className="flex-1 bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 flex items-center gap-4">
+            <div className="min-w-0 bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 flex items-center gap-4">
               <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center shrink-0">
                 <Clock className="w-5 h-5 text-orange-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-orange-400 font-bold text-sm"> {dueSoonJobs.length} Due Within 3 Days</p>
-                <p className="text-orange-400/70 text-xs truncate">{dueSoonJobs.map(j => j.poNumber).join(', ')}</p>
+                <p className="text-orange-400 font-bold text-sm">{dueSoonJobs.length} Due Within 3 Days</p>
+                <p className="text-orange-400/70 text-xs truncate">
+                  {dueSoonJobs.slice(0, 3).map(j => j.poNumber).join(' · ')}
+                  {dueSoonJobs.length > 3 && <span className="text-orange-400/90 font-semibold"> +{dueSoonJobs.length - 3} more</span>}
+                </p>
               </div>
-              <button onClick={() => setView('admin-jobs')} className="text-xs text-orange-400 hover:text-white border border-orange-500/30 px-3 py-1.5 rounded-lg hover:bg-orange-500/20 transition-colors shrink-0">View Jobs</button>
+              <button onClick={() => setView('admin-jobs')} className="text-xs font-medium text-orange-400 hover:text-white border border-orange-500/30 px-3 py-2 rounded-lg hover:bg-orange-500/20 transition-colors shrink-0 min-h-[36px]">View Jobs</button>
             </div>
           )}
         </div>
@@ -1477,35 +1831,40 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
       {/* Missing Scans Alert */}
       {workersNoScansToday.length > 0 && new Date().getHours() >= 8 && (
-        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0">
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4 flex items-center gap-3 sm:gap-4 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0">
             <AlertTriangle className="w-5 h-5 text-yellow-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-yellow-400 font-bold text-sm">{workersNoScansToday.length} worker{workersNoScansToday.length > 1 ? 's' : ''} haven't scanned today</p>
-            <p className="text-yellow-400/70 text-xs truncate">{workersNoScansToday.map((w: User) => w.name.split(' ')[0]).join(', ')}</p>
+            <p className="text-yellow-400 font-bold text-sm truncate">
+              {workersNoScansToday.length} worker{workersNoScansToday.length > 1 ? 's' : ''} haven't scanned today
+            </p>
+            <p className="text-yellow-400/70 text-xs truncate">
+              {workersNoScansToday.slice(0, 4).map((w: User) => w.name.split(' ')[0]).join(' · ')}
+              {workersNoScansToday.length > 4 && <span className="text-yellow-400/90 font-semibold"> +{workersNoScansToday.length - 4} more</span>}
+            </p>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
-        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+      <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Live Activity</p><h3 className="text-xl sm:text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] sm:text-xs text-blue-400 mt-1 truncate">Jobs running now</p></div>
           <Activity className={`w-7 h-7 sm:w-10 sm:h-10 text-blue-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Total open jobs</p></div>
           <Briefcase className="text-zinc-600 w-7 h-7 sm:w-10 sm:h-10 shrink-0" />
         </div>
-        <div className={`p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
+        <div className={`card-shine hover-lift-glow p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10' : 'bg-zinc-900/50 border-white/5'}`}>
           <div className="min-w-0"><p className={`text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-3xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] sm:text-xs mt-1 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due date</p></div>
           <AlertTriangle className={`w-7 h-7 sm:w-10 sm:h-10 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Floor Staff</p><h3 className="text-xl sm:text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Active Operators</p></div>
           <Users className="text-emerald-500 w-7 h-7 sm:w-10 sm:h-10 shrink-0" />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Today</p><h3 className="text-xl sm:text-3xl font-black text-white truncate">{todayHrsDisplay}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Hours logged</p></div>
           <Clock className="text-blue-400 w-7 h-7 sm:w-10 sm:h-10 opacity-60 shrink-0" />
         </div>
@@ -1555,6 +1914,17 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const monthMargin = monthTotals.revenue > 0 ? ((monthTotals.revenue - monthTotals.cost) / monthTotals.revenue * 100) : 0;
         const weekMargin = weekTotals.revenue > 0 ? ((weekTotals.revenue - weekTotals.cost) / weekTotals.revenue * 100) : 0;
 
+        // ── On-Time Delivery (OTD) — rolling 30 days ──
+        const otdWindow = Date.now() - 30 * 86400000;
+        const otdJobs = completedJobs.filter(j => j.dueDate && j.completedAt && j.completedAt >= otdWindow);
+        const otdOnTime = otdJobs.filter(j => {
+          // End-of-day on due date
+          const due = new Date(j.dueDate + 'T23:59:59').getTime();
+          return (j.completedAt || 0) <= due;
+        }).length;
+        const otdPct = otdJobs.length > 0 ? Math.round((otdOnTime / otdJobs.length) * 100) : null;
+        const otdLate = otdJobs.length - otdOnTime;
+
         // Active jobs with live costs (estimated vs actual)
         const activeJobsWithCosts = jobs.filter(j => j.status !== 'completed' && j.quoteAmount).map(j => {
           const f = calcJobFinancials(j);
@@ -1581,27 +1951,42 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         return (
           <div className="space-y-4">
             {/* Top KPI Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">Monthly Revenue</p>
-                <p className="text-base sm:text-xl md:text-2xl font-black text-emerald-400 truncate">${monthTotals.revenue >= 10000 ? `${(monthTotals.revenue/1000).toFixed(1)}k` : monthTotals.revenue.toLocaleString()}</p>
+            <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3">
+              {/* On-Time Delivery — machine-shop standard KPI */}
+              <div className={`card-shine hover-lift-glow border rounded-2xl p-3 sm:p-4 overflow-hidden relative ${otdPct === null ? 'bg-zinc-900/50 border-white/5' : otdPct >= 90 ? 'bg-emerald-500/10 border-emerald-500/25' : otdPct >= 70 ? 'bg-zinc-900/50 border-white/5' : 'bg-red-500/10 border-red-500/25'}`}>
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">On-Time Delivery</p>
+                <p className={`text-base sm:text-xl md:text-2xl font-black truncate tabular ${otdPct === null ? 'text-zinc-600' : otdPct >= 90 ? 'text-emerald-400' : otdPct >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
+                  {otdPct === null ? '—' : `${otdPct}%`}
+                </p>
+                <p className="text-[10px] text-zinc-600 truncate">
+                  {otdJobs.length === 0 ? 'No data (30d)' : `${otdOnTime}/${otdJobs.length} on time · 30d`}
+                </p>
+                {otdPct !== null && (
+                  <div className="mt-1.5 h-1 rounded-full bg-zinc-800 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-700 ${otdPct >= 90 ? 'bg-emerald-500' : otdPct >= 70 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${otdPct}%` }} />
+                  </div>
+                )}
+              </div>
+              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">Monthly Revenue</p>
+                <p className="text-base sm:text-xl md:text-2xl font-black text-emerald-400 truncate tabular">{fmtMoneyK(monthTotals.revenue)}</p>
                 <p className="text-[10px] text-zinc-600 truncate">{monthTotals.jobs} jobs completed</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">Monthly Costs</p>
-                <p className="text-base sm:text-xl md:text-2xl font-black text-orange-400 truncate">${monthTotals.cost >= 10000 ? `${(monthTotals.cost/1000).toFixed(1)}k` : monthTotals.cost.toFixed(0)}</p>
+              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">Monthly Costs</p>
+                <p className="text-base sm:text-xl md:text-2xl font-black text-orange-400 truncate tabular">{fmtMoneyK(monthTotals.cost)}</p>
                 <p className="text-[10px] text-zinc-600 truncate">{monthTotals.hrs.toFixed(0)}h labor + overhead</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">Net Profit</p>
-                <p className={`text-base sm:text-xl md:text-2xl font-black truncate ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {monthProfit !== null ? `${monthProfit >= 0 ? '+' : ''}$${Math.abs(monthProfit) >= 10000 ? `${(monthProfit/1000).toFixed(1)}k` : monthProfit.toFixed(0)}` : '—'}
+              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">Net Profit</p>
+                <p className={`text-base sm:text-xl md:text-2xl font-black truncate tabular ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {monthProfit !== null ? fmtMoneySigned(monthProfit) : '—'}
                 </p>
                 <p className="text-[10px] text-zinc-600 truncate">{monthMargin > 0 ? `${monthMargin.toFixed(0)}% margin` : 'No quoted jobs'}</p>
               </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate">$/Hour Earned</p>
-                <p className="text-base sm:text-xl md:text-2xl font-black text-blue-400 truncate">${avgRevenuePerHr.toFixed(0)}</p>
+              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">$/Hour Earned</p>
+                <p className="text-base sm:text-xl md:text-2xl font-black text-blue-400 truncate tabular">${avgRevenuePerHr.toFixed(0)}</p>
                 <p className="text-[10px] text-zinc-600 truncate">Cost: ${avgCostPerHr.toFixed(0)}/hr</p>
               </div>
             </div>
@@ -1646,130 +2031,273 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
               </div>
             </div>
 
-            {/* Live Job Budget Tracker — Estimated vs Actual */}
-            {activeJobsWithCosts.length > 0 && (
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Live Job Budget — Est. vs Actual</h3>
+            {/* Live Job Budget Tracker — Est. vs Actual */}
+            {activeJobsWithCosts.length > 0 && (() => {
+              const overBudget = activeJobsWithCosts.filter(j => j.remaining < 0).length;
+              const atRisk = activeJobsWithCosts.filter(j => j.remaining >= 0 && j.usedPct > 70).length;
+              const onTrack = activeJobsWithCosts.length - overBudget - atRisk;
+              return (
+              <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-5 overflow-hidden">
+                <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Live Job Budget</h3>
+                    <p className="text-[11px] text-zinc-600 mt-0.5">Est. vs actual · {activeJobsWithCosts.length} active job{activeJobsWithCosts.length !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {onTrack > 0 && <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">{onTrack} on track</span>}
+                    {atRisk > 0 && <span className="text-[10px] font-bold text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-2 py-1 rounded-full">{atRisk} at risk</span>}
+                    {overBudget > 0 && <span className="text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-full">{overBudget} over</span>}
+                  </div>
+                </div>
                 <div className="space-y-3">
-                  {activeJobsWithCosts.map(j => (
-                    <div key={j.id} className="space-y-1">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-1">
-                        <span className="text-white font-bold">{j.poNumber} <span className="text-zinc-500 font-normal">{j.partNumber}</span></span>
-                        <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs">
-                          <span className="text-zinc-500">Spent: <span className="text-orange-400 font-mono">${j.cost.toFixed(0)}</span></span>
-                          <span className="text-zinc-500">Budget: <span className="text-zinc-300 font-mono">${(j.quoteAmount || 0).toLocaleString()}</span></span>
-                          <span className={`font-bold font-mono ${j.remaining >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.remaining >= 0 ? '+' : ''}${j.remaining.toFixed(0)}</span>
+                  {activeJobsWithCosts.map(j => {
+                    const barColor = j.usedPct > 100 ? '#ef4444' : j.usedPct > 90 ? '#f59e0b' : j.usedPct > 70 ? '#eab308' : '#10b981';
+                    const statusText = j.remaining < 0 ? 'OVER' : j.usedPct > 90 ? 'WARN' : j.usedPct > 70 ? 'RISK' : 'OK';
+                    const statusTint = j.remaining < 0 ? 'bg-red-500/10 text-red-400 border-red-500/20' : j.usedPct > 90 ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : j.usedPct > 70 ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                    return (
+                      <div key={j.id} className="group">
+                        <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`text-[9px] font-black uppercase tracking-widest border px-1.5 py-0.5 rounded ${statusTint} tabular shrink-0`}>{statusText}</span>
+                            <span className="text-sm font-bold text-white truncate">{j.poNumber}</span>
+                            <span className="text-[11px] text-zinc-500 font-mono truncate hidden sm:inline">{j.partNumber}</span>
+                          </div>
+                          <div className="flex items-center gap-2 sm:gap-3 text-[11px] font-mono tabular shrink-0">
+                            <span className="text-zinc-500">Spent <span className="text-orange-400 font-bold">{fmtMoneyK(j.cost)}</span></span>
+                            <span className="text-zinc-700">/</span>
+                            <span className="text-zinc-500">Budget <span className="text-zinc-300 font-bold">{fmtMoneyK(j.quoteAmount || 0)}</span></span>
+                            <span className={`font-black px-1.5 py-0.5 rounded text-[10px] ${j.remaining >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                              {fmtMoneySigned(j.remaining)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="relative h-2 bg-zinc-800/60 rounded-full overflow-hidden">
+                          {/* 100% marker */}
+                          <div aria-hidden="true" className="absolute inset-y-0 w-[1px] bg-white/10" style={{ left: '100%' }} />
+                          <div
+                            className="h-full rounded-full transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{
+                              width: `${Math.min(100, j.usedPct)}%`,
+                              background: `linear-gradient(90deg, ${barColor}AA, ${barColor})`,
+                              boxShadow: `0 0 8px ${barColor}80`,
+                            }}
+                          />
+                          {/* Over-budget overflow indicator */}
+                          {j.usedPct > 100 && (
+                            <div aria-hidden="true" className="absolute inset-y-0 right-0 w-[4px] bg-red-500 rounded-r-full animate-pulse" style={{ boxShadow: '0 0 10px #ef4444' }} />
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between text-[9px] font-mono tabular text-zinc-600 mt-0.5 px-0.5">
+                          <span>{j.usedPct.toFixed(0)}% used</span>
+                          <span>{(100 - Math.min(100, j.usedPct)).toFixed(0)}% remaining</span>
                         </div>
                       </div>
-                      <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${j.usedPct > 90 ? 'bg-red-500' : j.usedPct > 70 ? 'bg-yellow-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, j.usedPct)}%` }} />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-            )}
+              );
+            })()}
 
-            {/* Top Customers Revenue — Premium Charts */}
+            {/* Top Customers — Redesigned Premium Charts */}
             {topCustomers.length > 0 && (() => {
-              const CUST_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
-              const shortName = (s: string) => s.length > 12 ? s.slice(0, 11) + '…' : s;
-              const custChartData = topCustomers.map(([cust, data]) => ({
-                name: shortName(cust),
+              // Premium palette — cohesive, WCAG-safe saturation
+              const CUST_COLORS = ['#3b82f6', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#f43f5e'];
+              const custChartData = topCustomers.map(([cust, data], i) => ({
+                name: fmtShortName(cust),
                 fullName: cust,
                 revenue: data.revenue,
                 cost: Math.round(data.cost),
+                profit: Math.round(data.revenue - data.cost),
                 margin: data.revenue > 0 ? parseFloat(((data.revenue - data.cost) / data.revenue * 100).toFixed(0)) : 0,
+                color: CUST_COLORS[i % CUST_COLORS.length],
               }));
               const totalCustRev = custChartData.reduce((a, d) => a + d.revenue, 0);
-              // Active shape for customer pie hover
-              const custActiveShape = (props: any) => {
-                const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, value } = props;
-                const pct = totalCustRev > 0 ? ((value / totalCustRev) * 100).toFixed(0) : '0';
-                return (
-                  <g>
-                    <Sector cx={cx} cy={cy} innerRadius={innerRadius - 3} outerRadius={outerRadius + 8} startAngle={startAngle} endAngle={endAngle} fill={fill} cornerRadius={5} />
-                    <Sector cx={cx} cy={cy} innerRadius={outerRadius + 12} outerRadius={outerRadius + 15} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.5} />
-                    <text x={cx} y={cy - 16} textAnchor="middle" fill="#f4f4f5" fontSize={12} fontWeight={800}>{payload.fullName}</text>
-                    <text x={cx} y={cy + 6} textAnchor="middle" fill="#e4e4e7" fontSize={20} fontWeight={900}>${value >= 1000 ? `${(value/1000).toFixed(1)}k` : value}</text>
-                    <text x={cx} y={cy + 24} textAnchor="middle" fill="#71717a" fontSize={11}>{pct}%</text>
-                  </g>
-                );
-              };
+              const totalCustCost = custChartData.reduce((a, d) => a + d.cost, 0);
+              const totalCustProfit = totalCustRev - totalCustCost;
+              const maxBarVal = custChartData.reduce((m, x) => Math.max(m, x.revenue, x.cost), 0) || 1;
+              const topCust = custChartData[0];
+
               return (
                 <>
-                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
-                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Top Customers (This Month)</h3>
-                  <ResponsiveContainer width="100%" height={isMobile ? 260 : 340}>
-                    <PieChart>
-                      <Pie data={custChartData} cx="50%" cy="45%" innerRadius={isMobile ? 50 : 75} outerRadius={isMobile ? 95 : 130} paddingAngle={2} dataKey="revenue" nameKey="fullName" stroke="rgba(0,0,0,0.3)" strokeWidth={1} isAnimationActive={true} animationDuration={800} animationEasing="ease-out" cornerRadius={5} activeIndex={undefined} activeShape={custActiveShape}>
-                        {custChartData.map((_, i) => <Cell key={i} fill={CUST_COLORS[i % CUST_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip cursor={false} content={(props: any) => {
-                        if (!props.active || !props.payload?.length) return null;
-                        const d = props.payload[0].payload;
-                        return (
-                          <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '14px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
-                            <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 4 }}>{d.fullName}</p>
-                            <p style={{ color: '#3b82f6', fontSize: 20, fontWeight: 900 }}>${d.revenue.toLocaleString()}</p>
+                {/* ────────── Donut: Top Customers ────────── */}
+                {(() => {
+                  const activeCust = hoveredCustIdx !== null ? custChartData[hoveredCustIdx] : topCust;
+                  const activeIsLeader = hoveredCustIdx === null;
+                  const activePct = totalCustRev > 0 && activeCust ? ((activeCust.revenue / totalCustRev) * 100).toFixed(0) : '0';
+                  return (
+                <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden">
+                  <div className="flex items-start justify-between mb-4 gap-3">
+                    <div>
+                      <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Revenue Mix</h3>
+                      <p className="text-[11px] text-zinc-600 mt-0.5">Top {custChartData.length} customers · this month</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full whitespace-nowrap">
+                      {fmtMoneyK(totalCustRev)} total
+                    </span>
+                  </div>
+
+                  {/* Donut chart */}
+                  <div className="relative" onMouseLeave={() => setHoveredCustIdx(null)}>
+                    <ResponsiveContainer width="100%" height={isMobile ? 220 : 260}>
+                      <PieChart>
+                        <defs>
+                          {custChartData.map((d, i) => (
+                            <linearGradient key={`gradPie-${i}`} id={`gradPie-${i}`} x1="0" y1="0" x2="1" y2="1">
+                              <stop offset="0%" stopColor={d.color} stopOpacity={1} />
+                              <stop offset="100%" stopColor={d.color} stopOpacity={0.6} />
+                            </linearGradient>
+                          ))}
+                        </defs>
+                        <Pie
+                          data={custChartData}
+                          cx="50%" cy="50%"
+                          innerRadius={isMobile ? 62 : 76}
+                          outerRadius={isMobile ? 96 : 116}
+                          paddingAngle={3}
+                          dataKey="revenue"
+                          nameKey="fullName"
+                          stroke="rgba(9,9,11,0.9)"
+                          strokeWidth={2}
+                          isAnimationActive
+                          animationDuration={900}
+                          animationEasing="ease-out"
+                          cornerRadius={6}
+                          onMouseEnter={(_, i) => setHoveredCustIdx(i)}
+                        >
+                          {custChartData.map((_, i) => (
+                            <Cell
+                              key={i}
+                              fill={`url(#gradPie-${i})`}
+                              style={{
+                                filter: hoveredCustIdx !== null && hoveredCustIdx !== i ? 'opacity(0.35)' : 'none',
+                                transition: 'filter 0.25s ease',
+                              }}
+                            />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+
+                    {/* Center label — dynamic with hover */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-4">
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em]">
+                        {activeIsLeader ? 'Leader' : 'Customer'}
+                      </p>
+                      <p className="text-[11px] font-bold text-zinc-300 truncate max-w-[150px] text-center mt-0.5" style={{ color: activeCust?.color }}>
+                        {activeCust?.fullName}
+                      </p>
+                      <p className="text-xl sm:text-2xl font-black text-white tabular mt-1 leading-none" style={{ textShadow: `0 0 24px ${activeCust?.color || '#3b82f6'}40` }}>
+                        {fmtMoneyK(activeCust?.revenue || 0)}
+                      </p>
+                      <p className="text-[10px] font-mono text-zinc-500 tabular mt-1">{activePct}% share</p>
+                    </div>
+                  </div>
+
+                  {/* Ranked legend */}
+                  <div className="mt-5 space-y-2" onMouseLeave={() => setHoveredCustIdx(null)}>
+                    {custChartData.map((d, i) => {
+                      const pct = totalCustRev > 0 ? (d.revenue / totalCustRev) * 100 : 0;
+                      const isActive = hoveredCustIdx === i;
+                      return (
+                        <button
+                          key={d.name}
+                          type="button"
+                          onMouseEnter={() => setHoveredCustIdx(i)}
+                          onFocus={() => setHoveredCustIdx(i)}
+                          onBlur={() => setHoveredCustIdx(null)}
+                          aria-label={`${d.fullName}: $${d.revenue.toLocaleString()} revenue, ${pct.toFixed(0)}% share`}
+                          className={`w-full flex items-center gap-2 sm:gap-3 px-2 py-1.5 rounded-lg transition-colors ${isActive ? 'bg-white/5' : 'hover:bg-white/[0.03]'}`}
+                        >
+                          <span className="w-4 text-center text-[10px] font-black text-zinc-600 tabular shrink-0">{i+1}</span>
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color, boxShadow: isActive ? `0 0 10px ${d.color}` : `0 0 4px ${d.color}80` }} />
+                          <span className={`flex-1 text-xs font-semibold truncate text-left transition-colors ${isActive ? 'text-white' : 'text-zinc-300'}`}>{d.fullName}</span>
+                          <div className="relative w-10 sm:w-20 h-1.5 rounded-full bg-zinc-800 overflow-hidden shrink-0">
+                            <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]" style={{ width: `${pct}%`, background: d.color, boxShadow: `0 0 6px ${d.color}80` }} />
                           </div>
-                        );
-                      }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-1 pb-1">
-                    {custChartData.map((d, i) => (
-                      <div key={d.name} className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: CUST_COLORS[i % CUST_COLORS.length] }} />
-                        <span className="text-[11px] text-zinc-400">{d.fullName}</span>
-                        <span className="text-[10px] text-zinc-600 font-mono">${d.revenue.toLocaleString()}</span>
-                      </div>
-                    ))}
+                          <span className="text-[11px] font-mono font-bold text-zinc-200 tabular text-right shrink-0 w-[52px]">{fmtMoneyK(d.revenue)}</span>
+                          <span className="text-[10px] font-mono text-zinc-500 tabular text-right shrink-0 w-8">{pct.toFixed(0)}%</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
-                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Revenue vs Cost</h3>
-                  <ResponsiveContainer width="100%" height={isMobile ? 240 : 300}>
-                    <BarChart data={custChartData} margin={{ top: 5, right: 10, left: 0, bottom: isMobile ? 50 : 40 }}>
-                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                      <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: isMobile ? 10 : 11 }} axisLine={false} tickLine={false} interval={0} angle={-35} textAnchor="end" height={isMobile ? 55 : 60} />
-                      <YAxis tick={{ fill: '#52525b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
-                      <Tooltip cursor={{ fill: 'rgba(255,255,255,0.04)', radius: 8 }}
-                        content={({ active, payload, label }: any) => {
-                          if (!active || !payload?.length) return null;
-                          const item = custChartData.find(d => d.name === label);
-                          const rev = payload.find((p: any) => p.dataKey === 'revenue')?.value || 0;
-                          const cost = payload.find((p: any) => p.dataKey === 'cost')?.value || 0;
-                          return (
-                            <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '16px 20px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
-                              <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 15, marginBottom: 10 }}>{item?.fullName || label}</p>
-                              <div style={{ display: 'flex', gap: 20 }}>
-                                <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>REVENUE</p><p style={{ color: '#3b82f6', fontSize: 18, fontWeight: 900 }}>${Number(rev).toLocaleString()}</p></div>
-                                <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>COST</p><p style={{ color: '#f59e0b', fontSize: 18, fontWeight: 900 }}>${Number(cost).toLocaleString()}</p></div>
-                              </div>
-                              {item && <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 8, marginTop: 10 }}>
-                                <p style={{ color: item.margin >= 20 ? '#10b981' : item.margin >= 0 ? '#f59e0b' : '#ef4444', fontSize: 13, fontWeight: 800 }}>
-                                  {item.margin >= 0 ? '↑' : '↓'} {item.margin}% margin · ${(rev - cost).toLocaleString()} profit
-                                </p>
-                              </div>}
+                  );
+                })()}
+
+                {/* ────────── Horizontal Bar: Revenue vs Cost ────────── */}
+                <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Revenue vs Cost</h3>
+                      <p className="text-[11px] text-zinc-600 mt-0.5">Profit per customer</p>
+                    </div>
+                    <span className={`text-[10px] font-bold border px-2 py-1 rounded-full ${totalCustProfit >= 0 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20'}`}>
+                      {fmtMoneySigned(totalCustProfit)} net
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {custChartData.map((d, i) => {
+                      const revPct = (d.revenue / maxBarVal) * 100;
+                      const costPct = (d.cost / maxBarVal) * 100;
+                      const profitable = d.profit >= 0;
+                      return (
+                        <div key={d.name} className="group">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: d.color, boxShadow: `0 0 6px ${d.color}80` }} />
+                              <span className="text-xs font-bold text-zinc-200 truncate">{d.fullName}</span>
                             </div>
-                          );
-                        }}
-                      />
-                      <Legend content={() => (
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: 24, paddingTop: 10 }}>
-                          <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: '#3b82f6', display: 'inline-block' }} /> Revenue</span>
-                          <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: 'rgba(59,130,246,0.3)', display: 'inline-block' }} /> Cost</span>
+                            <div className="flex items-center gap-2 text-[10px] font-mono tabular shrink-0">
+                              <span className={`font-black ${profitable ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {fmtMoneySigned(d.profit)}
+                              </span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded ${profitable ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                {d.margin}%
+                              </span>
+                            </div>
+                          </div>
+                          {/* Revenue bar */}
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest w-10">REV</span>
+                            <div className="relative flex-1 h-2.5 rounded-full bg-zinc-800/60 overflow-hidden">
+                              <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ width: `${revPct}%`, background: `linear-gradient(90deg, ${d.color}, ${d.color}DD)`, boxShadow: `0 0 10px ${d.color}60` }} />
+                            </div>
+                            <span className="text-[10px] font-mono font-bold text-zinc-200 tabular w-14 text-right">{fmtMoneyK(d.revenue)}</span>
+                          </div>
+                          {/* Cost bar */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest w-10">COST</span>
+                            <div className="relative flex-1 h-2.5 rounded-full bg-zinc-800/60 overflow-hidden">
+                              <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ width: `${costPct}%`, background: 'linear-gradient(90deg, #f59e0b, #f59e0bBB)', boxShadow: '0 0 8px rgba(245,158,11,0.4)' }} />
+                            </div>
+                            <span className="text-[10px] font-mono font-bold text-zinc-400 tabular w-14 text-right">{fmtMoneyK(d.cost)}</span>
+                          </div>
                         </div>
-                      )} />
-                      <Bar dataKey="revenue" radius={[8, 8, 0, 0]} barSize={24} name="Revenue" isAnimationActive={true} animationDuration={800} animationEasing="ease-out">
-                        {custChartData.map((_, i) => <Cell key={`r${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} />)}
-                      </Bar>
-                      <Bar dataKey="cost" radius={[8, 8, 0, 0]} barSize={24} name="Cost" isAnimationActive={true} animationDuration={800} animationEasing="ease-out">
-                        {custChartData.map((_, i) => <Cell key={`c${i}`} fill={CUST_COLORS[i % CUST_COLORS.length]} fillOpacity={0.25} />)}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer summary */}
+                  <div className="mt-5 pt-4 border-t border-white/5 grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Revenue</p>
+                      <p className="text-sm font-black text-white tabular mt-0.5">{fmtMoneyK(totalCustRev)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Cost</p>
+                      <p className="text-sm font-black text-amber-400 tabular mt-0.5">{fmtMoneyK(totalCustCost)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Profit</p>
+                      <p className={`text-sm font-black tabular mt-0.5 ${totalCustProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {fmtMoneySigned(totalCustProfit)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
                 </>
               );
@@ -1780,42 +2308,74 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-white/5"><h3 className="font-bold text-white flex items-center gap-2"><Activity className="w-4 h-4 text-emerald-500" /> Live Operations</h3></div>
-          <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[400px]">
-            {activeLogs.length === 0 && <div className="p-8 text-center text-zinc-500">Floor is quiet. No active timers.</div>}
-            {activeLogs.map(l => (
-              <div key={l.id} className="p-3 sm:p-4 flex items-center justify-between hover:bg-white/5 transition-colors gap-2">
-                <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-zinc-400 border border-white/5 shrink-0 text-xs sm:text-sm">{l.userName.charAt(0)}</div>
-                  <div className="min-w-0">
-                    <p className="font-bold text-white text-sm truncate">{l.userName}</p>
-                    <p className="text-xs text-zinc-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span> <span className="truncate">{l.operation}</span></p>
-                  </div>
+          <div className="p-5 border-b border-white/5 flex items-center justify-between">
+            <h3 className="font-bold text-white flex items-center gap-2"><Activity className="w-4 h-4 text-emerald-500" /> Live Operations</h3>
+            {activeLogs.length > 0 && (
+              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> {activeLogs.length} ACTIVE
+              </span>
+            )}
+          </div>
+          <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[420px]">
+            {activeLogs.length === 0 && (
+              <div className="p-12 text-center">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-zinc-800/60 flex items-center justify-center mb-3">
+                  <Activity className="w-6 h-6 text-zinc-600" />
                 </div>
-                <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-                  <div className="text-white text-sm sm:text-xl font-bold font-mono"><LiveTimer startTime={l.startTime} pausedAt={l.pausedAt} totalPausedMs={l.totalPausedMs} /></div>
-                  <button onClick={() => confirmAction({ title: "Force Stop", message: "Stop this timer?", onConfirm: () => DB.stopTimeLog(l.id) })} className="bg-red-500/10 text-red-500 p-1.5 sm:p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors"><Power className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button>
+                <p className="text-zinc-400 font-semibold">Floor is quiet</p>
+                <p className="text-zinc-600 text-xs mt-1">No active timers right now.</p>
+              </div>
+            )}
+            {activeLogs.map(l => (
+              <div key={l.id} className="p-3 sm:p-4 hover:bg-white/5 transition-colors group">
+                {/* Row 1: avatar + name/operation + stop button (always visible, never collides with timer) */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar name={l.userName} size="md" ring dot={l.pausedAt ? 'paused' : 'live'} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-white text-sm truncate">{l.userName}</p>
+                    <p className="text-xs text-zinc-500 truncate">{l.operation}</p>
+                  </div>
+                  <button
+                    aria-label={`Force stop ${l.userName}'s timer`}
+                    onClick={() => confirmAction({ title: 'Force Stop', message: 'Stop this timer?', onConfirm: () => DB.stopTimeLog(l.id) })}
+                    className="bg-red-500/10 text-red-500 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors opacity-60 group-hover:opacity-100 shrink-0"
+                    title="Force stop"
+                  >
+                    <Power className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
+                  </button>
+                </div>
+                {/* Row 2: large timer on its own line so it never overlaps the avatar at any width */}
+                <div className="mt-2 text-white text-2xl sm:text-3xl font-black font-mono tabular-nums text-center sm:text-right tracking-tight">
+                  <LiveTimer startTime={l.startTime} pausedAt={l.pausedAt} totalPausedMs={l.totalPausedMs} />
                 </div>
               </div>
             ))}
           </div>
         </div>
         <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-white/5 flex justify-between items-center">
+          <div className="p-5 border-b border-white/5 flex justify-between items-center">
             <h3 className="font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-blue-500" /> Recent Completed</h3>
-            <button onClick={() => setView('admin-logs')} className="text-xs text-blue-400 hover:text-white transition-colors">View All</button>
+            <button onClick={() => setView('admin-logs')} className="text-xs font-semibold text-blue-400 hover:text-white transition-colors flex items-center gap-1">View All <ChevronRight className="w-3 h-3" /></button>
           </div>
-          <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[400px]">
-            {logs.length === 0 && <div className="p-8 text-center text-zinc-500">No recent history.</div>}
+          <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[420px]">
+            {logs.length === 0 && (
+              <div className="p-12 text-center">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-zinc-800/60 flex items-center justify-center mb-3">
+                  <History className="w-6 h-6 text-zinc-600" />
+                </div>
+                <p className="text-zinc-400 font-semibold">No recent history</p>
+                <p className="text-zinc-600 text-xs mt-1">Completed operations show up here.</p>
+              </div>
+            )}
             {logs.map(l => (
               <div key={l.id} className="p-4 flex items-start gap-3 hover:bg-white/5 transition-colors">
-                <div className="mt-1 w-2 h-2 rounded-full shrink-0 bg-emerald-500"></div>
+                <Avatar name={l.userName} size="sm" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white"><span className="font-bold">{l.userName}</span> — <span className="text-zinc-300">{l.operation}</span></p>
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    <span className="text-zinc-300 font-bold text-xs">{l.jobIdsDisplay || l.jobId}</span>
-                    {l.partNumber && <span className="text-xs text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{l.partNumber}</span>}
-                    <span className="text-xs text-zinc-600">{new Date(l.endTime!).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
+                  <p className="text-sm text-white"><span className="font-bold">{l.userName}</span> <span className="text-zinc-600">—</span> <span className="text-zinc-300">{l.operation}</span></p>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className="text-zinc-400 font-mono text-[11px] font-bold">{l.jobIdsDisplay || l.jobId}</span>
+                    {l.partNumber && <span className="text-[10px] text-zinc-500 bg-zinc-800 border border-white/5 px-1.5 py-0.5 rounded">{l.partNumber}</span>}
+                    <span className="text-[10px] text-zinc-600">{new Date(l.endTime!).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
                   </div>
                   {l.notes && (
                     <div className="mt-1.5 bg-amber-500/5 border border-amber-500/20 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
@@ -1825,7 +2385,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                   )}
                 </div>
                 {l.durationMinutes != null && (
-                  <div className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-1 rounded shrink-0">{formatDuration(l.durationMinutes)}</div>
+                  <div className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded shrink-0 font-bold">{formatDuration(l.durationMinutes)}</div>
                 )}
               </div>
             ))}
@@ -1902,20 +2462,274 @@ function compressImage(file: File | Blob, maxW = 800, quality = 0.7): Promise<st
   });
 }
 
+// ══════════════════════════════════════════════════════════════════
+// JOB CHECKLIST SECTION — sub-tasks/operations per job (Jobs R1 #1)
+// ══════════════════════════════════════════════════════════════════
+import type { JobChecklistItem, JobAttachment } from './types';
+
+const JobChecklistSection = ({ job, onUpdate, user }: { job: Job; onUpdate: (items: JobChecklistItem[]) => void; user: User | null }) => {
+  const items = job.checklist || [];
+  const [newLabel, setNewLabel] = useState('');
+  const doneCount = items.filter(i => i.done).length;
+  const pct = items.length > 0 ? Math.round((doneCount / items.length) * 100) : 0;
+
+  const addItem = () => {
+    if (!newLabel.trim()) return;
+    const item: JobChecklistItem = {
+      id: `chk_${Date.now()}`,
+      label: newLabel.trim(),
+      done: false,
+    };
+    onUpdate([...items, item]);
+    setNewLabel('');
+  };
+  const toggle = (id: string) => {
+    const next = items.map(i => i.id === id
+      ? (i.done
+          ? { ...i, done: false, doneAt: undefined, doneBy: undefined, doneByName: undefined }
+          : { ...i, done: true, doneAt: Date.now(), doneBy: user?.id, doneByName: user?.name })
+      : i);
+    onUpdate(next);
+  };
+  const rename = (id: string, label: string) => onUpdate(items.map(i => i.id === id ? { ...i, label } : i));
+  const remove = (id: string) => onUpdate(items.filter(i => i.id !== id));
+  const move = (id: string, dir: -1 | 1) => {
+    const idx = items.findIndex(i => i.id === id);
+    const t = idx + dir;
+    if (idx < 0 || t < 0 || t >= items.length) return;
+    const next = [...items];
+    [next[idx], next[t]] = [next[t], next[idx]];
+    onUpdate(next);
+  };
+
+  return (
+    <div className="space-y-5">
+      <h4 className="text-xs font-black text-purple-400 uppercase tracking-[0.2em] border-b border-purple-500/20 pb-2 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2">
+          <span className="bg-purple-500/10 text-purple-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">✓</span>
+          Operation Checklist
+          {items.length > 0 && <span className="text-zinc-600 normal-case font-normal text-[10px]">({doneCount}/{items.length})</span>}
+        </span>
+        {items.length > 0 && (
+          <span className={`text-[10px] font-black tabular ${pct === 100 ? 'text-emerald-400' : pct > 50 ? 'text-yellow-400' : 'text-zinc-500'}`}>{pct}%</span>
+        )}
+      </h4>
+
+      {/* Progress bar */}
+      {items.length > 0 && (
+        <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden -mt-2">
+          <div className={`h-full rounded-full transition-all duration-500 ${pct === 100 ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-purple-500 to-pink-500'}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {/* Checklist items */}
+      <div className="space-y-1.5">
+        {items.map((item, idx) => (
+          <div key={item.id} className={`flex items-center gap-2 p-2.5 rounded-lg border transition-all ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-950 border-white/5 hover:border-white/15'}`}>
+            <button
+              type="button"
+              onClick={() => toggle(item.id)}
+              aria-label={item.done ? `Mark "${item.label}" incomplete` : `Mark "${item.label}" complete`}
+              className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${item.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-zinc-600 hover:border-purple-400'}`}
+            >
+              {item.done && <CheckCircle className="w-3 h-3 text-white" aria-hidden="true" />}
+            </button>
+            <input
+              value={item.label}
+              onChange={e => rename(item.id, e.target.value)}
+              className={`flex-1 bg-transparent text-sm outline-none ${item.done ? 'text-zinc-500 line-through' : 'text-white'}`}
+            />
+            {item.done && item.doneByName && (
+              <span className="text-[9px] text-emerald-400/70 truncate shrink-0" title={`Completed ${item.doneAt ? new Date(item.doneAt).toLocaleString() : ''}`}>
+                by {item.doneByName.split(' ')[0]}
+              </span>
+            )}
+            <div className="flex flex-col shrink-0">
+              <button type="button" onClick={() => move(item.id, -1)} disabled={idx === 0} aria-label="Move up" className="text-zinc-600 hover:text-white disabled:opacity-20 p-0.5"><ChevronUp className="w-3 h-3" aria-hidden="true" /></button>
+              <button type="button" onClick={() => move(item.id, 1)} disabled={idx === items.length - 1} aria-label="Move down" className="text-zinc-600 hover:text-white disabled:opacity-20 p-0.5"><ChevronDown className="w-3 h-3" aria-hidden="true" /></button>
+            </div>
+            <button type="button" onClick={() => remove(item.id)} aria-label="Remove step" className="text-zinc-600 hover:text-red-400 p-1 shrink-0"><X className="w-3.5 h-3.5" aria-hidden="true" /></button>
+          </div>
+        ))}
+      </div>
+
+      {/* Add new item */}
+      <div className="flex gap-2">
+        <input
+          value={newLabel}
+          onChange={e => setNewLabel(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+          placeholder="Add operation (e.g. Deburr edges, QC inspect, Pack)..."
+          className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500/50"
+        />
+        <button type="button" onClick={addItem} disabled={!newLabel.trim()} className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1">
+          <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add
+        </button>
+      </div>
+      {items.length === 0 && (
+        <p className="text-[10px] text-zinc-600 italic text-center">💡 Break big jobs into steps. Workers check them off on the shop floor — nothing gets missed.</p>
+      )}
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// JOB ATTACHMENTS SECTION — drawings, PDFs, cert docs (Jobs R1 #2)
+// ══════════════════════════════════════════════════════════════════
+const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; onUpdate: (atts: JobAttachment[]) => void; user: User | null; addToast: any }) => {
+  const attachments = job.attachments || [];
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const MAX_BYTES = 2 * 1024 * 1024; // 2 MB inline cap — larger files should go to Firebase Storage later
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    const newAtts: JobAttachment[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_BYTES) {
+        addToast('error', `"${file.name}" is over 2MB — compress or use smaller file`);
+        continue;
+      }
+      try {
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result as string);
+          r.onerror = reject;
+          r.readAsDataURL(file);
+        });
+        const category: JobAttachment['category'] =
+          file.type.startsWith('image/') ? 'photo' :
+          file.name.toLowerCase().match(/(drawing|dwg|stp|step|iges)/) ? 'drawing' :
+          file.name.toLowerCase().match(/(cert|compliance|conform)/) ? 'cert' :
+          file.name.toLowerCase().match(/(inspection|fai|qc)/) ? 'inspection' :
+          'other';
+        newAtts.push({
+          id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          dataUrl,
+          uploadedAt: Date.now(),
+          uploadedBy: user?.id || 'unknown',
+          uploadedByName: user?.name,
+          category,
+        });
+      } catch (e) {
+        addToast('error', `Failed to read ${file.name}`);
+      }
+    }
+    if (newAtts.length > 0) {
+      onUpdate([...attachments, ...newAtts]);
+      addToast('success', `Added ${newAtts.length} attachment${newAtts.length > 1 ? 's' : ''}`);
+    }
+    setUploading(false);
+  };
+
+  const remove = (id: string) => onUpdate(attachments.filter(a => a.id !== id));
+
+  const download = (att: JobAttachment) => {
+    const a = document.createElement('a');
+    a.href = att.dataUrl;
+    a.download = att.name;
+    a.click();
+  };
+
+  const formatBytes = (b: number) => b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
+
+  const catIcon = (cat?: string) => {
+    if (cat === 'drawing') return '📐';
+    if (cat === 'photo') return '📷';
+    if (cat === 'cert') return '📜';
+    if (cat === 'inspection') return '🔍';
+    return '📎';
+  };
+
+  return (
+    <div className="space-y-5">
+      <h4 className="text-xs font-black text-indigo-400 uppercase tracking-[0.2em] border-b border-indigo-500/20 pb-2 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2">
+          <span className="bg-indigo-500/10 text-indigo-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">📎</span>
+          Attachments
+          {attachments.length > 0 && <span className="text-zinc-600 normal-case font-normal text-[10px]">({attachments.length})</span>}
+        </span>
+      </h4>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept="image/*,.pdf,.dwg,.dxf,.stp,.step,.iges,.doc,.docx,.xls,.xlsx,.txt"
+        onChange={e => handleFiles(e.target.files)}
+      />
+
+      {attachments.length === 0 ? (
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          className="w-full border-2 border-dashed border-indigo-500/20 hover:border-indigo-500/40 rounded-xl p-6 flex flex-col items-center gap-2 text-indigo-400/60 hover:text-indigo-400 transition-all group"
+        >
+          <span className="text-3xl">📎</span>
+          <span className="font-bold text-sm">{uploading ? 'Uploading…' : 'Upload Attachments'}</span>
+          <span className="text-[10px] text-zinc-600">Drawings · PDFs · Cert docs · Inspection reports · 2 MB max each</span>
+        </button>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {attachments.map(att => (
+              <div key={att.id} className="bg-zinc-950 border border-white/10 rounded-xl p-3 flex items-center gap-3 group hover:border-indigo-500/30 transition-all">
+                <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center shrink-0 text-lg">{catIcon(att.category)}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white truncate" title={att.name}>{att.name}</p>
+                  <p className="text-[10px] text-zinc-500">
+                    <span className="uppercase">{att.category || 'file'}</span> · {formatBytes(att.size)}
+                    {att.uploadedByName && <> · {att.uploadedByName.split(' ')[0]}</>}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {att.type.startsWith('image/') && (
+                    <a href={att.dataUrl} target="_blank" rel="noopener" className="text-zinc-500 hover:text-indigo-400 p-1" title="View"><ExternalLink className="w-3.5 h-3.5" aria-hidden="true" /></a>
+                  )}
+                  <button type="button" onClick={() => download(att)} aria-label="Download" className="text-zinc-500 hover:text-indigo-400 p-1"><Download className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                  <button type="button" onClick={() => remove(att.id)} aria-label="Remove" className="text-zinc-500 hover:text-red-400 p-1"><X className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+          >
+            <Plus className="w-3 h-3" aria-hidden="true" /> Add more
+          </button>
+        </>
+      )}
+    </div>
+  );
+};
+
 // ── Part Image Lightbox ──
 const PartImageLightbox = ({ src, onClose }: { src: string, onClose: () => void }) => (
   <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-fade-in" onClick={onClose}>
     <div className="relative max-w-3xl max-h-[85vh] m-4" onClick={e => e.stopPropagation()}>
-      <button onClick={onClose} className="absolute -top-3 -right-3 z-10 bg-zinc-800 border border-white/10 rounded-full p-1.5 text-white hover:bg-red-500 transition-colors shadow-lg"><X className="w-5 h-5" /></button>
+      <button aria-label="Close" onClick={onClose} className="absolute -top-3 -right-3 z-10 bg-zinc-800 border border-white/10 rounded-full p-2 text-white hover:bg-red-500 transition-colors shadow-lg"><X className="w-5 h-5" aria-hidden="true" /></button>
       <img src={src} alt="Part Photo" className="max-w-full max-h-[85vh] rounded-xl shadow-2xl object-contain" />
     </div>
   </div>
 );
 
+
 // --- ADMIN: JOBS ---
-const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: any) => {
+const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, initialTab, calendarOnly }: any) => {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'calendar'>('active');
+  const [reworkEntries, setReworkEntries] = useState<ReworkEntry[]>([]);
+  const [reworkModal, setReworkModal] = useState<Partial<ReworkEntry> | null>(null);
+  const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'calendar'>(calendarOnly ? 'calendar' : (initialTab || 'active'));
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [calSelectedDay, setCalSelectedDay] = useState<number | null>(null);
   const [search, setSearch] = useState('');
@@ -1923,6 +2737,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'newest' | 'oldest'>('dueDate');
   const [showFilters, setShowFilters] = useState(false);
+  // Jobs R1 #4: Saved filter views (stored in localStorage per admin — no Firestore dep)
+  type SavedView = { id: string; name: string; search: string; priority: string; status: string; sortBy: typeof sortBy; tab: 'active' | 'completed' };
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
+    try { return JSON.parse(localStorage.getItem('jobs_saved_views') || '[]'); } catch { return []; }
+  });
+  useEffect(() => { try { localStorage.setItem('jobs_saved_views', JSON.stringify(savedViews)); } catch {} }, [savedViews]);
+  // Jobs R1 #5: Bulk selection
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [bulkActionOpen, setBulkActionOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
   const [showModal, setShowModal] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
@@ -1933,6 +2756,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [workers, setWorkers] = useState<User[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<User | null>(null);
+  const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [calAdded, setCalAdded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cal_added_jobs') || '[]'); } catch { return []; } });
@@ -1949,17 +2773,32 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
     const u2 = DB.subscribeSettings((s) => { setOps(s.customOperations || []); setClients(s.clients || []); setShopSettings(s); });
     const u3 = DB.subscribeUsers((u) => setWorkers(u.filter((w: User) => w.isActive !== false)));
     const u4 = DB.subscribeLogs(l => setAllLogs(l.filter(x => x.endTime)));
-    return () => { u1(); u2(); u3(); u4(); };
+    const u5 = DB.subscribeRework(setReworkEntries);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
+
+  // Open rework counts per job
+  const reworkByJob = useMemo(() => {
+    const m = new Map<string, { open: number; total: number }>();
+    reworkEntries.forEach(r => {
+      if (!r.jobId) return;
+      const cur = m.get(r.jobId) || { open: 0, total: 0 };
+      cur.total++;
+      if (r.status !== 'resolved') cur.open++;
+      m.set(r.jobId, cur);
+    });
+    return m;
+  }, [reworkEntries]);
 
   const handleAdminStartJob = async (operation: string) => {
     if (!startJobModal) return;
     const targetWorker = selectedWorker || user;
     try {
-      await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, undefined, undefined, startJobModal.jobIdsDisplay);
-      addToast('success', `Operation started for ${targetWorker.name}`);
+      await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
+      addToast('success', `Operation started${selectedMachine ? ` on ${selectedMachine}` : ''} for ${targetWorker.name}`);
       setStartJobModal(null);
       setSelectedWorker(null);
+      setSelectedMachine(null);
     } catch (e: any) {
       addToast('error', 'Failed to start: ' + e.message);
     }
@@ -2078,8 +2917,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Briefcase className="w-6 h-6 text-blue-500" /> Production Jobs</h2>
-          <p className="text-zinc-500 text-sm">Manage orders and track by PO, priority, and due date.</p>
+          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+            {calendarOnly ? <><Calendar className="w-6 h-6 text-blue-500" /> Production Calendar</> : <><Briefcase className="w-6 h-6 text-blue-500" /> Production Jobs</>}
+          </h2>
+          <p className="text-zinc-500 text-sm">{calendarOnly ? 'Month view of every job due date. Click a day to see what ships.' : 'Manage orders and track by PO, priority, and due date.'}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Plus className="w-4 h-4" /> New Job</button>
@@ -2087,20 +2928,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         </div>
       </div>
 
-      {/* Tab Bar */}
-      <div className="flex gap-2 border-b border-white/5 pb-2">
-        <button onClick={() => { setActiveTab('active'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
-          Active Production
-          <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status !== 'completed').length}</span>
-        </button>
-        <button onClick={() => { setActiveTab('completed'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'completed' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
-          Completed History
-          <span className="ml-2 text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{jobs.filter(j => j.status === 'completed').length}</span>
-        </button>
-        <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-1.5 ${activeTab === 'calendar' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>
-          <Calendar className="w-3.5 h-3.5" /> Calendar
-        </button>
-      </div>
+      {/* Tab Bar — hidden when calendarOnly (dedicated /calendar route) */}
+      {!calendarOnly && (
+        <div className="inline-flex gap-1 p-1 bg-zinc-900/60 border border-white/5 rounded-xl">
+          <button onClick={() => { setActiveTab('active'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'active' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-white'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${activeTab === 'active' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-700'}`} />
+            Active Production
+            <span className={`text-xs font-black px-2 py-0.5 rounded-full ${activeTab === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>{jobs.filter(j => j.status !== 'completed').length}</span>
+          </button>
+          <button onClick={() => { setActiveTab('completed'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'completed' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-white'}`}>
+            <CheckCircle className={`w-3.5 h-3.5 ${activeTab === 'completed' ? 'text-blue-400' : 'text-zinc-600'}`} />
+            Completed History
+            <span className={`text-xs font-black px-2 py-0.5 rounded-full ${activeTab === 'completed' ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-800 text-zinc-500'}`}>{jobs.filter(j => j.status === 'completed').length}</span>
+          </button>
+        </div>
+      )}
 
       {activeTab === 'completed' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in">
@@ -2216,9 +3058,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
             {/* Month nav */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <button onClick={prevMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronLeft className="w-5 h-5" /></button>
-                <h3 className="text-xl font-black text-white min-w-[220px] text-center">{monthName}</h3>
-                <button onClick={nextMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white"><ChevronRight className="w-5 h-5" /></button>
+                <button aria-label="Previous month" onClick={prevMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white min-w-[40px] min-h-[40px]"><ChevronLeft className="w-5 h-5" aria-hidden="true" /></button>
+                <h3 className="text-xl font-black text-white min-w-[220px] text-center" aria-live="polite">{monthName}</h3>
+                <button aria-label="Next month" onClick={nextMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white min-w-[40px] min-h-[40px]"><ChevronRight className="w-5 h-5" aria-hidden="true" /></button>
               </div>
               <div className="flex items-center gap-3">
                 <button onClick={goToday} className="text-xs text-blue-400 hover:text-blue-300 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-500/10 border border-blue-500/20">Today</button>
@@ -2320,6 +3162,45 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
           </button>
         </div>
 
+        {/* ── Saved Views Bar (Jobs R1 #4) ── */}
+        {(savedViews.length > 0 || activeFilterCount > 0 || search) && (
+          <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-white/5">
+            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest shrink-0">📌 Views</span>
+            {savedViews.map(v => {
+              const isActive = v.search === search && v.priority === filterPriority && v.status === filterStatus && v.sortBy === sortBy && v.tab === activeTab;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => {
+                    setSearch(v.search);
+                    setFilterPriority(v.priority);
+                    setFilterStatus(v.status);
+                    setSortBy(v.sortBy);
+                    setActiveTab(v.tab);
+                  }}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-colors ${isActive ? 'bg-blue-500/15 border-blue-500/30 text-blue-400' : 'bg-zinc-900 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
+                >
+                  {v.name}
+                  <X className="w-3 h-3 opacity-50 hover:opacity-100" onClick={(e) => { e.stopPropagation(); setSavedViews(savedViews.filter(x => x.id !== v.id)); }} />
+                </button>
+              );
+            })}
+            {(activeFilterCount > 0 || search) && (
+              <button
+                onClick={() => {
+                  const name = prompt('Name this view:', search ? `"${search}" ${filterStatus !== 'all' ? filterStatus : ''}`.trim() : `${filterStatus !== 'all' ? filterStatus : 'custom'} ${filterPriority !== 'all' ? filterPriority : ''}`.trim());
+                  if (!name?.trim()) return;
+                  const v: SavedView = { id: `v_${Date.now()}`, name: name.trim(), search, priority: filterPriority, status: filterStatus, sortBy, tab: activeTab === 'calendar' ? 'active' : activeTab };
+                  setSavedViews([...savedViews, v]);
+                }}
+                className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" aria-hidden="true" /> Save as view
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Expanded Filters */}
         {showFilters && (
           <div className="flex flex-wrap gap-3 pt-2 border-t border-white/5 animate-fade-in">
@@ -2399,23 +3280,136 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
         </div>
       </div>
 
+      {/* ── Bulk Action Bar (Jobs R1 #5) — appears when rows are selected ── */}
+      {selectedJobIds.size > 0 && (
+        <div className="bg-gradient-to-r from-blue-500/15 to-indigo-500/10 border border-blue-500/30 rounded-xl p-3 flex items-center gap-3 flex-wrap animate-fade-in">
+          <span className="text-sm font-bold text-white flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-blue-400" aria-hidden="true" />
+            {selectedJobIds.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedJobIds(new Set())}
+            className="text-xs text-zinc-400 hover:text-white px-2 py-1 rounded"
+          >
+            Clear
+          </button>
+          <div className="h-5 w-px bg-white/20" />
+          {/* Batch: set priority */}
+          <div className="inline-flex gap-1 p-0.5 bg-zinc-900/60 border border-white/5 rounded-lg">
+            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-2 py-1">Priority:</span>
+            {(['urgent','high','normal','low'] as const).map(p => (
+              <button
+                key={p}
+                type="button"
+                onClick={async () => {
+                  const ids: string[] = Array.from(selectedJobIds);
+                  await Promise.all(ids.map(id => {
+                    const job = jobs.find(x => x.id === id);
+                    if (!job) return Promise.resolve();
+                    return DB.saveJob({ ...job, priority: p });
+                  }));
+                  addToast('success', `Set ${ids.length} job${ids.length > 1 ? 's' : ''} to ${p}`);
+                  setSelectedJobIds(new Set());
+                }}
+                className={`text-[11px] font-bold px-2 py-1 rounded capitalize ${p === 'urgent' ? 'text-red-400 hover:bg-red-500/10' : p === 'high' ? 'text-orange-400 hover:bg-orange-500/10' : p === 'low' ? 'text-zinc-500 hover:bg-zinc-700' : 'text-zinc-400 hover:bg-zinc-700'}`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          <div className="h-5 w-px bg-white/20" />
+          {/* Batch: advance to next stage */}
+          <button
+            type="button"
+            onClick={async () => {
+              const stages = getStages(shopSettings);
+              const ids: string[] = Array.from(selectedJobIds);
+              await Promise.all(ids.map(async id => {
+                const job = jobs.find(x => x.id === id);
+                if (!job) return;
+                const next = getNextStage(job, stages);
+                if (next) {
+                  await DB.advanceJobStage(id, next.id, user.id, user.name, next.isComplete);
+                }
+              }));
+              addToast('success', `Advanced ${ids.length} job${ids.length > 1 ? 's' : ''} to next stage`);
+              setSelectedJobIds(new Set());
+            }}
+            className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-3 py-1 rounded-lg flex items-center gap-1"
+          >
+            <ArrowRight className="w-3 h-3" aria-hidden="true" /> Advance Stage
+          </button>
+          {/* Batch: print travelers */}
+          <button
+            type="button"
+            onClick={() => {
+              const ids: string[] = Array.from(selectedJobIds);
+              ids.forEach(id => {
+                const job = jobs.find(x => x.id === id);
+                if (job) printJobTravelerPDF(job, shopSettings);
+              });
+              addToast('info', `Generated ${ids.length} traveler${ids.length > 1 ? 's' : ''}`);
+            }}
+            className="text-[11px] font-bold text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-lg flex items-center gap-1"
+          >
+            <Printer className="w-3 h-3" aria-hidden="true" /> Print Travelers
+          </button>
+          {/* Batch: delete (danger) */}
+          <button
+            type="button"
+            onClick={() => {
+              const ids: string[] = Array.from(selectedJobIds);
+              confirm({
+                title: `Delete ${ids.length} jobs?`,
+                message: `This permanently deletes ${ids.length} job${ids.length > 1 ? 's' : ''}. Cannot be undone.`,
+                onConfirm: async () => {
+                  await Promise.all(ids.map(id => DB.deleteJob(id)));
+                  addToast('success', `Deleted ${ids.length} jobs`);
+                  setSelectedJobIds(new Set());
+                }
+              });
+            }}
+            className="text-[11px] font-bold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 px-3 py-1 rounded-lg flex items-center gap-1 ml-auto"
+          >
+            <Trash2 className="w-3 h-3" aria-hidden="true" /> Delete
+          </button>
+        </div>
+      )}
+
       <div className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-x-auto shadow-sm">
-        <table className="w-full text-sm text-left min-w-[560px]">
-          <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-xs">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-[10px] sm:text-xs">
             <tr>
-              <th className="p-3 sm:p-4">PO / Job</th>
+              <th className="p-2 sm:p-3 w-8">
+                <input
+                  type="checkbox"
+                  aria-label="Select all jobs on this view"
+                  checked={filteredJobs.length > 0 && filteredJobs.every(j => selectedJobIds.has(j.id))}
+                  ref={el => { if (el) el.indeterminate = selectedJobIds.size > 0 && !filteredJobs.every(j => selectedJobIds.has(j.id)); }}
+                  onChange={(e) => {
+                    if (e.target.checked) setSelectedJobIds(new Set(filteredJobs.map(j => j.id)));
+                    else setSelectedJobIds(new Set());
+                  }}
+                  className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                />
+              </th>
+              <th className="p-2 sm:p-4">PO / Job</th>
               <th className="p-3 sm:p-4 hidden md:table-cell">Part Details</th>
               <th className="p-3 sm:p-4 hidden sm:table-cell">Qty</th>
               <th className="p-3 sm:p-4 hidden lg:table-cell">Priority</th>
               <th className="p-3 sm:p-4 hidden md:table-cell">Status</th>
-              <th className="p-3 sm:p-4">Due</th>
-              <th className="p-3 sm:p-4 text-right">Actions</th>
+              <th className="p-2 sm:p-4">Due</th>
+              <th className="p-1.5 sm:p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {filteredJobs.map(j => {
               const isOverdue = j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < todayN;
               const isDueSoon = j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3DaysN;
+              // Historical on-time / late for completed jobs
+              const deliveredLate = j.status === 'completed' && j.dueDate && j.completedAt && j.completedAt > new Date(j.dueDate + 'T23:59:59').getTime();
+              const deliveredOnTime = j.status === 'completed' && j.dueDate && j.completedAt && j.completedAt <= new Date(j.dueDate + 'T23:59:59').getTime();
               // Job costing — per-worker rates
               const jobLogs = allLogs.filter(l => l.jobId === j.id);
               const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
@@ -2432,17 +3426,122 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               const hasQuote = (j.quoteAmount || 0) > 0;
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
-                <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
-                  <td className="p-3 sm:p-4">
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-white font-black text-base sm:text-xl">{j.poNumber}</span>
+                <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-blue-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
+                  <td className="p-2 sm:p-3 w-8" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${j.poNumber}`}
+                      checked={selectedJobIds.has(j.id)}
+                      onChange={(e) => {
+                        const next = new Set(selectedJobIds);
+                        if (e.target.checked) next.add(j.id);
+                        else next.delete(j.id);
+                        setSelectedJobIds(next);
+                      }}
+                      className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                    />
+                  </td>
+                  <td className="p-2 sm:p-4">
+                    <div className="flex items-start gap-2.5">
+                      {/* Part Photo thumbnail — always visible (mobile + desktop).
+                          Tap to enlarge. Camera icon placeholder → tap to add. */}
+                      {j.partImage ? (
+                        <img
+                          src={j.partImage}
+                          alt={`${j.partNumber} reference`}
+                          className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg object-cover border border-white/10 hover:border-cyan-500/60 transition-all flex-shrink-0 cursor-pointer"
+                          onClick={(e) => { e.stopPropagation(); setLightboxImg(j.partImage!); }}
+                        />
+                      ) : (
+                        <label
+                          className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg border border-dashed border-white/10 flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all flex-shrink-0 group/cam"
+                          title="Add part photo"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-600 group-hover/cam:text-cyan-400" aria-hidden="true" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]; if (!file) return;
+                              const compressed = await compressImage(file, 800, 0.6);
+                              const updated = { ...j, partImage: compressed };
+                              await DB.saveJob(updated);
+                              addToast('success', 'Photo added');
+                            }}
+                          />
+                        </label>
+                      )}
+                      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                        <span className="text-white font-black text-sm sm:text-xl">{j.poNumber}</span>
                         {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
                         {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
+                        {deliveredOnTime && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">ON TIME</span>}
+                        {deliveredLate && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">LATE</span>}
                       </div>
-                      <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[200px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
+                      <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
                       {/* Mobile-only: show customer + part inline since column is hidden */}
-                      <span className="md:hidden text-zinc-400 text-xs truncate max-w-[220px]">{j.partNumber} · {user.role === 'admin' ? j.customer : '***'}</span>
+                      <span className="md:hidden text-zinc-400 text-xs truncate max-w-[180px]">{j.partNumber} · {user.role === 'admin' ? j.customer : '***'}</span>
+                      {/* Jobs R1 badges: checklist progress + attachments + time budget */}
+                      {((j.checklist?.length || 0) > 0 || (j.attachments?.length || 0) > 0 || (j.expectedHours || 0) > 0) && (
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {(j.checklist?.length || 0) > 0 && (() => {
+                            const total = j.checklist!.length;
+                            const done = j.checklist!.filter(c => c.done).length;
+                            const pct = Math.round((done / total) * 100);
+                            return (
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${pct === 100 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-purple-400 bg-purple-500/10 border-purple-500/20'}`} title={`${done} of ${total} operations complete`}>
+                                ✓ {done}/{total} {pct === 100 ? '· Done' : ''}
+                              </span>
+                            );
+                          })()}
+                          {(j.attachments?.length || 0) > 0 && (
+                            <span className="text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded" title={`${j.attachments!.length} attached file(s)`}>
+                              📎 {j.attachments!.length}
+                            </span>
+                          )}
+                          {(j.expectedHours || 0) > 0 && totalHrs > 0 && (() => {
+                            const ratio = totalHrs / j.expectedHours!;
+                            const state = ratio > 1.1 ? 'over' : ratio > 0.9 ? 'near' : 'under';
+                            const cls = state === 'over' ? 'text-red-400 bg-red-500/10 border-red-500/20' : state === 'near' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+                            return (
+                              <span className={`text-[9px] font-bold border px-1.5 py-0.5 rounded tabular ${cls}`} title={`Budget: ${j.expectedHours}h · Actual: ${totalHrs.toFixed(1)}h`}>
+                                ⏱ {totalHrs.toFixed(1)}/{j.expectedHours}h
+                              </span>
+                            );
+                          })()}
+                          {(j.expectedHours || 0) > 0 && totalHrs === 0 && (
+                            <span className="text-[9px] font-bold text-zinc-500 bg-zinc-800/60 border border-white/5 px-1.5 py-0.5 rounded tabular" title={`Budgeted ${j.expectedHours}h`}>
+                              ⏱ {j.expectedHours}h budget
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {/* Inline notes preview — shows most recent non-empty note with count badge */}
+                      {j.jobNotes && j.jobNotes.length > 0 && (() => {
+                        const latest = [...j.jobNotes].filter(n => n && n.text?.trim()).sort((a, b) => b.timestamp - a.timestamp)[0];
+                        if (!latest) return null;
+                        const text = latest.text.trim();
+                        const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+                        return (
+                          <div className="mt-1 flex items-start gap-1.5 text-[11px] text-zinc-400 max-w-[200px] sm:max-w-[400px] min-w-0">
+                            <MessageSquare className="w-3 h-3 text-zinc-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                            <span className="italic truncate min-w-0"><span className="text-zinc-500 not-italic font-semibold">{latest.userName?.split(' ')[0] || 'Note'}:</span> {preview}</span>
+                            {j.jobNotes.length > 1 && (
+                              <span className="text-[9px] font-black text-zinc-500 bg-zinc-800 px-1 py-0.5 rounded flex-shrink-0">+{j.jobNotes.length - 1}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {j.specialInstructions && (
+                        <div className="mt-0.5 flex items-start gap-1.5 text-[11px] text-amber-400/80 max-w-[200px] sm:max-w-[400px] min-w-0">
+                          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                          <span className="truncate italic min-w-0">{j.specialInstructions.length > 60 ? j.specialInstructions.slice(0, 60) + '…' : j.specialInstructions}</span>
+                        </div>
+                      )}
                       {j.status === 'completed' && totalMins > 0 && (
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[10px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{totalHrs.toFixed(1)}h · ${totalCost.toFixed(0)} cost</span>
@@ -2453,6 +3552,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                           )}
                         </div>
                       )}
+                      </div>
                     </div>
                   </td>
                   <td className="p-3 sm:p-4 hidden md:table-cell">
@@ -2479,12 +3579,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                   <td className="p-3 sm:p-4 font-mono text-zinc-300 hidden sm:table-cell">{j.quantity}</td>
                   <td className="p-3 sm:p-4 hidden lg:table-cell"><PriorityBadge priority={j.priority} /></td>
                   <td className="p-3 sm:p-4 hidden md:table-cell"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
-                  <td className={`p-3 sm:p-4 font-mono sm:whitespace-nowrap font-bold text-xs sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
+                  <td className={`p-2 sm:p-4 font-mono sm:whitespace-nowrap font-bold text-[11px] sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
                     {fmt(j.dueDate)}
                   </td>
-                  <td className="p-3 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
-                    <div className="flex justify-end gap-2">
-                      <button onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" /></button>
+                  <td className="p-1.5 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1 sm:gap-2 flex-wrap sm:flex-nowrap">
+                      <button aria-label="Start operation" onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" aria-hidden="true" /></button>
                       {activeTab === 'active' && (() => {
                         const stages = getStages(shopSettings);
                         const nextStage = getNextStage(j, stages);
@@ -2493,7 +3593,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                         return (
                           <>
                             {nextStage && (
-                              <button onClick={() => confirm({
+                              <button
+                                aria-label={`Advance ${j.poNumber || 'job'} to ${nextStage.label}`}
+                                onClick={() => confirm({
                                 title: `Advance to ${nextStage.label}`,
                                 message: `Move this job to "${nextStage.label}"?`,
                                 onConfirm: async () => {
@@ -2504,11 +3606,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                                 className="p-2 rounded-lg transition-colors hover:text-white"
                                 style={{ background: `${nextStage.color}15`, color: nextStage.color }}
                                 title={`Advance to ${nextStage.label}`}>
-                                <ArrowRight className="w-4 h-4" />
+                                <ArrowRight className="w-4 h-4" aria-hidden="true" />
                               </button>
                             )}
                             {!isAlreadyComplete && completedStage && (
-                              <button onClick={() => confirm({
+                              <button
+                                aria-label={`Complete job ${j.poNumber || ''}`}
+                                onClick={() => confirm({
                                 title: 'Complete Job',
                                 message: `Mark "${j.poNumber}" as completed?`,
                                 onConfirm: async () => {
@@ -2518,32 +3622,42 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                               })}
                                 className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors"
                                 title="Complete Job">
-                                <CheckCircle className="w-4 h-4" />
+                                <CheckCircle className="w-4 h-4" aria-hidden="true" />
                               </button>
                             )}
                           </>
                         );
                       })()}
                       {j.dueDate && (
-                        <button onClick={() => {
+                        <button
+                          aria-label={calAdded.includes(j.id) ? `Already added to Google Calendar — ${j.poNumber || ''}` : `Add ${j.poNumber || 'job'} to Google Calendar`}
+                          onClick={() => {
                           const url = getCalendarUrl(j);
                           if (url) {
                             const updated = [...calAdded]; if (!updated.includes(j.id)) { updated.push(j.id); setCalAdded(updated); localStorage.setItem('cal_added_jobs', JSON.stringify(updated)); }
                             window.location.href = url;
                           }
-                        }} className={`p-2 rounded-lg transition-colors ${calAdded.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-blue-500/10 text-zinc-500 hover:text-blue-400'}`} title={calAdded.includes(j.id) ? 'Already in Google Calendar' : 'Add to Google Calendar'}>
-                          {calAdded.includes(j.id) ? <CheckCircle className="w-4 h-4" /> : <Calendar className="w-4 h-4" />}
+                        }} className={`hidden sm:flex p-2 rounded-lg transition-colors ${calAdded.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-blue-500/10 text-zinc-500 hover:text-blue-400'}`} title={calAdded.includes(j.id) ? 'Already in Google Calendar' : 'Add to Google Calendar'}>
+                          {calAdded.includes(j.id) ? <CheckCircle className="w-4 h-4" aria-hidden="true" /> : <Calendar className="w-4 h-4" aria-hidden="true" />}
                         </button>
                       )}
                       {j.customer && (
                         <button onClick={() => {
-                          const url = `${window.location.origin}?portal=${encodeURIComponent(j.customer || '')}`;
+                          const url = buildPortalUrl(j.customer!, shopSettings);
                           navigator.clipboard.writeText(url).then(() => addToast('success', 'Portal link copied!')).catch(() => prompt('Copy this link:', url));
-                        }} className="p-2 hover:bg-purple-500/10 rounded-lg text-purple-400 hover:text-purple-300 transition-colors" title="Copy Customer Portal Link"><Share2 className="w-4 h-4" /></button>
+                        }} aria-label="Copy customer portal link" className="hidden sm:flex p-2 hover:bg-purple-500/10 rounded-lg text-purple-400 hover:text-purple-300 transition-colors" title="Copy Customer Portal Link"><Share2 className="w-4 h-4" aria-hidden="true" /></button>
                       )}
-                      <button onClick={() => setPrintable(j)} className={`p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" /></button>
-                      <button onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                      <button
+                        aria-label={printed.includes(j.id) ? `Reprint traveler for ${j.poNumber || ''}` : `Print traveler for ${j.poNumber || ''}`}
+                        onClick={() => setPrintable(j)} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
+                      <button aria-label={`Report rework for ${j.poNumber || ''}`} onClick={(e) => { e.stopPropagation(); setReworkModal({ jobId: j.id, poNumber: j.poNumber, partNumber: j.partNumber, customer: j.customer, reason: 'finish', quantity: 1, status: 'open' }); }} className="p-2 hover:bg-amber-500/10 rounded-lg text-amber-400/70 hover:text-amber-400 transition-colors relative" title="Report rework">
+                        <AlertTriangle className="w-4 h-4" aria-hidden="true" />
+                        {reworkByJob.get(j.id) && (reworkByJob.get(j.id)!.open > 0) && (
+                          <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-zinc-950">{reworkByJob.get(j.id)!.open}</span>
+                        )}
+                      </button>
+                      <button aria-label={`Edit job ${j.poNumber || ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" aria-hidden="true" /></button>
+                      <button aria-label={`Delete job ${j.poNumber || ''}`} onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="hidden sm:flex p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
                     </div>
                   </td>
                 </tr>
@@ -2556,7 +3670,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       </>}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xl p-2 sm:p-4 animate-fade-in">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh]">
             <div className="p-3 sm:p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0">
               <h3 className="font-bold text-white text-base sm:text-lg">{editingJob.id ? 'Edit Job' : 'Create New Job'}</h3>
@@ -2573,9 +3687,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 const isJobComplete = (editingJob as Job).status === 'completed';
                 return (
                   <div className="bg-zinc-800/30 rounded-xl p-4 border border-white/5 space-y-3">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
+                    {/* Header row: label on top, action buttons on a clean grid below.
+                        Using a responsive grid avoids the mobile overlap mess. */}
+                    <div className="space-y-2">
                       <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Job Progress</p>
-                      <div className="flex items-center gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] gap-2 items-stretch">
                         {/* Stage dropdown — jump to any stage */}
                         <select
                           value={currentStage.id}
@@ -2586,26 +3702,38 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                             setEditingJob({ ...editingJob, currentStage: targetStage.id, status: targetStage.isComplete ? 'completed' : targetStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
                             addToast('success', `Moved to ${targetStage.label}`);
                           }}
-                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors"
+                          className="text-xs font-bold px-3 py-2 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors min-w-0 w-full"
+                          aria-label="Change job stage"
                         >
                           {stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                         </select>
                         {nextStage && (
-                          <button onClick={async () => {
-                            await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, nextStage.isComplete);
-                            setEditingJob({ ...editingJob, currentStage: nextStage.id, status: nextStage.isComplete ? 'completed' : nextStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
-                            addToast('success', `Advanced to ${nextStage.label}`);
-                          }} className="text-xs font-bold px-3 py-1.5 rounded-lg transition-colors hover:brightness-110" style={{ background: `${nextStage.color}20`, color: nextStage.color }}>
-                            Next: {nextStage.label} →
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, nextStage.isComplete);
+                              setEditingJob({ ...editingJob, currentStage: nextStage.id, status: nextStage.isComplete ? 'completed' : nextStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                              addToast('success', `Advanced to ${nextStage.label}`);
+                            }}
+                            className="text-xs font-bold px-3 py-2 rounded-lg transition-colors hover:brightness-110 flex items-center justify-center gap-1.5 whitespace-nowrap"
+                            style={{ background: `${nextStage.color}20`, color: nextStage.color }}
+                            title={`Move to ${nextStage.label}`}
+                          >
+                            <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span className="truncate max-w-[110px]">{nextStage.label}</span>
                           </button>
                         )}
                         {!isJobComplete && completedStage && (
-                          <button onClick={async () => {
-                            await DB.advanceJobStage(editingJob.id, completedStage.id, user.id, user.name, true);
-                            setEditingJob({ ...editingJob, currentStage: completedStage.id, status: 'completed' });
-                            addToast('success', `✅ Job completed!`);
-                          }} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors">
-                            ✓ Complete
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await DB.advanceJobStage(editingJob.id, completedStage.id, user.id, user.name, true);
+                              setEditingJob({ ...editingJob, currentStage: completedStage.id, status: 'completed' });
+                              addToast('success', `✅ Job completed!`);
+                            }}
+                            className="text-xs font-bold px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> Complete
                           </button>
                         )}
                       </div>
@@ -2634,8 +3762,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                     {(editingJob as Job).customer && (
                       <div className="flex items-center gap-2 pt-1">
                         <button onClick={() => {
-                          const base = window.location.origin;
-                          const url = `${base}?portal=${encodeURIComponent((editingJob as Job).customer || '')}`;
+                          const url = buildPortalUrl((editingJob as Job).customer!, shopSettings);
                           navigator.clipboard.writeText(url).then(() => addToast('success', 'Customer portal link copied!')).catch(() => {
                             prompt('Copy this link:', url);
                           });
@@ -2643,8 +3770,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                           <Share2 className="w-3.5 h-3.5" /> Share Portal Link
                         </button>
                         <button onClick={() => {
-                          const base = window.location.origin;
-                          const url = `${base}?portal=${encodeURIComponent((editingJob as Job).customer || '')}`;
+                          const url = buildPortalUrl((editingJob as Job).customer!, shopSettings);
                           window.open(url, '_blank');
                         }} className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-all">
                           <ExternalLink className="w-3.5 h-3.5" /> Preview
@@ -2693,6 +3819,71 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                   </div>
                 </div>
               </div>
+
+              {/* Part History Banner — shows when we've run this part before */}
+              {editingJob.partNumber && (() => {
+                const history = getPartHistory(editingJob.partNumber, jobs, allLogs);
+                if (!history || history.totalRuns === 0) return null;
+                const suggestedHrs = editingJob.quantity
+                  ? suggestExpectedHours(history, editingJob.quantity)
+                  : history.avgJobHours;
+                return (
+                  <div className="bg-gradient-to-br from-purple-500/10 to-blue-500/5 border border-purple-500/25 rounded-2xl p-4 sm:p-5 space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center shrink-0">
+                          <History className="w-5 h-5 text-purple-400" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-purple-400 uppercase tracking-widest">We've run this part before</p>
+                          <p className="text-sm text-white font-bold truncate">
+                            {history.totalRuns} prior run{history.totalRuns > 1 ? 's' : ''} · {history.totalUnits.toLocaleString()} units total
+                          </p>
+                        </div>
+                      </div>
+                      {history.onTimeRate > 0 && (
+                        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border ${history.onTimeRate >= 90 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' : history.onTimeRate >= 70 ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/25' : 'text-orange-400 bg-orange-500/10 border-orange-500/25'}`}>
+                          {history.onTimeRate}% on-time
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <div className="bg-zinc-900/50 rounded-lg p-2.5 border border-white/5">
+                        <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Avg / Unit</p>
+                        <p className="text-lg font-black text-white tabular">{history.avgHoursPerUnit > 0 ? (history.avgHoursPerUnit * 60).toFixed(1) + ' min' : '—'}</p>
+                      </div>
+                      <div className="bg-zinc-900/50 rounded-lg p-2.5 border border-white/5">
+                        <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Avg Job Time</p>
+                        <p className="text-lg font-black text-white tabular">{history.avgJobHours.toFixed(1)}h</p>
+                      </div>
+                      <div className="bg-zinc-900/50 rounded-lg p-2.5 border border-white/5">
+                        <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Last Run</p>
+                        <p className="text-lg font-black text-white tabular truncate">{history.lastRun?.completedAt ? new Date(history.lastRun.completedAt).toLocaleDateString() : '—'}</p>
+                      </div>
+                      <div className="bg-zinc-900/50 rounded-lg p-2.5 border border-white/5">
+                        <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Best Worker</p>
+                        <p className="text-sm font-black text-emerald-400 truncate" title={history.bestWorker?.name || ''}>{history.bestWorker?.name?.split(' ')[0] || '—'}</p>
+                      </div>
+                    </div>
+                    {editingJob.quantity && editingJob.quantity > 0 && suggestedHrs > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingJob({ ...editingJob, expectedHours: suggestedHrs })}
+                        className="w-full flex items-center justify-between gap-2 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/25 rounded-lg p-3 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-lg">💡</span>
+                          <span className="text-sm text-white text-left">
+                            Suggested budget: <strong className="text-emerald-400 font-black tabular">{suggestedHrs}h</strong>
+                            <span className="text-zinc-500 text-xs"> for {editingJob.quantity} units</span>
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-bold text-emerald-400 shrink-0">Apply →</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="space-y-5">
                 <h4 className="text-xs font-black text-emerald-400 uppercase tracking-[0.2em] border-b border-emerald-500/20 pb-2 flex items-center gap-2">
@@ -2745,13 +3936,23 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                   <span className="bg-emerald-500/10 text-emerald-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">4</span>
                   Job Costing <span className="text-zinc-600 normal-case font-normal text-[10px]">(optional)</span>
                 </h4>
-                <div>
-                  <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quote / Revenue Amount ($)</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">$</span>
-                    <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quoteAmount || ''} onChange={e => setEditingJob({ ...editingJob, quoteAmount: Number(e.target.value) || 0 })} placeholder="0.00" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quote / Revenue Amount ($)</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">$</span>
+                      <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quoteAmount || ''} onChange={e => setEditingJob({ ...editingJob, quoteAmount: Number(e.target.value) || 0 })} placeholder="0.00" />
+                    </div>
+                    <p className="text-[10px] text-zinc-600 mt-1">What the customer is paying. Profit calculated when complete.</p>
                   </div>
-                  <p className="text-[10px] text-zinc-600 mt-1">What the customer is paying for this job. Profit is calculated automatically when the job is completed.</p>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Expected Hours <span className="text-zinc-600 normal-case">(budget)</span></label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">⏱</span>
+                      <input type="number" step="0.5" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.expectedHours || ''} onChange={e => setEditingJob({ ...editingJob, expectedHours: Number(e.target.value) || 0 })} placeholder="0" />
+                    </div>
+                    <p className="text-[10px] text-zinc-600 mt-1">Time budget. Job row shows red badge if actual exceeds this.</p>
+                  </div>
                 </div>
               </div>
 
@@ -2794,6 +3995,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
               </div>
               )}
 
+              {/* ── Operation Checklist (Jobs R1 #1) ── */}
+              {editingJob.id && (
+                <JobChecklistSection
+                  job={editingJob as Job}
+                  onUpdate={(items) => setEditingJob({ ...editingJob, checklist: items })}
+                  user={user}
+                />
+              )}
+
+              {/* ── Attachments (Jobs R1 #2) ── */}
+              {editingJob.id && (
+                <JobAttachmentsSection
+                  job={editingJob as Job}
+                  onUpdate={(atts) => setEditingJob({ ...editingJob, attachments: atts })}
+                  user={user}
+                  addToast={addToast}
+                />
+              )}
+
               {/* Part Photo */}
               <div className="space-y-5">
                 <h4 className="text-xs font-black text-cyan-400 uppercase tracking-[0.2em] border-b border-cyan-500/20 pb-2 flex items-center gap-2">
@@ -2832,7 +4052,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
       )}
 
       {startJobModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xl p-0 sm:p-4 animate-fade-in">
           <div className="bg-zinc-900 border border-white/10 w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
 
             {/* Header — always visible */}
@@ -2842,7 +4062,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 <p className="text-sm text-zinc-400 mt-0.5">PO: <strong className="text-white">{startJobModal.poNumber}</strong> — {startJobModal.partNumber}</p>
               </div>
               <button
-                onClick={() => { setStartJobModal(null); setSelectedWorker(null); }}
+                onClick={() => { setStartJobModal(null); setSelectedWorker(null); setSelectedMachine(null); }}
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -2876,6 +4096,38 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
                 )}
               </div>
 
+              {/* Machine / Station picker — optional, appears only if admin has configured machines */}
+              {(shopSettings.machines || []).length > 0 && (
+                <div>
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-2 flex items-center gap-2">
+                    <span>Machine / Station</span>
+                    <span className="text-[9px] font-normal text-zinc-600 normal-case">Optional</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setSelectedMachine(null)}
+                      aria-pressed={!selectedMachine}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${!selectedMachine ? 'bg-zinc-700 border-white/30 text-white' : 'bg-zinc-800 border-white/10 text-zinc-400 hover:border-white/30'}`}
+                    >
+                      — None —
+                    </button>
+                    {(shopSettings.machines || []).map(m => {
+                      const active = selectedMachine === m;
+                      return (
+                        <button
+                          key={m}
+                          onClick={() => setSelectedMachine(m)}
+                          aria-pressed={active}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${active ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-900/30' : 'bg-zinc-800 border-white/10 text-zinc-300 hover:border-white/30'}`}
+                        >
+                          {m}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Operation buttons */}
               <div>
                 <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-2">Select Operation</label>
@@ -2891,7 +4143,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
             {/* Footer — always visible, safe-area aware */}
             <div className="px-5 py-4 border-t border-white/5 shrink-0 pb-[calc(1rem+env(safe-area-inset-bottom))]">
               <button
-                onClick={() => { setStartJobModal(null); setSelectedWorker(null); }}
+                onClick={() => { setStartJobModal(null); setSelectedWorker(null); setSelectedMachine(null); }}
                 className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-bold text-sm transition-colors"
               >
                 Cancel
@@ -2903,964 +4155,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner }: an
 
       {/* Part Image Lightbox */}
       {lightboxImg && <PartImageLightbox src={lightboxImg} onClose={() => setLightboxImg(null)} />}
+
+      {/* Rework modal — opened from the row's AlertTriangle button */}
+      {reworkModal && <ReworkModal entry={reworkModal} jobs={jobs} user={user} onClose={() => setReworkModal(null)} addToast={addToast} />}
     </div>
   );
 };
 
-// ============================================================
-// --- ADMIN: LOGS (v3  filters by JOB completion status) ---
-// ============================================================
-const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) => void }) => {
-  const [logs, setLogs] = useState<TimeLog[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const savedScrollRef = useRef(0);
-  const [ops, setOps] = useState<string[]>([]);
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [selectedExportJobs, setSelectedExportJobs] = useState<Set<string>>(new Set());
-  const [exporting, setExporting] = useState(false);
-  const [showBackfill, setShowBackfill] = useState(false);
-  const [bfJob, setBfJob] = useState('');
-  const [bfWorker, setBfWorker] = useState('');
-  const [bfOp, setBfOp] = useState('');
-  const [bfStart, setBfStart] = useState('');
-  const [bfEnd, setBfEnd] = useState('');
-
-  // "active" = job not yet marked complete | "completed" = job marked complete
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'completed'>('active');
-  const [filterSearch, setFilterSearch] = useState('');
-
-  const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const fmt = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return { start: fmt(firstDay), end: fmt(lastDay) };
-  });
-
-  useEffect(() => {
-    const unsub1 = DB.subscribeLogs(setLogs);
-    const unsub2 = DB.subscribeUsers(setUsers);
-    const unsub3 = DB.subscribeJobs(setJobs);
-    const unsub4 = DB.subscribeSettings((s) => setOps(s.customOperations || []));
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
-  }, [refreshKey]);
-
-  // Build quick lookups: jobId → job.status and jobId → full job
-  const jobStatusMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    jobs.forEach(j => { map[j.id] = j.status; });
-    return map;
-  }, [jobs]);
-
-  const jobMap = useMemo(() => {
-    const map: Record<string, Job> = {};
-    jobs.forEach(j => { map[j.id] = j; });
-    return map;
-  }, [jobs]);
-
-  const handleEditLog = (log: TimeLog) => {
-    savedScrollRef.current = document.querySelector('main')?.scrollTop ?? 0;
-    setEditingLog({ ...log });
-    setShowEditModal(true);
-  };
-
-  const closeEditModal = () => {
-    setShowEditModal(false);
-    setEditingLog(null);
-    requestAnimationFrame(() => {
-      const main = document.querySelector('main');
-      if (main) main.scrollTop = savedScrollRef.current;
-    });
-  };
-
-  const handleSaveLog = async () => {
-    if (!editingLog) return;
-    if (editingLog.endTime && editingLog.endTime < editingLog.startTime) {
-      addToast('error', 'End time cannot be before Start time');
-      return;
-    }
-    try {
-      await DB.updateTimeLog(editingLog);
-      addToast('success', 'Log updated successfully');
-      closeEditModal();
-    } catch (e) { addToast('error', 'Failed to update log'); }
-  };
-
-  const handleDeleteLog = () => {
-    if (!editingLog) return;
-    const logToDelete = editingLog;
-    const doDelete = async () => {
-      try {
-        await DB.deleteTimeLog(logToDelete.id);
-        addToast('success', 'Log deleted');
-        closeEditModal();
-      } catch (e) { addToast('error', 'Failed to delete log'); }
-    };
-    if (confirm) {
-      confirm({ title: 'Delete Log', message: `Permanently delete this time entry for ${logToDelete.userName}?`, onConfirm: doDelete });
-    } else {
-      doDelete();
-    }
-  };
-
-  const setPreset = (type: 'today' | 'week' | 'month') => {
-    const now = new Date();
-    const fmt = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (type === 'today') {
-      const s = fmt(now);
-      setDateRange({ start: s, end: s });
-    } else if (type === 'week') {
-      const diff = now.getDay() === 0 ? -6 : 1 - now.getDay();
-      const mon = new Date(now); mon.setDate(now.getDate() + diff);
-      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-      setDateRange({ start: fmt(mon), end: fmt(sun) });
-    } else {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const last  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      setDateRange({ start: fmt(first), end: fmt(last) });
-    }
-  };
-
-  const groupedLogs = useMemo(() => {
-    const [sY, sM, sD] = dateRange.start.split('-').map(Number);
-    const startTs = new Date(sY, sM - 1, sD, 0, 0, 0, 0).getTime();
-    const [eY, eM, eD] = dateRange.end.split('-').map(Number);
-    const endTs = new Date(eY, eM - 1, eD, 23, 59, 59, 999).getTime();
-
-    const term = filterSearch.toLowerCase().trim();
-
-    const filtered = logs.filter(log => {
-      //  KEY LOGIC 
-      // A log belongs to "completed" tab if its parent JOB is marked complete.
-      // A log belongs to "active" tab if its parent JOB is NOT yet complete.
-      // Individual timer start/stop (log.endTime) is shown INSIDE the group
-      // as a detail row  it does NOT drive the tab grouping.
-      // 
-      const jobIsCompleted = jobStatusMap[log.jobId] === 'completed';
-
-      if (activeTab === 'completed' && !jobIsCompleted) return false;
-      if (activeTab === 'active'    &&  jobIsCompleted) return false;
-
-      // Date range: use startTime for the check (covers both active & completed logs)
-      if (log.startTime < startTs || log.startTime > endTs) return false;
-
-      // Search — includes job's poNumber and partNumber from the job record
-      if (term) {
-        const job = jobMap[log.jobId];
-        const haystack = [
-          log.jobId, log.jobIdsDisplay, log.userName,
-          log.operation, log.partNumber, log.customer,
-          job?.poNumber, job?.partNumber,
-        ].filter(Boolean).join(' ').toLowerCase();
-        if (!haystack.includes(term)) return false;
-      }
-
-      return true;
-    });
-
-    // Group by the human-readable job display ID
-    const groups: Record<string, {
-      jobId: string;
-      internalJobId: string;
-      partNumber: string;
-      customer: string;
-      dueDate: string;
-      poNumber: string;
-      quantity: number;
-      jobIsCompleted: boolean;
-      completedAt: number | null;
-      logs: TimeLog[];
-      totalDurationMinutes: number;
-      users: Set<string>;
-      lastActivity: number;
-      runningCount: number;   // timers still ticking
-      stoppedCount: number;   // timers that have been stopped
-    }> = {};
-
-    filtered.forEach(log => {
-      const displayKey = log.jobIdsDisplay || log.jobId || 'Unknown Job';
-      if (!groups[displayKey]) {
-        // Pull extra info from the jobs list
-        const job = jobs.find(j => j.id === log.jobId);
-        groups[displayKey] = {
-          jobId: displayKey,
-          internalJobId: log.jobId,
-          partNumber: log.partNumber || job?.partNumber || 'N/A',
-          customer:   log.customer  || job?.customer  || '',
-          dueDate:    job?.dueDate  || '',
-          poNumber:   job?.poNumber || '',
-          quantity:   job?.quantity || 0,
-          jobIsCompleted: jobStatusMap[log.jobId] === 'completed',
-          completedAt:    job?.completedAt || null,
-          logs: [],
-          totalDurationMinutes: 0,
-          users: new Set(),
-          lastActivity: 0,
-          runningCount: 0,
-          stoppedCount: 0,
-        };
-      }
-      const g = groups[displayKey];
-      g.logs.push(log);
-      if (log.durationMinutes) g.totalDurationMinutes += log.durationMinutes;
-      g.users.add(log.userName);
-      const t = log.endTime || log.startTime;
-      if (t > g.lastActivity) g.lastActivity = t;
-      if (log.endTime) g.stoppedCount++;
-      else g.runningCount++;
-    });
-
-    return Object.values(groups)
-      .sort((a, b) => {
-        // Completed jobs: sort by when job was completed, newest first
-        if (a.jobIsCompleted && b.jobIsCompleted) {
-          return (b.completedAt || b.lastActivity) - (a.completedAt || a.lastActivity);
-        }
-        // Active jobs: sort by most recent activity
-        return b.lastActivity - a.lastActivity;
-      })
-      .map(g => {
-        g.logs.sort((a, b) => b.startTime - a.startTime);
-        return g;
-      });
-  }, [logs, jobs, jobStatusMap, jobMap, activeTab, dateRange, filterSearch]);
-
-  const totalHours    = groupedLogs.reduce((acc, g) => acc + g.totalDurationMinutes / 60, 0);
-  const totalEntries  = groupedLogs.reduce((acc, g) => acc + g.logs.length, 0);
-
-  // Counts for the tab badges (based on JOB status, not log status)
-  const jobsWithLogs     = useMemo(() => new Set(logs.map(l => l.jobId)), [logs]);
-  const activeJobCount   = useMemo(() => [...jobsWithLogs].filter(id => jobStatusMap[id] !== 'completed').length, [jobsWithLogs, jobStatusMap]);
-  const completedJobCount= useMemo(() => [...jobsWithLogs].filter(id => jobStatusMap[id] === 'completed').length, [jobsWithLogs, jobStatusMap]);
-
-  // ── CSV Export ───────────────────────────────────────────────────────────────
-  const openExportModal = () => {
-    // Pre-select all jobs by default
-    setSelectedExportJobs(new Set(groupedLogs.map(g => g.jobId)));
-    setShowExportModal(true);
-  };
-
-  const toggleExportJob = (jobId: string) => {
-    setSelectedExportJobs(prev => {
-      const next = new Set(prev);
-      next.has(jobId) ? next.delete(jobId) : next.add(jobId);
-      return next;
-    });
-  };
-
-  const fmtTime = (ts: number) =>
-    new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-
-  const fmtDate = (ts: number) =>
-    new Date(ts).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-
-  const fmtDur = (mins: number) => {
-    if (!mins) return '';
-    const h = Math.floor(mins / 60);
-    const m = Math.round(mins % 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
-
-  const csvEscape = (val: string | number | undefined) => {
-    const s = String(val ?? '');
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-
-  const exportToGoogleSheets = () => {
-    const exportGroups = groupedLogs.filter(g => selectedExportJobs.has(g.jobId));
-    if (exportGroups.length === 0) { addToast('error', 'Select at least one PO to export'); return; }
-    if (typeof (window as any).__requestSheetsAccess !== 'function') {
-      addToast('error', 'Google Sheets not available'); return;
-    }
-
-    setExporting(true);
-
-    (window as any).__requestSheetsAccess(async (success: boolean, err: string) => {
-      if (!success) {
-        addToast('error', 'Google access denied: ' + (err || 'Unknown error'));
-        setExporting(false); return;
-      }
-      try {
-        const sheetsToken: string = (window as any).__sheetsToken;
-        const drStart = new Date(dateRange.start + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-        const drEnd   = new Date(dateRange.end   + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-        const totalExportMins = exportGroups.reduce((a, g) => a + g.totalDurationMinutes, 0);
-        const now = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
-        const title = `SC Deburring Work Logs — ${drStart} to ${drEnd}`;
-
-        // ── Build rows + track formatting targets ──────────────────
-        const rows: any[][] = [];
-        const formatRequests: any[] = [];
-
-        // Helper: record row index BEFORE pushing
-        const colCount = 13;
-
-        // Rows 0-4: Report header
-        rows.push(['SC DEBURRING — Work Log Export', ...Array(colCount - 1).fill('')]);
-        rows.push([`Date Range: ${drStart} to ${drEnd}`, ...Array(colCount - 1).fill('')]);
-        rows.push([`Generated: ${now}  |  POs: ${exportGroups.length}  |  Total Hours: ${(totalExportMins / 60).toFixed(2)}`, ...Array(colCount - 1).fill('')]);
-        rows.push(Array(colCount).fill(''));
-
-        // Row 4: Column headers
-        const headerRowIdx = rows.length;
-        rows.push(['PO Number', 'SC Job #', 'Part Number', 'Customer', 'Status', 'Date', 'Employee', 'Operation', 'Start', 'End', 'Mins', 'Duration', 'Timer']);
-
-        const jobSeparatorRowIdxs: number[] = [];
-        const subtotalRowIdxs: number[] = [];
-        const logRowIdxs: number[] = [];
-
-        exportGroups.forEach(group => {
-          rows.push(Array(colCount).fill('')); // blank
-
-          // Job separator
-          jobSeparatorRowIdxs.push(rows.length);
-          rows.push([
-            `PO: ${group.poNumber || group.jobId}`,
-            `SC#: ${group.jobId}`,
-            `Part: ${group.partNumber}`,
-            group.customer || '',
-            group.jobIsCompleted ? 'COMPLETED' : 'ACTIVE',
-            `Total: ${fmtDur(group.totalDurationMinutes)}`,
-            `Staff: ${[...group.users].join(', ')}`,
-            '', '', '', '', '', '',
-          ]);
-
-          // Log entries
-          group.logs.forEach(log => {
-            logRowIdxs.push(rows.length);
-            rows.push([
-              group.poNumber || group.jobId,
-              group.jobId,
-              group.partNumber,
-              group.customer || '',
-              group.jobIsCompleted ? 'Completed' : 'Active',
-              fmtDate(log.startTime),
-              log.userName,
-              log.operation,
-              fmtTime(log.startTime),
-              log.endTime ? fmtTime(log.endTime) : 'Running',
-              log.durationMinutes ? Math.round(log.durationMinutes) : '',
-              log.durationMinutes ? fmtDur(log.durationMinutes) : '',
-              log.endTime ? 'Stopped' : 'Live',
-            ]);
-          });
-
-          // Subtotal
-          subtotalRowIdxs.push(rows.length);
-          rows.push(['', '', '', '', '', 'JOB TOTAL', '', '', '', '',
-            Math.round(group.totalDurationMinutes),
-            fmtDur(group.totalDurationMinutes), '']);
-        });
-
-        rows.push(Array(colCount).fill(''));
-        const grandTotalRowIdx = rows.length;
-        rows.push(['GRAND TOTAL', '', '', '', '', '', '', '', '', '',
-          Math.round(totalExportMins), fmtDur(totalExportMins), '']);
-
-        // ── Create spreadsheet ────────────────────────────────────
-        const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${sheetsToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            properties: { title },
-            sheets: [{ properties: { title: 'Work Logs', gridProperties: { frozenRowCount: headerRowIdx + 1 } } }]
-          }),
-        });
-        if (!createRes.ok) throw new Error(`Create failed: ${await createRes.text()}`);
-        const createData = await createRes.json();
-        const spreadsheetId = createData.spreadsheetId;
-        const spreadsheetUrl = createData.spreadsheetUrl;
-        const sheetId = createData.sheets[0].properties.sheetId;
-
-        // ── Write values ──────────────────────────────────────────
-        const writeRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Work%20Logs!A1?valueInputOption=USER_ENTERED`, {
-          method: 'PUT',
-          headers: { 'Authorization': `Bearer ${sheetsToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ values: rows }),
-        });
-        if (!writeRes.ok) throw new Error(`Write failed: ${await writeRes.text()}`);
-
-        // ── Helper colors ─────────────────────────────────────────
-        const rgb = (r: number, g: number, b: number) => ({ red: r/255, green: g/255, blue: b/255 });
-        const rowFmt = (rowIdx: number, bg: any, textColor: any, bold: boolean, fontSize?: number) => ({
-          repeatCell: {
-            range: { sheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 0, endColumnIndex: colCount },
-            cell: { userEnteredFormat: {
-              backgroundColor: bg,
-              textFormat: { foregroundColor: textColor, bold, fontSize: fontSize || 10 },
-              verticalAlignment: 'MIDDLE',
-              wrapStrategy: 'CLIP',
-            }},
-            fields: 'userEnteredFormat(backgroundColor,textFormat,verticalAlignment,wrapStrategy)',
-          }
-        });
-
-        // Title row (row 0)
-        formatRequests.push(rowFmt(0, rgb(15, 23, 42), rgb(255,255,255), true, 13));
-        // Info rows (1-2)
-        formatRequests.push(rowFmt(1, rgb(30, 41, 59), rgb(148,163,184), false, 9));
-        formatRequests.push(rowFmt(2, rgb(30, 41, 59), rgb(148,163,184), false, 9));
-        // Column header row
-        formatRequests.push(rowFmt(headerRowIdx, rgb(30, 64, 175), rgb(255,255,255), true, 10));
-        // Job separator rows
-        jobSeparatorRowIdxs.forEach(i => formatRequests.push(rowFmt(i, rgb(55, 65, 81), rgb(229,231,235), true, 10)));
-        // Subtotal rows
-        subtotalRowIdxs.forEach(i => formatRequests.push(rowFmt(i, rgb(220, 252, 231), rgb(21, 128, 61), true, 10)));
-        // Grand total row
-        formatRequests.push(rowFmt(grandTotalRowIdx, rgb(21, 128, 61), rgb(255,255,255), true, 11));
-
-        // Alternating log row colors
-        logRowIdxs.forEach((i, idx) => {
-          const bg = idx % 2 === 0 ? rgb(255,255,255) : rgb(248,250,252);
-          formatRequests.push(rowFmt(i, bg, rgb(30,41,59), false, 10));
-        });
-
-        // Column widths
-        const colWidths = [120, 90, 110, 100, 80, 85, 90, 130, 80, 80, 50, 70, 60];
-        colWidths.forEach((px, i) => {
-          formatRequests.push({
-            updateDimensionProperties: {
-              range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
-              properties: { pixelSize: px },
-              fields: 'pixelSize',
-            }
-          });
-        });
-
-        // Row heights
-        formatRequests.push({
-          updateDimensionProperties: {
-            range: { sheetId, dimension: 'ROWS', startIndex: 0, endIndex: rows.length },
-            properties: { pixelSize: 22 },
-            fields: 'pixelSize',
-          }
-        });
-        // Taller title row
-        formatRequests.push({
-          updateDimensionProperties: {
-            range: { sheetId, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
-            properties: { pixelSize: 32 },
-            fields: 'pixelSize',
-          }
-        });
-
-        // ── Apply formatting ───────────────────────────────────────
-        const fmtRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${sheetsToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requests: formatRequests }),
-        });
-        if (!fmtRes.ok) throw new Error(`Format failed: ${await fmtRes.text()}`);
-
-        window.open(spreadsheetUrl, '_blank');
-        setShowExportModal(false);
-        addToast('success', `Opened in Google Sheets — ${exportGroups.length} PO${exportGroups.length !== 1 ? 's' : ''} exported`);
-      } catch (e: any) {
-        addToast('error', 'Export failed: ' + (e?.message || 'Unknown error'));
-      } finally {
-        setExporting(false);
-      }
-    });
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 no-print">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2 text-white"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
-          <p className="text-zinc-500 text-sm mt-1">Time entries grouped by job. Filter by date, status, or search.</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors">
-            <Plus className="w-4 h-4" /> Backfill Entry
-          </button>
-          <button onClick={openExportModal} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors shadow-lg shadow-emerald-900/20">
-            <Download className="w-4 h-4" /> Export
-          </button>
-          <button onClick={() => setRefreshKey(k => k + 1)} className="px-3 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
-        </div>
-      </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 no-print">
-        <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl">
-          <p className="text-zinc-500 text-xs uppercase font-bold">Jobs Shown</p>
-          <p className="text-2xl font-bold text-white">{groupedLogs.length}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl">
-          <p className="text-zinc-500 text-xs uppercase font-bold">Total Hours</p>
-          <p className="text-2xl font-bold text-blue-400">{totalHours.toFixed(1)}h</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-orange-500/10 p-4 rounded-xl">
-          <p className="text-zinc-500 text-xs uppercase font-bold">Active Jobs</p>
-          <p className="text-2xl font-bold text-orange-400">{activeJobCount}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-emerald-500/10 p-4 rounded-xl">
-          <p className="text-zinc-500 text-xs uppercase font-bold">Completed Jobs</p>
-          <p className="text-2xl font-bold text-emerald-400">{completedJobCount}</p>
-        </div>
-      </div>
-
-      {/* Filter Bar */}
-      <div className="bg-zinc-900 border border-white/10 rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-4 no-print">
-        <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-2 sm:gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] uppercase font-bold text-zinc-500">Start Date</label>
-            <input type="date" value={dateRange.start} onChange={e => setDateRange({ ...dateRange, start: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white w-full sm:min-w-[130px]" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] uppercase font-bold text-zinc-500">End Date</label>
-            <input type="date" value={dateRange.end} onChange={e => setDateRange({ ...dateRange, end: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white w-full sm:min-w-[130px]" />
-          </div>
-          <div className="flex gap-1 col-span-2 sm:col-span-1">
-            {(['today', 'week', 'month'] as const).map(p => (
-              <button key={p} onClick={() => setPreset(p)} className="flex-1 sm:flex-initial px-3 py-2 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors capitalize">{p}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col md:flex-row gap-3 items-start md:items-center">
-          {/* Tabs driven by JOB status */}
-          <div className="bg-black/30 p-1 rounded-xl flex gap-1 shrink-0">
-            {([
-              { key: 'all',       label: 'All Jobs',        count: activeJobCount + completedJobCount },
-              { key: 'active',    label: ' Active Jobs',  count: activeJobCount },
-              { key: 'completed', label: ' Completed Jobs',count: completedJobCount },
-            ] as const).map(({ key, label, count }) => (
-              <button
-                key={key}
-                onClick={() => setActiveTab(key)}
-                className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${activeTab === key ? 'bg-zinc-700 text-white shadow' : 'text-zinc-500 hover:text-zinc-300'}`}
-              >
-                {label}
-                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${activeTab === key ? 'bg-zinc-600 text-zinc-200' : 'bg-zinc-800 text-zinc-500'}`}>{count}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="flex-1 relative w-full">
-            <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
-            <input
-              placeholder="Search by PO#, Part#, Employee, Operation..."
-              value={filterSearch}
-              onChange={e => setFilterSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-black/30 border border-white/10 rounded-xl text-sm text-white focus:ring-1 focus:ring-blue-500 outline-none"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Grouped Logs */}
-      <div className="space-y-4">
-        {groupedLogs.length === 0 && (
-          <div className="p-12 text-center text-zinc-500 bg-zinc-900/50 rounded-2xl border border-white/5">
-            <div className="inline-block p-4 rounded-full bg-zinc-800 mb-4"><Filter className="w-8 h-8 text-zinc-600" /></div>
-            <p className="font-medium">No logs found matching your filters.</p>
-            <p className="text-sm mt-2 text-zinc-600">Try adjusting the date range or switching tabs.</p>
-          </div>
-        )}
-
-        {groupedLogs.map(group => (
-          <div key={group.jobId}
-            className={`border rounded-2xl overflow-hidden shadow-sm transition-all ${
-              group.jobIsCompleted
-                ? 'bg-emerald-950/20 border-emerald-500/20 hover:border-emerald-500/40'
-                : 'bg-zinc-900/50 border-white/5 hover:border-white/10'
-            }`}
-          >
-            {/* Group Header */}
-            <div className={`p-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 ${group.jobIsCompleted ? 'bg-emerald-950/30 border-emerald-500/10' : 'bg-zinc-900/80 border-white/5'}`}>
-              <div className="flex items-start gap-4">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${group.jobIsCompleted ? 'bg-emerald-500/10 border border-emerald-500/30' : 'bg-blue-500/10 border border-blue-500/20'}`}>
-                  {group.jobIsCompleted
-                    ? <CheckCircle className="w-5 h-5 text-emerald-400" />
-                    : <Briefcase className="w-5 h-5 text-blue-500" />
-                  }
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-xl font-black text-white leading-tight">{group.poNumber || group.jobId}</h3>
-                    {group.jobIsCompleted
-                      ? <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider">Job Complete</span>
-                      : <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider">In Production</span>
-                    }
-                  </div>
-                  <div className="flex items-center gap-2 text-xs mt-1 flex-wrap">
-                    {group.poNumber && <span className="text-zinc-500 font-mono">Job ID: {group.jobId}</span>}
-                    {group.poNumber && <span className="text-zinc-700"></span>}
-                    <span className="text-zinc-500">Part: <span className="text-zinc-300">{group.partNumber}</span></span>
-                    {group.quantity > 0 && <><span className="text-zinc-700"></span><span className="text-zinc-500">Qty: <span className="text-zinc-300">{group.quantity}</span></span></>}
-                    {group.customer && <><span className="text-zinc-700"></span><span className="text-zinc-400">{group.customer}</span></>}
-                    {group.dueDate  && <><span className="text-zinc-700"></span><span className="text-zinc-500">Due: <span className="text-zinc-300">{fmt(group.dueDate)}</span></span></>}
-                  </div>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    {group.runningCount > 0 && (
-                      <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-                        {group.runningCount} timer{group.runningCount > 1 ? 's' : ''} running
-                      </span>
-                    )}
-                    {group.stoppedCount > 0 && (
-                      <span className="text-[10px] font-bold text-zinc-400 bg-zinc-800 border border-white/10 px-2 py-0.5 rounded-full">
-                        {group.stoppedCount} operation{group.stoppedCount > 1 ? 's' : ''} logged
-                      </span>
-                    )}
-                    {group.completedAt && (
-                      <span className="text-[10px] text-emerald-500 font-bold">
-                        Completed {new Date(group.completedAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 text-xs shrink-0">
-                <div className="text-right">
-                  <p className="text-zinc-500 uppercase font-bold tracking-wide">Total Time</p>
-                  <p className={`text-xl font-mono font-bold ${group.jobIsCompleted ? 'text-emerald-400' : 'text-white'}`}>{formatDuration(group.totalDurationMinutes)}</p>
-                </div>
-                <div className="text-right border-l border-white/10 pl-4">
-                  <p className="text-zinc-500 uppercase font-bold tracking-wide">Staff</p>
-                  <p className="text-white text-lg font-bold">{group.users.size}</p>
-                </div>
-                {(() => {
-                  const job = jobs.find(j => j.id === group.internalJobId);
-                  const ss = DB.getSettings();
-                  const r = ss.shopRate || 0;
-                  if (!r || !group.totalDurationMinutes) return null;
-                  const hrs = group.totalDurationMinutes / 60;
-                  const ohR = (ss.monthlyOverhead || 0) / (ss.monthlyWorkHours || 160);
-                  const cost = hrs * (r + ohR);
-                  const quote = job?.quoteAmount || 0;
-                  const profit = quote > 0 ? quote - cost : null;
-                  return (
-                    <div className="text-right border-l border-white/10 pl-4">
-                      <p className="text-zinc-500 uppercase font-bold tracking-wide">Cost</p>
-                      <p className="text-white text-lg font-mono font-bold">${cost.toFixed(0)}</p>
-                      {profit !== null && (
-                        <p className={`text-xs font-black mt-0.5 ${profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {profit >= 0 ? '+' : '-'}${Math.abs(profit).toFixed(0)} {profit >= 0 ? 'profit' : 'loss'}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-
-            {/* Logs Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-black/20 text-zinc-500 uppercase tracking-wide">
-                  <tr>
-                    <th className="p-3 pl-6">Date</th>
-                    <th className="p-3">Employee</th>
-                    <th className="p-3">Operation</th>
-                    <th className="p-3">Start  End</th>
-                    <th className="p-3">Timer</th>
-                    <th className="p-3 text-right pr-6">Duration</th>
-                    <th className="p-3 text-right pr-6 no-print"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {group.logs.map(log => (
-                    <React.Fragment key={log.id}>
-                    <tr className="hover:bg-white/5 transition-colors group/row">
-                      <td className="p-3 pl-6 text-zinc-400 whitespace-nowrap">{new Date(log.startTime).toLocaleDateString()}</td>
-                      <td className="p-3 text-white font-semibold">{log.userName}</td>
-                      <td className="p-3 text-blue-400 font-medium">{log.operation}</td>
-                      <td className="p-3 font-mono text-zinc-400 whitespace-nowrap">
-                        {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {'  '}
-                        {log.endTime
-                          ? new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                          : <span className="text-blue-400 font-bold">Running</span>
-                        }
-                      </td>
-                      <td className="p-3">
-                        {log.endTime
-                          ? <span className="text-[10px] font-bold text-zinc-400 bg-zinc-800 border border-white/10 px-2 py-0.5 rounded-full">Stopped</span>
-                          : <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Live</span>
-                        }
-                      </td>
-                      <td className="p-3 text-right pr-6 font-mono text-zinc-300 font-bold">{formatDuration(getLogDurationMins(log) ?? log.durationMinutes)}</td>
-                      <td className="p-3 text-right pr-6 no-print opacity-0 group-hover/row:opacity-100 transition-opacity">
-                        <button onClick={() => handleEditLog(log)} className="text-blue-500 hover:text-white p-1 rounded hover:bg-blue-500/20 transition-colors" title="Edit log"><Edit2 className="w-3 h-3" /></button>
-                      </td>
-                    </tr>
-                    {log.notes && (
-                      <tr className="bg-amber-500/5 border-l-2 border-amber-500/40">
-                        <td colSpan={7} className="px-6 py-2">
-                          <div className="flex items-start gap-2 text-sm">
-                            <span className="text-amber-500 mt-0.5">📝</span>
-                            <div>
-                              <span className="text-amber-300/90">{log.notes}</span>
-                              <span className="text-zinc-600 text-xs ml-2">— {log.userName}</span>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Edit Modal */}
-      {showEditModal && editingLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
-              <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
-              <button onClick={closeEditModal}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
-            </div>
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Employee</label>
-                <select className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={editingLog.userId}
-                  onChange={e => {
-                    const u = users.find(u => u.id === e.target.value);
-                    if (u) setEditingLog({ ...editingLog, userId: u.id, userName: u.name });
-                  }}>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Operation</label>
-                <select className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={editingLog.operation}
-                  onChange={e => setEditingLog({ ...editingLog, operation: e.target.value })}>
-                  {ops.map(o => <option key={o} value={o}>{o}</option>)}
-                  {!ops.includes(editingLog.operation) && <option value={editingLog.operation}>{editingLog.operation} (Legacy)</option>}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Start Time</label>
-                  <input type="datetime-local" className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
-                    value={toDateTimeLocal(editingLog.startTime)}
-                    onChange={e => setEditingLog({ ...editingLog, startTime: new Date(e.target.value).getTime() })} />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">End Time</label>
-                  <input type="datetime-local" className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
-                    value={toDateTimeLocal(editingLog.endTime)}
-                    onChange={e => {
-                      const val = e.target.value ? new Date(e.target.value).getTime() : null;
-                      setEditingLog({ ...editingLog, endTime: val });
-                    }} />
-                  <p className="text-[10px] text-zinc-500 mt-1">Clear to mark as active.</p>
-                </div>
-              </div>
-            </div>
-            <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center">
-              <button onClick={handleDeleteLog} className="text-red-500 hover:text-red-400 text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /> Delete Log</button>
-              <div className="flex gap-2">
-                <button onClick={closeEditModal} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
-                <button onClick={handleSaveLog} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-bold">Save Changes</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Backfill Entry Modal ──────────────────────────────────── */}
-      {showBackfill && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
-            <div className="flex items-center justify-between px-5 pt-5 pb-3">
-              <div><h3 className="text-lg font-bold text-white flex items-center gap-2"><Clock className="w-5 h-5 text-blue-400" /> Backfill Time Entry</h3><p className="text-sm text-zinc-400 mt-0.5">Add a past entry for a worker who forgot to scan</p></div>
-              <button onClick={() => setShowBackfill(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="overflow-y-auto flex-1 px-5 pb-4 space-y-4">
-              <div>
-                <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Job</label>
-                <select value={bfJob} onChange={e => setBfJob(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white">
-                  <option value="">Select job...</option>
-                  {jobs.filter(j => j.status !== 'completed').map(j => <option key={j.id} value={j.id}>PO {j.poNumber} — {j.partNumber}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Worker</label>
-                <select value={bfWorker} onChange={e => setBfWorker(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white">
-                  <option value="">Select worker...</option>
-                  {users.filter(u => u.isActive !== false).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Operation</label>
-                <select value={bfOp} onChange={e => setBfOp(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white">
-                  <option value="">Select operation...</option>
-                  {ops.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Start Time</label>
-                  <input type="datetime-local" value={bfStart} onChange={e => setBfStart(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">End Time</label>
-                  <input type="datetime-local" value={bfEnd} onChange={e => setBfEnd(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white" />
-                </div>
-              </div>
-              {bfStart && bfEnd && new Date(bfEnd) > new Date(bfStart) && (
-                <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 text-center">
-                  <span className="text-blue-400 font-bold">{((new Date(bfEnd).getTime() - new Date(bfStart).getTime()) / 3600000).toFixed(1)}h</span>
-                  <span className="text-zinc-400 text-sm"> will be logged</span>
-                </div>
-              )}
-            </div>
-            <div className="px-5 py-4 border-t border-white/5 flex gap-3">
-              <button onClick={() => setShowBackfill(false)} className="flex-1 py-3 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-sm">Cancel</button>
-              <button
-                disabled={!bfJob || !bfWorker || !bfOp || !bfStart || !bfEnd || new Date(bfEnd) <= new Date(bfStart)}
-                onClick={async () => {
-                  try {
-                    const job = jobs.find(j => j.id === bfJob);
-                    const worker = users.find(u => u.id === bfWorker);
-                    if (!job || !worker) return;
-                    await DB.createBackfillLog(
-                      bfJob, bfWorker, worker.name, bfOp,
-                      new Date(bfStart).getTime(), new Date(bfEnd).getTime(),
-                      job.partNumber, job.customer, job.jobIdsDisplay
-                    );
-                    addToast('success', `Backfill logged: ${worker.name} → ${job.poNumber} (${bfOp})`);
-                    setShowBackfill(false);
-                    setRefreshKey(k => k + 1);
-                  } catch (e: any) { addToast('error', e?.message || 'Failed to create backfill'); }
-                }}
-                className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white font-bold text-sm transition-colors"
-              >
-                Save Entry
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Export CSV Modal ─────────────────────────────────────────── */}
-      {showExportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col max-h-[85vh]">
-            {/* Header */}
-            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
-              <div>
-                <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                  <Download className="w-5 h-5 text-emerald-400" /> Export Work Logs
-                </h3>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  {dateRange.start} → {dateRange.end} · {groupedLogs.length} PO{groupedLogs.length !== 1 ? 's' : ''} in current view
-                </p>
-              </div>
-              <button onClick={() => setShowExportModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
-            </div>
-
-            {/* PO Selector */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Select POs to Export</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setSelectedExportJobs(new Set(groupedLogs.map(g => g.jobId)))}
-                    className="text-[11px] text-blue-400 hover:text-blue-300 font-bold"
-                  >Select All</button>
-                  <span className="text-zinc-700">·</span>
-                  <button
-                    onClick={() => setSelectedExportJobs(new Set())}
-                    className="text-[11px] text-zinc-500 hover:text-zinc-300 font-bold"
-                  >Clear</button>
-                </div>
-              </div>
-
-              {groupedLogs.length === 0 ? (
-                <p className="text-zinc-500 text-sm text-center py-8">No logs in current date range.</p>
-              ) : (
-                groupedLogs.map(group => {
-                  const checked = selectedExportJobs.has(group.jobId);
-                  return (
-                    <label
-                      key={group.jobId}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                        checked
-                          ? 'bg-emerald-500/10 border-emerald-500/30'
-                          : 'bg-zinc-800/50 border-white/5 hover:border-white/15'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleExportJob(group.jobId)}
-                        className="w-4 h-4 accent-emerald-500 shrink-0"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-black text-white text-sm">{group.poNumber || group.jobId}</span>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                            group.jobIsCompleted
-                              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-                              : 'text-orange-400 bg-orange-500/10 border-orange-500/20'
-                          }`}>{group.jobIsCompleted ? 'Completed' : 'Active'}</span>
-                        </div>
-                        <p className="text-[11px] text-zinc-500 mt-0.5">
-                          {group.partNumber}{group.customer ? ` · ${group.customer}` : ''} · {group.logs.length} entr{group.logs.length === 1 ? 'y' : 'ies'}
-                        </p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-bold text-white font-mono">{fmtDur(group.totalDurationMinutes)}</p>
-                        <p className="text-[10px] text-zinc-600">{[...group.users].join(', ')}</p>
-                      </div>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-5 border-t border-white/10 bg-zinc-800/30 space-y-3">
-              {/* Summary of selection */}
-              {selectedExportJobs.size > 0 && (() => {
-                const sel = groupedLogs.filter(g => selectedExportJobs.has(g.jobId));
-                const selMins = sel.reduce((a, g) => a + g.totalDurationMinutes, 0);
-                const selEntries = sel.reduce((a, g) => a + g.logs.length, 0);
-                return (
-                  <div className="flex items-center justify-between text-xs text-zinc-400 bg-zinc-900/50 rounded-lg px-3 py-2">
-                    <span><span className="text-white font-bold">{selectedExportJobs.size}</span> PO{selectedExportJobs.size !== 1 ? 's' : ''} selected · <span className="text-white font-bold">{selEntries}</span> entries</span>
-                    <span>Total: <span className="text-emerald-400 font-bold">{fmtDur(selMins)}</span></span>
-                  </div>
-                );
-              })()}
-              <div className="flex gap-3">
-                <button onClick={() => setShowExportModal(false)} disabled={exporting} className="px-4 py-2.5 text-zinc-400 hover:text-white text-sm font-medium transition-colors disabled:opacity-40">Cancel</button>
-                <button
-                  onClick={exportToGoogleSheets}
-                  disabled={selectedExportJobs.size === 0 || exporting}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-all"
-                >
-                  {exporting ? (
-                    <><RefreshCw className="w-4 h-4 animate-spin" /> Creating Sheet...</>
-                  ) : (
-                    <><Download className="w-4 h-4" /> Open in Google Sheets ({selectedExportJobs.size} PO{selectedExportJobs.size !== 1 ? 's' : ''})</>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+// LogsView moved to ./views/LogsView.tsx — see import at top of file.
+
+// --- ROLE META ---
+// Single source of truth for role UI/permissions. Add/edit here to change everywhere.
+const ROLE_META: Record<UserRole, { label: string; description: string; color: string; tint: string; accent: string; icon: any }> = {
+  admin:    { label: 'Admin',    description: 'Full access to everything — billing, settings, team, financials.', color: '#a855f7', tint: 'bg-purple-500/10 border-purple-500/25 text-purple-400', accent: 'from-purple-500 to-pink-500', icon: Settings },
+  manager:  { label: 'Manager',  description: 'Runs the floor — jobs, workers, reports. Cannot change billing.',  color: '#3b82f6', tint: 'bg-blue-500/10 border-blue-500/25 text-blue-400',      accent: 'from-blue-500 to-indigo-500',  icon: Users },
+  employee: { label: 'Worker',   description: 'Scans jobs, logs time, sees their own history.',                   color: '#10b981', tint: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400', accent: 'from-emerald-500 to-teal-500', icon: Play },
 };
 
 // --- ADMIN: EMPLOYEES ---
@@ -3868,8 +4177,16 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
   const [users, setUsers] = useState<User[]>([]);
   const [editingUser, setEditingUser] = useState<Partial<User>>({});
   const [showModal, setShowModal] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1); // 1=role, 2=identity, 3=access, 4=review
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const [showBadges, setShowBadges] = useState(false);
+  const [shopSettings, setShopSettings] = useState<SystemSettings>(DB.getSettings());
 
-  useEffect(() => DB.subscribeUsers(setUsers), []);
+  useEffect(() => {
+    const u1 = DB.subscribeUsers(setUsers);
+    const u2 = DB.subscribeSettings(setShopSettings);
+    return () => { u1(); u2(); };
+  }, []);
 
   const handleDelete = (id: string) => confirm({
     title: 'Remove User',
@@ -3877,10 +4194,28 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
     onConfirm: () => DB.deleteUser(id)
   });
 
+  const openNew = () => { setEditingUser({ role: 'employee', isActive: true }); setWizardStep(1); setShowModal(true); };
+  const openEdit = (u: User) => { setEditingUser(u); setWizardStep(2); setShowModal(true); };
+  const closeModal = () => { setShowModal(false); setEditingUser({}); setWizardStep(1); };
+
+  // Auto-generate next available employee ID (EMP-001, EMP-002, ...)
+  const nextEmployeeId = () => {
+    const existing = users.map(u => u.employeeId).filter(Boolean) as string[];
+    const nums = existing.map(id => parseInt(id.replace(/^\D+/, ''), 10)).filter(n => !isNaN(n));
+    const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+    return `EMP-${String(next).padStart(3, '0')}`;
+  };
+
   const handleSave = () => {
-    if (!editingUser.name || !editingUser.username || !editingUser.pin) return addToast('error', 'Missing fields');
+    if (!editingUser.name || !editingUser.username || !editingUser.pin) { addToast('error', 'Missing fields'); return; }
+    if (editingUser.pin.length < 4) { addToast('error', 'PIN must be at least 4 digits'); return; }
+    if (users.some(u => u.username.toLowerCase() === editingUser.username!.toLowerCase() && u.id !== editingUser.id)) {
+      addToast('error', 'Username already taken');
+      return;
+    }
     const newUser: User = {
       id: editingUser.id || Date.now().toString(),
+      employeeId: editingUser.employeeId || nextEmployeeId(),
       name: editingUser.name,
       username: editingUser.username,
       pin: editingUser.pin,
@@ -3889,82 +4224,461 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
       hourlyRate: editingUser.hourlyRate || undefined,
     };
     DB.saveUser(newUser);
-    setShowModal(false);
-    setEditingUser({});
-    addToast('success', 'User Saved');
+    closeModal();
+    addToast('success', `${editingUser.id ? 'Updated' : 'Welcome'} ${newUser.name} (${newUser.employeeId})`);
   };
 
+  const randomPin = () => String(Math.floor(1000 + Math.random() * 9000));
+  const suggestUsername = (name: string) => name.trim().toLowerCase().replace(/\s+/g, '.').replace(/[^a-z0-9.]/g, '');
+
   const admins = users.filter(u => u.role === 'admin');
-  const employees = users.filter(u => u.role !== 'admin');
+  const managers = users.filter(u => u.role === 'manager');
+  const workers = users.filter(u => u.role === 'employee');
+  const isEditing = !!editingUser.id;
+
+  const canNextWizard =
+    wizardStep === 1 ? !!editingUser.role :
+    wizardStep === 2 ? !!editingUser.name && !!editingUser.username :
+    wizardStep === 3 ? !!editingUser.pin && editingUser.pin.length >= 4 :
+    true;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2"><Users className="w-5 h-5 text-blue-500" /> Team</h2>
-          <p className="text-sm text-zinc-500">{users.length} members · {admins.length} admin · {employees.length} workers</p>
+          <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tight"><Users className="w-6 h-6 text-blue-500" /> Team</h2>
+          <p className="text-sm text-zinc-500 mt-0.5">{users.length} member{users.length !== 1 ? 's' : ''} · {admins.length} admin · {managers.length} manager{managers.length !== 1 ? 's' : ''} · {workers.length} worker{workers.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={() => { setEditingUser({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold"><Plus className="w-4 h-4" /> Add Member</button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowBadges(true)} disabled={users.length === 0} className="bg-zinc-800/80 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 text-sm font-bold transition-all disabled:opacity-40" title="Print QR sign-in badges">
+            <QrCode className="w-4 h-4" aria-hidden="true" /> Print Badges
+          </button>
+          <button onClick={openNew} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg shadow-blue-900/40 transition-all">
+            <Plus className="w-4 h-4" aria-hidden="true" /> Invite Member
+          </button>
+        </div>
       </div>
 
-      <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
-            <tr>
-              <th className="text-left p-3">Name</th>
-              <th className="text-left p-3">Username</th>
-              <th className="text-left p-3">Role</th>
-              <th className="text-right p-3">Rate</th>
-              <th className="text-right p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {users.map(u => (
-              <tr key={u.id} className="hover:bg-white/5 transition-colors">
-                <td className="p-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}`}>{u.name.charAt(0)}</div>
-                    <span className="text-white font-bold">{u.name}</span>
-                  </div>
-                </td>
-                <td className="p-3 text-zinc-500 font-mono text-xs">@{u.username}</td>
-                <td className="p-3">
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-800 text-zinc-400'}`}>{u.role}</span>
-                </td>
-                <td className="p-3 text-right font-mono">{u.hourlyRate ? <span className="text-emerald-400">${u.hourlyRate.toFixed(2)}/hr</span> : <span className="text-zinc-600">—</span>}</td>
-                <td className="p-3 text-right">
-                  <div className="flex justify-end gap-1">
-                    <button onClick={() => { setEditingUser(u); setShowModal(true); }} className="p-1.5 hover:bg-white/10 rounded text-zinc-500 hover:text-white"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleDelete(u.id)} className="p-1.5 hover:bg-red-500/10 rounded text-zinc-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
-              <h3 className="font-bold text-white">User Details</h3>
-              <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+      {/* Role sections */}
+      {(['admin', 'manager', 'employee'] as const).map(role => {
+        const meta = ROLE_META[role];
+        const list = users.filter(u => u.role === role);
+        if (list.length === 0 && role !== 'employee') return null;
+        const Icon = meta.icon;
+        return (
+          <div key={role} className="space-y-2">
+            <div className="flex items-center gap-2 px-1">
+              <div className={`w-6 h-6 rounded-lg ${meta.tint} border flex items-center justify-center`}>
+                <Icon className="w-3.5 h-3.5" style={{ color: meta.color }} aria-hidden="true" />
+              </div>
+              <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">{meta.label}s</h3>
+              <span className="text-[10px] text-zinc-600 font-mono">{list.length}</span>
+              <div aria-hidden="true" className="flex-1 h-[1px] bg-gradient-to-r from-white/10 to-transparent ml-2" />
             </div>
-            <div className="p-6 space-y-4">
-              <div><label className="text-xs text-zinc-500 ml-1">Full Name</label><input className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white mt-1" value={editingUser.name || ''} onChange={e => setEditingUser({ ...editingUser, name: e.target.value })} /></div>
-              <div><label className="text-xs text-zinc-500 ml-1">Username</label><input className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white mt-1" value={editingUser.username || ''} onChange={e => setEditingUser({ ...editingUser, username: e.target.value })} /></div>
-              <div><label className="text-xs text-zinc-500 ml-1">PIN</label><input type="text" className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white mt-1" value={editingUser.pin || ''} onChange={e => setEditingUser({ ...editingUser, pin: e.target.value })} /></div>
-              <div><label className="text-xs text-zinc-500 ml-1">Role</label><select className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white mt-1" value={editingUser.role || 'employee'} onChange={e => setEditingUser({ ...editingUser, role: e.target.value as any })}><option value="employee">Employee</option><option value="admin">Admin</option></select></div>
-              <div><label className="text-xs text-zinc-500 ml-1">Hourly Rate <span className="text-zinc-600">(admin only — workers can't see this)</span></label>
-                <div className="relative mt-1">
-                  <span className="absolute left-3 top-2.5 text-zinc-500">$</span>
-                  <input type="number" step="0.01" className="w-full bg-black/40 border border-white/10 rounded-lg p-2 pl-7 text-white font-mono" value={editingUser.hourlyRate || ''} onChange={e => setEditingUser({ ...editingUser, hourlyRate: Number(e.target.value) || 0 })} placeholder="0.00" />
+            {list.length === 0 ? (
+              <div className="bg-zinc-900/30 border border-dashed border-white/5 rounded-2xl p-6 text-center">
+                <p className="text-zinc-600 text-xs">{role === 'employee' ? 'No workers yet — invite your first team member above.' : `No ${meta.label.toLowerCase()}s.`}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {list.map(u => (
+                  <div key={u.id} className="card-shine hover-lift-glow group bg-zinc-900/50 border border-white/5 rounded-2xl p-4 flex items-start gap-3 relative overflow-hidden">
+                    <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[2px]" style={{ backgroundImage: `linear-gradient(90deg, ${meta.color}66, transparent)` }} />
+                    <Avatar name={u.name} size="md" ring />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-1.5 flex-wrap">
+                        <p className="font-bold text-white leading-tight break-words" style={{ wordBreak: 'break-word' }}>{u.name}</p>
+                        {u.isActive === false && <span className="text-[9px] font-black text-zinc-500 bg-zinc-800 border border-white/5 px-1.5 py-0.5 rounded shrink-0">INACTIVE</span>}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 truncate mt-0.5">@{u.username}</p>
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        {u.employeeId && <span className="text-[9px] font-mono font-bold text-zinc-400 bg-zinc-800/60 border border-white/5 px-1.5 py-0.5 rounded">{u.employeeId}</span>}
+                        {u.hourlyRate ? <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">${u.hourlyRate.toFixed(2)}/hr</span> : null}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      <button aria-label={`Edit ${u.name}`} onClick={() => openEdit(u)} className="p-1.5 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Edit"><Edit2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                      <button aria-label={`Remove ${u.name}`} onClick={() => handleDelete(u.id)} className="p-1.5 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Remove"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Onboarding Wizard Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xl p-0 sm:p-4 animate-fade-in" onClick={closeModal}>
+          <div className="bg-zinc-900/95 backdrop-blur-xl border border-white/10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-slide-up" style={{ boxShadow: '0 24px 60px -12px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.04)' }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/40 to-transparent shrink-0">
+              <div>
+                <h3 className="font-black text-white text-base tracking-tight">{isEditing ? 'Edit Member' : 'Invite New Member'}</h3>
+                {!isEditing && <p className="text-[11px] text-zinc-500 mt-0.5">Step {wizardStep} of 4</p>}
+              </div>
+              <button aria-label="Close" onClick={closeModal} className="text-zinc-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10"><X className="w-4 h-4" aria-hidden="true" /></button>
+            </div>
+
+            {/* Progress bar (wizard only) */}
+            {!isEditing && (
+              <div className="px-5 pt-4 shrink-0">
+                <div className="flex items-center gap-1.5">
+                  {[1, 2, 3, 4].map(s => (
+                    <div key={s} className={`flex-1 h-1 rounded-full transition-all duration-500 ${s < wizardStep ? 'bg-gradient-to-r from-blue-500 to-indigo-500' : s === wizardStep ? 'bg-blue-500' : 'bg-zinc-800'}`} />
+                  ))}
+                </div>
+                <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider mt-2 text-zinc-600">
+                  <span className={wizardStep >= 1 ? 'text-blue-400' : ''}>Role</span>
+                  <span className={wizardStep >= 2 ? 'text-blue-400' : ''}>Identity</span>
+                  <span className={wizardStep >= 3 ? 'text-blue-400' : ''}>Access</span>
+                  <span className={wizardStep >= 4 ? 'text-blue-400' : ''}>Review</span>
                 </div>
               </div>
+            )}
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Step 1 — role picker (wizard only) */}
+              {!isEditing && wizardStep === 1 && (
+                <div className="space-y-3 animate-fade-in">
+                  <div>
+                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Pick a role</p>
+                    <p className="text-[11px] text-zinc-600">Controls what this person can see and do.</p>
+                  </div>
+                  {(['employee', 'manager', 'admin'] as const).map(r => {
+                    const meta = ROLE_META[r];
+                    const Icon = meta.icon;
+                    const active = editingUser.role === r;
+                    return (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setEditingUser({ ...editingUser, role: r })}
+                        className={`w-full flex items-start gap-3 p-4 rounded-2xl border text-left transition-all ${active ? 'bg-gradient-to-br from-blue-500/15 to-indigo-500/5 border-blue-500/40 ring-1 ring-blue-500/30' : 'bg-zinc-900/50 border-white/5 hover:border-white/15 hover:bg-zinc-900/80'}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${meta.accent} flex items-center justify-center shadow-lg shrink-0`}>
+                          <Icon className="w-5 h-5 text-white" aria-hidden="true" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white">{meta.label}</span>
+                            {active && <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">SELECTED</span>}
+                          </div>
+                          <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{meta.description}</p>
+                        </div>
+                        {active && <CheckCircle className="w-5 h-5 text-blue-400 shrink-0" aria-hidden="true" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Step 2 — identity (wizard + edit) */}
+              {(isEditing || wizardStep === 2) && (
+                <div className="space-y-4 animate-fade-in">
+                  {!isEditing && (
+                    <div>
+                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Who is joining?</p>
+                      <p className="text-[11px] text-zinc-600">Their full name and a username they'll use to sign in.</p>
+                    </div>
+                  )}
+                  {/* Preview avatar */}
+                  {editingUser.name && (
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-zinc-900/60 border border-white/5">
+                      <Avatar name={editingUser.name} size="lg" ring />
+                      <div className="min-w-0">
+                        <p className="text-white font-bold truncate">{editingUser.name}</p>
+                        <p className="text-xs text-zinc-500 truncate">@{editingUser.username || suggestUsername(editingUser.name)}</p>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Full Name</label>
+                    <input
+                      autoFocus
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-zinc-700 outline-none"
+                      placeholder="e.g. Maria Gonzales"
+                      value={editingUser.name || ''}
+                      onChange={e => {
+                        const name = e.target.value;
+                        setEditingUser({ ...editingUser, name, username: editingUser.username || suggestUsername(name) });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Username</label>
+                    <div className="relative">
+                      <span aria-hidden="true" className="absolute left-4 top-3 text-zinc-500">@</span>
+                      <input
+                        className="w-full bg-black/40 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white placeholder:text-zinc-700 outline-none font-mono"
+                        placeholder="maria.gonzales"
+                        value={editingUser.username || ''}
+                        onChange={e => setEditingUser({ ...editingUser, username: e.target.value.toLowerCase().replace(/\s+/g, '.') })}
+                      />
+                    </div>
+                    <p className="text-[10px] text-zinc-600 mt-1.5">They'll sign in with this. No spaces, lowercase.</p>
+                  </div>
+                  {isEditing && (
+                    <div>
+                      <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Role</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['employee', 'manager', 'admin'] as const).map(r => {
+                          const meta = ROLE_META[r];
+                          const active = editingUser.role === r;
+                          return (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() => setEditingUser({ ...editingUser, role: r })}
+                              className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${active ? 'ring-1 ring-blue-500/30 ' + meta.tint : 'bg-zinc-900/50 border-white/5 text-zinc-400 hover:text-white'}`}
+                            >
+                              {meta.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3 — PIN + hourly rate (wizard + edit) */}
+              {(isEditing || wizardStep === 3) && (
+                <div className="space-y-4 animate-fade-in">
+                  {!isEditing && (
+                    <div>
+                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Access &amp; pay</p>
+                      <p className="text-[11px] text-zinc-600">Set a PIN for sign-in. You can change it anytime.</p>
+                    </div>
+                  )}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">PIN (4+ digits)</label>
+                      <button type="button" onClick={() => setEditingUser({ ...editingUser, pin: randomPin() })} className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold">Generate</button>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={8}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-zinc-700 outline-none font-mono text-lg tracking-[0.3em]"
+                      placeholder="••••"
+                      value={editingUser.pin || ''}
+                      onChange={e => setEditingUser({ ...editingUser, pin: e.target.value.replace(/\D/g, '') })}
+                    />
+                  </div>
+                  {(editingUser.role === 'admin' || editingUser.role === 'manager' || editingUser.role === 'employee') && (
+                    <div>
+                      <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Hourly Rate <span className="text-zinc-600 normal-case font-normal">— used for job costing, hidden from workers</span></label>
+                      <div className="relative">
+                        <span aria-hidden="true" className="absolute left-4 top-3 text-zinc-500">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full bg-black/40 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white placeholder:text-zinc-700 outline-none font-mono"
+                          placeholder="0.00"
+                          value={editingUser.hourlyRate || ''}
+                          onChange={e => setEditingUser({ ...editingUser, hourlyRate: Number(e.target.value) || 0 })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {isEditing && (
+                    <label className="flex items-center gap-3 p-3 rounded-xl bg-zinc-900/60 border border-white/5 cursor-pointer">
+                      <input type="checkbox" checked={editingUser.isActive !== false} onChange={e => setEditingUser({ ...editingUser, isActive: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" />
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-white">Active</p>
+                        <p className="text-[10px] text-zinc-500">Inactive members can't sign in but their history stays intact.</p>
+                      </div>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {/* Step 4 — review + invite (wizard only) */}
+              {!isEditing && wizardStep === 4 && (
+                <div className="space-y-4 animate-fade-in">
+                  <div>
+                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Ready to invite</p>
+                    <p className="text-[11px] text-zinc-600">Review the details, then share these credentials with the new member.</p>
+                  </div>
+
+                  {/* Summary card */}
+                  {(() => {
+                    const meta = ROLE_META[editingUser.role || 'employee'];
+                    return (
+                      <div className="bg-gradient-to-br from-zinc-900/80 to-zinc-900/40 border border-white/10 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar name={editingUser.name} size="lg" ring />
+                          <div className="min-w-0">
+                            <p className="text-white font-black truncate">{editingUser.name}</p>
+                            <p className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border inline-block mt-1 ${meta.tint}`}>{meta.label}</p>
+                          </div>
+                        </div>
+                        <div className="divider-gradient" />
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Username</p>
+                            <p className="text-white font-mono mt-0.5">@{editingUser.username}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">PIN</p>
+                            <p className="text-white font-mono tracking-[0.2em] mt-0.5">{editingUser.pin}</p>
+                          </div>
+                          {editingUser.hourlyRate ? (
+                            <div className="col-span-2">
+                              <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Hourly Rate</p>
+                              <p className="text-emerald-400 font-mono mt-0.5">${(editingUser.hourlyRate || 0).toFixed(2)}/hr</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* QR-invite card — scan from phone to sign in */}
+                  {(() => {
+                    const inviteUrl = `${window.location.origin}?u=${encodeURIComponent(editingUser.username || '')}`;
+                    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&bgcolor=09090b&color=ffffff&margin=0&data=${encodeURIComponent(inviteUrl)}`;
+                    return (
+                      <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/25 rounded-2xl p-4 flex items-center gap-4">
+                        <div className="shrink-0 p-2 bg-white rounded-xl">
+                          <img src={qrUrl} alt={`QR code for ${editingUser.name}`} className="w-24 h-24 block" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-black text-blue-300 uppercase tracking-widest">Scan to sign in</p>
+                          <p className="text-[11px] text-blue-400/80 mt-1 leading-snug">Have {editingUser.name?.split(' ')[0] || 'them'} scan this with their phone camera to open the app. They'll just need to enter their PIN.</p>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const text = `${editingUser.name} — sign-in\nUsername: ${editingUser.username}\nPIN: ${editingUser.pin}\nApp: ${window.location.origin}`;
+                              try { await navigator.clipboard.writeText(text); setCopiedInvite(true); setTimeout(() => setCopiedInvite(false), 2000); } catch {}
+                            }}
+                            className="mt-2 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+                          >
+                            <Copy className="w-3 h-3" aria-hidden="true" /> {copiedInvite ? 'Copied!' : 'Copy Credentials'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Role capabilities preview */}
+                  <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">What they'll see</p>
+                    <ul className="space-y-1.5 text-[12px] text-zinc-300">
+                      {editingUser.role === 'admin' && <>
+                        <li className="flex items-center gap-2"><CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" /> Everything — jobs, logs, team, billing, TV display, settings</li>
+                        <li className="flex items-center gap-2"><CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" /> Financials: revenue, profit, hourly rates</li>
+                      </>}
+                      {editingUser.role === 'manager' && <>
+                        <li className="flex items-center gap-2"><CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" /> Jobs, logs, workers, reports, live floor</li>
+                        <li className="flex items-center gap-2"><X className="w-3 h-3 text-zinc-600 shrink-0" aria-hidden="true" /> Cannot edit billing or remove admins</li>
+                      </>}
+                      {editingUser.role === 'employee' && <>
+                        <li className="flex items-center gap-2"><CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" /> Work Station view, scan jobs, log time, view own history</li>
+                        <li className="flex items-center gap-2"><X className="w-3 h-3 text-zinc-600 shrink-0" aria-hidden="true" /> Cannot see rates, other workers' logs, or financials</li>
+                      </>}
+                    </ul>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-2">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
-              <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-medium">Save</button>
+
+            {/* Footer */}
+            <div className="px-5 py-4 border-t border-white/10 bg-zinc-950/50 flex items-center justify-between gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => wizardStep > 1 ? setWizardStep(wizardStep - 1) : closeModal()}
+                className="px-4 py-2.5 text-zinc-400 hover:text-white font-medium transition-colors"
+              >
+                {wizardStep === 1 || isEditing ? 'Cancel' : 'Back'}
+              </button>
+              {isEditing || wizardStep === 4 ? (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/40 flex items-center gap-2 transition-all"
+                >
+                  <Save className="w-4 h-4" aria-hidden="true" />
+                  {isEditing ? 'Save Changes' : 'Invite Member'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => canNextWizard && setWizardStep(wizardStep + 1)}
+                  disabled={!canNextWizard}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/40 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
+                >
+                  Continue <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Badge Sheet — printable 4-up QR badge grid */}
+      {showBadges && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xl p-0 sm:p-4 animate-fade-in no-print" onClick={() => setShowBadges(false)}>
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-5xl rounded-none sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-screen sm:max-h-[92vh]" onClick={e => e.stopPropagation()}>
+            {/* Header — hidden in print */}
+            <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/40 to-transparent shrink-0 no-print">
+              <div>
+                <h3 className="font-black text-white text-base tracking-tight flex items-center gap-2"><QrCode className="w-4 h-4 text-blue-400" aria-hidden="true" /> Sign-In Badges</h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5">Print, cut, and laminate. Workers scan their badge to sign in instantly.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => window.print()} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-900/30 transition-all">
+                  <Printer className="w-4 h-4" aria-hidden="true" /> Print
+                </button>
+                <button aria-label="Close" onClick={() => setShowBadges(false)} className="text-zinc-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10"><X className="w-4 h-4" aria-hidden="true" /></button>
+              </div>
+            </div>
+
+            {/* Badge grid — 2 cols on screen, 2 cols in print (A4 letter, 4 per page works at this size) */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-zinc-950/50">
+              <div id="badge-sheet" className="grid grid-cols-1 sm:grid-cols-2 gap-4 print:gap-3 max-w-4xl mx-auto">
+                {users.filter(u => u.isActive !== false).map(u => {
+                  const meta = ROLE_META[u.role];
+                  const inviteUrl = `${window.location.origin}?u=${encodeURIComponent(u.username)}`;
+                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&bgcolor=ffffff&color=000000&margin=0&data=${encodeURIComponent(inviteUrl)}`;
+                  return (
+                    <div key={u.id} className="badge-card bg-white text-black rounded-2xl overflow-hidden relative shadow-lg" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+                      {/* Role-colored top strip */}
+                      <div className="h-2" style={{ background: `linear-gradient(90deg, ${meta.color}, ${meta.color}80)` }} />
+
+                      {/* Body */}
+                      <div className="p-4 flex items-center gap-4">
+                        {/* QR code */}
+                        <div className="shrink-0 p-1.5 bg-white border border-zinc-200 rounded-xl">
+                          <img src={qrUrl} alt={`Sign-in QR for ${u.name}`} className="w-24 h-24 block" />
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">{shopSettings.companyName || 'SC DEBURRING'}</p>
+                          <p className="text-lg font-black text-zinc-900 leading-tight mt-0.5 truncate" title={u.name}>{u.name}</p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                            <span className="text-[9px] font-mono font-bold text-zinc-700 bg-zinc-100 border border-zinc-200 px-1.5 py-0.5 rounded">{u.employeeId || 'EMP-???'}</span>
+                            <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded text-white" style={{ background: meta.color }}>{meta.label}</span>
+                          </div>
+                          <p className="text-[9px] text-zinc-500 mt-2 font-mono">@{u.username}</p>
+                          <p className="text-[9px] text-zinc-400 mt-0.5 italic">Scan to sign in</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Help text — screen only */}
+              <p className="text-center text-[11px] text-zinc-500 mt-6 no-print">
+                {users.filter(u => u.isActive !== false).length} active badge{users.filter(u => u.isActive !== false).length !== 1 ? 's' : ''} ·
+                Tip: print on cardstock or laminate for durability · Inactive users excluded
+              </p>
             </div>
           </div>
         </div>
@@ -4092,6 +4806,432 @@ const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
         <Bell className="w-4 h-4" />
         {status === 'working' ? 'Registering...' : status === 'done' ? 'Re-register This Device' : 'Register This Device for Alerts'}
       </button>
+    </div>
+  );
+};
+
+// ── FINANCIAL SETTINGS ──
+// Precise computation pulls actual jobs + logs data to show real shop economics,
+// not just theoretical values from the rate/overhead inputs.
+// ── GOALS SETTINGS ── build customizable shop goals (jobs/week, revenue, on-time, etc.)
+const GOAL_METRIC_META: Record<GoalMetric, { label: string; desc: string; icon: string; unit: string; color: ShopGoal['color'] }> = {
+  'jobs-completed':   { label: 'Jobs Completed', desc: 'How many jobs finished in the period', icon: '✅', unit: 'jobs', color: 'emerald' },
+  'hours-logged':     { label: 'Hours Logged', desc: 'Total worker hours in the period', icon: '⏱️', unit: 'hrs', color: 'blue' },
+  'revenue':          { label: 'Revenue', desc: 'Sum of quote amounts on completed jobs', icon: '💰', unit: '$', color: 'amber' },
+  'on-time-delivery': { label: 'On-Time Delivery', desc: '% of completed jobs shipped by due date', icon: '🎯', unit: '%', color: 'cyan' },
+  'rework-count':     { label: 'Rework Issues', desc: 'Lower is better — keep under target', icon: '🔧', unit: 'issues', color: 'red' },
+  'customer-jobs':    { label: 'Customer Jobs', desc: 'Jobs completed for a specific customer', icon: '👥', unit: 'jobs', color: 'purple' },
+};
+
+// Shared goal helpers live in utils/goals.ts — used by both Settings editor and TV slide
+import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from './utils/goals';
+
+const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+  const goals = settings.shopGoals || [];
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // Subscribe to live data so the progress bar on each goal row is always current
+  const [gJobs, setGJobs] = useState<Job[]>([]);
+  const [gLogs, setGLogs] = useState<TimeLog[]>([]);
+  const [gReworkOpen, setGReworkOpen] = useState(0);
+  useEffect(() => {
+    const u1 = DB.subscribeJobs(setGJobs);
+    const u2 = DB.subscribeLogs(setGLogs);
+    const subRework = (DB as any).subscribeRework;
+    const u3 = typeof subRework === 'function'
+      ? subRework((entries: any[]) => setGReworkOpen((entries || []).filter((r: any) => r.status === 'open' || r.status === 'in-rework').length))
+      : () => {};
+    return () => { u1(); u2(); u3(); };
+  }, []);
+
+  const update = (idx: number, patch: Partial<ShopGoal>) => {
+    const next = [...goals];
+    next[idx] = { ...next[idx], ...patch };
+    setSettings({ ...settings, shopGoals: next });
+  };
+  const remove = (idx: number) => {
+    setSettings({ ...settings, shopGoals: goals.filter((_, i) => i !== idx) });
+  };
+  const add = (metric: GoalMetric) => {
+    const meta = GOAL_METRIC_META[metric];
+    const defaults: Record<GoalMetric, { label: string; target: number; period: GoalPeriod }> = {
+      'jobs-completed':   { label: 'Jobs Completed This Week', target: 20, period: 'week' },
+      'hours-logged':     { label: 'Hours Logged This Week', target: 160, period: 'week' },
+      'revenue':          { label: 'Monthly Revenue Goal', target: 50000, period: 'month' },
+      'on-time-delivery': { label: 'On-Time Delivery', target: 95, period: 'month' },
+      'rework-count':     { label: 'Keep Rework Low', target: 2, period: 'week' },
+      'customer-jobs':    { label: 'Top Customer Jobs This Month', target: 10, period: 'month' },
+    };
+    const d = defaults[metric];
+    const newGoal: ShopGoal = {
+      id: `goal_${Date.now()}`,
+      label: d.label,
+      metric,
+      period: d.period,
+      target: d.target,
+      unit: meta.unit,
+      color: meta.color,
+      lowerIsBetter: metric === 'rework-count',
+      enabled: true,
+      showOnTv: true,
+      showOnDashboard: true,
+    };
+    setSettings({ ...settings, shopGoals: [...goals, newGoal] });
+    setPickerOpen(false);
+    setExpandedId(newGoal.id);
+  };
+
+  return (
+    <div className="space-y-6 max-w-5xl">
+      <div>
+        <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2"><Zap className="w-5 h-5 text-amber-400" aria-hidden="true" /> Shop Goals</h3>
+        <p className="text-sm text-zinc-500">Set targets that matter to <em>your</em> shop — jobs per week, revenue, on-time delivery, rework limits, or custom metrics. Shown on the TV Goals slide and admin dashboard.</p>
+      </div>
+
+      {/* Add goal picker */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setPickerOpen(!pickerOpen)}
+          className="w-full sm:w-auto bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-bold px-4 py-2.5 rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
+        >
+          <Plus className="w-4 h-4" aria-hidden="true" /> Add Goal {pickerOpen ? '▲' : '▼'}
+        </button>
+        {pickerOpen && (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-zinc-900/50 border border-white/5 rounded-2xl animate-fade-in">
+            {(Object.keys(GOAL_METRIC_META) as GoalMetric[]).map(m => {
+              const meta = GOAL_METRIC_META[m];
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => add(m)}
+                  className="text-left px-3 py-3 rounded-xl border border-white/5 bg-zinc-950/40 hover:bg-zinc-800/60 hover:border-white/15 transition-all flex items-start gap-3"
+                >
+                  <span className="text-2xl shrink-0" aria-hidden="true">{meta.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-white">{meta.label}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5 leading-snug">{meta.desc}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Goals list */}
+      {goals.length === 0 && (
+        <div className="rounded-2xl border-2 border-dashed border-white/10 p-6 space-y-4">
+          <div className="text-center">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-3">
+              <Zap className="w-8 h-8 text-emerald-400" aria-hidden="true" />
+            </div>
+            <p className="text-base font-bold text-white">No goals yet — pick a quick-start pack or build your own</p>
+            <p className="text-sm text-zinc-500 mt-1">Every shop is different. You can always edit or delete these later.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const pack: ShopGoal[] = [
+                  { id: `g_${Date.now()}_1`, label: 'Jobs Completed This Week', metric: 'jobs-completed', period: 'week', target: 20, unit: 'jobs', color: 'emerald', enabled: true, showOnTv: true, showOnDashboard: true },
+                  { id: `g_${Date.now()}_2`, label: 'On-Time Delivery', metric: 'on-time-delivery', period: 'month', target: 95, unit: '%', color: 'cyan', enabled: true, showOnTv: true, showOnDashboard: true },
+                  { id: `g_${Date.now()}_3`, label: 'Keep Rework Under', metric: 'rework-count', period: 'week', target: 3, unit: 'issues', color: 'red', lowerIsBetter: true, enabled: true, showOnTv: true, showOnDashboard: true },
+                ];
+                setSettings({ ...settings, shopGoals: pack });
+              }}
+              className="text-left px-4 py-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 hover:bg-emerald-500/10 transition-all"
+            >
+              <p className="text-sm font-bold text-emerald-400 flex items-center gap-2">🏭 Production Shop</p>
+              <p className="text-xs text-zinc-400 mt-1">Jobs/week · On-time % · Rework</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const pack: ShopGoal[] = [
+                  { id: `g_${Date.now()}_1`, label: 'Monthly Revenue', metric: 'revenue', period: 'month', target: 50000, unit: '$', color: 'amber', enabled: true, showOnTv: true, showOnDashboard: true },
+                  { id: `g_${Date.now()}_2`, label: 'Weekly Hours Billed', metric: 'hours-logged', period: 'week', target: 160, unit: 'hrs', color: 'blue', enabled: true, showOnTv: true, showOnDashboard: true },
+                  { id: `g_${Date.now()}_3`, label: 'Jobs Shipped / Month', metric: 'jobs-completed', period: 'month', target: 60, unit: 'jobs', color: 'emerald', enabled: true, showOnTv: true, showOnDashboard: true },
+                ];
+                setSettings({ ...settings, shopGoals: pack });
+              }}
+              className="text-left px-4 py-3 rounded-xl border border-amber-500/25 bg-amber-500/5 hover:bg-amber-500/10 transition-all"
+            >
+              <p className="text-sm font-bold text-amber-400 flex items-center gap-2">💰 Revenue-Focused</p>
+              <p className="text-xs text-zinc-400 mt-1">Revenue · Hours billed · Shipments</p>
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-600 text-center">or use <strong className="text-zinc-400">+ Add Goal</strong> above to build from scratch</p>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {goals.map((goal, idx) => {
+          const meta = GOAL_METRIC_META[goal.metric];
+          const expanded = expandedId === goal.id;
+          const { current, pct } = computeGoalProgressForGoal(goal, gJobs, gLogs, gReworkOpen);
+          const achieved = goal.lowerIsBetter ? current <= goal.target : current >= goal.target;
+          const colorMap: Record<string, string> = {
+            blue: 'from-blue-500 to-indigo-500',
+            emerald: 'from-emerald-500 to-teal-500',
+            amber: 'from-amber-500 to-orange-500',
+            purple: 'from-purple-500 to-pink-500',
+            red: 'from-red-500 to-rose-500',
+            cyan: 'from-cyan-500 to-sky-500',
+          };
+          const barGrad = colorMap[goal.color || 'blue'];
+          return (
+            <div key={goal.id} className={`border rounded-2xl overflow-hidden transition-all ${goal.enabled ? 'border-white/10 bg-zinc-900/50' : 'border-white/5 bg-zinc-950/40 opacity-60'}`}>
+              <div className="p-4 flex items-center gap-3">
+                <span className="text-2xl shrink-0" aria-hidden="true">{meta.icon}</span>
+                <button type="button" onClick={() => setExpandedId(expanded ? null : goal.id)} className="flex-1 text-left min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{goal.label}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Target: <strong className="text-zinc-300">{goal.target} {goal.unit || meta.unit}</strong> · per <strong className="text-zinc-300">{goal.period}</strong>
+                    {goal.lowerIsBetter && <span className="text-amber-400/80 ml-1">(lower is better)</span>}
+                  </p>
+                </button>
+                {/* Live progress pill — mini visualization of current state */}
+                {goal.enabled && (
+                  <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 w-28">
+                    <div className="flex items-baseline gap-1 text-xs">
+                      <span className={`font-black tabular ${achieved ? 'text-emerald-400' : 'text-white'}`}>{formatGoalDisplay(goal, current)}</span>
+                      <span className="text-zinc-600">/ {formatGoalDisplay(goal, goal.target)}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full bg-gradient-to-r ${barGrad} transition-all`} style={{ width: `${pct}%` }} />
+                    </div>
+                    {achieved ? (
+                      <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">✓ Hit</span>
+                    ) : (
+                      <span className="text-[9px] text-zinc-500 tabular">{Math.round(pct)}%</span>
+                    )}
+                  </div>
+                )}
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 shrink-0 cursor-pointer">
+                  <input type="checkbox" checked={goal.showOnTv !== false} onChange={e => update(idx, { showOnTv: e.target.checked })} className="w-3.5 h-3.5 rounded accent-blue-500" aria-label="Show on TV" /> TV
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 shrink-0 cursor-pointer">
+                  <input type="checkbox" checked={goal.enabled} onChange={e => update(idx, { enabled: e.target.checked })} className="w-3.5 h-3.5 rounded accent-blue-500" aria-label="Enabled" /> Active
+                </label>
+                <button type="button" onClick={() => remove(idx)} aria-label="Delete goal" className="text-zinc-600 hover:text-red-400 shrink-0 p-1"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+              </div>
+              {/* Mobile progress bar — full-width, shown below header on small screens */}
+              {goal.enabled && (
+                <div className="sm:hidden px-4 pb-3 -mt-2">
+                  <div className="flex items-baseline gap-2 mb-1 text-xs">
+                    <span className={`font-black tabular ${achieved ? 'text-emerald-400' : 'text-white'}`}>{formatGoalDisplay(goal, current)}</span>
+                    <span className="text-zinc-600">/ {formatGoalDisplay(goal, goal.target)} {goal.unit || meta.unit}</span>
+                    <span className="ml-auto text-[10px] text-zinc-500 tabular">{achieved ? '✓ Hit' : `${Math.round(pct)}%`}</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full bg-gradient-to-r ${barGrad} transition-all`} style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              )}
+              {expanded && (
+                <div className="border-t border-white/5 bg-zinc-950/60 p-4 space-y-3">
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Display Name</label>
+                    <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.label} onChange={e => update(idx, { label: e.target.value })} />
+                    <p className="text-[10px] text-zinc-600 mt-1">What the TV shows as the goal name.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Target</label>
+                      <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:border-blue-500/50 focus:outline-none" value={goal.target} onChange={e => update(idx, { target: Number(e.target.value) || 0 })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Unit</label>
+                      <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.unit || meta.unit} onChange={e => update(idx, { unit: e.target.value })} placeholder={meta.unit} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Period</label>
+                      <select className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.period} onChange={e => update(idx, { period: e.target.value as GoalPeriod })}>
+                        {(['day','week','month','quarter','year'] as GoalPeriod[]).map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Color Accent</label>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {(['blue','emerald','amber','purple','red','cyan'] as const).map(c => {
+                        const bg = { blue: 'bg-blue-500', emerald: 'bg-emerald-500', amber: 'bg-amber-500', purple: 'bg-purple-500', red: 'bg-red-500', cyan: 'bg-cyan-500' }[c];
+                        return (
+                          <button key={c} type="button" onClick={() => update(idx, { color: c })} aria-label={c} className={`w-8 h-8 rounded-lg ${bg} transition-all ${(goal.color || 'blue') === c ? 'ring-2 ring-white scale-110' : 'opacity-40 hover:opacity-80'}`} />
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {goal.metric === 'customer-jobs' && (
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Customer Filter</label>
+                      <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.customerFilter || ''} onChange={e => update(idx, { customerFilter: e.target.value })} placeholder="e.g. PAMCO" list="goal-customers" />
+                      <datalist id="goal-customers">
+                        {(settings.clients || []).map(c => <option key={c} value={c} />)}
+                      </datalist>
+                    </div>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+                    <input type="checkbox" checked={!!goal.lowerIsBetter} onChange={e => update(idx, { lowerIsBetter: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
+                    <span><strong className="text-white">Lower is better</strong> — treat the target as a ceiling instead of a floor</span>
+                  </label>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+  const [allJobs, setAllJobs] = useState<Job[]>([]);
+  const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
+  const [workers, setWorkers] = useState<User[]>([]);
+
+  useEffect(() => {
+    const u1 = DB.subscribeJobs(setAllJobs);
+    const u2 = DB.subscribeLogs(setAllLogs);
+    const u3 = DB.subscribeUsers(setWorkers);
+    return () => { u1(); u2(); u3(); };
+  }, []);
+
+  const shopRate = settings.shopRate || 0;
+  const monthlyOverhead = settings.monthlyOverhead || 0;
+  const monthlyHours = settings.monthlyWorkHours || 160;
+  const ohRate = monthlyHours > 0 ? monthlyOverhead / monthlyHours : 0;
+  const trueCost = shopRate + ohRate;
+
+  // Real-data calculations — last 30 days
+  const thirtyDaysAgo = Date.now() - 30 * 86400000;
+  const completedRecent = allJobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= thirtyDaysAgo);
+  const loggedMins30 = allLogs.filter(l => l.startTime >= thirtyDaysAgo && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const loggedHrs30 = loggedMins30 / 60;
+
+  // Revenue from completed jobs' quoteAmount
+  const revenue30 = completedRecent.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+  const jobsWithQuote = completedRecent.filter(j => (j.quoteAmount || 0) > 0);
+
+  // Labor cost using each worker's hourlyRate (fallback to shopRate)
+  const laborCost30 = allLogs.filter(l => l.startTime >= thirtyDaysAgo && l.endTime).reduce((acc, l) => {
+    const w = workers.find(w => w.id === l.userId);
+    const r = w?.hourlyRate || shopRate;
+    return acc + ((l.durationMinutes || 0) / 60) * r;
+  }, 0);
+  const overheadCost30 = loggedHrs30 * ohRate;
+  const totalCost30 = laborCost30 + overheadCost30;
+  const grossProfit30 = revenue30 - totalCost30;
+  const marginPct = revenue30 > 0 ? (grossProfit30 / revenue30) * 100 : 0;
+
+  // Break-even: hours needed per month to cover overhead at current avg margin
+  const avgJobMargin = jobsWithQuote.length > 0
+    ? jobsWithQuote.reduce((acc, j) => {
+        const logs = allLogs.filter(l => l.jobId === j.id);
+        const mins = logs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+        const cost = (mins / 60) * trueCost;
+        return acc + ((j.quoteAmount || 0) - cost);
+      }, 0) / jobsWithQuote.length
+    : 0;
+  const breakEvenHours = avgJobMargin > 0 && ohRate > 0 ? monthlyOverhead / (avgJobMargin / (completedRecent.length > 0 ? loggedHrs30 / completedRecent.length : 1)) : null;
+
+  const fmtCurrency = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2"><Calculator className="w-5 h-5 text-emerald-400" aria-hidden="true" /> Financial</h3>
+        <p className="text-sm text-zinc-500">Shop rates, overhead, and real-world margins pulled from your actual job data.</p>
+      </div>
+
+      {/* ── LIVE SHOP ECONOMICS (last 30 days) — real data */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-black text-zinc-500 uppercase tracking-widest">Live · Last 30 Days</p>
+          <span className="text-[10px] text-zinc-600">{completedRecent.length} jobs · {loggedHrs30.toFixed(1)}h logged</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="card-shine bg-gradient-to-br from-emerald-500/10 to-emerald-500/[0.02] border border-emerald-500/20 rounded-xl p-4">
+            <div className="flex items-center gap-1.5 mb-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /><p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Revenue</p></div>
+            <p className="text-xl sm:text-2xl font-black text-white tabular">{fmtCurrency(revenue30)}</p>
+            <p className="text-[10px] text-zinc-500 mt-1">{jobsWithQuote.length} job{jobsWithQuote.length !== 1 ? 's' : ''} w/ quote</p>
+          </div>
+          <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-xl p-4">
+            <div className="flex items-center gap-1.5 mb-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400" /><p className="text-[10px] font-black text-red-400 uppercase tracking-widest">Total Cost</p></div>
+            <p className="text-xl sm:text-2xl font-black text-white tabular">{fmtCurrency(totalCost30)}</p>
+            <p className="text-[10px] text-zinc-500 mt-1">{fmtCurrency(laborCost30)} labor + {fmtCurrency(overheadCost30)} OH</p>
+          </div>
+          <div className={`card-shine border rounded-xl p-4 ${grossProfit30 >= 0 ? 'bg-gradient-to-br from-blue-500/10 to-blue-500/[0.02] border-blue-500/20' : 'bg-gradient-to-br from-red-500/10 to-red-500/[0.02] border-red-500/30'}`}>
+            <div className="flex items-center gap-1.5 mb-1"><span className={`w-1.5 h-1.5 rounded-full ${grossProfit30 >= 0 ? 'bg-blue-400' : 'bg-red-400'}`} /><p className={`text-[10px] font-black uppercase tracking-widest ${grossProfit30 >= 0 ? 'text-blue-400' : 'text-red-400'}`}>Gross Profit</p></div>
+            <p className={`text-xl sm:text-2xl font-black tabular ${grossProfit30 >= 0 ? 'text-white' : 'text-red-300'}`}>{grossProfit30 < 0 ? '-' : ''}{fmtCurrency(Math.abs(grossProfit30))}</p>
+            <p className="text-[10px] text-zinc-500 mt-1">on completed jobs</p>
+          </div>
+          <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-xl p-4">
+            <div className="flex items-center gap-1.5 mb-1"><span className={`w-1.5 h-1.5 rounded-full ${marginPct >= 20 ? 'bg-emerald-400' : marginPct >= 10 ? 'bg-yellow-400' : 'bg-red-400'}`} /><p className={`text-[10px] font-black uppercase tracking-widest ${marginPct >= 20 ? 'text-emerald-400' : marginPct >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>Margin</p></div>
+            <p className="text-xl sm:text-2xl font-black text-white tabular">{marginPct.toFixed(1)}%</p>
+            <p className="text-[10px] text-zinc-500 mt-1">{marginPct >= 30 ? '💪 healthy' : marginPct >= 15 ? 'ok' : marginPct >= 0 ? '⚠ thin' : '🚨 losing money'}</p>
+          </div>
+        </div>
+        {revenue30 === 0 && (
+          <p className="text-[10px] text-zinc-600 italic mt-2">Tip: set <strong className="text-zinc-400">Quote Amount</strong> on completed jobs (job edit modal) so these numbers populate.</p>
+        )}
+      </div>
+
+      {/* ── RATE & OVERHEAD INPUTS */}
+      <div>
+        <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">Shop Rates</p>
+        <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Fallback Rate</label>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-blue-500/50 focus:outline-none" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
+              <p className="text-[10px] text-zinc-600 mt-1">Used when a worker has no individual rate.</p>
+            </div>
+            <div>
+              <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Monthly Overhead</label>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-blue-500/50 focus:outline-none" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <p className="text-[10px] text-zinc-600 mt-1">Rent, utilities, insurance, software, etc.</p>
+            </div>
+            <div>
+              <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Productive Hours</label>
+              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-blue-500/50 focus:outline-none" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <p className="text-[10px] text-zinc-600 mt-1">Billable hours per month per worker.</p>
+            </div>
+          </div>
+          {trueCost > 0 && (
+            <div className="bg-gradient-to-br from-zinc-800/70 to-zinc-800/30 border border-white/5 rounded-xl p-4">
+              <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest mb-3">True Hourly Cost (calculated)</p>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div><p className="text-[10px] text-zinc-500">Labor</p><p className="text-lg font-black text-white tabular mt-0.5">${shopRate.toFixed(2)}</p></div>
+                <div className="text-zinc-600 self-center text-xl">+</div>
+                <div><p className="text-[10px] text-zinc-500">Overhead</p><p className="text-lg font-black text-yellow-400 tabular mt-0.5">${ohRate.toFixed(2)}</p></div>
+              </div>
+              <div className="border-t border-white/10 mt-3 pt-3 text-center">
+                <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Every hour costs</p>
+                <p className="text-3xl font-black text-emerald-400 tabular mt-1">${trueCost.toFixed(2)}</p>
+                <p className="text-[10px] text-zinc-600 mt-1">Quote at ≥ ${(trueCost * 1.3).toFixed(2)}/hr for 30% margin · ≥ ${(trueCost * 1.5).toFixed(2)}/hr for 50%</p>
+              </div>
+            </div>
+          )}
+          {workers.length > 0 && (
+            <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-3 flex items-start gap-2">
+              <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                <strong className="text-blue-300">Worker-specific rates</strong> override the fallback. Set them in
+                <strong className="text-white"> Team → edit worker</strong>. Currently {workers.filter(w => w.hourlyRate).length} of {workers.length} workers have individual rates set.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── QUOTE CALCULATOR (existing) */}
+      <div>
+        <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">Quote Calculator</p>
+        <QuoteCalculator settings={settings} />
+      </div>
     </div>
   );
 };
@@ -4240,555 +5380,1390 @@ const QuoteCalculator = ({ settings }: { settings: SystemSettings }) => {
   );
 };
 
-// ═══════════════════════════════════════════════════
-// REPORTS VIEW — Worker productivity, job metrics
-// ═══════════════════════════════════════════════════
-const ReportsView = () => {
-  const [logs, setLogs] = useState<TimeLog[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+
+// --- MACHINE MANAGER — simple list of physical stations/machines ---
+const MachineManager = ({ settings, onSaveSettings }: { settings: SystemSettings; onSaveSettings: (s: SystemSettings) => void }) => {
+  const [open, setOpen] = useState(false);
+  const [newMachine, setNewMachine] = useState('');
+  const machines = settings.machines || [];
+  const handleAdd = () => {
+    const name = newMachine.trim();
+    if (!name) return;
+    if (machines.some(m => m.toLowerCase() === name.toLowerCase())) { setNewMachine(''); return; }
+    onSaveSettings({ ...settings, machines: [...machines, name] });
+    setNewMachine('');
+  };
+  const handleDelete = (m: string) => onSaveSettings({ ...settings, machines: machines.filter(x => x !== m) });
+  return (
+    <div>
+      <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+        <button onClick={() => setOpen(!open)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 rounded-xl transition-colors">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-white">Machines &amp; Stations</p>
+            <span className="text-[10px] bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded-full font-bold">{machines.length}</span>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+        </button>
+        {open && (
+          <div className="px-4 pb-4 space-y-3 border-t border-white/5">
+            <p className="text-[11px] text-zinc-500 mt-3">Physical work locations in your shop (e.g. "Bench 1", "Vibratory Tumbler", "Belt Sander 2"). Workers can tag which machine an operation happened at.</p>
+            <div className="flex gap-2">
+              <input aria-label="Add machine or station" value={newMachine} onChange={e => setNewMachine(e.target.value)} placeholder="Add machine or station…" className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white outline-none" onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+              <button onClick={handleAdd} className="bg-orange-600 hover:bg-orange-500 px-3 rounded-lg text-white text-xs font-bold">Add</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {machines.sort((a, b) => a.localeCompare(b)).map(m => (
+                <span key={m} className="bg-zinc-800 border border-white/10 px-2 py-0.5 rounded flex items-center gap-1 text-xs text-zinc-300">
+                  {m}<button aria-label={`Remove ${m}`} onClick={() => handleDelete(m)} className="text-zinc-500 hover:text-red-400 p-1 rounded"><X className="w-2.5 h-2.5" aria-hidden="true" /></button>
+                </span>
+              ))}
+            </div>
+            {machines.length === 0 && (
+              <div className="bg-zinc-950/60 border border-dashed border-white/5 rounded-lg p-3 mt-2">
+                <p className="text-[11px] text-zinc-500 mb-2">Common machines in a deburring/finishing shop:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {['Bench 1', 'Bench 2', 'Belt Sander', 'Vibratory Tumbler', 'Blast Cabinet', 'Drill Press', 'Hand Grinder'].map(suggested => (
+                    <button
+                      key={suggested}
+                      type="button"
+                      onClick={() => onSaveSettings({ ...settings, machines: [...(settings.machines || []), suggested] })}
+                      className="text-[11px] bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/20 text-orange-400 px-2.5 py-1 rounded-lg font-semibold transition-colors"
+                    >
+                      + {suggested}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- CUSTOMER MANAGER — discovers + dedupes customers pulled from actual jobs ---
+const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any; settings: SystemSettings; onSaveSettings: (s: SystemSettings) => void }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [period, setPeriod] = useState<'week' | 'month' | 'custom' | 'all'>('week');
-  const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
-  const isMobile = useIsMobile();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [canonicalName, setCanonicalName] = useState('');
+  const [merging, setMerging] = useState(false);
+  const [newClient, setNewClient] = useState('');
 
-  useEffect(() => {
-    const u1 = DB.subscribeLogs(setLogs);
-    const u2 = DB.subscribeUsers(setUsers);
-    const u3 = DB.subscribeJobs(setJobs);
-    const u4 = DB.subscribeSettings(setSettings);
-    return () => { u1(); u2(); u3(); u4(); };
-  }, []);
+  useEffect(() => DB.subscribeJobs(setJobs), []);
 
-  const now = Date.now();
-  const weekAgo = now - 7 * 86400000;
-  const monthAgo = now - 30 * 86400000;
-  const customCutoffStart = customStart ? new Date(customStart).getTime() : 0;
-  const customCutoffEnd = customEnd ? new Date(customEnd + 'T23:59:59').getTime() : now;
-  const cutoff = period === 'week' ? weekAgo : period === 'month' ? monthAgo : period === 'custom' ? customCutoffStart : 0;
+  // Aggregate: unique customer strings from jobs + manually-added clients
+  const rows = useMemo(() => {
+    const map = new Map<string, { jobs: number; active: number; completed: number; lastSeen: number }>();
+    jobs.forEach(j => {
+      const c = (j.customer || '').trim();
+      if (!c) return;
+      const cur = map.get(c) || { jobs: 0, active: 0, completed: 0, lastSeen: 0 };
+      cur.jobs++;
+      if (j.status === 'completed') cur.completed++; else cur.active++;
+      cur.lastSeen = Math.max(cur.lastSeen, j.completedAt || j.createdAt || 0);
+      map.set(c, cur);
+    });
+    // Merge in manually-added clients with 0 jobs
+    (settings.clients || []).forEach(c => {
+      if (!map.has(c)) map.set(c, { jobs: 0, active: 0, completed: 0, lastSeen: 0 });
+    });
+    return [...map.entries()]
+      .map(([name, stats]) => ({ name, ...stats }))
+      .sort((a, b) => b.jobs - a.jobs || a.name.localeCompare(b.name));
+  }, [jobs, settings.clients]);
 
-  const completedLogs = logs.filter(l => l.endTime && l.endTime > cutoff && (period !== 'custom' || l.endTime <= customCutoffEnd));
-  const activeWorkers = users.filter(u => u.isActive !== false && u.role !== 'admin');
-  const shopRate = settings.shopRate || 0;
-  const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
+  // Duplicate detection — strip corporate suffixes, punctuation, whitespace;
+  // then fuzzy-match on first 2 meaningful tokens.
+  const COMMON_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|llc|ltd|limited|lp|llp|pllc|gmbh|plc|sa|ag|nv|bv|pty|oy|aero|aerospace|industries|industry|group|holdings|services|solutions|machining|manufacturing|mfg|products|intl|international)\b/gi;
+  const normalize = (s: string) => s
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/\([^)]*\)/g, '')
+    .replace(COMMON_SUFFIXES, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 1)
+    .slice(0, 2)
+    .join('');
 
-  // Per-worker stats
-  const workerStats = activeWorkers.map(w => {
-    const wLogs = completedLogs.filter(l => l.userId === w.id);
-    const totalMins = wLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
-    const totalHrs = totalMins / 60;
-    const jobIds = [...new Set(wLogs.map(l => l.jobId))];
-    const operations = [...new Set(wLogs.map(l => l.operation))];
-    const rate = (w as any).hourlyRate || shopRate;
-    const cost = totalHrs * (rate + ohRate);
-    const avgMinsPerSession = wLogs.length > 0 ? totalMins / wLogs.length : 0;
-    return { user: w, logs: wLogs, totalMins, totalHrs, jobCount: jobIds.length, operations, cost, sessions: wLogs.length, avgMinsPerSession };
-  }).sort((a, b) => b.totalHrs - a.totalHrs);
+  const suggestedGroups = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    rows.forEach(r => {
+      const key = normalize(r.name);
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r.name);
+    });
+    return [...groups.values()].filter(g => g.length > 1);
+  }, [rows]);
 
-  // Totals
-  const totalHrs = workerStats.reduce((a, w) => a + w.totalHrs, 0);
-  const totalCost = workerStats.reduce((a, w) => a + w.cost, 0);
-  const totalSessions = workerStats.reduce((a, w) => a + w.sessions, 0);
-  const completedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff);
-  const totalRevenue = completedJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+  const toggle = (name: string) => {
+    const next = new Set(selected);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setSelected(next);
+    // Default canonical to the longest/most-jobs name in selection
+    if (next.size > 0) {
+      const best = rows.filter(r => next.has(r.name)).sort((a, b) => b.jobs - a.jobs || b.name.length - a.name.length)[0];
+      if (best) setCanonicalName(best.name);
+    }
+  };
 
-  // Operations breakdown
-  const opMap = new Map<string, number>();
-  completedLogs.forEach(l => opMap.set(l.operation, (opMap.get(l.operation) || 0) + (l.durationMinutes || 0)));
-  const opBreakdown = Array.from(opMap.entries()).sort((a, b) => b[1] - a[1]);
-  const maxOpMins = opBreakdown.length > 0 ? opBreakdown[0][1] : 1;
+  const handleMerge = async () => {
+    if (selected.size < 2) { addToast('error', 'Select at least 2 customers to merge'); return; }
+    if (!canonicalName.trim()) { addToast('error', 'Pick a final name'); return; }
+    setMerging(true);
+    try {
+      const others = [...selected].filter(n => n !== canonicalName.trim());
+      if (others.length === 0) { addToast('info', 'Nothing to merge — all selected already use this name'); setMerging(false); return; }
+      const count = await DB.renameCustomer(others, canonicalName.trim());
+      // Also remove merged aliases from saved clients list if present
+      const clients = (settings.clients || []).filter(c => !others.includes(c));
+      if (!clients.includes(canonicalName.trim()) && canonicalName.trim()) clients.push(canonicalName.trim());
+      onSaveSettings({ ...settings, clients });
+      addToast('success', `Merged ${others.length} name${others.length !== 1 ? 's' : ''} → "${canonicalName.trim()}" · ${count} job${count !== 1 ? 's' : ''} updated`);
+      setSelected(new Set());
+      setCanonicalName('');
+    } catch {
+      addToast('error', 'Merge failed');
+    }
+    setMerging(false);
+  };
+
+  const applySuggestedGroup = (names: string[]) => {
+    setSelected(new Set(names));
+    const best = rows.filter(r => names.includes(r.name)).sort((a, b) => b.jobs - a.jobs || b.name.length - a.name.length)[0];
+    if (best) setCanonicalName(best.name);
+  };
+
+  const handleAddClient = () => {
+    const name = newClient.trim();
+    if (!name) return;
+    if ((settings.clients || []).some(c => c.toLowerCase() === name.toLowerCase())) { addToast('info', 'Already exists'); return; }
+    onSaveSettings({ ...settings, clients: [...(settings.clients || []), name] });
+    setNewClient('');
+  };
 
   return (
-    <div className="max-w-4xl w-full space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white">Reports</h2>
-          <p className="text-sm text-zinc-500">Worker productivity and shop performance.</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-white">Customers</p>
+            <span className="text-[10px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded-full font-bold">{rows.length}</span>
+          </div>
+          <p className="text-[11px] text-zinc-500 mt-0.5">Found from your jobs + manually added. Select duplicates and merge to clean up reports.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5">
-            {(['week', 'month', 'all', 'custom'] as const).map(p => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${period === p ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
-                {p === 'week' ? 'Week' : p === 'month' ? 'Month' : p === 'custom' ? 'Custom' : 'All'}
+      </div>
+
+      {/* Suggested merges */}
+      {suggestedGroups.length > 0 && (
+        <div className="px-4 py-3 border-b border-white/5 bg-amber-500/5">
+          <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest mb-2">⚠ Possible duplicates</p>
+          <div className="space-y-1.5">
+            {suggestedGroups.slice(0, 4).map((group, i) => (
+              <button key={i} type="button" onClick={() => applySuggestedGroup(group)} className="w-full text-left flex items-center gap-2 p-2 rounded-lg bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/15 transition-colors">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" aria-hidden="true" />
+                <span className="flex-1 text-xs text-zinc-300 truncate">
+                  {group.map((n, idx) => <span key={n}>{idx > 0 && <span className="text-zinc-600 mx-1">·</span>}<span className="font-semibold text-white">{n}</span></span>)}
+                </span>
+                <span className="text-[10px] text-amber-400 font-bold shrink-0">Select all</span>
               </button>
             ))}
           </div>
-          {period === 'custom' && (
-            <div className="flex gap-2 items-center">
-              <input type="date" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={customStart} onChange={e => setCustomStart(e.target.value)} />
-              <span className="text-zinc-500 text-xs">to</span>
-              <input type="date" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={customEnd} onChange={e => setCustomEnd(e.target.value)} />
+        </div>
+      )}
+
+      {/* Action bar */}
+      <div className="px-4 py-3 border-b border-white/5 flex flex-wrap items-center gap-2 bg-zinc-950/40">
+        <span className="text-[11px] text-zinc-500">{selected.size > 0 ? `${selected.size} selected` : 'Pick 2+ to merge'}</span>
+        {selected.size > 0 && (
+          <>
+            <span className="text-zinc-600">→</span>
+            <input
+              aria-label="Final customer name"
+              value={canonicalName}
+              onChange={e => setCanonicalName(e.target.value)}
+              placeholder="Final name…"
+              className="flex-1 min-w-[140px] bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white outline-none"
+            />
+            <button onClick={handleMerge} disabled={merging || selected.size < 2 || !canonicalName.trim()} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
+              {merging ? 'Merging…' : 'Merge'}
+            </button>
+            <button onClick={() => { setSelected(new Set()); setCanonicalName(''); }} className="text-zinc-400 hover:text-white text-xs font-medium px-2 py-1 rounded hover:bg-white/5">Clear</button>
+          </>
+        )}
+        {selected.size === 0 && (
+          <div className="flex gap-2 flex-1 ml-auto justify-end">
+            <input aria-label="Add customer" value={newClient} onChange={e => setNewClient(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddClient()} placeholder="Add new customer…" className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white outline-none w-48" />
+            <button onClick={handleAddClient} className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Add</button>
+          </div>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="max-h-[400px] overflow-y-auto">
+        {rows.length === 0 ? (
+          <p className="p-6 text-center text-zinc-500 text-xs italic">No customers yet. Scan a PO or add one above.</p>
+        ) : (
+          <div className="divide-y divide-white/5">
+            {rows.map(r => {
+              const isSelected = selected.has(r.name);
+              const slug = settings.clientSlugs?.[r.name] || makeClientSlug(r.name);
+              const hasCustomSlug = !!settings.clientSlugs?.[r.name];
+              return (
+                <div key={r.name} className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${isSelected ? 'bg-blue-500/10' : 'hover:bg-white/[0.03]'}`}>
+                  <input type="checkbox" checked={isSelected} onChange={() => toggle(r.name)} className="w-4 h-4 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500 shrink-0 cursor-pointer" aria-label={`Select ${r.name}`} />
+                  <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-white truncate" title={r.name}>{r.name}</span>
+                    {/* Short URL slug — editable pill */}
+                    <div className="flex items-center gap-1 bg-zinc-800/80 rounded px-1.5 py-0.5 border border-white/5 group/slug">
+                      <span className="text-[9px] text-zinc-600 font-mono">?c=</span>
+                      <input
+                        value={slug}
+                        onChange={(e) => {
+                          const cleaned = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32);
+                          const slugs = { ...(settings.clientSlugs || {}) };
+                          if (cleaned) slugs[r.name] = cleaned;
+                          else delete slugs[r.name];
+                          onSaveSettings({ ...settings, clientSlugs: slugs });
+                        }}
+                        className={`bg-transparent border-none outline-none text-[10px] font-mono tabular w-24 p-0 ${hasCustomSlug ? 'text-emerald-400' : 'text-zinc-400'}`}
+                        aria-label={`URL slug for ${r.name}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = buildPortalUrl(r.name, { ...settings, clientSlugs: { ...(settings.clientSlugs || {}), [r.name]: slug } });
+                          navigator.clipboard.writeText(url).then(() => addToast('success', `Copied: ${url.slice(0, 60)}${url.length > 60 ? '…' : ''}`)).catch(() => prompt('Copy:', url));
+                        }}
+                        aria-label={`Copy portal link for ${r.name}`}
+                        title="Copy portal URL"
+                        className="text-zinc-500 hover:text-emerald-400 p-0.5 transition-colors"
+                      >
+                        <Copy className="w-3 h-3" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-mono tabular text-zinc-400 shrink-0">{r.jobs} job{r.jobs !== 1 ? 's' : ''}</span>
+                  {r.active > 0 && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded shrink-0">{r.active} active</span>}
+                  {r.jobs === 0 && <button type="button" aria-label={`Remove ${r.name}`} onClick={(e) => { e.preventDefault(); onSaveSettings({ ...settings, clients: (settings.clients || []).filter(c => c !== r.name) }); }} className="text-zinc-500 hover:text-red-400 p-1 rounded shrink-0"><X className="w-3 h-3" aria-hidden="true" /></button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <div className="px-4 py-2 border-t border-white/5 bg-zinc-950/40">
+          <p className="text-[10px] text-zinc-600 leading-relaxed">
+            💡 <strong className="text-zinc-500">Short URL slug:</strong> each customer gets a tidy portal link like <code className="font-mono text-emerald-400">?c=acme-corp</code>. Edit inline → copy with the 📋 icon.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PROCESS LIBRARY MANAGER — reusable process templates (Quotes Round 1 #2)
+// ══════════════════════════════════════════════════════════════════
+const DEFAULT_PROCESS_SEEDS: Omit<ProcessTemplate, 'id'>[] = [
+  { name: 'Vibratory Deburr', description: 'Vibratory tumble deburring, break sharp edges', unit: 'ea', setupFee: 75, pricePerUnit: 0.45, minLot: 50, category: 'Deburring' },
+  { name: 'Hand Deburr', description: 'Manual deburring with files/stones per print', unit: 'ea', setupFee: 50, pricePerUnit: 1.25, minLot: 25, category: 'Deburring' },
+  { name: 'Polishing', description: 'Multi-step polish to customer spec', unit: 'ea', setupFee: 100, pricePerUnit: 2.5, minLot: 10, category: 'Finishing' },
+  { name: 'Setup & Inspection', description: 'First article inspection + setup', unit: 'lot', pricePerUnit: 125, category: 'Inspection' },
+  { name: 'Passivation', description: 'Stainless steel passivation per AMS 2700', unit: 'lb', setupFee: 150, pricePerUnit: 4.5, minCharge: 250, category: 'Finishing' },
+];
+
+const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+  const processes = settings.processTemplates || [];
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showSeeds, setShowSeeds] = useState(false);
+
+  const update = (idx: number, patch: Partial<ProcessTemplate>) => {
+    const next = [...processes];
+    next[idx] = { ...next[idx], ...patch };
+    setSettings({ ...settings, processTemplates: next });
+  };
+  const remove = (idx: number) => setSettings({ ...settings, processTemplates: processes.filter((_, i) => i !== idx) });
+  const add = (seed?: Omit<ProcessTemplate, 'id'>) => {
+    const p: ProcessTemplate = seed
+      ? { id: `proc_${Date.now()}`, ...seed }
+      : { id: `proc_${Date.now()}`, name: 'New Process', unit: 'ea', pricePerUnit: 0, category: 'Other' };
+    setSettings({ ...settings, processTemplates: [...processes, p] });
+    setExpandedId(p.id);
+    setShowSeeds(false);
+  };
+
+  // Group by category for cleaner display
+  const byCategory: Record<string, ProcessTemplate[]> = {};
+  processes.forEach(p => { const c = p.category || 'Other'; (byCategory[c] = byCategory[c] || []).push(p); });
+
+  return (
+    <div className="bg-zinc-900/50 border border-emerald-500/15 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-2 bg-gradient-to-b from-emerald-500/10 to-transparent">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white flex items-center gap-2"><Zap className="w-4 h-4 text-emerald-400" aria-hidden="true" /> Process Library</p>
+          <p className="text-[11px] text-zinc-500 mt-0.5">Reusable process templates — quote line items fill in with one click. Setup fee, per-unit price, min lot all saved.</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {processes.length === 0 && (
+            <button type="button" onClick={() => setShowSeeds(!showSeeds)} className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold">✨ Starter Pack</button>
+          )}
+          <button type="button" onClick={() => add()} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add</button>
+        </div>
+      </div>
+
+      {showSeeds && (
+        <div className="p-4 bg-emerald-500/5 border-b border-white/5 space-y-2">
+          <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest">Quick start — pick what applies to your shop</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {DEFAULT_PROCESS_SEEDS.map(seed => (
+              <button key={seed.name} type="button" onClick={() => add(seed)} className="text-left bg-zinc-900/70 hover:bg-zinc-800 border border-white/5 hover:border-emerald-500/30 rounded-lg p-3 transition-all">
+                <p className="text-sm font-bold text-white">{seed.name}</p>
+                <p className="text-[11px] text-zinc-500 mt-0.5">${seed.pricePerUnit}/{seed.unit}{seed.setupFee ? ` · $${seed.setupFee} setup` : ''}{seed.minLot ? ` · min ${seed.minLot}` : ''}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {processes.length === 0 && !showSeeds && (
+        <div className="px-4 py-8 text-center">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-3">
+            <Zap className="w-7 h-7 text-emerald-400" aria-hidden="true" />
+          </div>
+          <p className="text-sm font-bold text-white">No processes yet</p>
+          <p className="text-xs text-zinc-500 mt-1">Saved processes pre-fill quote line items — saves minutes per quote.</p>
+          <p className="text-[10px] text-zinc-600 mt-3 italic">Try: "Vibratory Deburr @ $0.45/ea · $75 setup · min 50"</p>
+        </div>
+      )}
+
+      {Object.keys(byCategory).length > 0 && (
+        <div className="divide-y divide-white/5">
+          {Object.entries(byCategory).sort().map(([cat, procs]) => (
+            <div key={cat}>
+              <p className="px-4 py-2 text-[10px] font-black text-emerald-400 uppercase tracking-widest bg-zinc-950/40">{cat}</p>
+              <div className="divide-y divide-white/5">
+                {procs.map(p => {
+                  const idx = processes.findIndex(x => x.id === p.id);
+                  const expanded = expandedId === p.id;
+                  return (
+                    <div key={p.id}>
+                      <div className="px-4 py-3 flex items-center gap-3">
+                        <button type="button" onClick={() => setExpandedId(expanded ? null : p.id)} className="flex-1 text-left min-w-0">
+                          <p className="text-sm font-bold text-white truncate">{p.name}</p>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">
+                            <span className="text-emerald-400 font-mono font-bold">${p.pricePerUnit.toFixed(2)}</span>/<span>{p.unit}</span>
+                            {p.setupFee ? <span className="text-zinc-600"> · <span className="text-zinc-400">${p.setupFee} setup</span></span> : null}
+                            {p.minLot ? <span className="text-zinc-600"> · <span className="text-zinc-400">min {p.minLot}</span></span> : null}
+                            {p.minCharge ? <span className="text-zinc-600"> · <span className="text-zinc-400">${p.minCharge} min charge</span></span> : null}
+                          </p>
+                        </button>
+                        <button type="button" onClick={() => remove(idx)} aria-label="Delete" className="text-zinc-500 hover:text-red-400 p-1 rounded"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+                      </div>
+                      {expanded && (
+                        <div className="border-t border-white/5 bg-zinc-950/40 p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="sm:col-span-2">
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Process Name</label>
+                            <input value={p.name} onChange={e => update(idx, { name: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500/50 focus:outline-none" />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Default Line-Item Description</label>
+                            <textarea value={p.description || ''} onChange={e => update(idx, { description: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500/50 focus:outline-none resize-y" rows={2} placeholder={`e.g. "${p.name} per customer spec"`} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Category</label>
+                            <input value={p.category || ''} onChange={e => update(idx, { category: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500/50 focus:outline-none" placeholder="Deburring, Finishing, etc." list={`cat-options-${p.id}`} />
+                            <datalist id={`cat-options-${p.id}`}>{['Deburring','Finishing','Inspection','Assembly','Packing','Other'].map(c => <option key={c} value={c} />)}</datalist>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Unit</label>
+                            <input value={p.unit} onChange={e => update(idx, { unit: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500/50 focus:outline-none" list={`unit-options-${p.id}`} />
+                            <datalist id={`unit-options-${p.id}`}>{['ea','hr','ft','lb','lot','pcs','set'].map(u => <option key={u} value={u} />)}</datalist>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Price / Unit</label>
+                            <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" value={p.pricePerUnit} onChange={e => update(idx, { pricePerUnit: Number(e.target.value) || 0 })} className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-7 pr-3 text-sm text-white font-mono focus:border-emerald-500/50 focus:outline-none" /></div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Setup Fee (optional)</label>
+                            <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="1" value={p.setupFee || ''} onChange={e => update(idx, { setupFee: Number(e.target.value) || undefined })} className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-7 pr-3 text-sm text-white font-mono focus:border-emerald-500/50 focus:outline-none" placeholder="0" /></div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Min Lot Size</label>
+                            <input type="number" value={p.minLot || ''} onChange={e => update(idx, { minLot: Number(e.target.value) || undefined })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:border-emerald-500/50 focus:outline-none" placeholder="0" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Min Charge</label>
+                            <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="1" value={p.minCharge || ''} onChange={e => update(idx, { minCharge: Number(e.target.value) || undefined })} className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-7 pr-3 text-sm text-white font-mono focus:border-emerald-500/50 focus:outline-none" placeholder="0" /></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// SNIPPET LIBRARY MANAGER — reusable text blocks for quote Scope/Notes/Terms
+// (Quotes Round 1 #8 — steal from PandaDoc)
+// ══════════════════════════════════════════════════════════════════
+const DEFAULT_SNIPPET_SEEDS: Omit<QuoteSnippet, 'id'>[] = [
+  { label: 'Certificate of Conformance', text: 'CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.', target: 'notes', category: 'Quality' },
+  { label: 'Mil-Spec Inspection', text: 'First-article and in-process inspection per MIL-STD-1595. Documentation available on request.', target: 'scope', category: 'Quality' },
+  { label: 'Rush Fee Terms', text: 'Rush lead-time (< 5 business days) adds 25% to total. Standard lead-time applies unless otherwise quoted.', target: 'terms', category: 'Pricing' },
+  { label: 'Net 30 Terms', text: 'Net 30 from invoice date. Past-due balances incur 1.5% monthly finance charge.', target: 'terms', category: 'Pricing' },
+  { label: '50% Deposit Required', text: 'A 50% deposit is required before production begins. Balance due upon completion prior to shipment.', target: 'terms', category: 'Pricing' },
+  { label: 'Customer-Supplied Material', text: 'Customer is responsible for providing material in good condition. We inspect upon receipt but assume no liability for pre-existing defects.', target: 'scope', category: 'Scope' },
+];
+
+const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+  const snippets = settings.quoteSnippets || [];
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showSeeds, setShowSeeds] = useState(false);
+
+  const update = (idx: number, patch: Partial<QuoteSnippet>) => {
+    const next = [...snippets]; next[idx] = { ...next[idx], ...patch };
+    setSettings({ ...settings, quoteSnippets: next });
+  };
+  const remove = (idx: number) => setSettings({ ...settings, quoteSnippets: snippets.filter((_, i) => i !== idx) });
+  const add = (seed?: Omit<QuoteSnippet, 'id'>) => {
+    const s: QuoteSnippet = seed
+      ? { id: `snip_${Date.now()}`, ...seed }
+      : { id: `snip_${Date.now()}`, label: 'New Snippet', text: '', target: 'notes', category: 'Other' };
+    setSettings({ ...settings, quoteSnippets: [...snippets, s] });
+    setExpandedId(s.id);
+    setShowSeeds(false);
+  };
+
+  return (
+    <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+      <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-white">Content Blocks (Snippets)</span>
+          <span className="text-[9px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded uppercase tracking-widest">{snippets.length}</span>
+        </div>
+        <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+      </summary>
+      <div className="px-4 pb-4 space-y-2">
+        <p className="text-[10px] text-zinc-500 leading-relaxed">Reusable text for Scope, Notes, and Terms. One click to insert — saves retyping common boilerplate every quote.</p>
+        <div className="flex gap-1.5">
+          {snippets.length === 0 && (
+            <button type="button" onClick={() => setShowSeeds(!showSeeds)} className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold">✨ Starter Pack</button>
+          )}
+          <button type="button" onClick={() => add()} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add</button>
+        </div>
+
+        {showSeeds && (
+          <div className="space-y-1 pt-2">
+            {DEFAULT_SNIPPET_SEEDS.map(seed => (
+              <button key={seed.label} type="button" onClick={() => add(seed)} className="w-full text-left bg-zinc-950 hover:bg-zinc-800 border border-white/5 hover:border-emerald-500/30 rounded-lg p-2 transition-all">
+                <p className="text-xs font-bold text-white truncate">{seed.label}</p>
+                <p className="text-[10px] text-zinc-500 truncate">{seed.text.slice(0, 70)}…</p>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {snippets.map((s, idx) => {
+          const expanded = expandedId === s.id;
+          return (
+            <div key={s.id} className="border border-white/5 bg-zinc-800/30 rounded-lg overflow-hidden">
+              <div className="p-2 flex items-center gap-2">
+                <button type="button" onClick={() => setExpandedId(expanded ? null : s.id)} className="flex-1 text-left min-w-0">
+                  <p className="text-xs font-bold text-white truncate">{s.label}</p>
+                  <p className="text-[10px] text-zinc-500 truncate mt-0.5">
+                    <span className="text-emerald-400 uppercase font-black tracking-widest text-[9px]">{s.target}</span>
+                    {' · '}{s.text.slice(0, 50)}…
+                  </p>
+                </button>
+                <button type="button" onClick={() => remove(idx)} aria-label="Delete" className="text-zinc-500 hover:text-red-400 p-1"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+              </div>
+              {expanded && (
+                <div className="border-t border-white/5 bg-zinc-950 p-3 space-y-2">
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Label</label>
+                    <input value={s.label} onChange={e => update(idx, { label: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1.5 text-xs text-white" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Text</label>
+                    <textarea value={s.text} onChange={e => update(idx, { text: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1.5 text-xs text-white resize-y" rows={4} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Inserts Into</label>
+                      <select value={s.target} onChange={e => update(idx, { target: e.target.value as QuoteSnippet['target'] })} className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1.5 text-xs text-white">
+                        <option value="scope">Scope of Work</option>
+                        <option value="notes">Notes / Comments</option>
+                        <option value="terms">Payment Terms</option>
+                        <option value="all">Any Field</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Category</label>
+                      <input value={s.category || ''} onChange={e => update(idx, { category: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1.5 text-xs text-white" placeholder="Quality, Pricing..." />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+};
+
+// ── TV Slides Editor ─ full-featured editor for rotating slideshow
+const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: string; color: string }> = {
+  workers:     { label: 'Live Workers + Jobs', desc: 'Running timers + auto-scroll jobs belt (the default view)', icon: '👷', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400' },
+  jobs:        { label: 'Open Jobs (full-screen)', desc: 'All open jobs on one screen, auto-scrolling', icon: '📋', color: 'bg-purple-500/15 border-purple-500/30 text-purple-400' },
+  leaderboard: { label: 'Leaderboard', desc: 'Ranked workers by hours/jobs', icon: '🏆', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
+  weather:     { label: 'Weather Forecast', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400' },
+  'stats-week': { label: 'Weekly Stats', desc: 'Hours, jobs & sessions with daily bar graph', icon: '📊', color: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' },
+  goals:       { label: 'Shop Goals', desc: 'Your custom targets (jobs/week, revenue, etc)', icon: '🎯', color: 'bg-teal-500/15 border-teal-500/30 text-teal-400' },
+  safety:      { label: 'Safety Message', desc: 'Big, bold safety reminder', icon: '⚠️', color: 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400' },
+  message:     { label: 'Announcement', desc: 'Custom title + body with color', icon: '📢', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400' },
+  stats:       { label: 'Quick Stats (legacy)', desc: 'Basic stats card', icon: '📈', color: 'bg-zinc-500/15 border-zinc-500/30 text-zinc-400' },
+};
+
+// ── Weather Location Card — request & display location status for TV weather slide
+const WeatherLocationCard = ({ addToast }: { addToast: any }) => {
+  const [status, setStatus] = useState<'unknown' | 'granted' | 'denied' | 'prompt' | 'unsupported'>('unknown');
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [temp, setTemp] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) { setStatus('unsupported'); return; }
+    // Check permission state if supported
+    if ((navigator as any).permissions) {
+      (navigator as any).permissions.query({ name: 'geolocation' }).then((r: any) => {
+        setStatus(r.state);
+        r.addEventListener?.('change', () => setStatus(r.state));
+      }).catch(() => {});
+    }
+    // Try a silent fetch — if already granted it'll work
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setStatus('granted');
+        const lat = pos.coords.latitude, lon = pos.coords.longitude;
+        setCoords({ lat, lon });
+        fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=fahrenheit`)
+          .then(r => r.json()).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
+      },
+      err => { if (err.code === err.PERMISSION_DENIED) setStatus('denied'); },
+      { timeout: 8000 }
+    );
+  }, []);
+
+  const request = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setStatus('granted');
+        const lat = pos.coords.latitude, lon = pos.coords.longitude;
+        setCoords({ lat, lon });
+        addToast('success', 'Location access granted — weather will appear on TV');
+        fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=fahrenheit`)
+          .then(r => r.json()).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
+      },
+      err => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setStatus('denied');
+          addToast('error', 'Location denied. Enable it in your browser settings.');
+        } else {
+          addToast('error', 'Could not get location — try again');
+        }
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  const statusColor = status === 'granted' ? 'text-emerald-400' : status === 'denied' ? 'text-red-400' : 'text-amber-400';
+  const statusBg = status === 'granted' ? 'bg-emerald-500/10 border-emerald-500/25' : status === 'denied' ? 'bg-red-500/10 border-red-500/25' : 'bg-amber-500/10 border-amber-500/25';
+
+  return (
+    <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Cloud className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+        <span className="text-sm font-bold text-white">Weather Location</span>
+      </div>
+      <p className="text-[10px] text-zinc-500 leading-snug">The TV weather slide + header widget need browser location permission to show your local forecast.</p>
+      <div className={`rounded-xl border p-3 flex items-center gap-3 ${statusBg}`}>
+        {status === 'granted' ? (
+          <>
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
+              <CheckCircle className="w-5 h-5 text-emerald-400" aria-hidden="true" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-xs font-bold ${statusColor}`}>Location active</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">
+                {temp !== null ? <span className="text-white font-black">{temp}°F</span> : 'Loading…'}
+                {coords && <span className="ml-1.5 text-zinc-600">· {coords.lat.toFixed(2)}, {coords.lon.toFixed(2)}</span>}
+              </p>
+            </div>
+          </>
+        ) : status === 'denied' ? (
+          <>
+            <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center shrink-0">
+              <X className="w-5 h-5 text-red-400" aria-hidden="true" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-xs font-bold ${statusColor}`}>Location blocked</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">Click the 🔒 in your browser's address bar → allow location → refresh.</p>
+            </div>
+          </>
+        ) : status === 'unsupported' ? (
+          <>
+            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0">
+              <AlertCircle className="w-5 h-5 text-zinc-500" aria-hidden="true" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-zinc-400">Not supported</p>
+              <p className="text-[10px] text-zinc-500 mt-0.5">This browser doesn't support geolocation.</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
+              <Cloud className="w-5 h-5 text-amber-400" aria-hidden="true" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-xs font-bold ${statusColor}`}>Location needed</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">Click below to allow this site to see your location.</p>
+            </div>
+            <button type="button" onClick={request} className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Enable</button>
+          </>
+        )}
+      </div>
+      {status === 'granted' && (
+        <button type="button" onClick={request} className="w-full text-[11px] text-zinc-500 hover:text-white py-1 transition-colors">Refresh location</button>
+      )}
+    </div>
+  );
+};
+
+// ── Safety message presets ─ each emoji has a default title + body.
+// User can still edit freely. Picking the icon auto-fills blank fields.
+const SAFETY_PRESETS: Record<string, { title: string; body: string; color: 'yellow' | 'red' | 'orange' | 'blue' | 'green' | 'white' }> = {
+  '⚠️': { title: 'Stay Alert', body: 'Watch for hazards. Report anything unsafe to your supervisor.', color: 'yellow' },
+  '🦺': { title: 'Wear Your Vest', body: 'High-visibility gear is required on the shop floor.', color: 'orange' },
+  '🥽': { title: 'Eye Protection', body: 'Safety glasses on at all times in the work area.', color: 'blue' },
+  '🧤': { title: 'Hand Protection', body: 'Use the correct gloves for the job. Inspect before use.', color: 'blue' },
+  '🚫': { title: 'No Shortcuts', body: 'Follow the process. Shortcuts cause injuries and rework.', color: 'red' },
+  '🔥': { title: 'Fire Safety', body: 'Know where extinguishers are. Keep work areas clear of combustibles.', color: 'red' },
+  '⚡': { title: 'Electrical Safety', body: 'Inspect cords before use. Report damaged equipment.', color: 'yellow' },
+  '🛑': { title: 'Stop & Think', body: 'If something feels wrong — stop. Unsafe tasks aren\'t worth it.', color: 'red' },
+  '✅': { title: 'Good Job!', body: 'Zero incidents this week — keep it up!', color: 'green' },
+  '🎯': { title: 'Quality First', body: 'Double-check your work. Quality protects us all.', color: 'blue' },
+  '🏭': { title: 'Keep It Clean', body: '5S: Sort, Set in order, Shine, Standardize, Sustain.', color: 'green' },
+  '👷': { title: 'PPE Check', body: 'Head, eyes, ears, hands, feet — run through the list every shift.', color: 'orange' },
+  '🦾': { title: 'Machine Safety', body: 'Lock-out / tag-out before servicing. No exceptions.', color: 'red' },
+  '📢': { title: 'Important Notice', body: 'Check the bulletin board for today\'s updates.', color: 'blue' },
+  '🔔': { title: 'Shift Change', body: 'Hand off your work cleanly. Leave notes for the next shift.', color: 'yellow' },
+};
+
+const ANNOUNCEMENT_PRESETS: Record<string, { title: string; body: string; color: 'blue' | 'yellow' | 'red' | 'green' | 'white' | 'orange' }> = {
+  '📢': { title: 'Important Announcement', body: 'Please read the board for today\'s updates.', color: 'blue' },
+  '🎉': { title: 'Great Job Team!', body: 'We hit our goal — thank you all for the hard work.', color: 'green' },
+  '🎯': { title: 'Focus Today', body: 'Priority: get the hot jobs out the door.', color: 'blue' },
+  '⭐': { title: 'Shout-Out', body: 'Congrats to our top performer this week!', color: 'yellow' },
+  '✨': { title: 'Keep It Up', body: 'We\'re on track — let\'s finish strong.', color: 'green' },
+  '🏆': { title: 'Milestone Hit', body: 'Celebrate the win before starting the next push.', color: 'yellow' },
+  '📋': { title: 'Reminder', body: 'Log all your time — it helps us quote accurately.', color: 'blue' },
+  '💡': { title: 'Suggestion Box', body: 'Have an idea? Share it with your supervisor.', color: 'blue' },
+};
+
+// ── Multi-message editor for safety + announcement slides ──
+// Each slide can hold several messages that cycle one per TV rotation.
+const SlideMessagesEditor = ({ slide, onUpdate }: { slide: TvSlide; onUpdate: (patch: Partial<TvSlide>) => void }) => {
+  // Normalize legacy single-message slides into messages[]
+  const messages: SlideMessage[] = slide.messages && slide.messages.length > 0
+    ? slide.messages
+    : [{ id: 'legacy', title: slide.title, body: slide.body, color: slide.color, icon: slide.icon }];
+
+  const updateMsg = (i: number, patch: Partial<SlideMessage>) => {
+    const next = [...messages];
+    next[i] = { ...next[i], ...patch };
+    onUpdate({ messages: next, title: undefined, body: undefined, color: undefined, icon: undefined });
+  };
+  const removeMsg = (i: number) => {
+    if (messages.length <= 1) return;
+    const next = messages.filter((_, idx) => idx !== i);
+    onUpdate({ messages: next });
+  };
+  const addMsg = () => {
+    const defaults: SlideMessage = slide.type === 'safety'
+      ? { id: `m_${Date.now()}`, title: 'New Safety Reminder', body: '', color: 'yellow', icon: '⚠️' }
+      : { id: `m_${Date.now()}`, title: 'New Announcement', body: '', color: 'blue' };
+    onUpdate({ messages: [...messages, defaults] });
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    const t = i + dir;
+    if (t < 0 || t >= messages.length) return;
+    const next = [...messages];
+    [next[i], next[t]] = [next[t], next[i]];
+    onUpdate({ messages: next });
+  };
+
+  const icons = slide.type === 'safety' ? ['⚠️','🦺','🥽','🧤','🚫','🔥','⚡','🛑','✅','🎯','🏭','👷','🦾','📢','🔔'] : ['📢','🎉','🎯','⭐','✨','🏆','📋','💡'];
+
+  const loadPreset = () => {
+    const presets = slide.type === 'safety' ? SAFETY_PRESETS : ANNOUNCEMENT_PRESETS;
+    const newMsgs: SlideMessage[] = Object.entries(presets).slice(0, slide.type === 'safety' ? 8 : 6).map(([icon, p], i) => ({
+      id: `m_${Date.now()}_${i}`,
+      title: p.title,
+      body: p.body,
+      color: p.color,
+      ...(slide.type === 'safety' ? { icon } : {}),
+    }));
+    onUpdate({ messages: newMsgs, title: undefined, body: undefined, color: undefined, icon: undefined });
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+          {slide.type === 'safety' ? 'Safety Messages' : 'Announcements'} · {messages.length} total
+        </p>
+        <div className="flex gap-1">
+          <button type="button" onClick={loadPreset} className="text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded-md flex items-center gap-1" title="Replace with preset pack">
+            ✨ Preset Pack
+          </button>
+          <button type="button" onClick={addMsg} className="text-[10px] font-bold bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded-md flex items-center gap-1">
+            <Plus className="w-3 h-3" aria-hidden="true" /> Add
+          </button>
+        </div>
+      </div>
+      <p className="text-[10px] text-zinc-600 italic">Each message shows in turn — one per slide rotation. Great for cycling 10 safety tips without cluttering the rotation.</p>
+      <div className="space-y-2">
+        {messages.map((m, i) => (
+          <div key={m.id} className="bg-zinc-900/60 border border-white/5 rounded-lg p-2.5 space-y-1.5">
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">#{i + 1}</span>
+              <div className="flex-1" />
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move up" className="text-zinc-500 hover:text-white disabled:opacity-20 p-0.5"><ChevronUp className="w-3 h-3" aria-hidden="true" /></button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === messages.length - 1} aria-label="Move down" className="text-zinc-500 hover:text-white disabled:opacity-20 p-0.5"><ChevronDown className="w-3 h-3" aria-hidden="true" /></button>
+              {messages.length > 1 && <button type="button" onClick={() => removeMsg(i)} aria-label="Remove message" className="text-zinc-500 hover:text-red-400 p-0.5"><X className="w-3 h-3" aria-hidden="true" /></button>}
+            </div>
+            <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white" placeholder={slide.type === 'safety' ? 'Safety reminder title…' : 'Announcement title…'} value={m.title || ''} onChange={e => updateMsg(i, { title: e.target.value })} />
+            <textarea className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-[11px] text-white resize-y" rows={2} placeholder="Body (optional)…" value={m.body || ''} onChange={e => updateMsg(i, { body: e.target.value })} />
+            {slide.type === 'safety' && (
+              <div className="flex flex-wrap gap-1">
+                {icons.map(icn => (
+                  <button
+                    key={icn}
+                    type="button"
+                    onClick={() => {
+                      const preset = SAFETY_PRESETS[icn];
+                      const patch: Partial<SlideMessage> = { icon: icn };
+                      // Only auto-fill blank fields so we don't overwrite user's edits
+                      if (preset) {
+                        if (!m.title?.trim()) patch.title = preset.title;
+                        if (!m.body?.trim()) patch.body = preset.body;
+                        if (!m.color) patch.color = preset.color;
+                      }
+                      updateMsg(i, patch);
+                    }}
+                    className={`w-7 h-7 rounded-md transition-all text-base ${(m.icon || '⚠️') === icn ? 'bg-blue-500/30 ring-2 ring-blue-500' : 'bg-zinc-900 hover:bg-zinc-800'}`}
+                    title={SAFETY_PRESETS[icn] ? `${SAFETY_PRESETS[icn].title} — click to use preset` : icn}
+                  >{icn}</button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] text-zinc-500 uppercase font-bold tracking-widest mr-1">Color:</span>
+              {[{id:'blue',cls:'bg-blue-500'},{id:'yellow',cls:'bg-yellow-500'},{id:'orange',cls:'bg-orange-500'},{id:'red',cls:'bg-red-500'},{id:'green',cls:'bg-emerald-500'},{id:'white',cls:'bg-white'}].map(c => (
+                <button key={c.id} type="button" onClick={() => updateMsg(i, { color: c.id as any })} className={`w-5 h-5 rounded ${c.cls} transition-all ${(m.color || (slide.type === 'safety' ? 'yellow' : 'blue')) === c.id ? 'ring-2 ring-white scale-110' : 'opacity-40 hover:opacity-80'}`} aria-label={c.id} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+  const slides = settings.tvSlides || [];
+  const [addOpen, setAddOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const update = (idx: number, patch: Partial<TvSlide>) => {
+    const next = [...slides];
+    next[idx] = { ...next[idx], ...patch };
+    setSettings({ ...settings, tvSlides: next });
+  };
+  const remove = (idx: number) => {
+    setSettings({ ...settings, tvSlides: slides.filter((_, i) => i !== idx) });
+  };
+  const move = (idx: number, dir: -1 | 1) => {
+    const t = idx + dir;
+    if (t < 0 || t >= slides.length) return;
+    const next = [...slides];
+    [next[idx], next[t]] = [next[t], next[idx]];
+    setSettings({ ...settings, tvSlides: next });
+  };
+  const add = (type: TvSlide['type']) => {
+    const defaults: Record<string, Partial<TvSlide>> = {
+      workers:      { title: 'Live Workers' },
+      jobs:         { title: 'Open Jobs' },
+      leaderboard:  { leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+      weather:      {},
+      'stats-week': {},
+      goals:        {},
+      safety:       { title: 'Safety First', body: 'Wear your PPE. Keep your work area clean. Report hazards.', color: 'yellow', icon: '⚠️' },
+      message:      { title: 'Announcement', body: '', color: 'blue' },
+      stats:        {},
+    };
+    const newSlide: TvSlide = {
+      id: `${type}_${Date.now()}`,
+      type,
+      enabled: true,
+      ...defaults[type],
+    };
+    setSettings({ ...settings, tvSlides: [...slides, newSlide] });
+    setAddOpen(false);
+    setExpandedId(newSlide.id);
+  };
+
+  const enabledCount = slides.filter(s => s.enabled).length;
+
+  return (
+    <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+      <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]">
+        <div>
+          <p className="text-sm font-bold text-white flex items-center gap-2">📺 Slides</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">{slides.length === 0 ? 'Using defaults (Workers · Leaderboard · Weather · Stats)' : `${enabledCount} of ${slides.length} enabled`}</p>
+        </div>
+        <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+      </summary>
+      <div className="px-4 pb-4 space-y-3">
+        {/* Add slide menu */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setAddOpen(!addOpen)}
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold px-3 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30"
+          >
+            <Plus className="w-4 h-4" aria-hidden="true" /> Add Slide {addOpen ? '▲' : '▼'}
+          </button>
+          {addOpen && (
+            <div className="mt-2 grid grid-cols-1 gap-1.5 p-2 bg-zinc-950 border border-white/10 rounded-xl animate-fade-in">
+              {(Object.keys(SLIDE_TYPE_META) as (keyof typeof SLIDE_TYPE_META)[]).filter(t => t !== 'stats').map(t => {
+                const meta = SLIDE_TYPE_META[t];
+                // Non-configurable types render identical content every time — warn on duplicate add
+                const SINGLE_INSTANCE: TvSlide['type'][] = ['workers', 'jobs', 'weather', 'stats-week', 'goals'];
+                const existing = slides.filter(s => s.type === t).length;
+                const alreadyExists = SINGLE_INSTANCE.includes(t as TvSlide['type']) && existing > 0;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => {
+                      if (alreadyExists && !confirm(`You already have a "${meta.label}" slide. Adding another will show the same content twice. Continue?`)) return;
+                      add(t as TvSlide['type']);
+                    }}
+                    className={`text-left px-3 py-2 rounded-lg border ${meta.color} hover:brightness-125 transition-all flex items-center gap-2.5`}
+                  >
+                    <span className="text-xl" aria-hidden="true">{meta.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                        {meta.label}
+                        {alreadyExists && <span className="text-[9px] font-black text-yellow-400 bg-yellow-500/15 border border-yellow-500/30 rounded px-1 py-0.5">✓ Added</span>}
+                      </p>
+                      <p className="text-[10px] text-white/60 mt-0.5 leading-tight">{meta.desc}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {slides.length === 0 && (
+          <div className="rounded-xl border border-dashed border-white/10 p-4 text-center">
+            <p className="text-xs text-zinc-400 font-bold">Using default slideshow</p>
+            <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+              Workers+Jobs · Leaderboard · Weather · Week Stats will rotate every {settings.tvSlideDuration || 15}s.<br />
+              Click <strong className="text-zinc-400">Add Slide</strong> above to customize.
+            </p>
+          </div>
+        )}
+
+        {slides.map((slide, idx) => {
+          const meta = SLIDE_TYPE_META[slide.type] || SLIDE_TYPE_META.message;
+          const expanded = expandedId === slide.id;
+          return (
+            <div key={slide.id} className={`border rounded-xl overflow-hidden transition-all ${slide.enabled ? 'border-white/10 bg-zinc-800/20' : 'border-white/5 bg-zinc-900/40 opacity-60'}`}>
+              {/* Header row */}
+              <div className="p-2.5 flex items-center gap-2">
+                {/* Move up/down */}
+                <div className="flex flex-col shrink-0">
+                  <button type="button" aria-label="Move up" disabled={idx === 0} onClick={() => move(idx, -1)} className="text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500"><ChevronUp className="w-3 h-3" aria-hidden="true" /></button>
+                  <button type="button" aria-label="Move down" disabled={idx === slides.length - 1} onClick={() => move(idx, 1)} className="text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500"><ChevronDown className="w-3 h-3" aria-hidden="true" /></button>
+                </div>
+                {/* Icon + label */}
+                <button type="button" onClick={() => setExpandedId(expanded ? null : slide.id)} className="flex-1 flex items-center gap-2 min-w-0 text-left">
+                  <span className="text-lg shrink-0" aria-hidden="true">{meta.icon}</span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white truncate">{slide.title || meta.label}</p>
+                    <p className="text-[9px] text-zinc-500 truncate">{slide.type === 'leaderboard' ? `${slide.leaderboardPeriod || 'week'} · top ${slide.leaderboardCount || 5}` : meta.label}</p>
+                  </div>
+                </button>
+                {/* Duration */}
+                <select
+                  className="bg-zinc-950 border border-white/10 rounded px-1 py-0.5 text-white text-[10px] shrink-0"
+                  aria-label="Duration"
+                  value={slide.duration || settings.tvSlideDuration || 15}
+                  onChange={e => update(idx, { duration: Number(e.target.value) })}
+                >
+                  {[5, 10, 15, 20, 30, 45, 60, 90].map(s => <option key={s} value={s}>{s}s</option>)}
+                </select>
+                {/* Enabled toggle */}
+                <label className="flex items-center gap-1 shrink-0 cursor-pointer" title={slide.enabled ? 'Disable slide' : 'Enable slide'}>
+                  <input
+                    type="checkbox"
+                    checked={slide.enabled}
+                    onChange={e => update(idx, { enabled: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded accent-blue-500"
+                  />
+                </label>
+                {/* Delete */}
+                <button type="button" aria-label="Delete slide" onClick={() => remove(idx)} className="text-zinc-600 hover:text-red-400 shrink-0 p-1"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+              </div>
+
+              {/* Expanded editor */}
+              {expanded && (
+                <div className="border-t border-white/5 bg-zinc-950/40 p-3 space-y-2">
+                  {(slide.type === 'message' || slide.type === 'safety') && (
+                    <SlideMessagesEditor slide={slide} onUpdate={(patch) => update(idx, patch)} />
+                  )}
+                  {slide.type === 'leaderboard' && (
+                    <>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Period</label>
+                        <div role="group" className="inline-flex gap-1 p-1 bg-zinc-900 border border-white/10 rounded-lg w-full">
+                          {(['today', 'week', 'month'] as const).map(p => (
+                            <button key={p} type="button" onClick={() => update(idx, { leaderboardPeriod: p })} aria-pressed={(slide.leaderboardPeriod || 'week') === p} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardPeriod || 'week') === p ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{p}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Show</label>
+                        <div role="group" className="inline-flex gap-1 p-1 bg-zinc-900 border border-white/10 rounded-lg w-full">
+                          {(['hours', 'jobs', 'mixed'] as const).map(m => (
+                            <button key={m} type="button" onClick={() => update(idx, { leaderboardMetric: m })} aria-pressed={(slide.leaderboardMetric || 'mixed') === m} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardMetric || 'mixed') === m ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{m === 'mixed' ? 'Hours + Jobs' : m}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Top N workers · {slide.leaderboardCount || 5}</label>
+                        <input type="range" min={3} max={10} value={slide.leaderboardCount || 5} onChange={e => update(idx, { leaderboardCount: Number(e.target.value) })} className="w-full accent-blue-500" />
+                      </div>
+                    </>
+                  )}
+                  {(slide.type === 'workers' || slide.type === 'jobs' || slide.type === 'weather' || slide.type === 'stats-week' || slide.type === 'stats') && (
+                    <p className="text-[10px] text-zinc-500 italic">No additional options — this slide uses the shop's live data.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {slides.length > 0 && (
+          <div className="pt-2 border-t border-white/5 space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                // Load the default lineup so user can customize from a clean state
+                if (!confirm('Replace current slides with defaults (Workers · Jobs · Leaderboard · Goals · Week Stats · Weather)?')) return;
+                setSettings({ ...settings, tvSlides: [
+                  { id: `slide_${Date.now()}_1`, type: 'workers', enabled: true },
+                  { id: `slide_${Date.now()}_2`, type: 'jobs', enabled: true },
+                  { id: `slide_${Date.now()}_3`, type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+                  { id: `slide_${Date.now()}_4`, type: 'goals', enabled: true },
+                  { id: `slide_${Date.now()}_5`, type: 'stats-week', enabled: true },
+                  { id: `slide_${Date.now()}_6`, type: 'weather', enabled: true },
+                ]});
+              }}
+              className="w-full text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/5 py-1.5 rounded transition-colors font-bold"
+            >
+              ↻ Load Default Lineup
+            </button>
+            <button
+              type="button"
+              onClick={() => { if (confirm('Clear all slides? (Defaults will run instead.)')) setSettings({ ...settings, tvSlides: [] }); }}
+              className="w-full text-[10px] text-zinc-600 hover:text-red-400 py-1 transition-colors"
+            >
+              Clear all (use built-in defaults)
+            </button>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+};
+
+// ── TV Mirror Preview ─ a miniature, true-to-life mock of the TV-mode layout
+// so admins can see how their customizations will look before they push to TV.
+// Cycles through configured slides at 1/3 speed so admins can see each one.
+const TvMirrorPreview = ({ settings, activeLogs, jobs, allLogs }: { settings: SystemSettings; activeLogs: TimeLog[]; jobs: Job[]; allLogs: TimeLog[] }) => {
+  const [previewSlideIdx, setPreviewSlideIdx] = useState(0);
+  // Same default slides as TV mode — deduped by id so legacy configs can't double-show
+  const enabledSlides: TvSlide[] = (settings.tvSlides && settings.tvSlides.filter(s => s.enabled).length > 0)
+    ? settings.tvSlides.filter(s => s.enabled)
+    : [
+        { id: 'p-workers', type: 'workers', enabled: true },
+        { id: 'p-leader', type: 'leaderboard', enabled: true, leaderboardPeriod: 'week', leaderboardCount: 5, leaderboardMetric: 'mixed' },
+        { id: 'p-weather', type: 'weather', enabled: true },
+        { id: 'p-stats', type: 'stats-week', enabled: true },
+      ];
+  const slides = React.useMemo(() => {
+    const seen = new Set<string>();
+    const out: TvSlide[] = [];
+    for (const s of enabledSlides) { if (seen.has(s.id)) continue; seen.add(s.id); out.push(s); }
+    return out;
+  }, [enabledSlides]);
+  useEffect(() => {
+    if (slides.length <= 1) return;
+    const t = setInterval(() => setPreviewSlideIdx(prev => (prev + 1) % slides.length), 4000);
+    return () => clearInterval(t);
+  }, [slides.length]);
+  const currentSlide = slides[previewSlideIdx] || slides[0];
+
+  return <TvMirrorPreviewInner settings={settings} activeLogs={activeLogs} jobs={jobs} allLogs={allLogs} slides={slides} currentSlide={currentSlide} previewSlideIdx={previewSlideIdx} setPreviewSlideIdx={setPreviewSlideIdx} />;
+};
+
+const TvMirrorPreviewInner = ({ settings, activeLogs, jobs, allLogs, slides, currentSlide, previewSlideIdx, setPreviewSlideIdx }: { settings: SystemSettings; activeLogs: TimeLog[]; jobs: Job[]; allLogs: TimeLog[]; slides: TvSlide[]; currentSlide: TvSlide; previewSlideIdx: number; setPreviewSlideIdx: (i: number) => void }) => {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
+  const runningCount = activeLogs.filter(l => !l.pausedAt).length;
+  const pausedCount = activeLogs.filter(l => !!l.pausedAt).length;
+  const workerCount = new Set(activeLogs.map(l => l.userId)).size;
+  const openJobs = jobs.filter(j => j.status !== 'completed').slice(0, 8);
+  const sorted = [...activeLogs].sort((a, b) => {
+    const ap = a.pausedAt ? 1 : 0, bp = b.pausedAt ? 1 : 0;
+    return ap !== bp ? ap - bp : a.startTime - b.startTime;
+  }).slice(0, 4);
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const fmtElapsed = (log: TimeLog) => {
+    const el = DB.getWorkingElapsedMs(log);
+    const s = Math.floor(el / 1000);
+    return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="sticky top-4 space-y-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs font-black text-zinc-500 uppercase tracking-widest flex items-center gap-1.5"><Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" aria-hidden="true" /> Live TV Preview</p>
+        <p className="text-[10px] text-zinc-600">Updates as you change settings</p>
+      </div>
+      {/* TV frame */}
+      <div className="bg-black rounded-2xl shadow-2xl overflow-hidden border-2 border-zinc-800 p-2">
+        <div className="bg-gradient-to-br from-zinc-950 via-black to-zinc-950 rounded-xl overflow-hidden relative" style={{ aspectRatio: '16 / 9' }}>
+          {/* Ambient glow */}
+          <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[60px]" />
+            <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-600/10 blur-[60px]" />
+          </div>
+
+          {/* TOP BAR */}
+          <div className="relative shrink-0 px-3 py-2 flex items-center justify-between gap-3 border-b border-white/5 backdrop-blur-xl bg-black/20">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-5 object-contain" />}
+              <div className="min-w-0">
+                {settings.companyName && <p className="text-[11px] font-black text-white truncate">{settings.companyName}</p>}
+                <div className="flex items-center gap-1"><Radio className="w-2 h-2 text-red-500 animate-pulse" /><span className="text-[7px] font-black text-white/60 uppercase tracking-[0.3em]">Live</span></div>
+              </div>
+            </div>
+            {settings.tvShowClock !== false && (
+              <div className="shrink-0 text-center">
+                <p className="text-[15px] sm:text-lg font-black text-white tabular leading-none tracking-tight">{timeStr}</p>
+                <p className="text-white/40 text-[7px] font-semibold mt-0.5 truncate max-w-[90px]">{dateStr}</p>
+              </div>
+            )}
+            <div className="shrink-0 flex items-center gap-2 min-w-0 flex-1 justify-end">
+              {settings.tvShowStats !== false && (
+                <div className="flex items-center gap-2">
+                  <div className="text-center"><p className="text-[13px] font-black text-white tabular leading-none">{workerCount}</p><p className="text-[6px] font-black text-white/30 uppercase tracking-widest mt-0.5">Wrk</p></div>
+                  <div className="w-px h-4 bg-white/10" />
+                  <div className="text-center"><p className="text-[13px] font-black text-white tabular leading-none">{runningCount}</p><p className="text-[6px] font-black text-white/30 uppercase tracking-widest mt-0.5">Run</p></div>
+                  <div className="w-px h-4 bg-white/10" />
+                  <div className="text-center"><p className="text-[13px] font-black text-white tabular leading-none">{openJobs.length}</p><p className="text-[6px] font-black text-white/30 uppercase tracking-widest mt-0.5">Open</p></div>
+                </div>
+              )}
+              {settings.tvShowWeather !== false && <div className="bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[8px] text-white/60">72°F</div>}
+            </div>
+          </div>
+
+          {/* MAIN: Rotating slides (scaled-down representation) */}
+          <div className="absolute left-0 right-0 bottom-[18px] top-[42px] overflow-hidden">
+            <MiniSlideRender slide={currentSlide} activeLogs={activeLogs} jobs={jobs} settings={settings} sorted={sorted} openJobs={openJobs} fmtElapsed={fmtElapsed} allLogs={allLogs} />
+          </div>
+
+          {/* Slide indicator dots */}
+          {slides.length > 1 && (
+            <div className="absolute bottom-0 left-0 right-0 h-[18px] flex items-center justify-center gap-1 px-2 bg-black/50 backdrop-blur-sm">
+              {slides.map((s, i) => (
+                <button key={s.id} type="button" onClick={() => setPreviewSlideIdx(i)} aria-label={`Show ${SLIDE_TYPE_META[s.type]?.label || s.type}`} aria-current={i === previewSlideIdx ? 'true' : undefined} className="flex items-center gap-0.5">
+                  <span className={`h-1 rounded-full transition-all ${i === previewSlideIdx ? 'w-5 bg-blue-500' : 'w-1 bg-white/20'}`} />
+                </button>
+              ))}
             </div>
           )}
         </div>
       </div>
-
-      {/* Summary Cards */}
-      {(() => {
-        const weeklyGoal = settings.weeklyGoalHours || 40;
-        const periodDays = period === 'week' ? 7 : period === 'month' ? 30 : period === 'custom' && customStart && customEnd ? Math.max(1, Math.ceil((customCutoffEnd - customCutoffStart) / 86400000)) : 365;
-        const availableHrs = activeWorkers.length * weeklyGoal * (periodDays / 7);
-        const utilization = availableHrs > 0 ? Math.min(100, (totalHrs / availableHrs) * 100) : 0;
-        const profitMargin = totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue * 100) : 0;
-        const avgHrsPerWorker = activeWorkers.length > 0 ? totalHrs / activeWorkers.length : 0;
-        return (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Total Hours</p>
-                <p className="text-xl sm:text-2xl font-black text-white">{totalHrs.toFixed(1)}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Sessions</p>
-                <p className="text-xl sm:text-2xl font-black text-white">{totalSessions}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Jobs Done</p>
-                <p className="text-xl sm:text-2xl font-black text-emerald-400">{completedJobs.length}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Revenue</p>
-                <p className="text-lg sm:text-2xl font-black text-green-400 truncate">${totalRevenue >= 10000 ? `${(totalRevenue/1000).toFixed(1)}k` : totalRevenue.toLocaleString()}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Labor Cost</p>
-                <p className="text-lg sm:text-2xl font-black text-orange-400 truncate">${totalCost >= 10000 ? `${(totalCost/1000).toFixed(1)}k` : Math.round(totalCost).toLocaleString()}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Margin</p>
-                <p className={`text-2xl font-black ${profitMargin >= 20 ? 'text-emerald-400' : profitMargin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{profitMargin.toFixed(0)}%</p>
-              </div>
-            </div>
-            {/* Utilization Bar */}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <p className="text-sm font-bold text-white">Shop Utilization</p>
-                  <p className="text-[10px] text-zinc-500">{activeWorkers.length} workers x {weeklyGoal}h/week goal = {availableHrs.toFixed(0)}h available</p>
-                </div>
-                <div className="text-right">
-                  <p className={`text-xl font-black ${utilization >= 80 ? 'text-emerald-400' : utilization >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{utilization.toFixed(0)}%</p>
-                  <p className="text-[10px] text-zinc-500">{avgHrsPerWorker.toFixed(1)}h avg/worker</p>
-                </div>
-              </div>
-              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${utilization >= 80 ? 'bg-emerald-500' : utilization >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(100, utilization)}%` }} />
-              </div>
-            </div>
-          </>
-        );
-      })()}
-
-      {/* Worker Productivity Table */}
-      <div>
-        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Productivity</h3>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
-              <tr>
-                <th className="text-left p-3">Worker</th>
-                <th className="text-right p-3">Hours</th>
-                <th className="text-right p-3 hidden sm:table-cell">Sessions</th>
-                <th className="text-right p-3">Jobs</th>
-                <th className="text-right p-3 hidden sm:table-cell">Avg/Session</th>
-                <th className="text-right p-3">Cost</th>
-                <th className="p-3 hidden md:table-cell">Top Operations</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {workerStats.map(w => (
-                <tr key={w.user.id} className="hover:bg-white/5">
-                  <td className="p-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 text-xs font-bold">{w.user.name.charAt(0)}</div>
-                      <div>
-                        <p className="text-white font-bold text-sm">{w.user.name}</p>
-                        <p className="text-zinc-600 text-[10px]">{w.user.role}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-3 text-right font-mono text-white font-bold">{w.totalHrs.toFixed(1)}h</td>
-                  <td className="p-3 text-right font-mono text-zinc-300 hidden sm:table-cell">{w.sessions}</td>
-                  <td className="p-3 text-right font-mono text-zinc-300">{w.jobCount}</td>
-                  <td className="p-3 text-right font-mono text-zinc-400 hidden sm:table-cell">{w.avgMinsPerSession.toFixed(0)}m</td>
-                  <td className="p-3 text-right font-mono text-orange-400">${w.cost.toFixed(0)}</td>
-                  <td className="p-3 hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
-                      {w.operations.slice(0, 3).map(op => (
-                        <span key={op} className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">{op}</span>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {workerStats.length === 0 && (
-                <tr><td colSpan={7} className="p-8 text-center text-zinc-500">No activity in this period.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="flex items-center justify-between text-[10px] text-zinc-600 px-1">
+        <span>📺 Previewing: <strong className="text-zinc-400">{SLIDE_TYPE_META[currentSlide?.type]?.label || 'Slide'}</strong> ({previewSlideIdx + 1}/{slides.length})</span>
+        <span>{activeLogs.length} live · {openJobs.length} open</span>
       </div>
-
-      {(() => {
-        const VIVID = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#a855f7', '#eab308', '#64748b', '#e11d48', '#84cc16', '#0ea5e9'];
-        const workerChartData = workerStats.filter(w => w.totalHrs > 0).sort((a, b) => b.totalHrs - a.totalHrs).map(w => ({ name: w.user.name.split(' ')[0], hours: parseFloat(w.totalHrs.toFixed(1)), cost: Math.round(w.cost), sessions: w.sessions }));
-        const pieData = opBreakdown.map(([op, mins]) => ({ name: op, value: parseFloat((mins / 60).toFixed(1)), sessions: completedLogs.filter(l => l.operation === op).length }));
-        const totalOpHrs = pieData.reduce((a, d) => a + d.value, 0);
-        const totalSess = pieData.reduce((a, d) => a + d.sessions, 0);
-        // Active shape for donut hover — pops slice out with outer ring, no center text (HTML overlay handles that)
-        const renderActiveShape = (props: any) => {
-          const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
-          return (
-            <g>
-              <Sector cx={cx} cy={cy} innerRadius={innerRadius - 3} outerRadius={outerRadius + 8} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={1} cornerRadius={6} />
-              <Sector cx={cx} cy={cy} innerRadius={outerRadius + 12} outerRadius={outerRadius + 15} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.5} />
-            </g>
-          );
-        };
-        // Active bar hover — brighter + shadow
-        const renderActiveBar = (props: any) => {
-          const { x, y, width, height, fill } = props;
-          return <rect x={x} y={y - 2} width={width} height={height + 4} rx={10} fill={fill} opacity={1} style={{ filter: 'brightness(1.3) drop-shadow(0 0 8px rgba(255,255,255,0.15))' }} />;
-        };
-        // Custom bar label
-        const renderBarLabel = (props: any) => {
-          const { x, y, width, value, height } = props;
-          if (!value) return null;
-          return <text x={x + width + 8} y={y + height / 2} fill="#e4e4e7" fontSize={12} fontWeight={800} dominantBaseline="middle">{value}h</text>;
-        };
-        return (
-          <>
-          {/* Worker Hours — Full Width Bar Chart */}
-          <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Worker Hours</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 overflow-hidden" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
-              {workerChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={Math.max(isMobile ? 260 : 320, workerChartData.length * (isMobile ? 42 : 56))}>
-                  <BarChart layout="vertical" data={workerChartData} margin={{ top: 5, right: isMobile ? 40 : 70, left: 0, bottom: 5 }}>
-                    <defs>
-                      {workerChartData.map((_, i) => (
-                        <linearGradient key={`wg${i}`} id={`wGrad${i}`} x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor={VIVID[i % VIVID.length]} stopOpacity={0.35} />
-                          <stop offset="30%" stopColor={VIVID[i % VIVID.length]} stopOpacity={0.7} />
-                          <stop offset="100%" stopColor={VIVID[i % VIVID.length]} stopOpacity={1} />
-                        </linearGradient>
-                      ))}
-                    </defs>
-                    <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                    <XAxis type="number" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}h`} />
-                    <YAxis type="category" dataKey="name" tick={{ fill: '#d4d4d8', fontSize: isMobile ? 11 : 13, fontWeight: 700 }} axisLine={false} tickLine={false} width={isMobile ? 50 : 85} />
-                    <Tooltip cursor={false}
-                      content={(props: any) => {
-                        if (!props.active || !props.payload?.length) return null;
-                        const d = props.payload[0].payload;
-                        return (
-                          <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '16px 20px', boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05)' }}>
-                            <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 15, marginBottom: 8 }}>{d.name}</p>
-                            <div style={{ display: 'flex', gap: 16 }}>
-                              <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>HOURS</p><p style={{ color: '#3b82f6', fontSize: 18, fontWeight: 900 }}>{d.hours}h</p></div>
-                              <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>SESSIONS</p><p style={{ color: '#a1a1aa', fontSize: 18, fontWeight: 900 }}>{d.sessions}</p></div>
-                              {d.cost > 0 && <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>COST</p><p style={{ color: '#f59e0b', fontSize: 18, fontWeight: 900 }}>${d.cost}</p></div>}
-                            </div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Bar dataKey="hours" radius={[0, 10, 10, 0]} barSize={36} isAnimationActive={true} animationDuration={800} animationEasing="ease-out" label={renderBarLabel} activeBar={renderActiveBar}>
-                      {workerChartData.map((_, i) => <Cell key={i} fill={`url(#wGrad${i})`} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : <p className="text-zinc-500 text-sm text-center py-8">No hours logged.</p>}
-            </div>
-          </div>
-
-          {/* Operations Breakdown — Large Donut */}
-          <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Operations Breakdown</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 relative overflow-hidden" style={{ boxShadow: '0 4px 30px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)' }}>
-              {pieData.length > 0 ? (
-                <>
-                <ResponsiveContainer width="100%" height={isMobile ? 280 : 420}>
-                  <PieChart>
-                    <Pie data={pieData} cx="50%" cy="48%" innerRadius={isMobile ? 55 : 80} outerRadius={isMobile ? 100 : 145} paddingAngle={2} dataKey="value" stroke="rgba(0,0,0,0.3)" strokeWidth={1} isAnimationActive={true} animationDuration={1000} animationEasing="ease-out" cornerRadius={5} activeIndex={undefined} activeShape={renderActiveShape}>
-                      {pieData.map((_, i) => <Cell key={i} fill={VIVID[i % VIVID.length]} />)}
-                    </Pie>
-                    <Tooltip cursor={false} content={(props: any) => {
-                      if (!props.active || !props.payload?.length) return null;
-                      const d = props.payload[0].payload;
-                      const pct = totalOpHrs > 0 ? ((d.value / totalOpHrs) * 100).toFixed(1) : '0';
-                      return (
-                        <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '14px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
-                          <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 6 }}>{d.name}</p>
-                          <p style={{ color: '#e4e4e7', fontSize: 20, fontWeight: 900 }}>{d.value}h <span style={{ color: '#71717a', fontSize: 13, fontWeight: 600 }}>({pct}%)</span></p>
-                          <p style={{ color: '#71717a', fontSize: 11, marginTop: 4 }}>{d.sessions} session{d.sessions !== 1 ? 's' : ''}</p>
-                        </div>
-                      );
-                    }} />
-                  </PieChart>
-                </ResponsiveContainer>
-                {/* Center text overlay — position matches the donut (cy=48%) not parent */}
-                <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none" style={{ top: 0, height: isMobile ? 280 : 420 }}>
-                  <div className="text-center" style={{ transform: 'translateY(-2%)' }}>
-                    <p className={`${isMobile ? 'text-2xl' : 'text-4xl'} font-black text-white`} style={{ textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>{totalOpHrs.toFixed(0)}</p>
-                    <p className="text-[9px] sm:text-[10px] font-bold text-zinc-500 uppercase tracking-[3px]">Total Hours</p>
-                    <p className="text-[9px] sm:text-[10px] text-zinc-600 mt-0.5">{totalSess} sessions</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap justify-center gap-x-5 gap-y-2 mt-1 pb-2">
-                  {pieData.map((d, i) => {
-                    const pct = totalOpHrs > 0 ? ((d.value / totalOpHrs) * 100).toFixed(0) : '0';
-                    return (
-                      <div key={d.name} className="flex items-center gap-1.5 group cursor-default">
-                        <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: VIVID[i % VIVID.length] }} />
-                        <span className="text-xs text-zinc-300 font-semibold group-hover:text-white transition-colors">{d.name}</span>
-                        <span className="text-[11px] text-zinc-500 font-mono">{d.value}h</span>
-                        <span className="text-[10px] text-zinc-600">({pct}%)</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                </>
-              ) : <p className="text-zinc-500 text-sm text-center py-8">No data.</p>}
-            </div>
-          </div>
-          </>
-        );
-      })()}
-
-      {/* Customer Breakdown */}
-      {(() => {
-        const custMap = new Map<string, { jobs: number; hours: number; revenue: number; cost: number }>();
-        completedLogs.forEach(l => {
-          const j = jobs.find(jj => jj.id === l.jobId);
-          const cust = j?.customer || 'Unknown';
-          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0 };
-          cur.hours += (l.durationMinutes || 0) / 60;
-          custMap.set(cust, cur);
-        });
-        jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff).forEach(j => {
-          const cust = j.customer || 'Unknown';
-          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0 };
-          cur.jobs++;
-          cur.revenue += j.quoteAmount || 0;
-          custMap.set(cust, cur);
-        });
-        const custBreakdown = Array.from(custMap.entries()).sort((a, b) => b[1].hours - a[1].hours);
-        if (custBreakdown.length === 0) return null;
-        return (
-          <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Customer Breakdown</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
-                  <tr>
-                    <th className="text-left p-2 sm:p-3">Customer</th>
-                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Jobs</th>
-                    <th className="text-right p-2 sm:p-3">Hours</th>
-                    <th className="text-right p-2 sm:p-3">Revenue</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {custBreakdown.map(([cust, data]) => (
-                    <tr key={cust} className="hover:bg-white/5">
-                      <td className="p-2 sm:p-3 text-white font-bold truncate max-w-[140px] sm:max-w-none">{cust}</td>
-                      <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 hidden sm:table-cell">{data.jobs}</td>
-                      <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 text-xs sm:text-sm">{data.hours.toFixed(1)}h</td>
-                      <td className="p-2 sm:p-3 text-right font-mono text-emerald-400 text-xs sm:text-sm">{data.revenue > 0 ? `$${data.revenue.toLocaleString()}` : '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Job Profitability */}
-      {(() => {
-        const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && j.quoteAmount).map(j => {
-          const jLogs = completedLogs.filter(l => l.jobId === j.id);
-          const hrs = jLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0) / 60;
-          const cost = hrs * ((shopRate || 0) + ohRate);
-          const profit = (j.quoteAmount || 0) - cost;
-          const margin = j.quoteAmount ? (profit / j.quoteAmount) * 100 : 0;
-          return { ...j, hrs, cost, profit, margin };
-        }).sort((a, b) => b.profit - a.profit);
-        if (profitableJobs.length === 0) return null;
-        return (
-          <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Job Profitability</h3>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
-                  <tr>
-                    <th className="text-left p-2 sm:p-3">PO / Part</th>
-                    <th className="text-right p-2 sm:p-3 hidden md:table-cell">Quote</th>
-                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Cost</th>
-                    <th className="text-right p-2 sm:p-3">Profit</th>
-                    <th className="text-right p-2 sm:p-3">Margin</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {profitableJobs.map(j => (
-                    <tr key={j.id} className="hover:bg-white/5">
-                      <td className="p-2 sm:p-3">
-                        <div className="flex flex-col">
-                          <span className="text-white font-bold text-xs sm:text-sm">{j.poNumber}</span>
-                          <span className="text-zinc-500 text-[10px] sm:text-xs truncate max-w-[140px] sm:max-w-none">{j.partNumber}</span>
-                        </div>
-                      </td>
-                      <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 text-xs sm:text-sm hidden md:table-cell">${(j.quoteAmount || 0).toLocaleString()}</td>
-                      <td className="p-2 sm:p-3 text-right font-mono text-orange-400 text-xs sm:text-sm hidden sm:table-cell">${j.cost.toFixed(0)}</td>
-                      <td className={`p-2 sm:p-3 text-right font-mono font-bold text-xs sm:text-sm ${j.profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.profit >= 0 ? '+' : ''}${j.profit.toFixed(0)}</td>
-                      <td className={`p-2 sm:p-3 text-right font-mono text-[10px] sm:text-xs ${j.margin >= 20 ? 'text-emerald-400' : j.margin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{j.margin.toFixed(0)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ── Estimated vs Actual ── */}
-      {(() => {
-        const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (j.quoteAmount || j.expectedHours)).map(j => {
-          const jLogs = completedLogs.filter(l => l.jobId === j.id);
-          const actualHrs = jLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0) / 60;
-          const actualCost = actualHrs * ((shopRate || 0) + ohRate);
-          const estHrs = j.expectedHours || 0;
-          const quotedAmt = j.quoteAmount || 0;
-          const hrsVariance = estHrs > 0 ? ((actualHrs - estHrs) / estHrs * 100) : 0;
-          const costVariance = quotedAmt > 0 ? ((quotedAmt - actualCost) / quotedAmt * 100) : 0;
-          return { ...j, actualHrs, actualCost, estHrs, quotedAmt, hrsVariance, costVariance };
-        });
-        if (quotedJobs.length === 0) return null;
-        const avgAccuracy = quotedJobs.filter(j => j.estHrs > 0).length > 0
-          ? quotedJobs.filter(j => j.estHrs > 0).reduce((a, j) => a + Math.max(0, 100 - Math.abs(j.hrsVariance)), 0) / quotedJobs.filter(j => j.estHrs > 0).length
-          : 0;
-        const totalProfit = quotedJobs.reduce((a, j) => a + (j.quotedAmt - j.actualCost), 0);
-        const bestJob = [...quotedJobs].sort((a, b) => b.costVariance - a.costVariance)[0];
-        const worstJob = [...quotedJobs].sort((a, b) => a.costVariance - b.costVariance)[0];
-        const barData = quotedJobs.slice(0, 10).map(j => ({
-          name: j.poNumber.length > 10 ? j.poNumber.slice(0, 9) + '…' : j.poNumber,
-          estimated: parseFloat(j.estHrs.toFixed(1)),
-          actual: parseFloat(j.actualHrs.toFixed(1)),
-        }));
-        return (
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Estimated vs Actual</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Est. Accuracy</p>
-                <p className={`text-xl font-black ${avgAccuracy >= 80 ? 'text-emerald-400' : avgAccuracy >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>{avgAccuracy.toFixed(0)}%</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Net Profit</p>
-                <p className={`text-xl font-black ${totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${totalProfit >= 0 ? '+' : ''}${totalProfit.toFixed(0)}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Best Job</p>
-                <p className="text-sm font-bold text-emerald-400 truncate">{bestJob?.poNumber}</p>
-                <p className="text-[10px] text-zinc-600">{bestJob ? `+${bestJob.costVariance.toFixed(0)}%` : '-'}</p>
-              </div>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">Worst Job</p>
-                <p className="text-sm font-bold text-red-400 truncate">{worstJob?.poNumber}</p>
-                <p className="text-[10px] text-zinc-600">{worstJob ? `${worstJob.costVariance.toFixed(0)}%` : '-'}</p>
-              </div>
-            </div>
-            {barData.some(d => d.estimated > 0) && (
-              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
-                <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest mb-3">Hours: Estimated vs Actual</p>
-                <ResponsiveContainer width="100%" height={isMobile ? 240 : 320}>
-                  <BarChart data={barData} margin={{ top: 10, right: 10, left: 0, bottom: isMobile ? 45 : 35 }}>
-                    <defs>
-                      <linearGradient id="estGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#93c5fd" /><stop offset="50%" stopColor="#60a5fa" /><stop offset="100%" stopColor="#3b82f6" /></linearGradient>
-                      <linearGradient id="actGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fde68a" /><stop offset="50%" stopColor="#fbbf24" /><stop offset="100%" stopColor="#f59e0b" /></linearGradient>
-                    </defs>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                    <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" height={55} />
-                    <YAxis tick={{ fill: '#52525b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}h`} />
-                    <Tooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }}
-                      content={(props: any) => {
-                        if (!props.active || !props.payload?.length) return null;
-                        const d = props.payload;
-                        const est = d.find((e: any) => e.dataKey === 'estimated')?.value || 0;
-                        const act = d.find((e: any) => e.dataKey === 'actual')?.value || 0;
-                        const diff = act - est;
-                        return (
-                          <div style={{ background: 'rgba(9,9,11,0.96)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: '14px 18px', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}>
-                            <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 8 }}>{props.label}</p>
-                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>📐 Estimated: <span style={{ color: '#60a5fa', fontWeight: 800 }}>{est}h</span></p>
-                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>⏱ Actual: <span style={{ color: '#fbbf24', fontWeight: 800 }}>{act}h</span></p>
-                            {est > 0 && <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 6, marginTop: 6 }}>
-                              <p style={{ color: diff > 0 ? '#ef4444' : '#10b981', fontSize: 12, fontWeight: 700 }}>
-                                {diff > 0 ? '⚠ Over by' : '✅ Under by'} {Math.abs(diff).toFixed(1)}h ({est > 0 ? Math.abs(diff / est * 100).toFixed(0) : 0}%)
-                              </p>
-                            </div>}
-                          </div>
-                        );
-                      }}
-                    />
-                    <Legend formatter={(v: string) => <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600 }}>{v === 'estimated' ? '📐 Estimated' : '⏱ Actual'}</span>} />
-                    <Bar dataKey="estimated" fill="url(#estGrad)" radius={[8, 8, 0, 0]} barSize={22} name="estimated" isAnimationActive={true} animationDuration={800} animationEasing="ease-out" />
-                    <Bar dataKey="actual" fill="url(#actGrad)" radius={[8, 8, 0, 0]} barSize={22} name="actual" isAnimationActive={true} animationDuration={800} animationEasing="ease-out" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
-                  <tr>
-                    <th className="text-left p-3">PO</th>
-                    <th className="text-right p-3">Quoted</th>
-                    <th className="text-right p-3">Actual Cost</th>
-                    <th className="text-right p-3">Est. Hrs</th>
-                    <th className="text-right p-3 hidden sm:table-cell">Actual Hrs</th>
-                    <th className="text-right p-3">Variance</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {quotedJobs.map(j => (
-                    <tr key={j.id} className="hover:bg-white/5">
-                      <td className="p-3"><span className="text-white font-bold">{j.poNumber}</span><br /><span className="text-zinc-600 text-[10px]">{j.customer}</span></td>
-                      <td className="p-3 text-right font-mono text-zinc-300">{j.quotedAmt > 0 ? `$${j.quotedAmt.toLocaleString()}` : '-'}</td>
-                      <td className="p-3 text-right font-mono text-orange-400">${j.actualCost.toFixed(0)}</td>
-                      <td className="p-3 text-right font-mono text-blue-400">{j.estHrs > 0 ? `${j.estHrs.toFixed(1)}h` : '-'}</td>
-                      <td className="p-3 text-right font-mono text-yellow-400 hidden sm:table-cell">{j.actualHrs.toFixed(1)}h</td>
-                      <td className={`p-3 text-right font-mono font-bold text-xs ${j.costVariance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{j.costVariance >= 0 ? '+' : ''}{j.costVariance.toFixed(0)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
+};
+
+// Miniature rendering of each slide type for the settings preview.
+// Wired to LIVE data (allLogs + jobs) so admins see what will actually appear on TV
+// — not hardcoded placeholder numbers that would repeat on every slide cycle.
+const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, fmtElapsed, allLogs = [] }: any) => {
+  if (!slide) return null;
+
+  if (slide.type === 'workers' || !slide.type) {
+    return (
+      <div className="h-full grid grid-cols-2 gap-0">
+        <div className="border-r border-white/5 overflow-hidden flex flex-col">
+          <div className="px-3 py-1.5 border-b border-white/5 flex items-center justify-between">
+            <h2 className="text-[8px] font-black text-white/60 uppercase tracking-[0.3em]">● Running</h2>
+            <span className="text-[8px] text-white/40 font-mono">{activeLogs.filter((l: any) => !l.pausedAt).length}</span>
+          </div>
+          <div className="flex-1 overflow-hidden p-2 space-y-1.5">
+            {sorted.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-2">
+                <div className="w-8 h-8 rounded-xl bg-zinc-800/60 border border-white/5 flex items-center justify-center mb-1"><Activity className="w-4 h-4 text-zinc-600" aria-hidden="true" /></div>
+                <p className="text-zinc-400 text-[10px] font-bold">Floor is quiet</p>
+              </div>
+            ) : sorted.map((log: any) => {
+              const job = jobs.find((j: any) => j.id === log.jobId);
+              const isPaused = !!log.pausedAt;
+              return (
+                <div key={log.id} className={`bg-gradient-to-br rounded-lg p-1.5 border ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`}>
+                  <div className="flex items-center gap-1.5">
+                    <div className={`shrink-0 w-6 h-6 rounded-md flex items-center justify-center font-black text-[9px] text-white ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>{log.userName.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-black text-white truncate leading-tight">{log.userName}</p>
+                      <p className="text-[7px] text-blue-300 truncate">{log.operation}</p>
+                      {settings.tvShowJobId !== false && job && <p className="text-[6px] text-white/40 truncate">PO {job.poNumber}</p>}
+                    </div>
+                    <p className="text-[10px] font-black text-white tabular shrink-0">{fmtElapsed(log)}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {settings.tvShowJobsBelt !== false ? (
+          <div className="overflow-hidden flex flex-col">
+            <div className="px-3 py-1.5 border-b border-white/5 flex items-center justify-between">
+              <h2 className="text-[8px] font-black text-white/60 uppercase tracking-[0.3em]">Open Jobs</h2>
+            </div>
+            <div className="flex-1 overflow-hidden p-2 space-y-1.5">
+              {openJobs.slice(0, 4).map((j: any) => (
+                <div key={j.id} className="bg-zinc-900/50 border border-white/5 rounded-md px-1.5 py-1">
+                  <span className="text-[10px] font-black text-white tabular truncate">{j.poNumber}</span>
+                  <p className="text-[7px] text-white/60 truncate">{j.partNumber}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center p-4 text-[8px] text-zinc-600 italic">Jobs Belt off</div>
+        )}
+      </div>
+    );
+  }
+
+  if (slide.type === 'jobs') {
+    return (
+      <div className="h-full overflow-hidden flex flex-col p-3">
+        <h2 className="text-[8px] font-black text-white/60 uppercase tracking-[0.3em] mb-2">All Open Jobs ({openJobs.length})</h2>
+        <div className="flex-1 overflow-hidden grid grid-cols-2 gap-1.5">
+          {openJobs.slice(0, 8).map((j: any) => (
+            <div key={j.id} className="bg-zinc-900/50 border border-white/5 rounded-md px-1.5 py-1">
+              <span className="text-[10px] font-black text-white tabular truncate block">{j.poNumber}</span>
+              <p className="text-[7px] text-white/60 truncate">{j.partNumber}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (slide.type === 'leaderboard') {
+    // Build real leaderboard from allLogs for the chosen period
+    const now = new Date();
+    let cutoff: number;
+    if (slide.leaderboardPeriod === 'today') {
+      const d = new Date(); d.setHours(0, 0, 0, 0); cutoff = d.getTime();
+    } else if (slide.leaderboardPeriod === 'month') {
+      cutoff = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    } else {
+      const w = new Date(); w.setDate(w.getDate() - w.getDay()); w.setHours(0, 0, 0, 0); cutoff = w.getTime();
+    }
+    const userMap = new Map<string, { name: string; hours: number }>();
+    (allLogs as TimeLog[]).filter(l => l.startTime >= cutoff && l.endTime).forEach(l => {
+      const cur = userMap.get(l.userId) || { name: l.userName, hours: 0 };
+      cur.hours += (l.durationMinutes || 0) / 60;
+      cur.name = l.userName;
+      userMap.set(l.userId, cur);
+    });
+    const top = Array.from(userMap.values()).sort((a, b) => b.hours - a.hours).slice(0, 3);
+    const maxH = Math.max(1, ...top.map(u => u.hours));
+    const periodLabel = slide.leaderboardPeriod === 'today' ? "Today" : slide.leaderboardPeriod === 'month' ? "This Month" : "This Week";
+
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-4 text-center">
+        <p className="text-[8px] font-black text-amber-400 uppercase tracking-widest">🏆 Leaderboard</p>
+        <h2 className="text-lg font-black text-white tracking-tight mt-1">{periodLabel}'s Top Workers</h2>
+        <div className="w-full mt-3 space-y-1">
+          {top.length === 0 ? (
+            <p className="text-[9px] text-zinc-500 italic py-3">No hours logged yet {slide.leaderboardPeriod === 'today' ? 'today' : 'this period'}</p>
+          ) : ['🥇','🥈','🥉'].slice(0, top.length).map((medal, i) => (
+            <div key={i} className={`flex items-center gap-2 p-1.5 rounded-lg ${i === 0 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-zinc-900/50'}`}>
+              <span className="text-lg">{medal}</span>
+              <div className="flex-1 min-w-0 flex flex-col items-start">
+                <p className="text-[9px] font-black text-white truncate max-w-full">{top[i].name}</p>
+                <div className="w-full h-1 rounded-full bg-white/5 overflow-hidden mt-0.5"><div className={`h-full rounded-full ${i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-zinc-400' : 'bg-orange-500'}`} style={{ width: `${(top[i].hours / maxH) * 100}%` }} /></div>
+              </div>
+              <span className="text-[10px] font-black text-white tabular">{top[i].hours.toFixed(1)}h</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (slide.type === 'weather') {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-4 text-center">
+        <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">🌤️ Weather</p>
+        <div className="flex items-center gap-3 mt-2">
+          <div className="text-5xl font-black text-white tabular">72°</div>
+          <div className="text-left">
+            <p className="text-[10px] text-white/70">Partly cloudy</p>
+            <p className="text-[9px] text-white/40">H 78° · L 62°</p>
+          </div>
+        </div>
+        <div className="mt-2 grid grid-cols-5 gap-1 w-full">
+          {['Today', 'Tue', 'Wed', 'Thu', 'Fri'].map((d, i) => (
+            <div key={d} className="bg-zinc-900/50 border border-white/5 rounded p-1 text-center">
+              <p className="text-[6px] font-black text-white/40 uppercase">{d}</p>
+              <p className="text-[9px] font-black text-white tabular">{78 - i}°</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (slide.type === 'stats-week' || slide.type === 'stats') {
+    // Compute real weekly stats from allLogs + jobs (same math as full-screen TV slide)
+    const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0, 0, 0, 0);
+    const wkMs = weekStart.getTime();
+    const weekLogs = (allLogs as TimeLog[]).filter(l => l.startTime >= wkMs && l.endTime);
+    const totalH = weekLogs.reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+    const sessions = weekLogs.length;
+    const completedThisWeek = (jobs as Job[]).filter(j => j.status === 'completed' && (j.completedAt || 0) >= wkMs).length;
+    // Hours per day of week (Sun..Sat)
+    const daily = Array.from({ length: 7 }, (_, i) => {
+      const start = new Date(weekStart); start.setDate(weekStart.getDate() + i);
+      const end = new Date(start); end.setDate(start.getDate() + 1);
+      const hrs = weekLogs.filter(l => l.startTime >= start.getTime() && l.startTime < end.getTime()).reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+      return hrs;
+    });
+    const maxH = Math.max(1, ...daily);
+    const anyData = totalH > 0 || sessions > 0 || completedThisWeek > 0;
+
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-4 text-center">
+        <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">📊 Weekly Output</p>
+        <h2 className="text-lg font-black text-white tracking-tight mt-1">This Week at a Glance</h2>
+        <div className="mt-2 grid grid-cols-3 gap-1 w-full">
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded p-1.5 text-center"><p className="text-[6px] text-blue-400 font-black">Hours</p><p className="text-sm font-black text-white tabular">{totalH.toFixed(1)}h</p></div>
+          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded p-1.5 text-center"><p className="text-[6px] text-emerald-400 font-black">Jobs</p><p className="text-sm font-black text-white tabular">{completedThisWeek}</p></div>
+          <div className="bg-purple-500/10 border border-purple-500/20 rounded p-1.5 text-center"><p className="text-[6px] text-purple-400 font-black">Sessions</p><p className="text-sm font-black text-white tabular">{sessions}</p></div>
+        </div>
+        <div className="mt-2 flex items-end gap-1 h-12 w-full">
+          {daily.map((h, i) => (
+            <div key={i} className="flex-1 bg-blue-500/40 rounded-t" style={{ height: `${Math.max(anyData ? 4 : 0, (h / maxH) * 100)}%` }} />
+          ))}
+        </div>
+        {!anyData && <p className="text-[8px] text-zinc-500 italic mt-1">No activity yet this week</p>}
+      </div>
+    );
+  }
+
+  if (slide.type === 'safety') {
+    const palette: any = { red: 'from-red-500/20 border-red-500/40', yellow: 'from-yellow-500/20 border-yellow-500/40', orange: 'from-orange-500/20 border-orange-500/40', blue: 'from-blue-500/20 border-blue-500/40', green: 'from-emerald-500/20 border-emerald-500/40', white: 'from-white/15 border-white/40' };
+    const cls = palette[slide.color || 'yellow'] || palette.yellow;
+    return (
+      <div className="h-full flex items-center justify-center p-4">
+        <div className={`w-full h-full bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-2xl p-3 text-center flex flex-col items-center justify-center`}>
+          <p className={`text-[7px] font-black uppercase tracking-[0.4em] mb-1`} style={{ color: slide.color === 'red' ? '#f87171' : slide.color === 'green' ? '#34d399' : slide.color === 'orange' ? '#fb923c' : slide.color === 'blue' ? '#60a5fa' : '#facc15' }}>⚠ Safety</p>
+          <div className="text-3xl mb-1">{slide.icon || '⚠️'}</div>
+          <h2 className="text-base font-black text-white tracking-tight leading-tight">{slide.title || 'Think Safety First'}</h2>
+          {slide.body && <p className="text-[9px] text-white/70 mt-1 leading-snug">{slide.body}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (slide.type === 'message') {
+    const palette: any = { blue: 'from-blue-500/20 border-blue-500/40', yellow: 'from-yellow-500/20 border-yellow-500/40', red: 'from-red-500/20 border-red-500/40', green: 'from-emerald-500/20 border-emerald-500/40', white: 'from-white/15 border-white/40', orange: 'from-orange-500/20 border-orange-500/40' };
+    const cls = palette[slide.color || 'blue'] || palette.blue;
+    return (
+      <div className="h-full flex items-center justify-center p-4">
+        <div className={`w-full h-full bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-2xl p-4 text-center flex flex-col items-center justify-center`}>
+          <p className="text-[7px] font-black uppercase tracking-[0.4em] text-white/60 mb-2">Announcement</p>
+          <h2 className="text-lg font-black text-white tracking-tight leading-tight">{slide.title || 'Message'}</h2>
+          {slide.body && <p className="text-[9px] text-white/70 mt-2 leading-snug">{slide.body}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 };
 
 const SettingsView = ({ addToast }: { addToast: any }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
-  const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'documents' | 'tv' | 'system'>('profile');
+  const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'goals' | 'documents' | 'tv' | 'system'>('profile');
   const [opsOpen, setOpsOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
   // Live data for TV preview
   const [tvActiveLogs, setTvActiveLogs] = useState<TimeLog[]>([]);
   const [tvJobs, setTvJobs] = useState<Job[]>([]);
+  const [tvAllLogs, setTvAllLogs] = useState<TimeLog[]>([]);
 
   useEffect(() => {
     const unsub = DB.subscribeSettings((s) => setSettings(s));
     const unsub2 = DB.subscribeActiveLogs(setTvActiveLogs);
     const unsub3 = DB.subscribeJobs(setTvJobs);
-    return () => { unsub(); unsub2(); unsub3(); };
+    const unsub4 = DB.subscribeLogs(setTvAllLogs);
+    return () => { unsub(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
   const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
@@ -4805,8 +6780,17 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
   }, [settingsJson]);
   const handleAddOp = () => { if (!newOp.trim()) return; const ops = settings.customOperations || []; if (ops.includes(newOp.trim())) return; setSettings({ ...settings, customOperations: [...ops, newOp.trim()] }); setNewOp(''); };
   const handleDeleteOp = (op: string) => { setSettings({ ...settings, customOperations: (settings.customOperations || []).filter(o => o !== op) }); };
-  const handleAddClient = () => { if (!newClient.trim()) return; const clients = settings.clients || []; if (clients.map(c => c.toLowerCase()).includes(newClient.trim().toLowerCase())) return; const updated = { ...settings, clients: [...clients, newClient.trim()] }; setSettings(updated); DB.saveSettings(updated); setNewClient(''); };
-  const handleDeleteClient = (client: string) => { const updated = { ...settings, clients: (settings.clients || []).filter(c => c !== client) }; setSettings(updated); DB.saveSettings(updated); };
+  // Clients + ops: just update local state; autosave persists it 1.5s later (same path as every other field)
+  const handleAddClient = () => {
+    if (!newClient.trim()) return;
+    const clients = settings.clients || [];
+    if (clients.map(c => c.toLowerCase()).includes(newClient.trim().toLowerCase())) return;
+    setSettings({ ...settings, clients: [...clients, newClient.trim()] });
+    setNewClient('');
+  };
+  const handleDeleteClient = (client: string) => {
+    setSettings({ ...settings, clients: (settings.clients || []).filter(c => c !== client) });
+  };
 
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
   const trueCost = (settings.shopRate || 0) + ohRate;
@@ -4816,37 +6800,67 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
     { id: 'schedule', label: 'Schedule', icon: Clock },
     { id: 'production', label: 'Production', icon: Activity },
     { id: 'financial', label: 'Financial', icon: Calculator },
+    { id: 'goals', label: 'Goals', icon: Zap },
     { id: 'documents', label: 'Documents', icon: FileText },
     { id: 'tv', label: 'TV Display', icon: Activity },
     { id: 'system', label: 'System', icon: Settings },
   ];
 
+  // Autosave indicator — pulses briefly after each change
+  const [savedFlash, setSavedFlash] = useState(false);
+  useEffect(() => {
+    if (settingsJson === initialSettingsRef.current) return;
+    const t = setTimeout(() => {
+      setSavedFlash(true);
+      const off = setTimeout(() => setSavedFlash(false), 1800);
+      return () => clearTimeout(off);
+    }, 1600);
+    return () => clearTimeout(t);
+  }, [settingsJson]);
+
   return (
-    <div className="flex gap-6 w-full max-w-4xl">
-      {/* Left sidebar nav — desktop only */}
-      <div className="w-48 flex-shrink-0 space-y-1 hidden md:block">
-        <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest px-3 mb-3">Settings</p>
-        {sideItems.map(item => (
-          <button key={item.id} onClick={() => setSettingsTab(item.id)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left ${settingsTab === item.id ? 'bg-white/10 text-white font-bold' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
-            <item.icon className="w-4 h-4 flex-shrink-0" />{item.label}
-          </button>
-        ))}
-        <div className="border-t border-white/5 mt-4 pt-4">
-          <button onClick={handleSave} className="w-full bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
+    <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0">
+      {/* Left sidebar nav — desktop only (sticks on scroll) */}
+      <aside className="w-48 xl:w-56 flex-shrink-0 hidden md:block">
+        <div className="sticky top-4 space-y-1">
+          <div className="flex items-center justify-between px-3 mb-3">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Settings</p>
+            {savedFlash && (
+              <span className="text-[10px] font-black text-emerald-400 flex items-center gap-1 animate-fade-in">
+                <CheckCircle className="w-3 h-3" aria-hidden="true" /> Saved
+              </span>
+            )}
+          </div>
+          {sideItems.map(item => (
+            <button key={item.id} onClick={() => setSettingsTab(item.id)}
+              aria-current={settingsTab === item.id ? 'page' : undefined}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all text-left ${settingsTab === item.id ? 'bg-blue-500/10 border border-blue-500/20 text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'}`}>
+              <item.icon className={`w-4 h-4 flex-shrink-0 ${settingsTab === item.id ? 'text-blue-400' : ''}`} aria-hidden="true" />{item.label}
+            </button>
+          ))}
+          <div className="border-t border-white/5 mt-4 pt-4 space-y-2">
+            <p className="text-[10px] text-zinc-600 px-3">Changes save automatically as you edit.</p>
+            <button onClick={handleSave} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"><Save className="w-4 h-4" aria-hidden="true" /> Save Now</button>
+          </div>
         </div>
-      </div>
+      </aside>
 
       {/* Right content area (includes mobile tabs) */}
       <div className="flex-1 min-w-0">
-        {/* Mobile tabs */}
-        <div className="md:hidden flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5 mb-4 overflow-x-auto">
-          {sideItems.map(item => (
-            <button key={item.id} onClick={() => setSettingsTab(item.id)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${settingsTab === item.id ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
-              {item.label}
-            </button>
-          ))}
+        {/* Mobile tabs — horizontal pill scroll */}
+        <div className="md:hidden sticky top-[56px] z-10 -mx-4 px-4 pb-3 pt-1 bg-zinc-950/90 backdrop-blur-xl mb-4">
+          <div className="flex gap-1 overflow-x-auto no-scrollbar">
+            {sideItems.map(item => (
+              <button key={item.id} onClick={() => setSettingsTab(item.id)}
+                aria-current={settingsTab === item.id ? 'page' : undefined}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shrink-0 ${settingsTab === item.id ? 'bg-blue-600 text-white shadow-md shadow-blue-900/40' : 'text-zinc-400 hover:text-white bg-zinc-900/50 border border-white/5'}`}>
+                <item.icon className="w-3.5 h-3.5" aria-hidden="true" /> {item.label}
+              </button>
+            ))}
+          </div>
+          {savedFlash && (
+            <p className="text-[10px] font-black text-emerald-400 mt-2 flex items-center gap-1"><CheckCircle className="w-3 h-3" aria-hidden="true" /> Saved</p>
+          )}
         </div>
 
       {/* ── TAB: General ── */}
@@ -4940,7 +6954,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                     )}
                   </div>
                   {settings.companyLogo && (
-                    <button onClick={() => { const updated = { ...settings, companyLogo: '' }; setSettings(updated); DB.saveSettings(updated); addToast('info', 'Logo removed'); }} className="text-zinc-600 hover:text-red-400 text-xs shrink-0 mt-2">Remove</button>
+                    <button onClick={() => { setSettings({ ...settings, companyLogo: '' }); addToast('info', 'Logo removed'); }} className="text-zinc-600 hover:text-red-400 text-xs shrink-0 mt-2">Remove</button>
                   )}
                 </div>
               </div>
@@ -4956,9 +6970,9 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                   <p className="text-sm text-white">Theme</p>
                   <p className="text-xs text-zinc-500">Switch between dark and light mode</p>
                 </div>
-                <div className="flex gap-1 bg-zinc-800 p-0.5 rounded-lg">
-                  <button onClick={() => { setSettings({ ...settings, theme: 'dark' }); document.body.classList.remove('light-theme'); }} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${(settings.theme || 'dark') === 'dark' ? 'bg-zinc-600 text-white' : 'text-zinc-400'}`}>Dark</button>
-                  <button onClick={() => { setSettings({ ...settings, theme: 'light' }); document.body.classList.add('light-theme'); }} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${settings.theme === 'light' ? 'bg-white text-black' : 'text-zinc-400'}`}>Light</button>
+                <div role="group" aria-label="Theme" className="flex gap-1 bg-zinc-800 p-1 rounded-lg">
+                  <button aria-pressed={(settings.theme || 'dark') === 'dark'} onClick={() => { setSettings({ ...settings, theme: 'dark' }); document.body.classList.remove('light-theme'); }} className={`px-3 py-1.5 rounded text-xs font-bold transition-colors min-h-[32px] ${(settings.theme || 'dark') === 'dark' ? 'bg-zinc-600 text-white' : 'text-zinc-400 hover:text-white'}`}>Dark</button>
+                  <button aria-pressed={settings.theme === 'light'} onClick={() => { setSettings({ ...settings, theme: 'light' }); document.body.classList.add('light-theme'); }} className={`px-3 py-1.5 rounded text-xs font-bold transition-colors min-h-[32px] ${settings.theme === 'light' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}>Light</button>
                 </div>
               </div>
             </div>
@@ -5070,14 +7084,14 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                     [stages[idx - 1], stages[idx]] = [stages[idx], stages[idx - 1]];
                     stages.forEach((s, i) => s.order = i);
                     setSettings({ ...settings, jobStages: stages });
-                  }} className="text-zinc-600 hover:text-white" title="Move Up"><ChevronUp className="w-3.5 h-3.5" /></button>
+                  }} aria-label="Move up" className="text-zinc-500 hover:text-white p-1 rounded hover:bg-white/5" title="Move Up"><ChevronUp className="w-3.5 h-3.5" aria-hidden="true" /></button>
                   <button onClick={() => {
                     const stages = [...(settings.jobStages || DEFAULT_STAGES)].sort((a, b) => a.order - b.order);
                     if (idx >= stages.length - 1) return;
                     [stages[idx], stages[idx + 1]] = [stages[idx + 1], stages[idx]];
                     stages.forEach((s, i) => s.order = i);
                     setSettings({ ...settings, jobStages: stages });
-                  }} className="text-zinc-600 hover:text-white" title="Move Down"><ChevronDown className="w-3.5 h-3.5" /></button>
+                  }} aria-label="Move down" className="text-zinc-500 hover:text-white p-1 rounded hover:bg-white/5" title="Move Down"><ChevronDown className="w-3.5 h-3.5" aria-hidden="true" /></button>
                   {/* Mark as complete stage */}
                   <label className="flex items-center gap-1 text-[9px] text-zinc-500 cursor-pointer shrink-0" title="Reaching this stage completes the job">
                     <input type="checkbox" checked={stage.isComplete || false} onChange={e => {
@@ -5119,7 +7133,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                   <div className="flex flex-wrap gap-1.5">
                     {[...(settings.customOperations || [])].sort((a, b) => a.localeCompare(b)).map(op => (
                       <span key={op} className="bg-zinc-800 border border-white/10 px-2 py-0.5 rounded flex items-center gap-1 text-xs text-zinc-300">
-                        {op}<button onClick={() => handleDeleteOp(op)} className="text-zinc-600 hover:text-red-400"><X className="w-2.5 h-2.5" /></button>
+                        {op}<button aria-label={`Remove ${op}`} onClick={() => handleDeleteOp(op)} className="text-zinc-500 hover:text-red-400 p-1 rounded"><X className="w-2.5 h-2.5" aria-hidden="true" /></button>
                       </span>
                     ))}
                   </div>
@@ -5128,86 +7142,41 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
             </div>
           </div>
 
-          {/* Clients — collapsible, alphabetical */}
-          <div>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
-              <button onClick={() => setClientsOpen(!clientsOpen)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 rounded-xl transition-colors">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-white">Clients</p>
-                  <span className="text-[10px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded-full font-bold">{(settings.clients || []).length}</span>
-                </div>
-                <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform ${clientsOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {clientsOpen && (
-                <div className="px-4 pb-4 space-y-3 border-t border-white/5">
-                  <div className="flex gap-2 mt-3">
-                    <input value={newClient} onChange={e => setNewClient(e.target.value)} placeholder="Add client..." className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white" onKeyDown={e => e.key === 'Enter' && handleAddClient()} />
-                    <button onClick={handleAddClient} className="bg-purple-600 hover:bg-purple-500 px-3 rounded-lg text-white text-xs font-bold">Add</button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(settings.clients || []).sort((a, b) => a.localeCompare(b)).map(client => (
-                      <span key={client} className="bg-zinc-800 border border-white/10 px-2 py-0.5 rounded flex items-center gap-1 text-xs text-zinc-300">
-                        {client}<button onClick={() => handleDeleteClient(client)} className="text-zinc-600 hover:text-red-400"><X className="w-2.5 h-2.5" /></button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Machines / Stations — physical work locations */}
+          <MachineManager settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
+
+          {/* Process Library — reusable pricing templates that pre-fill quote line items */}
+          <ProcessLibraryManager settings={settings} setSettings={setSettings} />
+
+          {/* Customers — merge/dedupe tool */}
+          <CustomerManager addToast={addToast} settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
         </div>
       )}
 
       {/* ── FINANCIAL ── */}
       {settingsTab === 'financial' && (
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-lg font-bold text-white mb-1">Financial</h3>
-            <p className="text-sm text-zinc-500">Shop rates, overhead, and quoting tools.</p>
-          </div>
-          <div>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Rate ($/hr)</label>
-                  <div className="relative"><span className="absolute left-2 top-1.5 text-zinc-600 text-xs">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded py-1.5 pl-5 pr-2 text-white text-sm font-mono" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /></div>
-                </div>
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Overhead / mo</label>
-                  <div className="relative"><span className="absolute left-2 top-1.5 text-zinc-600 text-xs">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded py-1.5 pl-5 pr-2 text-white text-sm font-mono" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /></div>
-                </div>
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Hours / mo</label>
-                  <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded py-1.5 px-2 text-white text-sm font-mono" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" />
-                </div>
-              </div>
-              {trueCost > 0 && (
-                <div className="bg-zinc-800/50 rounded-lg p-3 grid grid-cols-3 sm:grid-cols-3 text-center text-xs">
-                  <div><span className="text-zinc-500">Rate</span><p className="text-white font-bold">${(settings.shopRate || 0).toFixed(2)}/hr</p></div>
-                  <div><span className="text-zinc-500">Overhead</span><p className="text-yellow-400 font-bold">${ohRate.toFixed(2)}/hr</p></div>
-                  <div><span className="text-zinc-500">True Cost</span><p className="text-emerald-400 font-bold">${trueCost.toFixed(2)}/hr</p></div>
-                </div>
-              )}
-              <p className="text-[10px] text-zinc-600">Set individual worker rates in Team. This rate is used as fallback.</p>
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Quote Calculator</p>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
-              <QuoteCalculator settings={settings} />
-            </div>
-          </div>
-        </div>
+        <FinancialSettings
+          settings={settings}
+          setSettings={setSettings}
+        />
+      )}
+
+      {/* ── GOALS ── */}
+      {settingsTab === 'goals' && (
+        <GoalsSettings
+          settings={settings}
+          setSettings={setSettings}
+        />
       )}
 
       {/* ── DOCUMENTS — Split-pane with live preview ── */}
       {settingsTab === 'documents' && (() => {
-        const accent = (settings as any).accentColor || '#3b82f6';
+        const accent = settings.accentColor || '#3b82f6';
         const [docSection, setDocSection] = [undefined, undefined]; // accordion placeholder
         return (
         <div className="flex gap-4 flex-col lg:flex-row">
           {/* ── LEFT: Settings Controls ── */}
-          <div className="w-full lg:w-[280px] xl:w-[300px] shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+          <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
             {/* Logo */}
             <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
@@ -5234,7 +7203,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                     <div className="text-zinc-500"><Image className="w-8 h-8 mx-auto mb-1 text-zinc-600" /><p className="text-xs">Drop logo or click to upload</p><p className="text-[10px] text-zinc-600">PNG, JPG, SVG</p></div>
                   )}
                 </div>
-                {settings.companyLogo && <button onClick={() => { const u = { ...settings, companyLogo: '' }; setSettings(u); DB.saveSettings(u); }} className="text-xs text-zinc-600 hover:text-red-400 mt-2 block mx-auto">Remove logo</button>}
+                {settings.companyLogo && <button onClick={() => setSettings({ ...settings, companyLogo: '' })} className="text-xs text-zinc-600 hover:text-red-400 mt-2 block mx-auto">Remove logo</button>}
               </div>
             </details>
 
@@ -5257,10 +7226,6 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                       <button onClick={() => setSettings({ ...settings, quoteNextNumber: 1 })} className="text-[10px] text-red-400 hover:text-red-300 px-2 shrink-0">Reset</button>
                     </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-[10px] text-zinc-500 block mb-1">Invoice Prefix</label><input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.invoicePrefix || 'INV-'} onChange={e => setSettings({ ...settings, invoicePrefix: e.target.value })} /></div>
-                  <div><label className="text-[10px] text-zinc-500 block mb-1">Next Number</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.invoiceNextNumber || 1} onChange={e => setSettings({ ...settings, invoiceNextNumber: parseInt(e.target.value) || 1 })} min={1} /></div>
                 </div>
               </div>
             </details>
@@ -5314,7 +7279,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               <div className="px-4 pb-4 space-y-3">
                 <label className="flex items-center justify-between cursor-pointer py-1">
                   <div><p className="text-sm text-white">Signature Lines</p><p className="text-[10px] text-zinc-600">Show company + client signature lines</p></div>
-                  <input type="checkbox" checked={(settings as any).showSignatureLines ?? true} onChange={e => setSettings({ ...settings, showSignatureLines: e.target.checked } as any)} className="w-5 h-5 rounded accent-blue-500" />
+                  <input type="checkbox" checked={settings.showSignatureLines ?? true} onChange={e => setSettings({ ...settings, showSignatureLines: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
                 </label>
                 <div>
                   <label className="text-[10px] text-zinc-500 block mb-1">Default Comment / Certificate</label>
@@ -5353,10 +7318,18 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               <div className="px-4 pb-4 space-y-3">
                 <div><label className="text-[10px] text-zinc-500 block mb-1">Default Payment Terms</label><input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultPaymentTerms || ''} onChange={e => setSettings({ ...settings, defaultPaymentTerms: e.target.value })} placeholder="Net 30" /></div>
                 <div><label className="text-[10px] text-zinc-500 block mb-1">Default Tax Rate (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.taxRate || ''} onChange={e => setSettings({ ...settings, taxRate: parseFloat(e.target.value) || 0 })} step="0.1" placeholder="0" /></div>
-                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Discount (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={(settings as any).defaultDiscount || ''} onChange={e => setSettings({ ...settings, defaultDiscount: parseFloat(e.target.value) || 0 } as any)} step="0.1" placeholder="0" /></div>
-                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Markup (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={(settings as any).defaultMarkup || '25'} onChange={e => setSettings({ ...settings, defaultMarkup: parseFloat(e.target.value) || 0 } as any)} step="1" placeholder="25" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Discount (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultDiscount || ''} onChange={e => setSettings({ ...settings, defaultDiscount: parseFloat(e.target.value) || 0 })} step="0.1" placeholder="0" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Markup (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultMarkup || '25'} onChange={e => setSettings({ ...settings, defaultMarkup: parseFloat(e.target.value) || 0 })} step="1" placeholder="25" /></div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Min Margin Threshold (%)</label>
+                  <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.minMarginPct ?? ''} onChange={e => setSettings({ ...settings, minMarginPct: parseFloat(e.target.value) || 0 })} step="1" placeholder="20" />
+                  <p className="text-[10px] text-zinc-600 mt-1">Quotes below this % margin show a red warning in the editor.</p>
+                </div>
               </div>
             </details>
+
+            {/* Snippet Library — reusable text blocks (Round 1 #8) */}
+            <SnippetLibraryManager settings={settings} setSettings={setSettings} />
 
             {/* Color */}
             <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
@@ -5387,7 +7360,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               <div className="px-4 pb-4">
                 <div className="flex flex-wrap gap-2">
                   {['None', 'DRAFT', 'SAMPLE', 'CONFIDENTIAL', 'COPY', 'VOID'].map(w => (
-                    <button key={w} onClick={() => setSettings({ ...settings, watermark: w === 'None' ? '' : w } as any)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${((settings as any).watermark || '') === (w === 'None' ? '' : w) ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>{w}</button>
+                    <button key={w} onClick={() => setSettings({ ...settings, watermark: w === 'None' ? '' : w })} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${(settings.watermark || '') === (w === 'None' ? '' : w) ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>{w}</button>
                   ))}
                 </div>
               </div>
@@ -5413,7 +7386,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 </div>
               </div>
               {/* Watermark */}
-              {(settings as any).watermark && <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ fontSize: 48, color: 'rgba(0,0,0,0.06)', fontWeight: 900, transform: 'rotate(-30deg)' }}>{(settings as any).watermark}</div>}
+              {settings.watermark && <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ fontSize: 48, color: 'rgba(0,0,0,0.06)', fontWeight: 900, transform: 'rotate(-30deg)' }}>{settings.watermark}</div>}
               {/* Info Block */}
               <div className="flex gap-6 mb-4 border-b border-gray-200 pb-3" style={{ fontSize: 11 }}>
                 <div><span className="text-gray-400">Date:</span> <span className="text-gray-700 font-medium">{new Date().toLocaleDateString()}</span></div>
@@ -5435,20 +7408,20 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               </div>
               {/* Items Table */}
               <table className="w-full mb-4" style={{ fontSize: 11 }}>
-                <thead><tr className="border-b-2 border-gray-200 text-gray-400 uppercase" style={{ fontSize: 9 }}><th className="text-left py-2">Description</th><th className="text-right py-2">Qty</th>{(settings as any).showUnitCol !== false && <th className="text-right py-2">Unit</th>}<th className="text-right py-2">Rate</th><th className="text-right py-2">Amount</th></tr></thead>
+                <thead><tr className="border-b-2 border-gray-200 text-gray-400 uppercase" style={{ fontSize: 9 }}><th className="text-left py-2">Description</th><th className="text-right py-2">Qty</th>{settings.showUnitCol !== false && <th className="text-right py-2">Unit</th>}<th className="text-right py-2">Rate</th><th className="text-right py-2">Amount</th></tr></thead>
                 <tbody>
-                  <tr className="border-b border-gray-100"><td className="py-2.5 text-gray-700">Deburring — Bracket Assembly</td><td className="py-2.5 text-right text-gray-600">500</td>{(settings as any).showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">ea</td>}<td className="py-2.5 text-right text-gray-600">$2.50</td><td className="py-2.5 text-right font-bold text-gray-800">$1,250.00</td></tr>
-                  <tr className="border-b border-gray-100 bg-gray-50"><td className="py-2.5 text-gray-700">Setup & Inspection</td><td className="py-2.5 text-right text-gray-600">1</td>{(settings as any).showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">lot</td>}<td className="py-2.5 text-right text-gray-600">$125.00</td><td className="py-2.5 text-right font-bold text-gray-800">$125.00</td></tr>
+                  <tr className="border-b border-gray-100"><td className="py-2.5 text-gray-700">Deburring — Bracket Assembly</td><td className="py-2.5 text-right text-gray-600">500</td>{settings.showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">ea</td>}<td className="py-2.5 text-right text-gray-600">$2.50</td><td className="py-2.5 text-right font-bold text-gray-800">$1,250.00</td></tr>
+                  <tr className="border-b border-gray-100 bg-gray-50"><td className="py-2.5 text-gray-700">Setup & Inspection</td><td className="py-2.5 text-right text-gray-600">1</td>{settings.showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">lot</td>}<td className="py-2.5 text-right text-gray-600">$125.00</td><td className="py-2.5 text-right font-bold text-gray-800">$125.00</td></tr>
                 </tbody>
               </table>
               {/* Totals */}
               <div className="flex justify-end" style={{ fontSize: 12 }}>
                 <div className="w-52 space-y-1.5">
                   <div className="flex justify-between"><span className="text-gray-400">Subtotal</span><span className="text-gray-700">$1,375.00</span></div>
-                  {(settings as any).defaultMarkup > 0 && <div className="flex justify-between"><span className="text-gray-400">Markup {(settings as any).defaultMarkup}%</span><span className="text-gray-700">+${((settings as any).defaultMarkup / 100 * 1375).toFixed(2)}</span></div>}
-                  {(settings as any).defaultDiscount > 0 && <div className="flex justify-between"><span className="text-gray-400">Discount</span><span className="text-red-500">-${((settings as any).defaultDiscount / 100 * 1375).toFixed(2)}</span></div>}
+                  {settings.defaultMarkup > 0 && <div className="flex justify-between"><span className="text-gray-400">Markup {settings.defaultMarkup}%</span><span className="text-gray-700">+${(settings.defaultMarkup / 100 * 1375).toFixed(2)}</span></div>}
+                  {settings.defaultDiscount > 0 && <div className="flex justify-between"><span className="text-gray-400">Discount</span><span className="text-red-500">-${(settings.defaultDiscount / 100 * 1375).toFixed(2)}</span></div>}
                   {(settings.taxRate || 0) > 0 && <div className="flex justify-between"><span className="text-gray-400">Tax {settings.taxRate}%</span><span className="text-gray-700">+${(settings.taxRate! / 100 * 1375).toFixed(2)}</span></div>}
-                  {(() => { const sub = 1375; const m = ((settings as any).defaultMarkup || 0) / 100; const d = ((settings as any).defaultDiscount || 0) / 100; const t = (settings.taxRate || 0) / 100; const total = (sub * (1 + m) * (1 - d)) * (1 + t); return (
+                  {(() => { const sub = 1375; const m = (settings.defaultMarkup || 0) / 100; const d = (settings.defaultDiscount || 0) / 100; const t = (settings.taxRate || 0) / 100; const total = (sub * (1 + m) * (1 - d)) * (1 + t); return (
                   <div className="flex justify-between font-extrabold border-t-2 border-gray-800 pt-2 mt-1" style={{ fontSize: 16, color: accent }}>
                     <span>Total</span><span>${total.toFixed(2)}</span>
                   </div>
@@ -5457,7 +7430,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               </div>
               {/* Footer */}
               {settings.defaultQuoteComment && <div className="mt-4 pt-3 border-t border-gray-200"><div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Comments</div><div className="text-gray-500 mt-1" style={{ fontSize: 10 }}>{settings.defaultQuoteComment.substring(0, 150)}{settings.defaultQuoteComment.length > 150 ? '...' : ''}</div></div>}
-              {(settings as any).showSignatureLines !== false && (
+              {settings.showSignatureLines !== false && (
                 <div className="flex gap-8 mt-8"><div className="flex-1 pt-2 border-t border-gray-300 text-gray-400" style={{ fontSize: 10 }}>{settings.companyName || 'Company'}</div><div className="flex-1 pt-2 border-t border-gray-300 text-gray-400" style={{ fontSize: 10 }}>Client's signature</div></div>
               )}
             </div>
@@ -5470,8 +7443,11 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
       {/* ── TV DISPLAY — Split-pane with live preview ── */}
       {settingsTab === 'tv' && (
         <div className="flex gap-4 flex-col lg:flex-row">
-          {/* LEFT: TV Controls */}
-          <div className="w-full lg:w-[280px] xl:w-[300px] shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+          {/* LEFT: TV Controls — scrollable inside its own column on desktop, free-flow on mobile */}
+          <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
+
+            {/* Weather Location */}
+            <WeatherLocationCard addToast={addToast} />
 
             {/* TV Stream Link */}
             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
@@ -5504,6 +7480,29 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               })()}
             </div>
 
+            {/* Privacy — sensitive data toggles */}
+            <details open className="bg-red-500/5 border border-red-500/20 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-red-500/10">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-white flex items-center gap-1.5">🔒 Privacy</span>
+                  <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/25 px-1.5 py-0.5 rounded uppercase tracking-widest">Sensitive</span>
+                </div>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-2">
+                <p className="text-[10px] text-zinc-500 leading-snug italic">TVs are often visible to customers, visitors, and workers — hide sensitive data by default.</p>
+                {[
+                  { key: 'tvShowRevenue', label: 'Show $ / Revenue', desc: '💰 Dollar amounts on stats + goal slides (off by default)', def: false },
+                  { key: 'tvShowCustomerNames', label: 'Show Customer Names', desc: '🏢 Customer names on job cards + Top Customer', def: true },
+                ].map(o => (
+                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                    <div className="flex-1 min-w-0 pr-3"><p className="text-xs font-bold text-white">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5 leading-snug">{o.desc}</p></div>
+                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-4 h-4 rounded accent-blue-500 shrink-0" />
+                  </label>
+                ))}
+              </div>
+            </details>
+
             {/* Display Options */}
             <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Display</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
@@ -5511,8 +7510,10 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 {[
                   { key: 'tvCompanyHeader', label: 'Company Header', desc: 'Show name + logo at top', def: true },
                   { key: 'tvShowClock', label: 'Live Clock', desc: 'Current time in header', def: true },
+                  { key: 'tvShowWeather', label: 'Outside Temperature', desc: 'Weather widget (needs location)', def: true },
                   { key: 'tvShowStats', label: 'Stats Bar', desc: 'Workers, running, paused counts', def: true },
-                  { key: 'tvShowCustomer', label: 'Customer Name', desc: 'Show on worker cards', def: true },
+                  { key: 'tvShowJobsBelt', label: 'Jobs Belt', desc: 'Auto-scrolling list of open jobs', def: true },
+                  { key: 'tvShowCustomer', label: 'Customer on Worker Cards', desc: 'Legacy — use Privacy toggle instead', def: true },
                   { key: 'tvShowJobId', label: 'Job ID', desc: 'Show job ID on cards', def: true },
                   { key: 'tvShowElapsedBar', label: 'Progress Bar', desc: 'Time elapsed bar', def: true },
                   { key: 'tvAutoScroll', label: 'Auto-Scroll', desc: 'Scroll when many workers', def: false },
@@ -5524,9 +7525,17 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                 ))}
                 <div className="flex items-center justify-between py-1">
                   <p className="text-xs text-white">Card Size</p>
-                  <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
+                  <select aria-label="TV card size" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
                     <option value="compact">Compact</option><option value="normal">Normal</option><option value="large">Large</option>
                   </select>
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-xs text-white">Jobs Belt Scroll Speed</p>
+                  <div role="group" aria-label="Jobs belt scroll speed" className="inline-flex gap-1 p-1 bg-zinc-950 border border-white/10 rounded-lg">
+                    {(['off', 'slow', 'normal', 'fast'] as const).map(s => (
+                      <button key={s} type="button" onClick={() => setSettings({ ...settings, tvScrollSpeed: s })} aria-pressed={(settings.tvScrollSpeed || 'normal') === s} className={`px-2.5 py-1 text-[11px] font-bold rounded capitalize min-h-[28px] ${(settings.tvScrollSpeed || 'normal') === s ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white'}`}>{s}</button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </details>
@@ -5548,121 +7557,13 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               </div>
             </details>
 
-            {/* Slides */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
-              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Slides</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
-              <div className="px-4 pb-4 space-y-2">
-                <div className="flex gap-1 mb-2">
-                  <button onClick={() => { const s = [...(settings.tvSlides || [])]; s.push({ id: `msg_${Date.now()}`, type: 'message', enabled: true, title: 'Announcement', body: '', color: 'blue' }); setSettings({ ...settings, tvSlides: s }); }} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded font-bold flex-1">+ Message</button>
-                  <button onClick={() => { const s = [...(settings.tvSlides || [])]; if (!s.find(x => x.type === 'stats')) s.push({ id: 'stats', type: 'stats', enabled: true }); setSettings({ ...settings, tvSlides: s }); }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold flex-1">+ Stats</button>
-                  <button onClick={() => { const s = [...(settings.tvSlides || [])]; if (!s.find(x => x.type === 'workers')) s.unshift({ id: 'workers', type: 'workers', enabled: true }); setSettings({ ...settings, tvSlides: s }); }} className="text-[10px] bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded font-bold flex-1">+ Workers</button>
-                </div>
-                {(!settings.tvSlides || settings.tvSlides.length === 0) && <p className="text-[10px] text-zinc-500 text-center py-2">No slides. Default worker view will show.</p>}
-                {(settings.tvSlides || []).map((slide, idx) => (
-                  <div key={slide.id} className={`border rounded-lg p-2.5 space-y-1.5 ${slide.enabled ? 'border-white/10 bg-zinc-800/30' : 'border-white/5 opacity-50'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded font-bold uppercase">{slide.type}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <select className="bg-zinc-950 border border-white/10 rounded px-1 py-0.5 text-white text-[9px]" value={slide.duration || settings.tvSlideDuration || 15} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], duration: Number(e.target.value) }; setSettings({ ...settings, tvSlides: s }); }}>
-                          {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
-                        </select>
-                        <input type="checkbox" checked={slide.enabled} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], enabled: e.target.checked }; setSettings({ ...settings, tvSlides: s }); }} className="w-3.5 h-3.5 rounded accent-blue-500" />
-                        <button onClick={() => setSettings({ ...settings, tvSlides: (settings.tvSlides || []).filter((_, i) => i !== idx) })} className="text-zinc-600 hover:text-red-400"><X className="w-3 h-3" /></button>
-                      </div>
-                    </div>
-                    {slide.type === 'message' && (
-                      <div className="space-y-1.5">
-                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white" placeholder="Title" value={slide.title || ''} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], title: e.target.value }; setSettings({ ...settings, tvSlides: s }); }} />
-                        <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-[10px] text-white" placeholder="Body (optional)" value={slide.body || ''} onChange={e => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], body: e.target.value }; setSettings({ ...settings, tvSlides: s }); }} />
-                        <div className="flex gap-1">{[{id:'blue',cls:'bg-blue-500'},{id:'yellow',cls:'bg-yellow-500'},{id:'red',cls:'bg-red-500'},{id:'green',cls:'bg-emerald-500'},{id:'white',cls:'bg-white'}].map(c => (
-                          <button key={c.id} onClick={() => { const s = [...(settings.tvSlides || [])]; s[idx] = { ...s[idx], color: c.id as any }; setSettings({ ...settings, tvSlides: s }); }} className={`w-5 h-5 rounded ${c.cls} transition-all ${(slide.color || 'blue') === c.id ? 'ring-2 ring-white scale-110' : 'opacity-40'}`} />
-                        ))}</div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </details>
+            {/* Slides — rich editor with all slide types */}
+            <TvSlidesEditor settings={settings} setSettings={setSettings} />
           </div>
 
-          {/* RIGHT: REAL Live TV Preview */}
-          <div className="flex-1 hidden lg:block min-w-0">
-            <div className="sticky top-4 bg-black rounded-2xl shadow-2xl overflow-hidden border border-white/10">
-              <div className="bg-zinc-950 p-6" style={{ minHeight: 400 }}>
-                {/* Header */}
-                {settings.tvCompanyHeader !== false && (
-                  <div className="flex items-center justify-center gap-3 pb-3 border-b border-white/5 mb-3">
-                    {settings.companyLogo && <img src={settings.companyLogo} className="h-6 object-contain" alt="" />}
-                    <span className="text-white font-bold text-sm">{settings.companyName || 'Your Company'}</span>
-                  </div>
-                )}
-                {/* Clock */}
-                {settings.tvShowClock !== false && (
-                  <div className="text-center text-zinc-500 text-xs font-mono mb-2">{new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', second:'2-digit'})}</div>
-                )}
-                {/* Real Stats */}
-                {settings.tvShowStats !== false && (() => {
-                  const running = tvActiveLogs.filter(l => l.status !== 'paused').length;
-                  const paused = tvActiveLogs.filter(l => l.status === 'paused').length;
-                  const workers = new Set(tvActiveLogs.map(l => l.userId)).size;
-                  return (
-                    <div className="flex justify-center gap-6 text-[10px] text-zinc-500 mb-4">
-                      <span>👥 {workers} worker{workers !== 1 ? 's' : ''}</span>
-                      <span>⚡ {running} running</span>
-                      <span>⏸ {paused} paused</span>
-                    </div>
-                  );
-                })()}
-                {/* Real Worker Cards */}
-                <div className="space-y-2">
-                  {tvActiveLogs.length === 0 && (
-                    <div className="text-center text-zinc-600 py-8">
-                      <p className="text-sm">No active workers</p>
-                      <p className="text-[10px] text-zinc-700 mt-1">Floor is quiet — workers will appear here when timers start</p>
-                    </div>
-                  )}
-                  {tvActiveLogs.slice(0, 6).map((log) => {
-                    const job = tvJobs.find(j => j.id === log.jobId);
-                    const elapsed = DB.getWorkingElapsedMs(log);
-                    const secs = Math.floor(elapsed / 1000);
-                    const h = String(Math.floor(secs / 3600)).padStart(2, '0');
-                    const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
-                    const s = String(secs % 60).padStart(2, '0');
-                    const isPaused = log.status === 'paused';
-                    const pct = Math.min(100, secs / 36); // rough progress
-                    return (
-                      <div key={log.id} className={`bg-white/[0.03] border border-white/5 rounded-xl ${settings.tvCardSize === 'compact' ? 'p-2' : settings.tvCardSize === 'large' ? 'p-4' : 'p-3'} ${isPaused ? 'opacity-60' : ''}`}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 text-xs font-bold shrink-0">{log.userName.charAt(0)}</div>
-                            <div className="min-w-0">
-                              <span className="text-white font-bold text-sm">{log.userName}</span>
-                              <span className="text-blue-400 text-xs ml-2">{log.operation}</span>
-                              {isPaused && <span className="text-yellow-400 text-[9px] ml-1">PAUSED</span>}
-                            </div>
-                          </div>
-                          <span className="text-white font-mono font-bold text-lg shrink-0">{h}:{m}:{s}</span>
-                        </div>
-                        {settings.tvShowElapsedBar !== false && (
-                          <div className="h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
-                            <div className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
-                          </div>
-                        )}
-                        {(settings.tvShowCustomer !== false || settings.tvShowJobId !== false) && (
-                          <div className="flex gap-3 mt-2 text-[10px] text-zinc-500 flex-wrap">
-                            {settings.tvShowJobId !== false && job && <span>PO: {job.poNumber}</span>}
-                            {job?.partNumber && <span>Part: {job.partNumber}</span>}
-                            {settings.tvShowCustomer !== false && job?.customer && <span className="text-blue-400">{job.customer}</span>}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+          {/* RIGHT: True TV-mode Mirror Preview */}
+          <div className="flex-1 min-w-0">
+            <TvMirrorPreview settings={settings} activeLogs={tvActiveLogs} jobs={tvJobs} allLogs={tvAllLogs} />
           </div>
         </div>
       )}
@@ -5838,51 +7739,65 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
   const opColors = ['bg-blue-500', 'bg-purple-500', 'bg-emerald-500', 'bg-orange-500', 'bg-pink-500', 'bg-cyan-500', 'bg-yellow-500'];
 
   return (
-    <div className="space-y-4 animate-fade-in max-w-2xl mx-auto">
+    <div className="space-y-4 animate-fade-in">
 
-      {/* Streak + Goal */}
-      <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            {streak > 0 && (
-              <div className="flex items-center gap-1.5 bg-orange-500/10 border border-orange-500/20 px-3 py-1.5 rounded-xl">
-                <span className="text-lg">🔥</span>
-                <span className="text-orange-400 font-black text-sm">{streak}-day streak</span>
-              </div>
-            )}
+      {/* Hero: Streak + Weekly Goal — full width, 2 columns on desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Streak card */}
+        <div className="card-shine hover-lift-glow bg-gradient-to-br from-orange-500/10 via-zinc-900/50 to-zinc-900/50 border border-orange-500/20 rounded-2xl p-5 relative overflow-hidden">
+          <div aria-hidden="true" className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 blur-3xl rounded-full" />
+          <div className="relative">
+            <p className="text-[10px] font-black text-orange-400/80 uppercase tracking-[0.2em]">Current Streak</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-6xl font-black text-white tabular leading-none" style={{ textShadow: '0 0 30px rgba(249,115,22,0.4)' }}>{streak}</span>
+              <span className="text-2xl">🔥</span>
+            </div>
+            <p className="text-xs text-zinc-400 mt-1.5">{streak === 0 ? 'Clock in to start a streak' : streak === 1 ? 'day — keep it going!' : `days in a row — on fire!`}</p>
           </div>
-          {goalPct >= 100 && <span className="text-emerald-400 font-black text-xs bg-emerald-500/10 px-2 py-1 rounded-lg">🏆 GOAL HIT!</span>}
         </div>
-        <div>
-          <div className="flex justify-between items-baseline mb-1.5">
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Weekly Goal</span>
-            <span className="text-xs font-mono text-zinc-400">
-              <span className={`font-bold ${goalPct >= 100 ? 'text-emerald-400' : 'text-white'}`}>{weekHrsCalc.toFixed(1)}h</span>
-              <span className="text-zinc-600"> / {WEEKLY_GOAL_HRS}h</span>
-            </span>
+
+        {/* Weekly Goal card */}
+        <div className="card-shine hover-lift-glow bg-gradient-to-br from-blue-500/10 via-zinc-900/50 to-zinc-900/50 border border-blue-500/20 rounded-2xl p-5 relative overflow-hidden lg:col-span-2">
+          <div aria-hidden="true" className="absolute top-0 right-0 w-40 h-40 bg-blue-500/10 blur-3xl rounded-full" />
+          <div className="relative">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-black text-blue-400/80 uppercase tracking-[0.2em]">Weekly Goal</p>
+              {goalPct >= 100 && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-full flex items-center gap-1">🏆 HIT!</span>}
+            </div>
+            <div className="flex items-baseline gap-3">
+              <span className={`text-6xl font-black tabular leading-none ${goalPct >= 100 ? 'text-emerald-400' : 'text-white'}`} style={{ textShadow: '0 0 30px rgba(59,130,246,0.3)' }}>{weekHrsCalc.toFixed(1)}</span>
+              <span className="text-2xl font-bold text-zinc-500">h</span>
+              <span className="text-sm text-zinc-600 ml-1">of {WEEKLY_GOAL_HRS}h</span>
+            </div>
+            <div className="mt-4 relative h-3 rounded-full bg-zinc-800 overflow-hidden">
+              <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${goalPct >= 100 ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' : 'bg-gradient-to-r from-blue-500 to-indigo-400'}`} style={{ width: `${goalPct}%`, boxShadow: goalPct >= 100 ? '0 0 12px rgba(16,185,129,0.6)' : '0 0 12px rgba(59,130,246,0.6)' }} />
+            </div>
+            <div className="flex items-center justify-between text-[11px] mt-1.5">
+              <span className="text-zinc-500">{goalPct.toFixed(0)}% complete</span>
+              <span className="text-zinc-400 font-mono">{goalPct < 100 ? `${(WEEKLY_GOAL_HRS - weekHrsCalc).toFixed(1)}h remaining` : `+${(weekHrsCalc - WEEKLY_GOAL_HRS).toFixed(1)}h over goal`}</span>
+            </div>
           </div>
-          <div className="w-full h-3 bg-zinc-800 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full bg-gradient-to-r transition-all duration-1000 ${goalPct >= 100 ? 'from-emerald-500 to-emerald-400' : 'from-blue-500 to-blue-400'}`} style={{ width: `${goalPct}%` }} />
-          </div>
-          {goalPct < 100 && <p className="text-xs text-zinc-500 mt-1">{(WEEKLY_GOAL_HRS - weekHrsCalc).toFixed(1)}h remaining — keep grinding! 💪</p>}
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center">
-          <p className="text-2xl font-bold text-blue-400">{fmtHours(weekHrsCalc)}</p>
-          <p className="text-xs text-zinc-500 mt-1">This Week</p>
+      {/* Summary cards — wide */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
+          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">This Week</p>
+          <p className="text-2xl sm:text-3xl font-black text-blue-400 tabular mt-1 leading-none">{fmtHours(weekHrsCalc)}</p>
+          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-blue-500/50 to-transparent mt-2" aria-hidden="true" />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center">
-          <p className="text-2xl font-bold text-purple-400">{weekOps}</p>
-          <p className="text-xs text-zinc-500 mt-1">Operations</p>
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
+          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Operations</p>
+          <p className="text-2xl sm:text-3xl font-black text-purple-400 tabular mt-1 leading-none">{weekOps}</p>
+          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-purple-500/50 to-transparent mt-2" aria-hidden="true" />
         </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center">
-          <p className="text-2xl font-bold text-emerald-400">
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
+          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Today</p>
+          <p className="text-2xl sm:text-3xl font-black text-emerald-400 tabular mt-1 leading-none">
             {todayMins >= 60 ? `${Math.floor(todayMins/60)}h ${todayMins%60}m` : `${todayMins}m`}
           </p>
-          <p className="text-xs text-zinc-500 mt-1">Today</p>
+          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent mt-2" aria-hidden="true" />
         </div>
       </div>
 
@@ -5974,14 +7889,28 @@ export default function App() {
     return params.get('tv') || null;
   });
 
-  // Check for Customer Portal mode (?portal=CUSTOMER_NAME&quote=QUOTE_ID)
+  // Check for Customer Portal mode
+  // Supports both legacy (?portal=CUSTOMER_NAME) and short slug (?c=slug)
+  // `?c=slug` is resolved to the customer name via settings.clientSlugs
   const [portalCustomer] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('portal') || null;
+    const portal = params.get('portal');
+    if (portal) return portal;
+    const slug = params.get('c');
+    if (!slug) return null;
+    // Resolve slug → customer name from settings
+    try {
+      const settings = DB.getSettings();
+      const slugMap = settings.clientSlugs || {};
+      for (const [customerName, s] of Object.entries(slugMap)) {
+        if (s === slug) return customerName;
+      }
+    } catch {}
+    return slug; // fallback: treat slug as customer name
   });
   const [portalQuoteId] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('quote') || null;
+    return params.get('quote') || params.get('q') || null;
   });
 
   // Save ?jobId= from QR scan URL to sessionStorage IMMEDIATELY before anything else
@@ -6005,6 +7934,16 @@ export default function App() {
   const [printable, setPrintable] = useState<Job | null>(null);
   const [confirm, setConfirm] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('sidebar_collapsed') === '1'; } catch { return false; }
+  });
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('sidebar_collapsed', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  }, []);
   const [showPOScanner, setShowPOScanner] = useState(false);
   const [appSettings, setAppSettings] = useState<SystemSettings>(DB.getSettings());
   // For notifications  track all jobs and active logs globally
@@ -6030,10 +7969,11 @@ export default function App() {
       if (view === 'login') {
         // If there's a pending QR scan, go to jobs/workstation instead of default
         const pendingJob = sessionStorage.getItem('pending_jobId');
-        if (pendingJob && user.role === 'admin') {
-          setView('admin-scan'); // Admin goes to Work Station where scan handler lives
+        const isStaff = user.role === 'admin' || user.role === 'manager';
+        if (pendingJob && isStaff) {
+          setView('admin-scan'); // Staff goes to Work Station where scan handler lives
         } else {
-          setView(user.role === 'admin' ? 'admin-dashboard' : 'employee-scan');
+          setView(isStaff ? 'admin-dashboard' : 'employee-scan');
         }
       }
     } else {
@@ -6095,18 +8035,23 @@ export default function App() {
     );
   }
 
- const navItems = [
-    { id: 'admin-dashboard', l: 'Overview', i: LayoutDashboard },
-    { id: 'admin-jobs', l: 'Jobs', i: Briefcase },
-    { id: 'admin-logs', l: 'Logs', i: Calendar },
-    { id: 'admin-team', l: 'Team', i: Users },
-    { id: 'admin-reports', l: 'Reports', i: Calculator },
-    { id: 'admin-settings', l: 'Settings', i: Settings },
-    { id: 'admin-live', l: 'Live Floor', i: Activity },
-    { id: 'admin-samples', l: 'Samples', i: Camera },
-    { id: 'admin-quotes', l: 'Quotes', i: FileText },
-    { id: 'admin-scan', l: 'Work Station', i: ScanLine },
+ const allNavItems: { id: string; l: string; i: any; adminOnly?: boolean }[] = [
+    { id: 'admin-dashboard', l: 'Overview',     i: LayoutDashboard },
+    { id: 'admin-jobs',      l: 'Jobs',         i: Briefcase },
+    { id: 'admin-board',     l: 'Board',        i: Columns3 },
+    { id: 'admin-calendar',  l: 'Calendar',     i: Calendar },
+    { id: 'admin-live',      l: 'Live Floor',   i: Activity },
+    { id: 'admin-logs',      l: 'Logs',         i: History },
+    { id: 'admin-quotes',    l: 'Quotes',       i: FileText },
+    { id: 'admin-samples',   l: 'Samples',      i: Camera },
+    { id: 'admin-quality',   l: 'Quality',      i: AlertTriangle },
+    { id: 'admin-reports',   l: 'Reports',      i: Calculator },
+    { id: 'admin-team',      l: 'Team',         i: Users },
+    { id: 'admin-scan',      l: 'Work Station', i: ScanLine },
+    { id: 'admin-settings',  l: 'Settings',     i: Settings, adminOnly: true },
   ];
+  // Managers see everything EXCEPT Settings (admin-only billing/config surface)
+  const navItems = allNavItems.filter(n => !n.adminOnly || user?.role === 'admin');
 
  //  PO SCANNER 
   const handlePOJobCreate = async (jobData: { poNumber: string; partNumber: string; customer: string; quantity: number; dueDate: string; dateReceived?: string; priority?: string; info: string; specialInstructions?: string; }) => {
@@ -6137,12 +8082,13 @@ export default function App() {
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex font-sans">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <PrintStyles />
       <PWAInstallBanner />
       <PrintableJobSheet job={printable} onClose={() => setPrintable(null)} onPrinted={(id) => { const list = JSON.parse(localStorage.getItem('printed_jobs') || '[]'); if (!list.includes(id)) { list.push(id); localStorage.setItem('printed_jobs', JSON.stringify(list)); } window.dispatchEvent(new Event('printed-update')); }} />
       <ConfirmationModal isOpen={!!confirm} {...(confirm || {})} onCancel={() => setConfirm(null)} />
 
-      {user.role === 'admin' && (
+      {(user.role === 'admin' || user.role === 'manager') && (
         <>
           {/* Mobile overlay backdrop */}
           {sidebarOpen && (
@@ -6152,47 +8098,108 @@ export default function App() {
             />
           )}
 
-          {/* Sidebar  hidden on mobile unless open, always visible on md+ */}
-          <aside className={`
-            fixed h-full z-40 flex flex-col w-64
-            border-r border-white/5 bg-zinc-950
-            transition-transform duration-300 ease-in-out
+          {/* Sidebar  hidden on mobile unless open, always visible on md+. Collapsible to icons-only on md+. */}
+          <aside aria-label="Primary sidebar" className={`
+            fixed h-full z-40 flex flex-col
+            ${sidebarCollapsed ? 'md:w-[68px] w-64' : 'w-64'}
+            border-r border-white/5 bg-gradient-to-b from-zinc-950 via-zinc-950 to-black
+            transition-[transform,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
             ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
             md:translate-x-0
           `}>
-            <div className="p-6 font-bold text-white flex gap-2 items-center justify-between">
-              <div className="flex items-center gap-2"><Sparkles className="text-blue-500" /> SC DEBURRING</div>
+            {/* Gradient accent line */}
+            <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
+
+            <div className={`font-bold text-white flex items-center ${sidebarCollapsed ? 'md:flex-col md:p-3 md:gap-3 md:justify-center p-5 justify-between gap-3' : 'p-5 justify-between gap-3'}`}>
+              <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'md:justify-center' : ''}`}>
+                <div className="relative shrink-0">
+                  <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl blur-md opacity-60" />
+                  <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                    <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
+                  </div>
+                </div>
+                <div className={`min-w-0 ${sidebarCollapsed ? 'md:hidden' : ''}`}>
+                  <p className="text-[15px] font-black tracking-tight leading-none">SC DEBURRING</p>
+                  <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-widest mt-0.5">Shop OS</p>
+                </div>
+              </div>
               <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} align="left" />
             </div>
-            <nav className="px-4 space-y-1">
-              {navItems.map(x => (
-                <button key={x.id} onClick={() => { setView(x.id as any); setSidebarOpen(false); }}
-                  className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-bold transition-all ${view === x.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/50'}`}>
-                  <x.i className="w-4 h-4" /> {x.l}
-                </button>
-              ))}
+            <nav aria-label="Main navigation" className={`space-y-0.5 mt-2 ${sidebarCollapsed ? 'md:px-2 px-3' : 'px-3'}`}>
+              {navItems.map(x => {
+                const active = view === x.id;
+                return (
+                  <button key={x.id} onClick={() => { setView(x.id as any); setSidebarOpen(false); }}
+                    aria-current={active ? 'page' : undefined}
+                    title={sidebarCollapsed ? x.l : undefined}
+                    className={`relative flex items-center gap-3 w-full rounded-xl text-sm font-semibold transition-all group
+                      ${sidebarCollapsed ? 'md:justify-center md:px-2.5 md:py-2.5 px-3.5 py-2.5' : 'px-3.5 py-2.5'}
+                      ${active
+                        ? 'bg-gradient-to-r from-blue-500/15 to-transparent text-white shadow-sm'
+                        : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
+                    {active && <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-gradient-to-b from-blue-400 to-indigo-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />}
+                    <x.i className={`w-[18px] h-[18px] flex-shrink-0 transition-colors ${active ? 'text-blue-400' : 'text-zinc-500 group-hover:text-zinc-300'}`} aria-hidden="true" />
+                    <span className={sidebarCollapsed ? 'md:hidden' : ''}>{x.l}</span>
+                  </button>
+                );
+              })}
             </nav>
-            <button onClick={() => setUser(null)} className="mt-auto m-6 flex items-center gap-3 text-zinc-500 hover:text-white text-sm font-bold transition-colors">
-              <LogOut className="w-4 h-4" /> Sign Out
+            {/* Collapse toggle — desktop only */}
+            <button
+              onClick={toggleSidebarCollapsed}
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-pressed={sidebarCollapsed}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className={`hidden md:flex items-center gap-2 mx-3 mt-3 rounded-xl text-xs font-bold text-zinc-500 hover:text-white hover:bg-white/5 transition-all
+                ${sidebarCollapsed ? 'justify-center px-2.5 py-2' : 'px-3.5 py-2'}`}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" aria-hidden="true" /> : <PanelLeftClose className="w-4 h-4" aria-hidden="true" />}
+              <span className={sidebarCollapsed ? 'hidden' : ''}>Collapse</span>
             </button>
+            <div className={`mt-auto border-t border-white/5 ${sidebarCollapsed ? 'md:p-2 p-4' : 'p-4'}`}>
+              <div className={`flex items-center gap-3 rounded-xl bg-zinc-900/60 mb-2 hover-lift
+                ${sidebarCollapsed ? 'md:justify-center md:p-2 p-3' : 'p-3'}`}>
+                <Avatar name={user?.name} size="md" ring />
+                <div className={`min-w-0 flex-1 ${sidebarCollapsed ? 'md:hidden' : ''}`}>
+                  <p className="text-sm font-bold text-white truncate">{user?.name}</p>
+                  <p className="text-[11px] text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> {user?.role}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setUser(null)}
+                aria-label="Sign out"
+                title={sidebarCollapsed ? 'Sign Out' : undefined}
+                className={`w-full flex items-center justify-center gap-2 rounded-xl border border-white/5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20 text-sm font-bold transition-all
+                  ${sidebarCollapsed ? 'md:px-2 md:py-2 px-4 py-2.5' : 'px-4 py-2.5'}`}
+              >
+                <LogOut className="w-4 h-4" aria-hidden="true" />
+                <span className={sidebarCollapsed ? 'md:hidden' : ''}>Sign Out</span>
+              </button>
+            </div>
           </aside>
         </>
       )}
 
       {/* Main content */}
-      <main className={`flex-1 overflow-auto ${user.role === 'admin' ? 'md:ml-64' : ''}`}>
+      <main id="main-content" aria-label="Main content" className={`flex-1 overflow-auto transition-[margin] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${(user.role === 'admin' || user.role === 'manager') ? (sidebarCollapsed ? 'md:ml-[68px]' : 'md:ml-64') : ''}`}>
 
-        {/* Mobile top bar  only shows for admin on small screens */}
-        {user.role === 'admin' && (
-          <div className="md:hidden flex items-center justify-between px-4 py-3 bg-zinc-950 border-b border-white/5 sticky top-0 z-20">
+        {/* Mobile top bar  only shows for staff (admin/manager) on small screens */}
+        {(user.role === 'admin' || user.role === 'manager') && (
+          <div className="md:hidden flex items-center justify-between px-4 py-3 bg-zinc-950/80 backdrop-blur-xl border-b border-white/5 sticky top-0 z-20">
             <button
+              aria-label="Open navigation menu"
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-xl bg-zinc-800 border border-white/5 text-zinc-400 hover:text-white"
+              className="p-2 rounded-xl bg-zinc-800/80 border border-white/10 text-zinc-300 hover:text-white hover:bg-zinc-700 min-h-[40px] min-w-[40px] active:scale-95 transition-all"
             >
-              <Menu className="w-5 h-5" />
+              <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
-            <div className="flex items-center gap-2 font-bold text-white text-sm">
-              <Sparkles className="w-4 h-4 text-blue-500" /> SC DEBURRING
+            <div className="flex items-center gap-2 font-black text-white text-sm tracking-tight">
+              <div className="relative w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                <Sparkles className="w-4 h-4 text-white" aria-hidden="true" />
+              </div>
+              SC DEBURRING
             </div>
             <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
           </div>
@@ -6201,6 +8208,9 @@ export default function App() {
         <div className="p-4 md:p-8">
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
+          {view === 'admin-board' && <JobBoardView user={user} addToast={addToast} confirm={setConfirm} />}
+          {view === 'admin-quality' && <QualityView user={user} addToast={addToast} confirm={setConfirm} />}
+          {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} />}
@@ -6209,7 +8219,23 @@ export default function App() {
           {view === 'admin-samples' && <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
             const jobId = `JOB-${Date.now()}`;
-            await DB.saveJob({ id: jobId, jobIdsDisplay: `J-${jobId.slice(-6)}`, poNumber: data.poNumber, partNumber: data.partNumber, customer: data.customer, quantity: data.quantity, dateReceived: new Date().toLocaleDateString('en-US'), dueDate: data.dueDate, info: data.info, status: 'pending', createdAt: Date.now(), quoteAmount: data.quoteAmount, linkedQuoteId: data.linkedQuoteId } as any);
+            await DB.saveJob({
+              id: jobId,
+              jobIdsDisplay: `J-${jobId.slice(-6)}`,
+              poNumber: data.poNumber,
+              partNumber: data.partNumber,
+              customer: data.customer,
+              quantity: data.quantity,
+              dateReceived: new Date().toLocaleDateString('en-US'),
+              dueDate: data.dueDate,
+              info: data.info,
+              status: 'pending',
+              createdAt: Date.now(),
+              quoteAmount: data.quoteAmount,
+              linkedQuoteId: data.linkedQuoteId,
+              // Routing (Round 2 #7): when the quote used Process Library items, pick the matching stage
+              ...(data.initialStageId ? { currentStage: data.initialStageId } : {}),
+            } as any);
           }} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
@@ -6228,6 +8254,31 @@ export default function App() {
           {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}
         </div>
       </div>
+      {/* PWA install prompt — only shows if not installed + not dismissed in last 7 days */}
+      <PwaInstallPrompt />
+
+      {/* Onboarding wizard — first-run only for admin/manager on a TRULY new account.
+          Suppressed for existing shops (they already have data) so it doesn't nag during dev.
+          Can be triggered manually from Settings → Shop Profile. */}
+      {user && (user.role === 'admin' || user.role === 'manager')
+        && !appSettings.onboardingComplete
+        && !appSettings.companyName  // existing accounts have a company name set
+        && (allJobs.length === 0)    // and no jobs yet = truly new
+        && (
+        <OnboardingWizard
+          currentSettings={appSettings}
+          canSkip={true}
+          onComplete={(updated) => {
+            setAppSettings(updated);
+            DB.saveSettings(updated);
+            addToast('success', '✨ Shop profile saved — app tailored to your workflow');
+          }}
+          onSkip={() => {
+            setAppSettings({ ...appSettings, onboardingComplete: true });
+            DB.saveSettings({ ...appSettings, onboardingComplete: true });
+          }}
+        />
+      )}
     </div>
   );
 }
