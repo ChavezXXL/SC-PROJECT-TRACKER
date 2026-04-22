@@ -10,7 +10,14 @@ function openPrintWindow(html: string, title: string) {
       @page { margin: 0.5in; size: letter; }
       * { margin:0; padding:0; box-sizing:border-box; }
       body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; color:#1a1a2e; background:#fff; font-size:12px; line-height:1.4; }
-      .page { width:100%; min-height:100vh; padding:0.5in; display:flex; flex-direction:column; }
+      /* No padding here — @page already reserves the margin. Doubling it caused content to
+         run off the page on half-inch printers. min-height:auto so short pages don't force
+         a second blank sheet. */
+      .page { width:100%; min-height:auto; padding:0; display:flex; flex-direction:column; }
+      /* Guard every labelled block against splitting across pages — keeps a "Bill To" box,
+         a QR code, or a table row from breaking in half at the fold. */
+      .info-grid, .client-block, .fields-grid, .special-block, .notes-block, .scope-block, .comments-block, .totals, .sig-section, tr { page-break-inside: avoid; break-inside: avoid; }
+      img { max-width:100%; height:auto; }
       /* Header */
       .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
       .company-left { display:flex; flex-direction:column; }

@@ -26,6 +26,7 @@ import {
 
 import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, GoalPeriod } from './types';
 import * as DB from './services/mockDb';
+import { ShopFlowMap } from './components/ShopFlowMap';
 
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [
@@ -370,7 +371,16 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
 // Single shared weather fetcher so we don't ping the API from each component.
 type WeatherCurrent = { temp: number; code: number };
 type WeatherDay = { dateMs: number; dayLabel: string; tMin: number; tMax: number; code: number };
-type WeatherData = { current: WeatherCurrent | null; forecast: WeatherDay[] };
+type WeatherData = {
+  current: WeatherCurrent | null;
+  forecast: WeatherDay[];
+  /** Fetch state — 'idle' means not attempted yet. 'unavailable' means
+   *  all location sources failed (no geolocation + IP lookup blocked) and
+   *  the user should set a manual location in Settings. */
+  status?: 'idle' | 'loading' | 'ready' | 'unavailable';
+  /** Which location source produced the current reading. */
+  source?: 'manual' | 'geolocation' | 'ip';
+};
 
 function weatherIcon(code: number, className = 'w-6 h-6') {
   if (code <= 3) return <Sun className={`${className} text-yellow-400`} aria-hidden="true" />;
@@ -392,66 +402,114 @@ function weatherLabel(code: number) {
 
 // Module-level cache + subscribers: one geolocation fetch feeds every useWeather() caller.
 // Before cache: each slide mount re-fetched → TV mode Weather slide stuck loading.
-let weatherCache: WeatherData = { current: null, forecast: [] };
+//
+// Location source priority (important for smart TVs / kiosks):
+//   1) Manual lat/lon from settings (admin entered in Settings → TV Display)
+//   2) Browser geolocation (requires HTTPS + permission; often denied on TVs)
+//   3) IP-based geolocation (no permission needed — works everywhere)
+//   4) Hard failure → status='unavailable' so UI can explain what to do
+let weatherCache: WeatherData = { current: null, forecast: [], status: 'idle' };
 let weatherFetchPromise: Promise<void> | null = null;
 let weatherLastFetch = 0;
 const weatherSubs = new Set<(d: WeatherData) => void>();
 
-function fetchWeather(): Promise<void> {
+async function resolveCoords(override?: { lat?: number; lon?: number }): Promise<{ lat: number; lon: number; source: WeatherData['source'] } | null> {
+  // 1. Admin-supplied coords win every time.
+  if (override?.lat != null && override?.lon != null) {
+    return { lat: override.lat, lon: override.lon, source: 'manual' };
+  }
+  // 2. Browser geolocation — only if HTTPS + API available. 6s timeout so we
+  //    don't hang the TV slide when the device silently ignores the prompt.
+  if (typeof navigator !== 'undefined' && navigator.geolocation) {
+    try {
+      const pos = await new Promise<GeolocationPosition>((ok, fail) => {
+        navigator.geolocation.getCurrentPosition(ok, fail, { timeout: 6000, maximumAge: 60 * 60 * 1000 });
+      });
+      return { lat: pos.coords.latitude, lon: pos.coords.longitude, source: 'geolocation' };
+    } catch { /* fall through to IP */ }
+  }
+  // 3. IP lookup — no permission, no prompt, works on TVs.
+  try {
+    const res = await fetch('https://ipapi.co/json/');
+    if (res.ok) {
+      const d = await res.json();
+      if (typeof d.latitude === 'number' && typeof d.longitude === 'number') {
+        return { lat: d.latitude, lon: d.longitude, source: 'ip' };
+      }
+    }
+  } catch { /* network blocked, nothing we can do */ }
+  return null;
+}
+
+function fetchWeather(override?: { lat?: number; lon?: number }): Promise<void> {
   if (weatherFetchPromise) return weatherFetchPromise;
-  if (!navigator.geolocation) return Promise.resolve();
-  weatherFetchPromise = new Promise<void>((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        const { latitude: lat, longitude: lon } = pos.coords;
-        fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-          `&current=temperature_2m,weather_code` +
-          `&daily=weather_code,temperature_2m_max,temperature_2m_min` +
-          `&temperature_unit=fahrenheit&timezone=auto&forecast_days=5`
-        ).then(r => r.json()).then(d => {
-          const current = d.current ? { temp: Math.round(d.current.temperature_2m), code: d.current.weather_code } : null;
-          const forecast: WeatherDay[] = [];
-          if (d.daily?.time) {
-            for (let i = 0; i < d.daily.time.length; i++) {
-              const day = new Date(d.daily.time[i]);
-              forecast.push({
-                dateMs: day.getTime(),
-                dayLabel: i === 0 ? 'Today' : day.toLocaleDateString('en-US', { weekday: 'short' }),
-                tMin: Math.round(d.daily.temperature_2m_min[i]),
-                tMax: Math.round(d.daily.temperature_2m_max[i]),
-                code: d.daily.weather_code[i],
-              });
-            }
-          }
-          weatherCache = { current, forecast };
-          weatherLastFetch = Date.now();
-          weatherSubs.forEach(s => s(weatherCache));
-        }).catch(() => {}).finally(() => { weatherFetchPromise = null; resolve(); });
-      },
-      () => { weatherFetchPromise = null; resolve(); },
-      { timeout: 8000 }
-    );
-  });
+  weatherFetchPromise = (async () => {
+    const coords = await resolveCoords(override);
+    if (!coords) {
+      weatherCache = { ...weatherCache, status: 'unavailable' };
+      weatherSubs.forEach(s => s(weatherCache));
+      return;
+    }
+    try {
+      const res = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}` +
+        `&current=temperature_2m,weather_code` +
+        `&daily=weather_code,temperature_2m_max,temperature_2m_min` +
+        `&temperature_unit=fahrenheit&timezone=auto&forecast_days=5`
+      );
+      const d = await res.json();
+      const current = d.current ? { temp: Math.round(d.current.temperature_2m), code: d.current.weather_code } : null;
+      const forecast: WeatherDay[] = [];
+      if (d.daily?.time) {
+        for (let i = 0; i < d.daily.time.length; i++) {
+          const day = new Date(d.daily.time[i]);
+          forecast.push({
+            dateMs: day.getTime(),
+            dayLabel: i === 0 ? 'Today' : day.toLocaleDateString('en-US', { weekday: 'short' }),
+            tMin: Math.round(d.daily.temperature_2m_min[i]),
+            tMax: Math.round(d.daily.temperature_2m_max[i]),
+            code: d.daily.weather_code[i],
+          });
+        }
+      }
+      weatherCache = { current, forecast, status: 'ready', source: coords.source };
+      weatherLastFetch = Date.now();
+      weatherSubs.forEach(s => s(weatherCache));
+    } catch {
+      weatherCache = { ...weatherCache, status: 'unavailable' };
+      weatherSubs.forEach(s => s(weatherCache));
+    }
+  })().finally(() => { weatherFetchPromise = null; });
   return weatherFetchPromise;
 }
 
-function useWeather(): WeatherData {
+function useWeather(override?: { lat?: number; lon?: number }): WeatherData {
   const [data, setData] = useState<WeatherData>(weatherCache);
+  // Stringify override so effect deps are stable — re-fetch when admin changes
+  // the manual coords in Settings.
+  const overrideKey = override?.lat != null && override?.lon != null ? `${override.lat},${override.lon}` : '';
   useEffect(() => {
     const sub = (d: WeatherData) => setData(d);
     weatherSubs.add(sub);
     // Fetch if cache is empty or stale (> 10 min old)
     if (!weatherCache.current || Date.now() - weatherLastFetch > 10 * 60 * 1000) {
-      fetchWeather();
+      fetchWeather(override);
     }
     return () => { weatherSubs.delete(sub); };
-  }, []);
+  }, [overrideKey]);
   return data;
 }
 
-const TVWeather = () => {
-  const { current } = useWeather();
+/** Force an immediate re-fetch (e.g. after admin saves a new manual location). */
+export function refreshWeather(override?: { lat?: number; lon?: number }) {
+  weatherLastFetch = 0;
+  weatherCache = { current: null, forecast: [], status: 'loading' };
+  weatherSubs.forEach(s => s(weatherCache));
+  fetchWeather(override);
+}
+
+const TVWeather: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) => {
+  const { current } = useWeather({ lat, lon });
   if (!current) return null;
   return (
     <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 backdrop-blur-xl" title="Outside">
@@ -490,14 +548,14 @@ const TvLeaderboardSlide: React.FC<{
   const totalHrs = rows.reduce((a, r) => a + r.hours, 0);
   const totalJobs = rows.reduce((a, r) => a + r.jobs, 0);
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 sm:p-12">
+    <div className="h-full flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)] overflow-hidden">
       <div className="w-full max-w-5xl">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <p className="text-xs font-black text-amber-400/80 uppercase tracking-[0.3em] flex items-center gap-2">
+        <div className="flex items-center justify-between mb-[clamp(1rem,2vw,2rem)] gap-3 flex-wrap">
+          <div className="min-w-0">
+            <p className="font-black text-amber-400/80 uppercase tracking-[0.3em] flex items-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
               <Trophy className="w-4 h-4" aria-hidden="true" /> Shop Leaderboard
             </p>
-            <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight mt-2">{periodLabel}'s Top Workers</h2>
+            <h2 className="font-black text-white tracking-tight mt-2 truncate" style={{ fontSize: 'clamp(1.75rem, 4.5vw, 3.75rem)' }}>{periodLabel}'s Top Workers</h2>
           </div>
           <div className="text-right hidden sm:block">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Total Logged</p>
@@ -562,19 +620,35 @@ const TvLeaderboardSlide: React.FC<{
 };
 
 // Weather forecast — current + next 5 days
-const TvWeatherSlide: React.FC = () => {
-  const { current, forecast } = useWeather();
+const TvWeatherSlide: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) => {
+  const { current, forecast, status } = useWeather({ lat, lon });
   const today = forecast[0];
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 sm:p-12">
+    <div className="h-full flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)] overflow-hidden">
       <div className="w-full max-w-5xl">
-        <p className="text-xs font-black text-blue-400/80 uppercase tracking-[0.3em] text-center">Outside · Live</p>
-        <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight text-center mt-2">Weather Forecast</h2>
+        <p className="font-black text-blue-400/80 uppercase tracking-[0.3em] text-center" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>Outside · Live</p>
+        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.75rem)' }}>Weather Forecast</h2>
         {!current && !forecast.length ? (
           <div className="flex flex-col items-center justify-center text-center py-24">
             <Cloud className="w-24 h-24 text-zinc-700 mb-4" aria-hidden="true" />
-            <p className="text-zinc-400 text-xl font-bold">Grant location to see forecast</p>
-            <p className="text-zinc-600 text-sm mt-1">The TV needs browser location permission.</p>
+            {status === 'unavailable' ? (
+              <>
+                <p className="text-zinc-300 text-xl font-bold">Can't detect location</p>
+                <p className="text-zinc-500 text-sm mt-2 max-w-md leading-relaxed">
+                  This TV doesn't have geolocation and the IP lookup was blocked. Set your city or zip under <strong className="text-zinc-400">Settings → TV Display → Weather Location</strong>.
+                </p>
+              </>
+            ) : status === 'loading' ? (
+              <>
+                <p className="text-zinc-400 text-xl font-bold">Loading forecast…</p>
+                <p className="text-zinc-600 text-sm mt-1">Finding your location.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-zinc-400 text-xl font-bold">Grant location to see forecast</p>
+                <p className="text-zinc-600 text-sm mt-1">Or set a city under Settings → TV Display.</p>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -656,12 +730,12 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
   const revenue = completedThisWeek.reduce((a, j) => a + (j.quoteAmount || 0), 0);
 
   return (
-    <div className="h-full overflow-y-auto p-6 sm:p-10">
+    <div className="h-full w-full overflow-hidden flex items-center justify-center p-[clamp(1rem,2vw,2.5rem)]">
       <div className="w-full max-w-6xl mx-auto">
-        <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
+        <p className="font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <TrendingUp className="w-4 h-4" aria-hidden="true" /> Weekly Output
         </p>
-        <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight text-center mt-2">This Week at a Glance</h2>
+        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.75rem)' }}>This Week at a Glance</h2>
 
         {/* Primary metrics — hero row. Revenue card only shows if admin opts-in (money is sensitive) */}
         <div className={`mt-6 grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
@@ -738,6 +812,25 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
   );
 };
 
+// Full-screen Flow Map slide — live visual of jobs across every stage.
+const TvFlowMapSlide: React.FC<{ jobs: Job[]; stages: JobStage[]; activeLogs: TimeLog[] }> = ({ jobs, stages, activeLogs }) => {
+  return (
+    <div className="h-full w-full flex flex-col items-center justify-center overflow-hidden p-[clamp(1rem,2.5vw,3rem)]">
+      <div className="w-full max-w-7xl mx-auto">
+        <p className="font-black text-indigo-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
+          <Activity className="w-4 h-4" aria-hidden="true" /> Shop Flow
+        </p>
+        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.75rem)' }}>
+          Where Every Job Is Right Now
+        </h2>
+        <div className="mt-[clamp(1rem,2.5vw,2.5rem)] bg-gradient-to-br from-zinc-900/40 to-transparent border border-white/5 rounded-3xl p-[clamp(0.75rem,1.5vw,1.5rem)]">
+          <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Safety slide — full-screen, bold, attention-grabbing
 const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, icon, cycleInfo }) => {
   const palette: Record<string, { from: string; border: string; text: string }> = {
@@ -750,17 +843,17 @@ const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; i
   };
   const p = palette[color || 'yellow'] || palette.yellow;
   return (
-    <div className="h-full flex items-center justify-center p-8 sm:p-16">
-      <div className={`w-full max-w-5xl bg-gradient-to-br ${p.from} to-transparent border-2 ${p.border} rounded-[48px] p-12 sm:p-20 text-center relative overflow-hidden`}>
+    <div className="h-full flex items-center justify-center p-[clamp(1rem,3vw,4rem)] overflow-hidden">
+      <div className={`w-full max-w-5xl bg-gradient-to-br ${p.from} to-transparent border-2 ${p.border} rounded-[clamp(1.5rem,3vw,3rem)] text-center relative overflow-hidden`} style={{ padding: 'clamp(1.5rem,4vw,5rem)' }}>
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
         <div className="relative">
-          <p className={`text-xs font-black uppercase tracking-[0.4em] ${p.text} mb-6 flex items-center justify-center gap-3`}>
+          <p className={`font-black uppercase tracking-[0.4em] ${p.text} mb-[clamp(0.75rem,1.5vw,1.5rem)] flex items-center justify-center gap-3`} style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
             <span>⚠ Safety Reminder</span>
             {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
           </p>
-          <div className="text-8xl sm:text-9xl mb-6">{icon || '⚠️'}</div>
-          <h2 className="text-5xl sm:text-7xl font-black text-white tracking-tight leading-tight">{title || 'Think Safety First'}</h2>
-          {body && <p className="text-xl sm:text-2xl text-white/70 mt-6 leading-relaxed max-w-3xl mx-auto">{body}</p>}
+          <div className="mb-[clamp(0.75rem,1.5vw,1.5rem)]" style={{ fontSize: 'clamp(3rem, 8vw, 7rem)' }}>{icon || '⚠️'}</div>
+          <h2 className="font-black text-white tracking-tight leading-tight" style={{ fontSize: 'clamp(2rem, 5.5vw, 4.5rem)' }}>{title || 'Think Safety First'}</h2>
+          {body && <p className="text-white/70 mt-[clamp(0.75rem,1.5vw,1.5rem)] leading-relaxed max-w-3xl mx-auto" style={{ fontSize: 'clamp(0.95rem, 1.6vw, 1.5rem)' }}>{body}</p>}
         </div>
       </div>
     </div>
@@ -779,14 +872,14 @@ const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; 
   };
   const cls = palette[color || 'blue'] || palette.blue;
   return (
-    <div className="h-full flex items-center justify-center p-8 sm:p-16">
-      <div className={`w-full max-w-5xl bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-[48px] p-16 sm:p-24 text-center`}>
-        <p className={`text-xs font-black uppercase tracking-[0.4em] ${cls.split(' ')[2]} mb-6 flex items-center justify-center gap-3`}>
+    <div className="h-full flex items-center justify-center p-[clamp(1rem,3vw,4rem)] overflow-hidden">
+      <div className={`w-full max-w-5xl bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-[clamp(1.5rem,3vw,3rem)] text-center`} style={{ padding: 'clamp(2rem,5vw,6rem)' }}>
+        <p className={`font-black uppercase tracking-[0.4em] ${cls.split(' ')[2]} mb-[clamp(0.75rem,1.5vw,1.5rem)] flex items-center justify-center gap-3`} style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <span>Announcement</span>
           {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
         </p>
-        <h2 className="text-6xl sm:text-8xl font-black text-white tracking-tight leading-tight">{title || 'Message'}</h2>
-        {body && <p className="text-2xl sm:text-3xl text-white/70 mt-8 leading-relaxed max-w-3xl mx-auto">{body}</p>}
+        <h2 className="font-black text-white tracking-tight leading-tight" style={{ fontSize: 'clamp(2.5rem, 7vw, 5.5rem)' }}>{title || 'Message'}</h2>
+        {body && <p className="text-white/70 mt-[clamp(1rem,2vw,2rem)] leading-relaxed max-w-3xl mx-auto" style={{ fontSize: 'clamp(1.125rem, 2vw, 1.875rem)' }}>{body}</p>}
       </div>
     </div>
   );
@@ -1200,7 +1293,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const DEFAULT_TV_SLIDES: TvSlide[] = [
     { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
     { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
-    { id: 'default-leaderboard', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+    { id: 'default-leaderboard-week', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+    { id: 'default-leaderboard-month', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'month', leaderboardCount: 5 },
     { id: 'default-goals', type: 'goals', enabled: true },
     { id: 'default-stats-week', type: 'stats-week', enabled: true },
     { id: 'default-weather', type: 'weather', enabled: true },
@@ -1337,7 +1431,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'leaderboard':
           return <TvLeaderboardSlide data={leaderboardForSlide(slide)} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} />;
         case 'weather':
-          return <TvWeatherSlide />;
+          return <TvWeatherSlide lat={settings.weatherLat} lon={settings.weatherLon} />;
         case 'stats-week':
         case 'stats':
           return <TvWeeklyStatsSlide
@@ -1355,6 +1449,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             reworkCount={openReworkCount}
             showRevenue={settings.tvShowRevenue === true}
           />;
+        case 'flow-map':
+          return <TvFlowMapSlide jobs={jobs} stages={stages} activeLogs={activeLogs} />;
         case 'safety': {
           // Safety slide cycles through multiple messages — one per TV rotation
           const msgs = (slide.messages && slide.messages.length > 0)
@@ -1386,6 +1482,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'weather': return 'Weather';
         case 'stats-week': case 'stats': return 'Week Stats';
         case 'goals': return 'Goals';
+        case 'flow-map': return 'Shop Flow';
         case 'safety': return slide.title || 'Safety';
         case 'message': return slide.title || 'Message';
         default: return 'Slide';
@@ -1434,17 +1531,23 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           </span>
         </div>
 
-        <div className="relative h-full flex flex-col">
-          {/* TOP BAR — Shop name + Clock + Stats + Weather */}
-          <div className="shrink-0 px-8 py-6 flex items-center justify-between gap-6 border-b border-white/5 backdrop-blur-xl bg-black/20">
+        <div className="relative h-full flex flex-col overflow-hidden">
+          {/* TOP BAR — Shop name + Clock + Stats + Weather
+              Sizes use clamp() so content shrinks on small TVs (720p / portrait)
+              and grows on 4K displays without overflow. Wraps to 2 rows below
+              ~900px so nothing gets clipped. */}
+          <div
+            className="shrink-0 flex items-center justify-between gap-3 sm:gap-6 border-b border-white/5 backdrop-blur-xl bg-black/20 flex-wrap"
+            style={{ padding: 'clamp(0.5rem, 1.2vw, 1.5rem) clamp(0.75rem, 2vw, 2rem)' }}
+          >
             {/* Left — shop */}
-            <div className="flex items-center gap-4 min-w-0 flex-1">
-              {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-12 object-contain" />}
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              {settings.companyLogo && <img src={settings.companyLogo} alt="" className="object-contain shrink-0" style={{ height: 'clamp(1.75rem, 3.5vw, 3rem)' }} />}
               <div className="min-w-0">
-                {settings.companyName && <p className="text-2xl font-black text-white tracking-tight truncate">{settings.companyName}</p>}
-                <div className="flex items-center gap-2 mt-1">
-                  <Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" aria-hidden="true" />
-                  <span className="text-[11px] font-black text-white/60 uppercase tracking-[0.3em]">Live Shop Floor</span>
+                {settings.companyName && <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1rem, 1.8vw, 1.5rem)' }}>{settings.companyName}</p>}
+                <div className="flex items-center gap-2 mt-0.5">
+                  <Radio className="w-3 h-3 text-red-500 animate-pulse shrink-0" aria-hidden="true" />
+                  <span className="font-black text-white/60 uppercase tracking-[0.3em] truncate" style={{ fontSize: 'clamp(0.55rem, 0.7vw, 0.7rem)' }}>Live Shop Floor</span>
                 </div>
               </div>
             </div>
@@ -1452,49 +1555,51 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             {/* Center — clock */}
             <div className="shrink-0 text-center">
               <LiveClock size="huge" />
-              <p className="text-white/40 text-sm font-semibold mt-2">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+              <p className="text-white/40 font-semibold mt-1 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.875rem)' }}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
             </div>
 
             {/* Right — stats + weather */}
-            <div className="shrink-0 flex items-center gap-6 min-w-0 flex-1 justify-end">
-              <div className="flex items-center gap-5">
+            <div className="shrink-0 flex items-center gap-3 sm:gap-5 min-w-0 flex-1 justify-end flex-wrap">
+              <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 1.2vw, 1.25rem)' }}>
                 <div className="text-center">
-                  <div className="flex items-center gap-1.5 justify-center">
-                    <Users className="w-4 h-4 text-emerald-400" aria-hidden="true" />
-                    <span className="text-3xl font-black text-white tabular leading-none">{workerCount}</span>
+                  <div className="flex items-center gap-1 justify-center">
+                    <Users className="w-3 h-3 sm:w-4 sm:h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{workerCount}</span>
                   </div>
-                  <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mt-1">Workers</p>
+                  <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Workers</p>
                 </div>
-                <div className="w-px h-10 bg-white/10" />
+                <div className="w-px h-8 bg-white/10" />
                 <div className="text-center">
-                  <div className="flex items-center gap-1.5 justify-center">
-                    <Activity className="w-4 h-4 text-blue-400 animate-pulse" aria-hidden="true" />
-                    <span className="text-3xl font-black text-white tabular leading-none">{runningCount}</span>
+                  <div className="flex items-center gap-1 justify-center">
+                    <Activity className="w-3 h-3 sm:w-4 sm:h-4 text-blue-400 animate-pulse shrink-0" aria-hidden="true" />
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{runningCount}</span>
                   </div>
-                  <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mt-1">Running</p>
+                  <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Running</p>
                 </div>
-                <div className="w-px h-10 bg-white/10" />
+                <div className="w-px h-8 bg-white/10" />
                 <div className="text-center">
-                  <div className="flex items-center gap-1.5 justify-center">
-                    <Briefcase className="w-4 h-4 text-purple-400" aria-hidden="true" />
-                    <span className="text-3xl font-black text-white tabular leading-none">{openJobs.length}</span>
+                  <div className="flex items-center gap-1 justify-center">
+                    <Briefcase className="w-3 h-3 sm:w-4 sm:h-4 text-purple-400 shrink-0" aria-hidden="true" />
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{openJobs.length}</span>
                   </div>
-                  <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mt-1">Open</p>
+                  <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Open</p>
                 </div>
               </div>
               {/* Weather — compact inline */}
-              {settings.tvShowWeather !== false && <TVWeather />}
+              {settings.tvShowWeather !== false && <TVWeather lat={settings.weatherLat} lon={settings.weatherLon} />}
             </div>
           </div>
 
-          {/* MAIN — Rotating slides (fades between) */}
-          <div className={`flex-1 min-h-0 transition-opacity duration-400 ${tvFade ? 'opacity-100' : 'opacity-0'}`}>
+          {/* MAIN — Rotating slides (fades between).
+              min-h-0 is critical so the flex child can shrink below its content
+              and overflow-hidden prevents children from pushing the layout off-screen. */}
+          <div className={`flex-1 min-h-0 overflow-hidden transition-opacity duration-400 ${tvFade ? 'opacity-100' : 'opacity-0'}`}>
             {renderSlide(currentSlide)}
           </div>
 
           {/* Slide indicators + slide label — bottom of screen */}
           {configuredTvSlides.length > 1 && (
-            <div className="tv-chrome shrink-0 px-8 py-3 border-t border-white/5 bg-black/40 backdrop-blur-xl flex items-center justify-center gap-2">
+            <div className="tv-chrome shrink-0 border-t border-white/5 bg-black/40 backdrop-blur-xl flex items-center justify-center gap-2 flex-wrap" style={{ padding: 'clamp(0.35rem, 0.6vw, 0.75rem) clamp(0.75rem, 2vw, 2rem)' }}>
               {configuredTvSlides.map((s, i) => (
                 <button
                   key={s.id}

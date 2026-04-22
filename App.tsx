@@ -37,7 +37,14 @@ import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getL
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
+import { findStageForOperation, shouldAutoRoute } from './utils/stageRouting';
+import { ShopFlowMap } from './components/ShopFlowMap';
+import { RecentStageMoves } from './components/RecentStageMoves';
+import { OperationsStageMapper } from './components/OperationsStageMapper';
+import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
+import { isDeveloper } from './utils/devMode';
 import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder } from './services/reminders';
+import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms } from './services/shiftAlarms';
 
 /** Hook: track viewport width for responsive chart sizing */
 export const useIsMobile = () => {
@@ -542,6 +549,16 @@ const PrintStyles = () => (
       #printable-area .border-4 { overflow: hidden !important; }
       #printable-area .border-2 { overflow: hidden !important; }
       #printable-area .print-part-photo { max-width: 180px !important; max-height: 140px !important; }
+      /* Never split a field block or the QR card across pages */
+      #printable-area .border-4, #printable-area .border-2 { page-break-inside: avoid !important; break-inside: avoid !important; }
+      /* Images must never overflow the page width */
+      #printable-area img { max-width: 100% !important; height: auto !important; }
+      /* mix-blend-multiply can blank the QR on thermal + ink-jet printers — flatten it */
+      #printable-area .print-qr-img { mix-blend-mode: normal !important; }
+      /* Keep the Operation Log rows intact per page */
+      #printable-area table, #printable-area tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+      /* Drop shadows + backdrop blur from the overlay so nothing looks washed out */
+      #printable-area [class*="shadow"] { box-shadow: none !important; }
       @page { size: letter; margin: 10mm; }
     }
   `}</style>
@@ -1156,6 +1173,53 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     return () => { stopLong(); stopMorning(); stopEndShift(); };
   }, [activeLog?.id, user.id, shopSettingsForReminders.autoClockOutTime]);
 
+  // Shift Alarms — customizable break / lunch / clock-out alerts.
+  // Runs regardless of notification permission (audio bell works without it)
+  // so shop-floor TVs get an audible cue even if they never saw the permission prompt.
+  // Preload CDN sounds on mount so the first alarm of the day plays instantly.
+  useEffect(() => { preloadAlarmSounds(); }, []);
+
+  // Proactively schedule upcoming alarms with the browser's Notification
+  // Trigger API. On Chrome/Edge Android + desktop this fires notifications
+  // EVEN WHEN THE APP IS FULLY CLOSED. iOS silently returns supported:false
+  // and relies on the catch-up-on-focus mechanism inside watchShiftAlarms.
+  useEffect(() => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    scheduleUpcomingAlarms(shopSettingsForReminders).catch(() => {});
+  }, [shopSettingsForReminders]);
+
+  useEffect(() => {
+    const stop = watchShiftAlarms(
+      () => shopSettingsForReminders,
+      async (alarm) => {
+        // Audible bell first — reliably wakes people on the floor.
+        playAlarmSound(alarm.sound || 'bell', alarm.customSoundUrl, alarm.durationSec);
+        // Visual notification (if permission granted).
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+          try {
+            const reg = await navigator.serviceWorker.getRegistration();
+            reg?.showNotification(`🔔 ${alarm.label}`, {
+              body: alarm.clockOut ? 'Shift is ending — wrap up your current task.' : alarm.pauseTimers ? 'Timers will pause until you come back.' : 'Time to take a break.',
+              icon: '/icon-192.png',
+              badge: '/icon-72.png',
+              tag: `alarm-${alarm.id}`,
+              vibrate: [300, 100, 300, 100, 300],
+              requireInteraction: !!alarm.clockOut,
+            } as any);
+          } catch {}
+        }
+        // Side effects: pause running work or clock out when flagged.
+        if (alarm.pauseTimers && activeLog && !activeLog.pausedAt) {
+          try { await DB.pauseTimeLog(activeLog.id, `Auto-pause: ${alarm.label}`); } catch {}
+        }
+        if (alarm.clockOut && activeLog) {
+          try { await DB.stopTimeLog(activeLog.id); } catch {}
+        }
+      }
+    );
+    return stop;
+  }, [shopSettingsForReminders, activeLog?.id]);
+
   // ── Listen for TIMER_ACTION messages from SW notification buttons ──
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -1186,6 +1250,18 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     const job = jobs.find(j => j.id === jobId);
     try {
       await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
+      // Smart auto-routing: clocking in on "Washing" moves the job to the Washing stage
+      if (job) {
+        const settings = DB.getSettings();
+        const stages = getStages(settings);
+        const target = findStageForOperation(operation, stages);
+        if (target && shouldAutoRoute(job, target)) {
+          try {
+            await DB.advanceJobStage(jobId, target.id, user.id, user.name, false);
+            addToast('info', `Job moved to ${target.label}`);
+          } catch { /* silent — timer still started */ }
+        }
+      }
       addToast('success', 'Timer Started');
       setShouldScrollToTimer(true);
     } catch (e) {
@@ -1547,6 +1623,45 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
             </div>
           )}
 
+          {/* Operation Log — lines for operators to sign off each stage */}
+          <div className="mt-4">
+            <label className="block text-xs uppercase font-black text-blue-700 mb-2 tracking-wider">Operation Log</label>
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr className="border-b-2 border-black">
+                  <th className="text-left py-1.5 px-2 font-black">Operation</th>
+                  <th className="text-left py-1.5 px-2 font-black">Operator</th>
+                  <th className="text-left py-1.5 px-2 font-black">Start</th>
+                  <th className="text-left py-1.5 px-2 font-black">End</th>
+                  <th className="text-left py-1.5 px-2 font-black">Qty</th>
+                  <th className="text-left py-1.5 px-2 font-black">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i} className="border-b border-gray-300">
+                    <td className="px-2" style={{ height: 26 }}></td>
+                    <td className="px-2"></td>
+                    <td className="px-2"></td>
+                    <td className="px-2"></td>
+                    <td className="px-2"></td>
+                    <td className="px-2"></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Sign-off line — operator + inspector */}
+          <div className="mt-6 grid grid-cols-2 gap-8 pt-4 border-t border-gray-300">
+            <div>
+              <div className="border-t border-black pt-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">Operator Sign-off</div>
+            </div>
+            <div>
+              <div className="border-t border-black pt-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">Inspector Sign-off</div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -1868,6 +1983,24 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Today</p><h3 className="text-xl sm:text-3xl font-black text-white truncate">{todayHrsDisplay}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Hours logged</p></div>
           <Clock className="text-blue-400 w-7 h-7 sm:w-10 sm:h-10 opacity-60 shrink-0" />
         </div>
+      </div>
+
+      {/* ── SHOP FLOW MAP — visual of jobs moving through each stage ── */}
+      <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5 overflow-hidden">
+        <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+          <div>
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" /> Shop Flow Map
+            </h3>
+            <p className="text-[11px] text-zinc-600 mt-0.5">Tap a stage to see the jobs inside · glowing = workers on it · flame = stuck jobs</p>
+          </div>
+        </div>
+        <ShopFlowMap
+          jobs={jobs}
+          stages={getStages(shopSettings)}
+          activeLogs={activeLogs}
+        />
+        <RecentStageMoves jobs={jobs} stages={getStages(shopSettings)} limit={8} />
       </div>
 
       {/* ── FINANCIAL OVERVIEW ── */}
@@ -2748,6 +2881,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [bulkActionOpen, setBulkActionOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
   const [showModal, setShowModal] = useState(false);
+  const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
   const [ops, setOps] = useState<string[]>([]);
   const [clients, setClients] = useState<string[]>([]);
@@ -2795,6 +2929,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const targetWorker = selectedWorker || user;
     try {
       await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
+      // Smart auto-routing: clocking in on an operation advances the job to the
+      // matching stage (e.g. "Washing" → Washing stage). Silent when no match.
+      const stages = getStages(shopSettings);
+      const target = findStageForOperation(operation, stages);
+      if (target && shouldAutoRoute(startJobModal, target)) {
+        try {
+          await DB.advanceJobStage(startJobModal.id, target.id, targetWorker.id, targetWorker.name, false);
+          addToast('info', `Job moved to ${target.label}`);
+        } catch { /* silent — timer still started */ }
+      }
       addToast('success', `Operation started${selectedMachine ? ` on ${selectedMachine}` : ''} for ${targetWorker.name}`);
       setStartJobModal(null);
       setSelectedWorker(null);
@@ -2925,6 +3069,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Plus className="w-4 h-4" /> New Job</button>
           <button onClick={onOpenPOScanner} className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-bold border border-white/10 text-sm transition-all"><ScanLine className="w-4 h-4" /> Scan PO</button>
+          <button
+            onClick={() => setShowClientUpdate(true)}
+            title="Generate a status message for a customer based on their open jobs"
+            className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-bold border border-white/10 text-sm transition-all"
+          >
+            <FileText className="w-4 h-4" aria-hidden="true" /> Client Update
+          </button>
         </div>
       </div>
 
@@ -3668,6 +3819,17 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         </table>
       </div>
       </>}
+
+      {showClientUpdate && (
+        <ClientUpdateGenerator
+          jobs={jobs}
+          stages={getStages(shopSettings)}
+          settings={shopSettings}
+          userName={user.name}
+          onClose={() => setShowClientUpdate(false)}
+          onToast={addToast}
+        />
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xl p-2 sm:p-4 animate-fade-in">
@@ -4698,9 +4860,10 @@ function vapidKeyToUint8(base64: string): Uint8Array {
   return arr;
 }
 
-const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
+const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
   const [msg, setMsg] = useState('');
+  const [backendReachable, setBackendReachable] = useState<boolean | null>(null);
 
   // Diagnose environment on mount so we can show what's supported
   const hasSW     = 'serviceWorker' in navigator;
@@ -4708,6 +4871,16 @@ const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
   const hasNotif  = typeof Notification !== 'undefined';
   const isPWA     = window.matchMedia('(display-mode: standalone)').matches || !!(navigator as any).standalone;
   const notifPerm = hasNotif ? Notification.permission : 'unavailable';
+
+  // Returns true if /.netlify/functions/send-push exists (JSON response). False = endpoint missing
+  // (Netlify SPA catch-all returns index.html HTML instead).
+  const checkBackend = async (): Promise<boolean> => {
+    try {
+      const res = await fetch('/.netlify/functions/send-push', { method: 'OPTIONS' });
+      const ct = res.headers.get('content-type') || '';
+      return res.ok && (ct.includes('json') || ct.includes('text/plain'));
+    } catch { return false; }
+  };
 
   const register = async () => {
     setStatus('working');
@@ -4719,7 +4892,7 @@ const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
 
       setMsg('Requesting permission...');
       const perm = await Notification.requestPermission();
-      if (perm !== 'granted') throw new Error(`Permission ${perm} — go to iPhone Settings and allow notifications for this app`);
+      if (perm !== 'granted') throw new Error(`Permission ${perm} — go to Settings and allow notifications for this app`);
 
       setMsg('Connecting to service worker...');
       // On iOS, navigator.serviceWorker.ready can hang if a new SW is waiting.
@@ -4743,22 +4916,58 @@ const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
       setMsg('Subscribing to push...');
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyToUint8(VAPID_KEY) });
 
-      setMsg('Saving to server...');
-      const res = await fetch('/api/send-push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subscription: sub.toJSON(),
-          title: '✅ Notifications Active',
-          body: 'This device will now receive alerts even when your phone is locked.',
-          tag: 'test-push',
-        }),
-      });
-      if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
+      // Save subscription to Firestore so the server (when configured) can reach this device.
+      // This is what matters for "alerts when not on the site" — future server cron pushes here.
+      if (userId) {
+        setMsg('Saving subscription...');
+        try { await DB.savePushSubscription(userId, sub.toJSON()); } catch {}
+      }
+
+      // Local test notification via the SW — works right now, no backend required.
+      setMsg('Sending test notification...');
+      await reg.showNotification('✅ Notifications Active', {
+        body: 'This device is subscribed. Server-triggered alerts arrive even when the app is closed.',
+        icon: '/icon-192.png',
+        badge: '/icon-72.png',
+        tag: 'push-registration-test',
+        vibrate: [200, 100, 200],
+      } as any);
+
+      // Try the real backend — but don't fail registration if it's not deployed yet.
+      // The subscription is already saved; the server can use it later.
+      const hasBackend = await checkBackend();
+      setBackendReachable(hasBackend);
+
+      if (hasBackend) {
+        try {
+          const res = await fetch('/.netlify/functions/send-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subscription: sub.toJSON(),
+              title: '🚀 Server Push Works',
+              body: 'This notification came from the Netlify function — works when app is closed.',
+              tag: 'server-push-test',
+            }),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            // Trim HTML bodies so the toast doesn't explode with a raw error page
+            const short = text.replace(/<[^>]*>/g, '').slice(0, 120);
+            throw new Error(`Server ${res.status}: ${short}`);
+          }
+        } catch (e: any) {
+          // Non-fatal — subscription is saved, local notification fired
+          console.warn('[Push] Server test failed:', e);
+        }
+      }
 
       setStatus('done');
-      setMsg('Done! A test notification was just sent to your phone.');
-      addToast('success', '✅ Push notifications activated!');
+      setMsg(hasBackend
+        ? 'Done! Subscription saved + test notification sent.'
+        : 'Subscription saved + local test fired. Server-push endpoint not deployed yet — alerts-when-off-site will start working once /.netlify/functions/send-push is live.'
+      );
+      addToast('success', '✅ Device registered for notifications');
     } catch (e: any) {
       setStatus('error');
       setMsg(e?.message || 'Unknown error');
@@ -4793,8 +5002,17 @@ const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
       )}
 
       {msg && (
-        <div className={`text-sm px-3 py-2 rounded-lg ${status === 'error' ? 'bg-red-500/10 text-red-300' : status === 'done' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-blue-500/10 text-blue-300'}`}>
+        <div className={`text-sm px-3 py-2 rounded-lg break-words ${status === 'error' ? 'bg-red-500/10 text-red-300' : status === 'done' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-blue-500/10 text-blue-300'}`}>
           {status === 'working' && <span className="animate-pulse">⏳ </span>}{msg}
+        </div>
+      )}
+
+      {status === 'done' && backendReachable === false && (
+        <div className="bg-orange-500/10 border border-orange-500/25 rounded-xl p-3 text-xs text-orange-300 space-y-1">
+          <p className="font-bold">Heads up — server push endpoint not deployed yet</p>
+          <p className="text-orange-300/80 leading-relaxed">
+            This device is subscribed, but to receive alerts <strong>when the app is closed</strong> the Netlify function <code className="bg-black/40 px-1 rounded">/.netlify/functions/send-push</code> needs to exist + a scheduled task needs to trigger it. Until then, only the in-app reminders fire (which require the tab to be open).
+          </p>
         </div>
       )}
 
@@ -4805,6 +5023,100 @@ const PushRegistrationPanel = ({ addToast }: { addToast: any }) => {
       >
         <Bell className="w-4 h-4" />
         {status === 'working' ? 'Registering...' : status === 'done' ? 'Re-register This Device' : 'Register This Device for Alerts'}
+      </button>
+    </div>
+  );
+};
+
+// ── AI HEALTH PANEL ──
+// Verifies that /.netlify/functions/gemini exists, the key is configured,
+// and a round-trip prompt returns text. Mirrors the Push panel's UX.
+const AIHealthPanel = ({ addToast }: { addToast: any }) => {
+  const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
+  const [lastModel, setLastModel] = useState<string | null>(null);
+  const [lastMsg, setLastMsg] = useState('');
+
+  // Passive check on mount — doesn't actually hit Gemini, just verifies the
+  // endpoint exists and the env var is set.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/.netlify/functions/gemini', { method: 'GET' });
+        if (res.ok) {
+          const d = await res.json().catch(() => ({}));
+          setKeyConfigured(!!d.keyConfigured);
+        } else {
+          setKeyConfigured(false);
+        }
+      } catch { setKeyConfigured(false); }
+    })();
+  }, []);
+
+  const runTest = async () => {
+    setStatus('checking');
+    setLastMsg('Sending round-trip test to Gemini…');
+    try {
+      const res = await fetch('/.netlify/functions/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'Reply with exactly: AI_OK' }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${res.status}`);
+      }
+      const d = await res.json();
+      if (!d.text) throw new Error('Empty response from Gemini');
+      setLastModel(d.model || null);
+      setStatus('ok');
+      setLastMsg(`Working — reply: "${String(d.text).slice(0, 60)}"`);
+      addToast('success', '✅ AI is working');
+    } catch (e: any) {
+      setStatus('error');
+      const msg = e?.message || 'Unknown error';
+      setLastMsg(msg);
+      addToast('error', msg);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <h3 className="font-bold text-white flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> AI Status</h3>
+      <p className="text-[10px] text-zinc-500 leading-relaxed">
+        The PO scanner uses Gemini to extract purchase-order details from photos. If you get "Scan failed" errors, check here first.
+      </p>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${keyConfigured === null ? 'bg-zinc-800/50 text-zinc-500' : keyConfigured ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+          <span>{keyConfigured === null ? '⏳' : keyConfigured ? '✅' : '❌'}</span>
+          <span>API Key</span>
+        </div>
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${status === 'ok' ? 'bg-emerald-500/10 text-emerald-400' : status === 'error' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-800/50 text-zinc-500'}`}>
+          <span>{status === 'ok' ? '✅' : status === 'error' ? '❌' : '⏸'}</span>
+          <span>Round-trip{lastModel ? ` · ${lastModel.replace('gemini-', '')}` : ''}</span>
+        </div>
+      </div>
+      {keyConfigured === false && (
+        <div className="bg-red-500/10 border border-red-500/25 rounded-xl p-3 text-xs text-red-300 space-y-1">
+          <p className="font-bold">GEMINI_API_KEY not set</p>
+          <p className="text-red-300/80 leading-relaxed">
+            In Netlify → Site settings → Environment variables, add <code className="bg-black/40 px-1 rounded">GEMINI_API_KEY</code>. Get a free key at <a href="https://ai.google.dev/" target="_blank" rel="noreferrer" className="underline">ai.google.dev</a>.
+          </p>
+        </div>
+      )}
+      {lastMsg && (
+        <div className={`text-xs px-3 py-2 rounded-lg break-words ${status === 'error' ? 'bg-red-500/10 text-red-300' : status === 'ok' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-blue-500/10 text-blue-300'}`}>
+          {status === 'checking' && <span className="animate-pulse">⏳ </span>}{lastMsg}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={runTest}
+        disabled={status === 'checking'}
+        className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2"
+      >
+        <Zap className="w-4 h-4" />
+        {status === 'checking' ? 'Testing…' : 'Test AI Connection'}
       </button>
     </div>
   );
@@ -4825,6 +5137,292 @@ const GOAL_METRIC_META: Record<GoalMetric, { label: string; desc: string; icon: 
 
 // Shared goal helpers live in utils/goals.ts — used by both Settings editor and TV slide
 import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from './utils/goals';
+
+// ── Shift Alarms editor — fully customizable break + lunch + clock-out alerts.
+// Each alarm fires an audible sound + browser notification at its configured time.
+// Admin can add as many as needed (morning break, lunch, afternoon break, end-of-shift, etc.)
+import { getActiveAlarms } from './services/shiftAlarms';
+import type { ShiftAlarm, ShiftAlarmSound } from './types';
+
+// Descriptions tell admins what each sound actually sounds like — picked
+// for different moods: a dinner bell for lunch, a horn for shift end, etc.
+const ALARM_SOUNDS: { value: ShiftAlarmSound; label: string; desc: string }[] = [
+  { value: 'bell',      label: '🔔 School Bell',    desc: 'Classic ring-ring-ring — attention grabbing' },
+  { value: 'chime',     label: '🎵 Dinner Chime',   desc: 'Three-note cascade — pleasant, says "come eat"' },
+  { value: 'triangle',  label: '🔺 Dinner Triangle', desc: 'Soft ding — gentle break reminder' },
+  { value: 'ship-bell', label: '⚓ Ship Bell',       desc: 'Warm, low clang — resonant' },
+  { value: 'horn',      label: '📯 Air Horn',       desc: 'Factory blast — heard across a loud shop' },
+  { value: 'siren',     label: '🚨 Siren',           desc: 'Wailing — urgent, for emergencies only' },
+  { value: 'silent',    label: '🔕 Silent',          desc: 'Notification only, no sound' },
+];
+
+const DAY_CHIPS: { value: number; label: string }[] = [
+  { value: 1, label: 'Mon' }, { value: 2, label: 'Tue' }, { value: 3, label: 'Wed' },
+  { value: 4, label: 'Thu' }, { value: 5, label: 'Fri' }, { value: 6, label: 'Sat' },
+  { value: 0, label: 'Sun' },
+];
+
+const DEFAULT_ALARMS: ShiftAlarm[] = [
+  { id: 'morning-break',   label: 'Morning Break',    time: '10:00', enabled: false, sound: 'triangle' },
+  { id: 'lunch-start',     label: 'Lunch Starts',     time: '12:00', enabled: true,  sound: 'bell',   pauseTimers: true },
+  { id: 'lunch-end',       label: 'Lunch Ends',       time: '12:30', enabled: true,  sound: 'chime' },
+  { id: 'afternoon-break', label: 'Afternoon Break',  time: '14:30', enabled: false, sound: 'triangle' },
+  { id: 'shift-end',       label: 'Shift Ends',       time: '16:30', enabled: true,  sound: 'horn',   clockOut: true },
+];
+
+const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void; addToast: any }) => {
+  const alarms: ShiftAlarm[] = settings.shiftAlarms && settings.shiftAlarms.length > 0
+    ? settings.shiftAlarms
+    : getActiveAlarms(settings); // fall back to legacy fields on first load
+
+  const update = (idx: number, patch: Partial<ShiftAlarm>) => {
+    const next = [...alarms];
+    next[idx] = { ...next[idx], ...patch };
+    setSettings({ ...settings, shiftAlarms: next });
+  };
+
+  const remove = (idx: number) => {
+    const next = alarms.filter((_, i) => i !== idx);
+    setSettings({ ...settings, shiftAlarms: next });
+  };
+
+  const addAlarm = () => {
+    const newAlarm: ShiftAlarm = {
+      id: `alarm_${Date.now()}`,
+      label: 'New Break',
+      time: '15:00',
+      enabled: true,
+      sound: 'bell',
+    };
+    setSettings({ ...settings, shiftAlarms: [...alarms, newAlarm] });
+  };
+
+  const loadDefaults = () => {
+    if (alarms.length > 0 && !confirm('Replace current alarms with the default set (Morning Break · Lunch · Afternoon Break · Shift End)?')) return;
+    setSettings({ ...settings, shiftAlarms: DEFAULT_ALARMS });
+  };
+
+  const testAlarm = (alarm: ShiftAlarm) => {
+    playAlarmSound(alarm.sound || 'bell', alarm.customSoundUrl, alarm.durationSec);
+    addToast('info', `🔔 Testing: ${alarm.label}`);
+  };
+
+  const toggleDay = (idx: number, day: number) => {
+    const current = alarms[idx].days || [];
+    const next = current.includes(day) ? current.filter(d => d !== day) : [...current, day];
+    update(idx, { days: next });
+  };
+
+  const alarmsEnabled = settings.shiftAlarmsEnabled !== false;
+  // Auto-request notification permission the moment an admin enables alarms.
+  // Without this, alarms ring in-app but never pop up when the PWA is closed.
+  const enableAlarms = async (on: boolean) => {
+    if (on && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      try {
+        const result = await Notification.requestPermission();
+        if (result !== 'granted') {
+          addToast('info', 'Tip: allow notifications so alarms work when the app is closed');
+        }
+      } catch {}
+    }
+    setSettings({ ...settings, shiftAlarmsEnabled: on });
+  };
+
+  return (
+    <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+      {/* Master switch */}
+      <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white flex items-center gap-2">
+            <span className="text-base">🔔</span> Break & Shift Alarms
+          </p>
+          <p className="text-[11px] text-zinc-500 mt-0.5">Audible alerts at lunch, breaks, and end-of-shift</p>
+          {alarmsEnabled && typeof Notification !== 'undefined' && Notification.permission !== 'granted' && (
+            <p className="text-[10px] text-amber-400 mt-1 font-bold">⚠ Allow notifications so alarms work when the app is closed</p>
+          )}
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer shrink-0">
+          <span className={`text-[10px] font-bold uppercase tracking-widest ${alarmsEnabled ? 'text-emerald-400' : 'text-zinc-600'}`}>{alarmsEnabled ? 'On' : 'Off'}</span>
+          <input type="checkbox" checked={alarmsEnabled} onChange={e => enableAlarms(e.target.checked)} className="w-4 h-4 rounded accent-blue-500" />
+        </label>
+      </div>
+
+      <div className={`px-4 py-3 space-y-2 ${!alarmsEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
+        {alarms.length === 0 && (
+          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center">
+            <p className="text-sm text-zinc-400 font-bold">No alarms set up yet</p>
+            <p className="text-[11px] text-zinc-600 mt-1">Click "Load Defaults" below for typical shop schedules — or add one custom.</p>
+          </div>
+        )}
+
+        {alarms.map((alarm, idx) => (
+          <div key={alarm.id} className={`rounded-xl border p-3 transition-colors ${alarm.enabled ? 'border-white/10 bg-zinc-800/30' : 'border-white/5 bg-zinc-900/40 opacity-70'}`}>
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+              {/* Enabled toggle */}
+              <input
+                type="checkbox"
+                aria-label={`Enable alarm: ${alarm.label}`}
+                checked={alarm.enabled}
+                onChange={e => update(idx, { enabled: e.target.checked })}
+                className="w-4 h-4 rounded accent-blue-500 shrink-0"
+              />
+
+              {/* Label */}
+              <input
+                type="text"
+                value={alarm.label}
+                onChange={e => update(idx, { label: e.target.value })}
+                placeholder="Label (e.g. Coffee Break)"
+                className="flex-1 min-w-0 bg-zinc-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-white font-bold"
+              />
+
+              {/* Time */}
+              <input
+                type="time"
+                value={alarm.time}
+                onChange={e => update(idx, { time: e.target.value })}
+                aria-label={`Time for ${alarm.label}`}
+                className="bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white tabular w-28 shrink-0"
+              />
+
+              {/* Sound */}
+              <select
+                value={alarm.sound || 'bell'}
+                onChange={e => update(idx, { sound: e.target.value as ShiftAlarmSound })}
+                aria-label={`Sound for ${alarm.label}`}
+                className="bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white shrink-0"
+              >
+                {ALARM_SOUNDS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+
+              {/* Test */}
+              <button
+                type="button"
+                onClick={() => testAlarm(alarm)}
+                title="Play this alarm sound now"
+                className="shrink-0 p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 hover:text-white"
+                aria-label={`Test ${alarm.label} sound`}
+              >
+                <Play className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+
+              {/* Delete */}
+              <button
+                type="button"
+                onClick={() => remove(idx)}
+                title="Remove this alarm"
+                className="shrink-0 p-1.5 rounded-lg text-zinc-500 hover:bg-red-500/10 hover:text-red-400"
+                aria-label={`Remove ${alarm.label}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+
+            {/* Day chips + behavior toggles — expandable detail row */}
+            <div className="mt-2 pl-6 flex items-center gap-2 flex-wrap">
+              <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Days</span>
+              {DAY_CHIPS.map(d => {
+                const active = !alarm.days || alarm.days.length === 0 || alarm.days.includes(d.value);
+                const allDays = !alarm.days || alarm.days.length === 0;
+                return (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => toggleDay(idx, d.value)}
+                    aria-pressed={active}
+                    className={`text-[9px] font-black px-1.5 py-0.5 rounded transition-colors ${active ? (allDays ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/15 text-blue-400 border border-blue-500/30') : 'bg-zinc-900 text-zinc-600 border border-white/5 hover:text-white'}`}
+                    title={allDays ? 'Every day' : undefined}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+              <span className="w-px h-3 bg-white/10" />
+              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Also pause all running timers when this alarm fires">
+                <input type="checkbox" checked={!!alarm.pauseTimers} onChange={e => update(idx, { pauseTimers: e.target.checked })} className="w-3 h-3 rounded accent-amber-500" />
+                Pause timers
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Also clock everyone out (end of shift)">
+                <input type="checkbox" checked={!!alarm.clockOut} onChange={e => update(idx, { clockOut: e.target.checked })} className="w-3 h-3 rounded accent-red-500" />
+                Clock out
+              </label>
+            </div>
+
+            {/* Duration — how long the alarm rings. Short audio files loop. */}
+            <div className="mt-2 pl-6 flex items-center gap-3">
+              <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest shrink-0">Ring for</span>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                step={1}
+                value={alarm.durationSec ?? 3}
+                onChange={e => update(idx, { durationSec: Number(e.target.value) })}
+                className="flex-1 accent-blue-500 max-w-[200px]"
+                aria-label={`Alarm duration in seconds for ${alarm.label}`}
+              />
+              <span className="text-[11px] font-black text-white tabular w-12 text-right">{alarm.durationSec ?? 3}s</span>
+            </div>
+
+            {/* Custom sound URL — collapsed by default. Admin can paste an MP3/OGG
+                link from anywhere (freesound.org, mixkit.co, their own server). */}
+            <details className="mt-2 pl-6 group">
+              <summary className="cursor-pointer text-[10px] font-black text-zinc-600 uppercase tracking-widest hover:text-zinc-400 flex items-center gap-1 select-none">
+                <ChevronRight className="w-2.5 h-2.5 group-open:rotate-90 transition-transform" />
+                Custom Sound URL
+                {alarm.customSoundUrl && <span className="text-[9px] font-bold text-emerald-400 normal-case tracking-normal bg-emerald-500/10 border border-emerald-500/25 rounded px-1 py-0.5 ml-1">✓ Set</span>}
+              </summary>
+              <div className="mt-1.5 flex items-center gap-2">
+                <input
+                  type="url"
+                  placeholder="https://... link to MP3/OGG (optional)"
+                  value={alarm.customSoundUrl || ''}
+                  onChange={e => update(idx, { customSoundUrl: e.target.value || undefined })}
+                  className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white"
+                />
+                {alarm.customSoundUrl && (
+                  <button
+                    type="button"
+                    onClick={() => update(idx, { customSoundUrl: undefined })}
+                    className="text-[10px] text-zinc-500 hover:text-red-400 font-bold"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <p className="text-[9px] text-zinc-600 mt-1 leading-relaxed">
+                Overrides the built-in sound. Works with any direct MP3/OGG URL — grab one from{' '}
+                <a href="https://pixabay.com/sound-effects/search/lunch%20bell/" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Pixabay</a>
+                {' · '}
+                <a href="https://mixkit.co/free-sound-effects/bell/" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Mixkit</a>
+                {' · '}
+                <a href="https://freesound.org/search/?q=factory+bell" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Freesound</a>
+              </p>
+            </details>
+          </div>
+        ))}
+
+        {/* Add + Defaults */}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={addAlarm}
+            className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add Alarm
+          </button>
+          <button
+            type="button"
+            onClick={loadDefaults}
+            className="text-xs text-zinc-500 hover:text-white px-3 py-2 rounded-lg hover:bg-white/5 transition-colors font-bold"
+          >
+            ↻ Load Defaults
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
   const goals = settings.shopGoals || [];
@@ -5931,13 +6529,14 @@ const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: strin
   weather:     { label: 'Weather Forecast', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400' },
   'stats-week': { label: 'Weekly Stats', desc: 'Hours, jobs & sessions with daily bar graph', icon: '📊', color: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' },
   goals:       { label: 'Shop Goals', desc: 'Your custom targets (jobs/week, revenue, etc)', icon: '🎯', color: 'bg-teal-500/15 border-teal-500/30 text-teal-400' },
+  'flow-map':  { label: 'Shop Flow Map', desc: 'Visual of jobs moving through each stage · live workers', icon: '🗺️', color: 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400' },
   safety:      { label: 'Safety Message', desc: 'Big, bold safety reminder', icon: '⚠️', color: 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400' },
   message:     { label: 'Announcement', desc: 'Custom title + body with color', icon: '📢', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400' },
   stats:       { label: 'Quick Stats (legacy)', desc: 'Basic stats card', icon: '📈', color: 'bg-zinc-500/15 border-zinc-500/30 text-zinc-400' },
 };
 
 // ── Weather Location Card — request & display location status for TV weather slide
-const WeatherLocationCard = ({ addToast }: { addToast: any }) => {
+const WeatherLocationCard = ({ addToast, settings, setSettings }: { addToast: any; settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
   const [status, setStatus] = useState<'unknown' | 'granted' | 'denied' | 'prompt' | 'unsupported'>('unknown');
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [temp, setTemp] = useState<number | null>(null);
@@ -6047,6 +6646,89 @@ const WeatherLocationCard = ({ addToast }: { addToast: any }) => {
       </div>
       {status === 'granted' && (
         <button type="button" onClick={request} className="w-full text-[11px] text-zinc-500 hover:text-white py-1 transition-colors">Refresh location</button>
+      )}
+
+      {/* Manual fallback — works on smart TVs / kiosks where geolocation is unavailable.
+          Uses Open-Meteo's free geocoding API to resolve a city or zip to lat/lon, then
+          persists the result so the TV weather slide always has coordinates to hit. */}
+      <div className="border-t border-white/5 pt-3 mt-2 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Manual Location (for TVs)</p>
+          {settings.weatherLat != null && settings.weatherLon != null && (
+            <span className="text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 rounded">✓ Saved</span>
+          )}
+        </div>
+        <p className="text-[10px] text-zinc-500 leading-snug">
+          If your TV or shop display can't share location, type a city or ZIP here. We'll look up the coordinates and save them so every device uses the same weather.
+        </p>
+        <ManualWeatherEditor settings={settings} setSettings={setSettings} addToast={addToast} />
+      </div>
+    </div>
+  );
+};
+
+// Inline geocode-on-save input. Uses Open-Meteo's free geocoding (no API key).
+const ManualWeatherEditor: React.FC<{ settings: SystemSettings; setSettings: (s: SystemSettings) => void; addToast: any }> = ({ settings, setSettings, addToast }) => {
+  const [input, setInput] = useState(settings.weatherCity || '');
+  const [looking, setLooking] = useState(false);
+
+  const resolve = async () => {
+    const q = input.trim();
+    if (!q) return;
+    setLooking(true);
+    try {
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
+      const d = await res.json();
+      const hit = d?.results?.[0];
+      if (!hit || typeof hit.latitude !== 'number') {
+        addToast('error', `Couldn't find "${q}" — try "City, State" or a 5-digit ZIP`);
+        return;
+      }
+      const label = [hit.name, hit.admin1, hit.country_code].filter(Boolean).join(', ');
+      setSettings({ ...settings, weatherCity: label, weatherLat: hit.latitude, weatherLon: hit.longitude });
+      addToast('success', `Weather location set: ${label}`);
+      setInput(label);
+    } catch {
+      addToast('error', 'Geocoding failed — check your connection');
+    } finally {
+      setLooking(false);
+    }
+  };
+
+  const clear = () => {
+    setInput('');
+    setSettings({ ...settings, weatherCity: '', weatherLat: undefined, weatherLon: undefined });
+    addToast('info', 'Manual weather location cleared');
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && !looking && resolve()}
+          placeholder="e.g. Fresno, CA or 93710"
+          className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white"
+        />
+        <button
+          type="button"
+          onClick={resolve}
+          disabled={looking || !input.trim()}
+          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg"
+        >
+          {looking ? 'Looking…' : 'Set'}
+        </button>
+      </div>
+      {settings.weatherLat != null && settings.weatherLon != null && (
+        <div className="flex items-center justify-between gap-2 text-[10px]">
+          <span className="text-zinc-500">
+            <span className="text-emerald-400 font-black">{settings.weatherCity || 'Custom'}</span>
+            <span className="text-zinc-700 ml-1">· {settings.weatherLat.toFixed(2)}, {settings.weatherLon.toFixed(2)}</span>
+          </span>
+          <button type="button" onClick={clear} className="text-zinc-500 hover:text-red-400 font-bold">Clear</button>
+        </div>
       )}
     </div>
   );
@@ -6221,6 +6903,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
       weather:      {},
       'stats-week': {},
       goals:        {},
+      'flow-map':   {},
       safety:       { title: 'Safety First', body: 'Wear your PPE. Keep your work area clean. Report hazards.', color: 'yellow', icon: '⚠️' },
       message:      { title: 'Announcement', body: '', color: 'blue' },
       stats:        {},
@@ -6262,7 +6945,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
               {(Object.keys(SLIDE_TYPE_META) as (keyof typeof SLIDE_TYPE_META)[]).filter(t => t !== 'stats').map(t => {
                 const meta = SLIDE_TYPE_META[t];
                 // Non-configurable types render identical content every time — warn on duplicate add
-                const SINGLE_INSTANCE: TvSlide['type'][] = ['workers', 'jobs', 'weather', 'stats-week', 'goals'];
+                const SINGLE_INSTANCE: TvSlide['type'][] = ['workers', 'jobs', 'weather', 'stats-week', 'goals', 'flow-map'];
                 const existing = slides.filter(s => s.type === t).length;
                 const alreadyExists = SINGLE_INSTANCE.includes(t as TvSlide['type']) && existing > 0;
                 return (
@@ -6372,7 +7055,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
                       </div>
                     </>
                   )}
-                  {(slide.type === 'workers' || slide.type === 'jobs' || slide.type === 'weather' || slide.type === 'stats-week' || slide.type === 'stats') && (
+                  {(slide.type === 'workers' || slide.type === 'jobs' || slide.type === 'weather' || slide.type === 'stats-week' || slide.type === 'stats' || slide.type === 'flow-map' || slide.type === 'goals') && (
                     <p className="text-[10px] text-zinc-500 italic">No additional options — this slide uses the shop's live data.</p>
                   )}
                 </div>
@@ -6388,13 +7071,15 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
               onClick={() => {
                 // Load the default lineup so user can customize from a clean state
                 if (!confirm('Replace current slides with defaults (Workers · Jobs · Leaderboard · Goals · Week Stats · Weather)?')) return;
+                const ts = Date.now();
                 setSettings({ ...settings, tvSlides: [
-                  { id: `slide_${Date.now()}_1`, type: 'workers', enabled: true },
-                  { id: `slide_${Date.now()}_2`, type: 'jobs', enabled: true },
-                  { id: `slide_${Date.now()}_3`, type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
-                  { id: `slide_${Date.now()}_4`, type: 'goals', enabled: true },
-                  { id: `slide_${Date.now()}_5`, type: 'stats-week', enabled: true },
-                  { id: `slide_${Date.now()}_6`, type: 'weather', enabled: true },
+                  { id: `slide_${ts}_1`, type: 'workers', enabled: true },
+                  { id: `slide_${ts}_2`, type: 'jobs', enabled: true },
+                  { id: `slide_${ts}_3`, type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+                  { id: `slide_${ts}_4`, type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'month', leaderboardCount: 5 },
+                  { id: `slide_${ts}_5`, type: 'goals', enabled: true },
+                  { id: `slide_${ts}_6`, type: 'stats-week', enabled: true },
+                  { id: `slide_${ts}_7`, type: 'weather', enabled: true },
                 ]});
               }}
               className="w-full text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/5 py-1.5 rounded transition-colors font-bold"
@@ -6654,6 +7339,19 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
     );
   }
 
+  if (slide.type === 'flow-map') {
+    const stages = getStages(settings);
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-2 text-center">
+        <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">🗺️ Flow Map</p>
+        <h2 className="text-xs font-black text-white tracking-tight mt-0.5 mb-1">Where Every Job Is</h2>
+        <div className="w-full scale-[0.6] origin-top -mt-1">
+          <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} compact />
+        </div>
+      </div>
+    );
+  }
+
   if (slide.type === 'weather') {
     return (
       <div className="h-full flex flex-col items-center justify-center p-4 text-center">
@@ -6746,7 +7444,7 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
   return null;
 };
 
-const SettingsView = ({ addToast }: { addToast: any }) => {
+const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
@@ -6985,35 +7683,22 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
       {settingsTab === 'schedule' && (
         <div className="space-y-6">
           <div>
-            <h3 className="text-lg font-bold text-white mb-1">Schedule & Automation</h3>
-            <p className="text-sm text-zinc-500">Auto clock-out, lunch breaks, and work schedule rules.</p>
+            <h3 className="text-lg font-bold text-white mb-1">Schedule & Alarms</h3>
+            <p className="text-sm text-zinc-500">Set up break alarms, lunch times, and shift end — fully customizable.</p>
           </div>
-          <div>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
-              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+
+          <ShiftAlarmsEditor settings={settings} setSettings={setSettings} addToast={addToast} />
+
+          {/* Lunch pause toggle — auto-pauses timers during the lunch window.
+              This is separate from alarms (which just fire notifications). */}
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+            <div className="px-4 py-3">
+              <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-white">Auto Clock-Out</p>
-                  <p className="text-xs text-zinc-500">Stop forgotten timers automatically</p>
+                  <p className="text-sm text-white">Auto-Pause Timers at Lunch</p>
+                  <p className="text-xs text-zinc-500">When on, any alarm marked "Pause Timers" will pause running work</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="time" value={settings.autoClockOutTime} onChange={e => setSettings({ ...settings, autoClockOutTime: e.target.value })} className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs w-24" />
-                  <input type="checkbox" checked={settings.autoClockOutEnabled} onChange={e => setSettings({ ...settings, autoClockOutEnabled: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-                </div>
-              </div>
-              <div className="px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-white">Lunch Pause</p>
-                    <p className="text-xs text-zinc-500">Auto-pause timers during break</p>
-                  </div>
-                  <input type="checkbox" checked={settings.autoLunchPauseEnabled || false} onChange={e => setSettings({ ...settings, autoLunchPauseEnabled: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
-                </div>
-                {settings.autoLunchPauseEnabled && (
-                  <div className="flex gap-3 mt-2">
-                    <div><label className="text-[10px] text-zinc-600">Start</label><input type="time" value={settings.lunchStart || '12:00'} onChange={e => setSettings({ ...settings, lunchStart: e.target.value })} className="block bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs w-24" /></div>
-                    <div><label className="text-[10px] text-zinc-600">End</label><input type="time" value={settings.lunchEnd || '12:30'} onChange={e => setSettings({ ...settings, lunchEnd: e.target.value })} className="block bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs w-24" /></div>
-                  </div>
-                )}
+                <input type="checkbox" checked={settings.autoLunchPauseEnabled || false} onChange={e => setSettings({ ...settings, autoLunchPauseEnabled: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
               </div>
             </div>
           </div>
@@ -7060,7 +7745,8 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
             {/* Stage List */}
             <div className="space-y-2">
               {(settings.jobStages || DEFAULT_STAGES).sort((a, b) => a.order - b.order).map((stage, idx) => (
-                <div key={stage.id} className="flex items-center gap-3 bg-zinc-800/30 rounded-xl p-3 border border-white/5">
+                <div key={stage.id} className="bg-zinc-800/30 rounded-xl border border-white/5">
+                 <div className="flex items-center gap-3 p-3">
                   <div className="w-4 h-4 rounded-full shrink-0" style={{ background: stage.color }} />
                   <input className="flex-1 bg-transparent text-white text-sm font-bold outline-none border-b border-transparent focus:border-white/20" value={stage.label} onChange={e => {
                     const stages = [...(settings.jobStages || DEFAULT_STAGES)];
@@ -7109,6 +7795,22 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
                       setSettings({ ...settings, jobStages: stages });
                     }} className="text-zinc-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
                   )}
+                 </div>
+                  {/* Per-stage operations mapping lives in the unified
+                      OperationsStageMapper below — cleaner UX than a disclosure
+                      tucked inside every stage row. Shows a summary chip here
+                      so admins see which stages are mapped at a glance. */}
+                  {!stage.isComplete && (stage.operations?.length || 0) > 0 && (
+                    <div className="border-t border-white/5 px-3 py-1.5 flex items-center gap-2 flex-wrap">
+                      <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Routes:</span>
+                      {(stage.operations || []).slice(0, 5).map(op => (
+                        <span key={op} className="text-[10px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/25 rounded px-1.5 py-0.5">{op}</span>
+                      ))}
+                      {(stage.operations?.length || 0) > 5 && (
+                        <span className="text-[10px] text-zinc-500">+{stage.operations!.length - 5} more</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -7141,6 +7843,11 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
               )}
             </div>
           </div>
+
+          {/* Operations → Stages mapper — the unified drag-and-drop board
+              that makes smart auto-routing configurable in one screen.
+              Replaces the old per-stage "Auto-route operations" disclosure. */}
+          <OperationsStageMapper settings={settings} setSettings={setSettings} />
 
           {/* Machines / Stations — physical work locations */}
           <MachineManager settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
@@ -7447,7 +8154,7 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
           <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
 
             {/* Weather Location */}
-            <WeatherLocationCard addToast={addToast} />
+            <WeatherLocationCard addToast={addToast} settings={settings} setSettings={setSettings} />
 
             {/* TV Stream Link */}
             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
@@ -7602,30 +8309,49 @@ const SettingsView = ({ addToast }: { addToast: any }) => {
           </div>
 
           {/* Notifications */}
-          <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Notifications</p>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
-              <PushRegistrationPanel addToast={addToast} />
+          {/* Notifications — dev-only diagnostic panel.
+              End users get push via the bell icon in the header; this card
+              exists to troubleshoot subscription + service-worker issues, which
+              means VAPID env vars and jargon that would confuse a shop owner. */}
+          {isDeveloper() && (
+            <div>
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Notifications <span className="text-[9px] text-amber-400 normal-case tracking-normal">(dev only)</span></p>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
+                <PushRegistrationPanel addToast={addToast} userId={userId} />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* System Info */}
+          {/* AI Status — dev-only. Shop owners don't manage our Netlify env vars. */}
+          {isDeveloper() && (
+            <div>
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">AI Assistant <span className="text-[9px] text-amber-400 normal-case tracking-normal">(dev only)</span></p>
+              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
+                <AIHealthPanel addToast={addToast} />
+              </div>
+            </div>
+          )}
+
+          {/* System Info — always shown, but with end-user-friendly labels.
+              Raw Firebase connection status is gated behind dev mode. */}
           <div>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">System</p>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+              {isDeveloper() && (
+                <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+                  <div>
+                    <p className="text-sm text-white">Firebase Status <span className="text-[9px] text-amber-400">(dev)</span></p>
+                    <p className="text-xs text-zinc-500">Database connection</p>
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${DB.isFirebaseConnected().connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{DB.isFirebaseConnected().connected ? 'Connected' : 'Offline'}</span>
+                </div>
+              )}
               <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
                 <div>
-                  <p className="text-sm text-white">Firebase Status</p>
-                  <p className="text-xs text-zinc-500">Database connection</p>
+                  <p className="text-sm text-white">Operations</p>
+                  <p className="text-xs text-zinc-500">How many operation types are set up</p>
                 </div>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${DB.isFirebaseConnected().connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{DB.isFirebaseConnected().connected ? 'Connected' : 'Offline'}</span>
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
-                <div>
-                  <p className="text-sm text-white">Active Jobs</p>
-                  <p className="text-xs text-zinc-500">Open production orders</p>
-                </div>
-                <span className="text-sm text-zinc-300 font-mono">{(settings.customOperations || []).length} operations configured</span>
+                <span className="text-sm text-zinc-300 font-mono">{(settings.customOperations || []).length} configured</span>
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
                 <div>
@@ -8208,12 +8934,12 @@ export default function App() {
         <div className="p-4 md:p-8">
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
-          {view === 'admin-board' && <JobBoardView user={user} addToast={addToast} confirm={setConfirm} />}
+          {view === 'admin-board' && <JobBoardView user={user} addToast={addToast} confirm={setConfirm} onEditStages={() => setView('admin-settings')} />}
           {view === 'admin-quality' && <QualityView user={user} addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
-          {view === 'admin-settings' && <SettingsView addToast={addToast} />}
+          {view === 'admin-settings' && <SettingsView addToast={addToast} userId={user?.id} />}
           {view === 'admin-reports' && <ReportsView />}
           {view === 'admin-live' && <LiveFloorMonitor user={user} onBack={() => setView('admin-dashboard')} addToast={addToast} />}
           {view === 'admin-samples' && <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />}

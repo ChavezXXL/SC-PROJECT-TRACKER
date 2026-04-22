@@ -4,7 +4,7 @@
 // effort. Pure move — zero functional changes.
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Columns3, Search, ArrowRight, GripVertical } from 'lucide-react';
+import { Columns3, Search, ArrowRight, GripVertical, Settings as SettingsIcon } from 'lucide-react';
 
 import { Job, SystemSettings } from '../types';
 import * as DB from '../services/mockDb';
@@ -12,7 +12,7 @@ import { dateNum, todayFmt } from '../utils/date';
 import { getStages, getJobStage, getNextStage, useIsMobile } from '../App';
 
 // --- ADMIN: JOB FLOW BOARD (Kanban) ---
-export const JobBoardView = ({ user, addToast, confirm }: any) => {
+export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [shopSettings, setShopSettings] = useState<SystemSettings>(DB.getSettings());
   const [draggingJob, setDraggingJob] = useState<string | null>(null);
@@ -132,14 +132,29 @@ export const JobBoardView = ({ user, addToast, confirm }: any) => {
           <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tight"><Columns3 className="w-6 h-6 text-blue-500" aria-hidden="true" /> Job Flow Board</h2>
           <p className="text-zinc-500 text-sm mt-0.5">{wipJobs} in flight · {overdueCount} overdue · drag to advance</p>
         </div>
-        <div className="relative flex-1 md:flex-initial md:w-72">
-          <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" aria-hidden="true" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search PO, part, customer…"
-            className="w-full bg-zinc-900/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none"
-          />
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="relative flex-1 md:w-72">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" aria-hidden="true" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search PO, part, customer…"
+              className="w-full bg-zinc-900/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none"
+            />
+          </div>
+          {/* Edit Stages — jumps straight to Settings where columns live.
+              Admins asked for a shortcut so they don't hunt through tabs. */}
+          {onEditStages && (
+            <button
+              type="button"
+              onClick={onEditStages}
+              title="Add, rename, or remove board columns"
+              className="shrink-0 bg-zinc-900/60 hover:bg-white/10 border border-white/10 hover:border-white/20 text-zinc-300 hover:text-white rounded-xl px-3 py-2 text-sm font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <SettingsIcon className="w-4 h-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Edit Stages</span>
+            </button>
+          )}
         </div>
       </div>
 

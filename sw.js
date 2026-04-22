@@ -70,8 +70,19 @@ self.addEventListener('fetch', event => {
 });
 
 // ── Push Notifications ────────────────────────────────────────────
+// Push payloads come from the server as JSON, but occasionally arrive as
+// plain text (Apple push in particular can be empty or raw string). Parse
+// defensively so a malformed payload never crashes the SW — otherwise the
+// entire push pipeline dies for that device until the SW is re-registered.
 self.addEventListener('push', event => {
-  const data = event.data ? event.data.json() : {};
+  let data = {};
+  if (event.data) {
+    try { data = event.data.json(); }
+    catch {
+      try { data = { body: event.data.text() }; }
+      catch { data = {}; }
+    }
+  }
   const title = data.title || 'SC Deburring';
   const options = {
     body: data.body || 'You have a new notification',

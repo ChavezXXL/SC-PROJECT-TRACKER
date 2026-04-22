@@ -22,6 +22,9 @@ export interface JobStage {
   color: string;        // hex color for badge
   order: number;
   isComplete?: boolean; // reaching this stage marks job as done
+  /** Operation names that should auto-route a job to this stage when a worker
+   *  clocks in. When empty, routing falls back to fuzzy label match. */
+  operations?: string[];
 }
 
 export interface StageHistoryEntry {
@@ -233,6 +236,38 @@ export interface TimeLog {
   sessionQty?: number;
 }
 
+// ── Shift Alarms — configurable audible/visual alerts at specific times of day.
+// Fire via browser notification (works backgrounded) + optional audio bell.
+// Each value maps to a different synthesized sound in services/shiftAlarms.ts.
+export type ShiftAlarmSound =
+  | 'bell'        // Classic school/factory bell — rapid ring cluster
+  | 'chime'       // Dinner / elevator three-note cascade (break time)
+  | 'triangle'    // Single soft dinner-triangle ding
+  | 'ship-bell'   // Warm single "clang" — slow fade
+  | 'horn'        // Factory air-horn blasts — heard across a loud shop
+  | 'siren'       // Rising/falling wail — urgent shift end / lockdown
+  | 'silent';
+
+export interface ShiftAlarm {
+  id: string;
+  label: string;       // Shown to workers in the notification: "Lunch starts" / "Break"
+  time: string;        // HH:MM, 24-hour
+  enabled: boolean;
+  sound?: ShiftAlarmSound;
+  /** Custom sound URL — pasted by admin. Overrides `sound` when present.
+   *  Accepts any MP3/OGG/WAV the browser can play (Freesound, Mixkit, etc.). */
+  customSoundUrl?: string;
+  /** How long the alarm should ring, in seconds. Short files loop to fill
+   *  the duration. Default 3s. Range 1–30. */
+  durationSec?: number;
+  /** Days of the week this alarm is active (0=Sun..6=Sat). Empty = every day. */
+  days?: number[];
+  /** When true, also pause all running timers at this moment (for lunch/breaks). */
+  pauseTimers?: boolean;
+  /** When true, also auto-clock-out all workers (used for end-of-shift). */
+  clockOut?: boolean;
+}
+
 export interface SystemSettings {
   lunchStart: string;
   lunchEnd: string;
@@ -240,6 +275,11 @@ export interface SystemSettings {
   autoClockOutEnabled: boolean;
   customOperations: string[];
   autoLunchPauseEnabled: boolean;
+  /** Customizable alarm times — fires audible + visual notification at each.
+   *  When absent, the legacy lunchStart/lunchEnd/autoClockOutTime fields are used. */
+  shiftAlarms?: ShiftAlarm[];
+  /** Master switch for the shift-alarm system (default on). */
+  shiftAlarmsEnabled?: boolean;
   clients: string[];
   clientContacts?: Record<string, CustomerContact>; // saved contact info per client name
   clientSlugs?: Record<string, string>; // short URL slug per client (e.g. "S&H Deburring" → "sh-deburring") for simple shareable portal links
@@ -267,6 +307,11 @@ export interface SystemSettings {
   tvShowClock?: boolean;       // Show current time on TV header
   tvShowStats?: boolean;       // Show stats strip (workers/running/paused)
   tvShowWeather?: boolean;     // Show outside temperature widget (default true)
+  // Manual weather location — used when a TV/kiosk device doesn't have geolocation
+  // or denies the permission. Lat/lon are resolved from city or zip via geocoding.
+  weatherCity?: string;        // e.g. "Fresno, CA" or "93710"
+  weatherLat?: number;         // resolved latitude (written after geocoding)
+  weatherLon?: number;         // resolved longitude
   tvShowJobsBelt?: boolean;    // Show the auto-scrolling open-jobs panel (default true)
   tvScrollSpeed?: 'slow' | 'normal' | 'fast' | 'off'; // Auto-scroll speed (default normal)
   // ── Document Settings (Quote/Invoice) ──
@@ -434,6 +479,7 @@ export type TvSlideType =
   | 'weather'        // Current + 5-day forecast
   | 'stats-week'     // Weekly stats with graphs
   | 'goals'          // Customizable shop goals with progress
+  | 'flow-map'       // Visual flow of jobs through each workflow stage
   | 'safety'         // Safety message with big icon
   | 'message'        // Custom announcement
   | 'stats';         // Legacy simple stats (kept for backward compat)

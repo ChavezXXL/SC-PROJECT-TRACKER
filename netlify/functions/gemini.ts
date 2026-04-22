@@ -10,40 +10,61 @@ const GEMINI_MODELS = [
   'gemini-flash-latest',
 ];
 
+// Per-model timeout — Gemini normally responds in 3-8s; anything past 20s is stuck.
+const UPSTREAM_TIMEOUT_MS = 20_000;
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+function json(status: number, body: Record<string, unknown>) {
+  return { statusCode: status, headers: JSON_HEADERS, body: JSON.stringify(body) };
+}
+
 export const handler: Handler = async (event) => {
-  // Only allow POST
-  if (event.httpMethod !== 'POST') {
+  // CORS preflight + client-side health probe (see AIHealthPanel in Settings).
+  if (event.httpMethod === 'OPTIONS') {
     return {
-      statusCode: 405,
-      body: JSON.stringify({ error: 'Method not allowed' }),
+      statusCode: 200,
+      headers: { ...JSON_HEADERS, 'Access-Control-Allow-Methods': 'POST, OPTIONS' },
+      body: JSON.stringify({ ok: true }),
     };
+  }
+
+  // Lightweight GET health-check — returns whether the key is configured without
+  // actually calling Gemini. Used by the Settings AI Status panel.
+  if (event.httpMethod === 'GET') {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    return json(200, { ok: true, keyConfigured: !!apiKey });
+  }
+
+  if (event.httpMethod !== 'POST') {
+    return json(405, { error: 'Method not allowed' });
   }
 
   // Prefer GEMINI_API_KEY (server-only), fall back to legacy VITE_GEMINI_API_KEY during migration
   const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Gemini API key not configured on server.' }),
-    };
+    return json(500, {
+      error: 'Gemini API key not configured. Add GEMINI_API_KEY in Netlify → Site settings → Environment variables.',
+      code: 'AUTH',
+    });
   }
 
   let payload: { prompt: string; imageBase64?: string; mimeType?: string };
   try {
     payload = JSON.parse(event.body || '{}');
   } catch {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
+    return json(400, { error: 'Invalid JSON body' });
   }
 
   const { prompt, imageBase64, mimeType = 'image/jpeg' } = payload;
 
   if (!prompt || prompt.length > 8000) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid prompt' }) };
+    return json(400, { error: 'Invalid prompt' });
   }
 
   // Size guard — prevent abuse. 5MB base64 ~= 3.75MB raw image.
   if (imageBase64 && imageBase64.length > 5_000_000) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Image too large (max 3.75MB raw)' }) };
+    return json(400, { error: 'Image too large (max 3.75MB raw)' });
   }
 
   const parts: any[] = [{ text: prompt }];
@@ -61,6 +82,8 @@ export const handler: Handler = async (event) => {
 
   let lastError: string = 'All models failed';
   for (const model of GEMINI_MODELS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS);
     try {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -68,16 +91,14 @@ export const handler: Handler = async (event) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          signal: ctrl.signal,
         }
       );
 
       if (res.ok) {
         const data = await res.json();
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        return {
-          statusCode: 200,
-          body: JSON.stringify({ text, model }),
-        };
+        return json(200, { text, model });
       }
 
       const errData = await res.json().catch(() => ({}));
@@ -86,23 +107,20 @@ export const handler: Handler = async (event) => {
       // 429 billing cap / 401/403 bad key = fail immediately, don't burn more calls
       if (res.status === 429 || res.status === 401 || res.status === 403) {
         const code = res.status === 429 ? 'BILLING' : 'AUTH';
-        return {
-          statusCode: res.status,
-          body: JSON.stringify({ error: errMsg, code }),
-        };
+        return json(res.status, { error: errMsg, code });
       }
 
       // Other errors (404/503) — try next model
       lastError = `${res.status}: ${errMsg}`;
       console.warn(`[gemini] ${model} failed:`, lastError);
     } catch (e: any) {
-      lastError = e?.message || 'Unknown fetch error';
+      // AbortError means the upstream took too long — try the next model
+      lastError = e?.name === 'AbortError' ? 'Upstream timeout' : (e?.message || 'Unknown fetch error');
       console.warn(`[gemini] ${model} threw:`, lastError);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  return {
-    statusCode: 502,
-    body: JSON.stringify({ error: lastError }),
-  };
+  return json(502, { error: lastError });
 };
