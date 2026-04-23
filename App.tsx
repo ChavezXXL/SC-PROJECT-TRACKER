@@ -548,8 +548,17 @@ const PrintStyles = () => (
         break-inside: avoid !important;
       }
 
-      /* Images never overflow the page width */
+      /* Images never overflow the page width (fallback — specific size rules below win) */
       #printable-area img { max-width: 100% !important; height: auto !important; }
+      /* The company logo sits in the header — cap it so it doesn't explode
+         to half the page (happened when the generic img height:auto rule
+         overrode the h-12 Tailwind class at print time). */
+      #printable-area .traveler-logo {
+        max-height: 72px !important;
+        max-width: 240px !important;
+        width: auto !important;
+        height: auto !important;
+      }
 
       /* Drop every box-shadow so nothing prints washed out */
       #printable-area [class*="shadow"] { box-shadow: none !important; }
@@ -1592,7 +1601,7 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
           <div className="flex justify-between items-center border-b-4 border-black pb-2 mb-4 gap-3">
             <div className="flex items-center gap-3 min-w-0">
               {show.logo && appSettings.companyLogo && (
-                <img src={appSettings.companyLogo} alt="" className="h-12 object-contain shrink-0" />
+                <img src={appSettings.companyLogo} alt="" className="traveler-logo h-12 object-contain shrink-0" />
               )}
               <div className="min-w-0">
                 <h1 className="text-2xl sm:text-3xl font-black tracking-tighter truncate">{appSettings.companyName || 'SC DEBURRING'}</h1>
