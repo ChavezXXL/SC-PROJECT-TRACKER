@@ -125,11 +125,13 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in overflow-y-auto"
+      className="fixed inset-0 z-[200] flex items-start justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
       onClick={onClose}
     >
+      {/* 2-pane modal — constrained height + internal scroll per pane.
+          Slight top offset on desktop so it doesn't hug the top edge. */}
       <div
-        className="w-full sm:max-w-4xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)] my-0 sm:my-auto"
+        className="w-full sm:max-w-4xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)] sm:mt-4"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

@@ -544,26 +544,31 @@ const DeliveryEditor: React.FC<{
     onSave(delivery, updatedContacts);
   };
 
+  // Outer scroll container — this is what scrolls when the modal is taller
+  // than the viewport. Inner modal has natural height, which avoids the
+  // "header clipped at top" bug entirely.
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in overflow-y-auto"
+      className="fixed inset-0 z-[200] overflow-y-auto bg-zinc-950/95 backdrop-blur-sm animate-fade-in"
       onClick={onCancel}
     >
-      <div
-        className="w-full sm:max-w-2xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)] my-0 sm:my-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between shrink-0 sticky top-0 bg-zinc-900 z-10 rounded-t-none sm:rounded-t-2xl">
-          <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-            <Truck className="w-4 h-4 text-blue-400" aria-hidden="true" />
-            {existing ? 'Edit Run' : 'New Delivery Run'}
-          </h2>
-          <button type="button" onClick={onCancel} aria-label="Close" className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5">
-            <X className="w-4 h-4" aria-hidden="true" />
-          </button>
-        </div>
+      <div className="min-h-full flex items-start justify-center p-0 sm:p-4">
+        <div
+          className="relative w-full sm:max-w-2xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl my-0 sm:my-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header — sticks to the top of the viewport while scrolling */}
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between sticky top-0 bg-zinc-900/95 backdrop-blur z-10 rounded-t-none sm:rounded-t-2xl">
+            <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+              <Truck className="w-4 h-4 text-blue-400" aria-hidden="true" />
+              {existing ? 'Edit Run' : 'New Delivery Run'}
+            </h2>
+            <button type="button" onClick={onCancel} aria-label="Close" className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5">
+              <X className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="p-4 space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Run #</label>
@@ -601,13 +606,16 @@ const DeliveryEditor: React.FC<{
             <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Notes</label>
             <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Anything the driver should know…" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white" />
           </div>
-        </div>
+          </div>
 
-        <div className="px-4 py-3 border-t border-white/10 flex items-center gap-2 bg-zinc-950/60">
-          <button type="button" onClick={onCancel} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
-          <button type="button" onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
-            {existing ? 'Save Changes' : 'Create Run'}
-          </button>
+          {/* Footer — sticks to the bottom of the viewport while scrolling.
+              Action buttons always reachable even on long forms. */}
+          <div className="px-4 py-3 border-t border-white/10 flex items-center gap-2 bg-zinc-950/95 backdrop-blur sticky bottom-0 rounded-b-none sm:rounded-b-2xl z-10">
+            <button type="button" onClick={onCancel} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
+            <button type="button" onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
+              {existing ? 'Save Changes' : 'Create Run'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
