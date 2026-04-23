@@ -7878,99 +7878,172 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
           )}
         </div>
 
-      {/* ── TAB: General ── */}
-      {/* ── SHOP PROFILE ── */}
+      {/* ── SHOP PROFILE — company info that prints on quotes, travelers,
+          and shows in the top bar. Laid out as a proper form:
+          preview card at top, logo + basics side-by-side on desktop,
+          stacks on mobile. Includes email (was missing). */}
       {settingsTab === 'profile' && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           <div>
             <h3 className="text-lg font-bold text-white mb-1">Shop Profile</h3>
-            <p className="text-sm text-zinc-500">Your company information used in headers and print travelers.</p>
+            <p className="text-sm text-zinc-500">Company info — prints on quotes, travelers, and shows in the top bar.</p>
           </div>
-          <div>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-3">
+
+          {/* Live preview card — shows exactly how the company appears on
+              printed docs, so admins can see their branding at a glance. */}
+          <div className="bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-transparent border border-blue-500/20 rounded-2xl p-4 sm:p-5">
+            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-3">Preview</p>
+            <div className="bg-white text-black rounded-xl p-4 flex items-center gap-3 shadow-lg">
+              {settings.companyLogo ? (
+                <img src={settings.companyLogo} alt="Logo" className="h-10 w-auto object-contain shrink-0" />
+              ) : (
+                <div className="h-10 w-10 rounded-lg bg-zinc-200 flex items-center justify-center shrink-0">
+                  <Image className="w-5 h-5 text-zinc-400" aria-hidden="true" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="font-black text-base truncate">{settings.companyName || 'Your Company Name'}</p>
+                <p className="text-xs text-zinc-600 truncate">
+                  {[settings.companyAddress, settings.companyPhone, (settings as any).companyEmail].filter(Boolean).join(' · ') || 'Add address / phone / email below'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Two-column layout: logo on the left (square dropzone), basics on the right */}
+          <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4">
+            {/* Logo uploader — clear dropzone + separate remove button so
+                it doesn't live on top of the drop target. */}
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Company Logo</p>
+              <div
+                className="border-2 border-dashed border-white/10 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500/40 hover:bg-blue-500/5 transition-all aspect-square flex items-center justify-center"
+                onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/10'); }}
+                onDragLeave={e => { e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10'); }}
+                onDrop={e => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
+                  const file = e.dataTransfer.files[0];
+                  if (file && file.type.startsWith('image/')) {
+                    const img = new window.Image();
+                    img.onload = () => {
+                      const canvas = document.createElement('canvas');
+                      const scale = Math.min(1, 400 / img.width);
+                      canvas.width = img.width * scale;
+                      canvas.height = img.height * scale;
+                      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+                      const updated = { ...settings, companyLogo: canvas.toDataURL('image/png', 0.9) };
+                      setSettings(updated); DB.saveSettings(updated);
+                      addToast('success', 'Logo saved');
+                    };
+                    img.src = URL.createObjectURL(file);
+                  }
+                }}
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = (ev: any) => {
+                    const file = ev.target.files?.[0];
+                    if (!file) return;
+                    const img = new window.Image();
+                    img.onload = () => {
+                      const canvas = document.createElement('canvas');
+                      const scale = Math.min(1, 400 / img.width);
+                      canvas.width = img.width * scale;
+                      canvas.height = img.height * scale;
+                      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+                      const updated = { ...settings, companyLogo: canvas.toDataURL('image/png', 0.9) };
+                      setSettings(updated); DB.saveSettings(updated);
+                      addToast('success', 'Logo saved');
+                    };
+                    img.src = URL.createObjectURL(file);
+                  };
+                  input.click();
+                }}
+              >
+                {settings.companyLogo ? (
+                  <img src={settings.companyLogo} alt="Logo" className="max-h-32 max-w-full object-contain" />
+                ) : (
+                  <div className="text-zinc-500">
+                    <Image className="w-10 h-10 mx-auto mb-2 text-zinc-600" aria-hidden="true" />
+                    <p className="text-xs font-bold">Drop logo or click to upload</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">PNG · JPG · SVG</p>
+                  </div>
+                )}
+              </div>
+              {settings.companyLogo && (
+                <button
+                  type="button"
+                  onClick={() => { const u = { ...settings, companyLogo: '' }; setSettings(u); DB.saveSettings(u); addToast('info', 'Logo removed'); }}
+                  className="w-full mt-2 text-[11px] text-zinc-500 hover:text-red-400 font-bold py-1.5 rounded hover:bg-red-500/5 transition-colors"
+                >
+                  Remove logo
+                </button>
+              )}
+            </div>
+
+            {/* Basics — name, phone, email, address */}
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
+              <div>
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Company Name</label>
+                <input
+                  className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-bold"
+                  value={settings.companyName || ''}
+                  onChange={e => setSettings({ ...settings, companyName: e.target.value })}
+                  placeholder="SC Deburring LLC"
+                />
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Company Name</label>
-                  <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyName || ''} onChange={e => setSettings({ ...settings, companyName: e.target.value })} placeholder="SC Deburring LLC" />
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Phone</label>
+                  <input
+                    type="tel"
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                    value={settings.companyPhone || ''}
+                    onChange={e => setSettings({ ...settings, companyPhone: e.target.value })}
+                    placeholder="(555) 123-4567"
+                  />
                 </div>
                 <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Phone</label>
-                  <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyPhone || ''} onChange={e => setSettings({ ...settings, companyPhone: e.target.value })} placeholder="(555) 123-4567" />
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Email</label>
+                  <input
+                    type="email"
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                    value={(settings as any).companyEmail || ''}
+                    onChange={e => setSettings({ ...settings, companyEmail: e.target.value } as any)}
+                    placeholder="contact@yourcompany.com"
+                  />
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Address</label>
-                <input className="w-full bg-zinc-950 border border-white/10 rounded px-3 py-1.5 text-sm text-white" value={settings.companyAddress || ''} onChange={e => setSettings({ ...settings, companyAddress: e.target.value })} placeholder="123 Industrial Blvd, City, ST 12345" />
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Address</label>
+                <input
+                  className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                  value={settings.companyAddress || ''}
+                  onChange={e => setSettings({ ...settings, companyAddress: e.target.value })}
+                  placeholder="123 Industrial Blvd, City, ST 12345"
+                />
               </div>
-              <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Company Logo</label>
-                <div className="flex gap-3 items-start">
-                  <div
-                    className="flex-1 border-2 border-dashed border-white/10 rounded-xl p-4 text-center cursor-pointer hover:border-blue-500/40 hover:bg-blue-500/5 transition-all"
-                    onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/10'); }}
-                    onDragLeave={e => { e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10'); }}
-                    onDrop={e => {
-                      e.preventDefault();
-                      e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
-                      const file = e.dataTransfer.files[0];
-                      if (file && file.type.startsWith('image/')) {
-                        const img = new window.Image();
-                        img.onload = () => {
-                          const canvas = document.createElement('canvas');
-                          const maxW = 400;
-                          const scale = Math.min(1, maxW / img.width);
-                          canvas.width = img.width * scale;
-                          canvas.height = img.height * scale;
-                          canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-                          const dataUrl = canvas.toDataURL('image/png', 0.9);
-                          const updated = { ...settings, companyLogo: dataUrl };
-                          setSettings(updated);
-                          DB.saveSettings(updated);
-                          addToast('success', 'Logo uploaded & saved');
-                        };
-                        img.src = URL.createObjectURL(file);
-                      }
-                    }}
-                    onClick={() => {
-                      const input = document.createElement('input');
-                      input.type = 'file';
-                      input.accept = 'image/*';
-                      input.onchange = (ev: any) => {
-                        const file = ev.target.files?.[0];
-                        if (file) {
-                          const img = new window.Image();
-                          img.onload = () => {
-                            const canvas = document.createElement('canvas');
-                            const maxW = 400;
-                            const scale = Math.min(1, maxW / img.width);
-                            canvas.width = img.width * scale;
-                            canvas.height = img.height * scale;
-                            canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            const dataUrl = canvas.toDataURL('image/png', 0.9);
-                            const updated = { ...settings, companyLogo: dataUrl };
-                            setSettings(updated);
-                            DB.saveSettings(updated);
-                            addToast('success', 'Logo uploaded & saved');
-                          };
-                          img.src = URL.createObjectURL(file);
-                        }
-                      };
-                      input.click();
-                    }}
-                  >
-                    {settings.companyLogo ? (
-                      <img src={settings.companyLogo} alt="Logo" className="max-h-16 mx-auto object-contain" />
-                    ) : (
-                      <div className="text-zinc-500">
-                        <Image className="w-8 h-8 mx-auto mb-1 text-zinc-600" />
-                        <p className="text-xs">Drop your logo here or click to upload</p>
-                        <p className="text-[10px] text-zinc-600 mt-0.5">PNG, JPG, SVG</p>
-                      </div>
-                    )}
-                  </div>
-                  {settings.companyLogo && (
-                    <button onClick={() => { setSettings({ ...settings, companyLogo: '' }); addToast('info', 'Logo removed'); }} className="text-zinc-600 hover:text-red-400 text-xs shrink-0 mt-2">Remove</button>
-                  )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/5">
+                <div>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Website (optional)</label>
+                  <input
+                    type="url"
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                    value={(settings as any).companyWebsite || ''}
+                    onChange={e => setSettings({ ...settings, companyWebsite: e.target.value } as any)}
+                    placeholder="yourcompany.com"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Tax ID (optional)</label>
+                  <input
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                    value={(settings as any).companyTaxId || ''}
+                    onChange={e => setSettings({ ...settings, companyTaxId: e.target.value } as any)}
+                    placeholder="EIN / VAT (optional)"
+                  />
                 </div>
               </div>
             </div>

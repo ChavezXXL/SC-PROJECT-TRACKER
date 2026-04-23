@@ -23,6 +23,7 @@ import * as DB from '../services/mockDb';
 import { createGpsSession, startTracking, stopTracking, sessionMiles, sessionMinutes, type GpsSession } from '../services/gpsTracker';
 import { directionsUrl, formatMiles } from '../utils/geo';
 import { fmt, todayFmt } from '../utils/date';
+import { Modal } from '../components/Modal';
 
 const IRS_MILEAGE_RATE_CENTS_2025 = 70; // $0.70/mi — update annually
 
@@ -644,81 +645,61 @@ const DeliveryEditor: React.FC<{
     onSave(delivery, updatedContacts);
   };
 
-  // Outer scroll container — this is what scrolls when the modal is taller
-  // than the viewport. Inner modal has natural height, which avoids the
-  // "header clipped at top" bug entirely.
+  // Rendered via the shared <Modal> — sticky header + footer, backdrop-close,
+  // Esc-to-close, scroll-lock, and mobile full-screen all handled centrally.
   return (
-    <div
-      className="fixed inset-0 z-[200] overflow-y-auto bg-zinc-950/95 backdrop-blur-sm animate-fade-in"
-      onClick={onCancel}
+    <Modal
+      open
+      onClose={onCancel}
+      title={existing ? 'Edit Run' : 'New Delivery Run'}
+      icon={<Truck className="w-4 h-4 text-blue-400" aria-hidden="true" />}
+      footer={
+        <>
+          <button type="button" onClick={onCancel} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
+          <button type="button" onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
+            {existing ? 'Save Changes' : 'Create Run'}
+          </button>
+        </>
+      }
     >
-      <div className="min-h-full flex items-start justify-center p-0 sm:p-4">
-        <div
-          className="relative w-full sm:max-w-2xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl my-0 sm:my-4"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header — sticks to the top of the viewport while scrolling */}
-          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between sticky top-0 bg-zinc-900/95 backdrop-blur z-10 rounded-t-none sm:rounded-t-2xl">
-            <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-              <Truck className="w-4 h-4 text-blue-400" aria-hidden="true" />
-              {existing ? 'Edit Run' : 'New Delivery Run'}
-            </h2>
-            <button type="button" onClick={onCancel} aria-label="Close" className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5">
-              <X className="w-4 h-4" aria-hidden="true" />
-            </button>
-          </div>
-
-          <div className="p-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Run #</label>
-              <input type="text" value={runNumber} onChange={e => setRunNumber(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white tabular" />
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Driver</label>
-              <select value={driverId} onChange={e => setDriverId(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white">
-                {drivers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Stops ({stops.length})</label>
-              <button type="button" onClick={addStop} className="text-[10px] text-blue-400 hover:text-white font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add stop</button>
-            </div>
-            <div className="space-y-2">
-              {stops.length === 0 && <p className="text-[11px] italic text-zinc-600 text-center py-4">No stops yet — add at least one.</p>}
-              {stops.map((stop, i) => (
-                <StopEditor
-                  key={stop.id}
-                  stop={stop}
-                  index={i}
-                  openJobs={openJobs}
-                  onChange={(patch) => updateStop(i, patch)}
-                  onRemove={() => removeStop(i)}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Notes</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Anything the driver should know…" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white" />
-          </div>
-          </div>
-
-          {/* Footer — sticks to the bottom of the viewport while scrolling.
-              Action buttons always reachable even on long forms. */}
-          <div className="px-4 py-3 border-t border-white/10 flex items-center gap-2 bg-zinc-950/95 backdrop-blur sticky bottom-0 rounded-b-none sm:rounded-b-2xl z-10">
-            <button type="button" onClick={onCancel} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
-            <button type="button" onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
-              {existing ? 'Save Changes' : 'Create Run'}
-            </button>
-          </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Run #</label>
+          <input type="text" value={runNumber} onChange={e => setRunNumber(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white tabular" />
+        </div>
+        <div>
+          <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Driver</label>
+          <select value={driverId} onChange={e => setDriverId(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white">
+            {drivers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
         </div>
       </div>
-    </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Stops ({stops.length})</label>
+          <button type="button" onClick={addStop} className="text-[10px] text-blue-400 hover:text-white font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add stop</button>
+        </div>
+        <div className="space-y-2">
+          {stops.length === 0 && <p className="text-[11px] italic text-zinc-600 text-center py-4">No stops yet — add at least one.</p>}
+          {stops.map((stop, i) => (
+            <StopEditor
+              key={stop.id}
+              stop={stop}
+              index={i}
+              openJobs={openJobs}
+              onChange={(patch) => updateStop(i, patch)}
+              onRemove={() => removeStop(i)}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Notes</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Anything the driver should know…" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white" />
+      </div>
+    </Modal>
   );
 };
 

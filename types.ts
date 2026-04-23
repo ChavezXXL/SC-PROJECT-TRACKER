@@ -341,6 +341,9 @@ export interface SystemSettings {
   companyLogo?: string;        // URL to logo image
   companyAddress?: string;     // For print travelers
   companyPhone?: string;       // For print travelers
+  companyEmail?: string;       // Contact email for quotes + invoices
+  companyWebsite?: string;     // Optional — printed on docs
+  companyTaxId?: string;       // EIN / VAT — printed on invoices
   weeklyGoalHours?: number;    // Weekly target hours per worker (default 40)
   defaultPriority?: string;    // Default priority for new jobs
   // Display
