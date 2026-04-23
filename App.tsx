@@ -3687,8 +3687,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {deliveredLate && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">LATE</span>}
                       </div>
                       <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
-                      {/* Mobile-only: show customer + part inline since column is hidden */}
-                      <span className="md:hidden text-zinc-400 text-xs truncate max-w-[180px]">{j.partNumber} · {user.role === 'admin' ? j.customer : '***'}</span>
+                      {/* Below sm (< 640px): Qty + Customer + Part Details columns are
+                          all hidden, so surface all three inline in the PO cell. Without
+                          this, mobile users can't see quantity without opening details. */}
+                      <span className="sm:hidden text-zinc-400 text-xs truncate max-w-[220px]">
+                        {j.partNumber}
+                        {j.quantity ? <> · <span className="font-bold text-zinc-300">Qty {j.quantity}</span></> : null}
+                        {user.role === 'admin' && j.customer ? <> · {j.customer}</> : null}
+                      </span>
+                      {/* Between sm and md (640–768px): Qty column is visible now, but
+                          the Part Details column (which has customer) is still hidden.
+                          Show part number + customer inline. */}
+                      <span className="hidden sm:inline md:hidden text-zinc-400 text-xs truncate max-w-[260px]">
+                        {j.partNumber}
+                        {user.role === 'admin' && j.customer ? <> · {j.customer}</> : null}
+                      </span>
                       {/* Jobs R1 badges: checklist progress + attachments + time budget */}
                       {((j.checklist?.length || 0) > 0 || (j.attachments?.length || 0) > 0 || (j.expectedHours || 0) > 0) && (
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
