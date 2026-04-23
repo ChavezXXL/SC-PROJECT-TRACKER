@@ -72,7 +72,9 @@ export const ReportsView = () => {
   const maxOpMins = opBreakdown.length > 0 ? opBreakdown[0][1] : 1;
 
   return (
-    <div className="max-w-4xl w-full space-y-6">
+    // Full-width — the sidebar already caps the main area. Previous
+    // max-w-4xl left huge dead space on large monitors.
+    <div className="w-full space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-white">Reports</h2>

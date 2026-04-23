@@ -2038,22 +2038,92 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         </div>
       </div>
 
-      {/* ── SHOP FLOW MAP — visual of jobs moving through each stage ── */}
+      {/* ── SHOP FLOW MAP — visual of jobs moving through each stage.
+          Two-column layout on desktop: the scrollable flow on the left (fills
+          its container), a health-summary panel on the right. On mobile the
+          panel stacks below so nothing gets squeezed. Eliminates the "empty
+          space on the right" issue when only a few stages are configured. */}
       <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5 overflow-hidden">
-        <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
           <div>
             <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" /> Shop Flow Map
             </h3>
-            <p className="text-[11px] text-zinc-600 mt-0.5">Tap a stage to see the jobs inside · glowing = workers on it · flame = stuck jobs</p>
+            <p className="text-[11px] text-zinc-600 mt-0.5">Tap a stage for jobs inside · glowing = workers on it · flame = stuck</p>
           </div>
         </div>
-        <ShopFlowMap
-          jobs={jobs}
-          stages={getStages(shopSettings)}
-          activeLogs={activeLogs}
-        />
-        <RecentStageMoves jobs={jobs} stages={getStages(shopSettings)} limit={8} />
+        {(() => {
+          const stages = getStages(shopSettings);
+          const openJobs = jobs.filter(j => j.status !== 'completed');
+          // Quick health stats for the right-side summary panel
+          const stuckCount = openJobs.filter(j => {
+            const arrival = (j.stageHistory && j.stageHistory.length > 0)
+              ? j.stageHistory[j.stageHistory.length - 1].timestamp
+              : j.createdAt;
+            return Date.now() - arrival > 3 * 86_400_000;
+          }).length;
+          const workersByStage = new Map<string, Set<string>>();
+          for (const log of activeLogs) {
+            // Use same stage-label-match used elsewhere for the dashboard
+            const match = stages.find(s => {
+              const label = s.label.toLowerCase();
+              const op = log.operation.toLowerCase();
+              return label === op || op.includes(label) || label.includes(op);
+            });
+            const id = match?.id || 'unknown';
+            if (!workersByStage.has(id)) workersByStage.set(id, new Set());
+            workersByStage.get(id)!.add(log.userId);
+          }
+          const liveStages = workersByStage.size;
+          // Bottleneck — the stage with the MOST open jobs
+          const byStageCount = new Map<string, number>();
+          for (const j of openJobs) {
+            const sid = j.currentStage || stages[0]?.id || '';
+            byStageCount.set(sid, (byStageCount.get(sid) || 0) + 1);
+          }
+          let topStage: { label: string; count: number; color: string } | null = null;
+          byStageCount.forEach((count, sid) => {
+            const st = stages.find(s => s.id === sid);
+            if (!st || st.isComplete) return;
+            if (!topStage || count > topStage.count) {
+              topStage = { label: st.label, count, color: st.color };
+            }
+          });
+          return (
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_200px] gap-4">
+              {/* LEFT — flow + recent moves fill the main column */}
+              <div className="min-w-0">
+                <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} />
+                <RecentStageMoves jobs={jobs} stages={stages} limit={8} />
+              </div>
+              {/* RIGHT — summary panel, keeps the card visually balanced */}
+              <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 lg:gap-2 lg:border-l lg:border-white/5 lg:pl-4">
+                <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5">
+                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Open Jobs</p>
+                  <p className="text-xl lg:text-2xl font-black text-white tabular">{openJobs.length}</p>
+                </div>
+                <div className={`bg-zinc-950/40 border rounded-xl p-2.5 ${stuckCount > 0 ? 'border-red-500/30' : 'border-white/5'}`}>
+                  <p className={`text-[9px] font-black uppercase tracking-widest ${stuckCount > 0 ? 'text-red-400' : 'text-zinc-600'}`}>Stuck 3d+</p>
+                  <p className={`text-xl lg:text-2xl font-black tabular ${stuckCount > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{stuckCount}</p>
+                </div>
+                <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5">
+                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Live Stages</p>
+                  <p className="text-xl lg:text-2xl font-black text-emerald-400 tabular flex items-center gap-1">
+                    {liveStages > 0 && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                    {liveStages}
+                  </p>
+                </div>
+                {topStage && (
+                  <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5 min-w-0">
+                    <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Heaviest</p>
+                    <p className="text-xs font-black truncate" style={{ color: (topStage as any).color }}>{(topStage as any).label}</p>
+                    <p className="text-[10px] text-zinc-500 tabular">{(topStage as any).count} job{(topStage as any).count !== 1 ? 's' : ''}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── FINANCIAL OVERVIEW ── */}
@@ -6602,6 +6672,175 @@ const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: strin
 };
 
 // ── Weather Location Card — request & display location status for TV weather slide
+// Live miniature Job Traveler preview — re-renders on every settings change
+// so admins see section toggles / banner text / row count update in real time.
+// Uses sample job data (PO-SAMPLE, ACME) so the preview is populated even if
+// the shop has zero real jobs yet.
+const TravelerPreview = ({ settings }: { settings: SystemSettings }) => {
+  const sampleJob: Job = {
+    id: 'sample',
+    jobIdsDisplay: 'SAMPLE-001',
+    poNumber: 'PO-12345',
+    partNumber: 'WIDGET-A',
+    customer: 'Acme Manufacturing',
+    priority: 'high',
+    quantity: 200,
+    dateReceived: '04/20/2026',
+    dueDate: '05/01/2026',
+    info: 'Sample job. Changes to your Traveler settings update this preview live.',
+    specialInstructions: 'No sharp edges — break 0.010 max.',
+    status: 'in-progress',
+    createdAt: Date.now() - 86400000,
+  };
+  const t = settings.traveler || {};
+  const show = {
+    logo: t.showLogo !== false,
+    qr: t.showQrCode !== false,
+    photo: t.showPartPhoto !== false,
+    instructions: t.showSpecialInstructions !== false,
+    notes: t.showNotes !== false,
+    operationLog: t.showOperationLog !== false,
+    signOff: t.showSignOff !== false,
+    dueDate: t.showDueDate !== false,
+    priority: t.showPriority !== false,
+    customer: t.showCustomer !== false,
+  };
+  const opRows = Math.min(20, Math.max(4, t.operationLogRows ?? 8));
+
+  return (
+    <div className="sticky top-4 bg-white text-black rounded-2xl shadow-2xl overflow-hidden">
+      <div className="p-5" style={{ fontFamily: '-apple-system, sans-serif', fontSize: 10 }}>
+        {t.headerBanner && (
+          <div className="bg-yellow-100 border-2 border-yellow-500 text-yellow-900 text-center font-black uppercase tracking-widest text-[9px] px-2 py-1 mb-2 rounded">
+            {t.headerBanner}
+          </div>
+        )}
+        <div className="flex justify-between items-center border-b-2 border-black pb-2 mb-3 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {show.logo && settings.companyLogo && (
+              <img src={settings.companyLogo} alt="" className="h-8 object-contain shrink-0" />
+            )}
+            <div className="min-w-0">
+              <h1 className="text-base font-black tracking-tighter truncate">{settings.companyName || 'Your Company'}</h1>
+              <p className="text-[8px] font-bold uppercase tracking-widest text-gray-500">Production Traveler</p>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-[10px] font-bold">{new Date().toLocaleDateString()}</p>
+            <p className="text-[8px] text-gray-400">Printed On</p>
+          </div>
+        </div>
+
+        <div className={`grid ${show.qr ? 'grid-cols-[1fr_90px]' : 'grid-cols-1'} gap-2 mb-2`}>
+          <div className="space-y-1.5">
+            <div className="border-2 border-black p-2">
+              <p className="text-[8px] uppercase font-bold text-gray-500">PO Number</p>
+              <p className="text-xl font-black leading-tight">{sampleJob.poNumber}</p>
+              {show.priority && sampleJob.priority && sampleJob.priority !== 'normal' && (
+                <span className="inline-block mt-1 text-[8px] font-black uppercase px-1 rounded bg-orange-500 text-white">
+                  {sampleJob.priority}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="border border-gray-300 p-1.5">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Part #</p>
+                <p className="text-xs font-black">{sampleJob.partNumber}</p>
+              </div>
+              <div className="border border-gray-300 p-1.5">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Qty</p>
+                <p className="text-xs font-black">{sampleJob.quantity}</p>
+              </div>
+              <div className="border border-gray-300 p-1.5">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Received</p>
+                <p className="text-[10px] font-bold">{sampleJob.dateReceived}</p>
+              </div>
+              {show.dueDate && (
+                <div className="border border-gray-300 p-1.5">
+                  <p className="text-[8px] uppercase font-bold text-gray-500">Due Date</p>
+                  <p className="text-[10px] font-black text-red-600">{sampleJob.dueDate}</p>
+                </div>
+              )}
+            </div>
+            {show.customer && (
+              <div className="border border-gray-300 p-1.5">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Customer</p>
+                <p className="text-xs font-bold">{sampleJob.customer}</p>
+              </div>
+            )}
+          </div>
+          {show.qr && (
+            <div className="flex flex-col items-center justify-center border-2 border-black p-2 bg-gray-50 min-w-0">
+              <div className="w-[60px] h-[60px] bg-white border border-gray-300 grid grid-cols-7 gap-px p-1">
+                {Array.from({ length: 49 }).map((_, i) => (
+                  <div key={i} className={Math.random() > 0.55 ? 'bg-black' : 'bg-white'} />
+                ))}
+              </div>
+              <p className="text-[8px] font-bold uppercase tracking-widest mt-1">SCAN JOB</p>
+            </div>
+          )}
+        </div>
+
+        {show.instructions && sampleJob.specialInstructions && (
+          <div className="border-2 border-orange-500 bg-orange-50 p-1.5 mb-1.5">
+            <p className="text-[8px] uppercase font-black text-orange-700 tracking-wider">⚠ Special Instructions</p>
+            <p className="text-[10px] font-bold text-gray-900">{sampleJob.specialInstructions}</p>
+          </div>
+        )}
+
+        {show.notes && sampleJob.info && (
+          <div className="border-l-2 border-gray-400 pl-2 py-1 bg-gray-50 mb-1.5">
+            <p className="text-[8px] uppercase font-bold text-gray-500">Notes</p>
+            <p className="text-[9px] text-gray-700">{sampleJob.info}</p>
+          </div>
+        )}
+
+        {show.operationLog && (
+          <div className="mt-2">
+            <p className="text-[8px] uppercase font-black text-blue-700 tracking-wider mb-1">Operation Log</p>
+            <table className="w-full border-collapse text-[8px]">
+              <thead>
+                <tr className="border-b border-black">
+                  <th className="text-left py-1 px-1 font-black">Op</th>
+                  <th className="text-left py-1 px-1 font-black">Operator</th>
+                  <th className="text-left py-1 px-1 font-black">Start</th>
+                  <th className="text-left py-1 px-1 font-black">End</th>
+                  <th className="text-left py-1 px-1 font-black">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: Math.min(opRows, 6) }).map((_, i) => (
+                  <tr key={i} className="border-b border-gray-200">
+                    <td className="px-1" style={{ height: 14 }}></td>
+                    <td></td><td></td><td></td><td></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {opRows > 6 && <p className="text-[7px] text-gray-400 italic mt-0.5">+{opRows - 6} more rows</p>}
+          </div>
+        )}
+
+        {show.signOff && (
+          <div className="mt-3 grid grid-cols-2 gap-4 pt-2 border-t border-gray-300">
+            <div><p className="border-t border-black pt-0.5 text-[7px] font-bold uppercase text-gray-500">Operator</p></div>
+            <div><p className="border-t border-black pt-0.5 text-[7px] font-bold uppercase text-gray-500">Inspector</p></div>
+          </div>
+        )}
+
+        {t.footerText && (
+          <div className="mt-2 pt-1 border-t border-gray-200 text-center text-[8px] text-gray-500 whitespace-pre-wrap">
+            {t.footerText}
+          </div>
+        )}
+      </div>
+      <div className="bg-zinc-950 px-3 py-2 border-t border-zinc-800 text-center">
+        <p className="text-[9px] text-zinc-500">Live preview · <span className="text-zinc-300 font-bold">sample data</span></p>
+      </div>
+    </div>
+  );
+};
+
 const WeatherLocationCard = ({ addToast, settings, setSettings }: { addToast: any; settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
   const [status, setStatus] = useState<'unknown' | 'granted' | 'denied' | 'prompt' | 'unsupported'>('unknown');
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -8272,14 +8511,7 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
           {/* ── RIGHT: Live Document Preview ── */}
           <div className="flex-1 hidden lg:block min-w-0">
             {docSubTab === 'traveler' ? (
-              <div className="sticky top-4 bg-zinc-900 border border-white/5 rounded-2xl p-8 text-center">
-                <div className="text-5xl mb-3">📋</div>
-                <p className="text-sm font-black text-white">Job Traveler Preview</p>
-                <p className="text-[11px] text-zinc-500 mt-2 leading-relaxed max-w-xs mx-auto">
-                  The Traveler is rendered per-job with that job's data.
-                  <br />Open any job → <strong className="text-zinc-300">Print Traveler</strong> to see your changes live.
-                </p>
-              </div>
+              <TravelerPreview settings={settings} />
             ) : (
             <div className="sticky top-4 bg-white text-black rounded-2xl shadow-2xl overflow-hidden" style={{ fontFamily: '-apple-system, sans-serif' }}>
             <div className="p-10" style={{ fontSize: 13 }}>

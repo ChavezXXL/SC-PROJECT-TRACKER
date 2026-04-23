@@ -657,7 +657,8 @@ ${settings.companyPhone || ''}`.trim()
   };
 
   return (
-    <div className="max-w-4xl w-full space-y-6">
+    // Full-width so large monitors don't show a dead column on the right
+    <div className="w-full space-y-6">
       {/* ── Page Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

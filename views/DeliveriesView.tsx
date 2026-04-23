@@ -167,8 +167,30 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
     [history],
   );
 
+  // KPI math for the header cards — gives the page a proper dashboard feel
+  // instead of a lonely "New Run" button on empty. Uses last-30d + MTD
+  // windows because that's what accountants ask for.
+  const now = Date.now();
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const thirtyDaysAgo = now - 30 * 86_400_000;
+
+  const completed = useMemo(() => deliveries.filter(d => d.status === 'delivered'), [deliveries]);
+  const milesMonth = useMemo(
+    () => completed.filter(d => (d.startedAt || 0) >= monthStart.getTime()).reduce((a, d) => a + (d.milesDriven || 0), 0),
+    [completed, monthStart],
+  );
+  const runs30 = useMemo(
+    () => completed.filter(d => (d.startedAt || 0) >= thirtyDaysAgo).length,
+    [completed, thirtyDaysAgo],
+  );
+  const drivers30 = useMemo(
+    () => new Set(completed.filter(d => (d.startedAt || 0) >= thirtyDaysAgo).map(d => d.driverId)).size,
+    [completed, thirtyDaysAgo],
+  );
+  const mileageDeductible = milesMonth * ((completed[0]?.mileageRateCents || IRS_MILEAGE_RATE_CENTS_2025) / 100);
+
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
         <div>
@@ -176,7 +198,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
             <Truck className="w-6 h-6 text-blue-500" aria-hidden="true" /> Deliveries
           </h2>
           <p className="text-zinc-500 text-sm mt-0.5">
-            GPS-tracked runs · {formatMiles(totalMilesAll)} logged all-time
+            GPS-tracked courier runs — miles auto-logged for taxes
           </p>
         </div>
         <div className="flex gap-2 items-center">
@@ -191,11 +213,43 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"
+            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-900/30"
           >
-            <Plus className="w-3.5 h-3.5" aria-hidden="true" /> New Run
+            <Plus className="w-4 h-4" aria-hidden="true" /> New Run
           </button>
         </div>
+      </div>
+
+      {/* KPI strip — always visible, gives the page shape even with zero data */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard
+          label="Miles This Month"
+          value={formatMiles(milesMonth)}
+          hint={milesMonth > 0 ? `~$${mileageDeductible.toFixed(0)} deductible` : 'Log your first run'}
+          color="text-blue-400"
+          icon={<Truck className="w-4 h-4" />}
+        />
+        <KpiCard
+          label="Runs (30d)"
+          value={String(runs30)}
+          hint={`${completed.length} all-time`}
+          color="text-emerald-400"
+          icon={<CheckCircle2 className="w-4 h-4" />}
+        />
+        <KpiCard
+          label="Drivers (30d)"
+          value={String(drivers30)}
+          hint={drivers30 > 0 ? 'on the road' : 'none yet'}
+          color="text-purple-400"
+          icon={<Users className="w-4 h-4" />}
+        />
+        <KpiCard
+          label="All-Time Miles"
+          value={formatMiles(totalMilesAll)}
+          hint={`${completed.length} completed runs`}
+          color="text-amber-400"
+          icon={<Navigation className="w-4 h-4" />}
+        />
       </div>
 
       {/* Active run banner */}
@@ -350,6 +404,19 @@ const Stat: React.FC<{ label: string; value: string; color: string }> = ({ label
   </div>
 );
 
+// Header KPI tile — used in the top strip. Gives the page dashboard feel
+// rather than starting as a blank "New Run" button.
+const KpiCard: React.FC<{ label: string; value: string; hint: string; color: string; icon: React.ReactNode }> = ({ label, value, hint, color, icon }) => (
+  <div className="bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
+    <div className="flex items-center justify-between gap-2 mb-1">
+      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest truncate">{label}</p>
+      <span className={color}>{icon}</span>
+    </div>
+    <p className={`text-xl sm:text-2xl font-black tabular leading-tight ${color}`}>{value}</p>
+    <p className="text-[10px] text-zinc-600 mt-0.5 truncate">{hint}</p>
+  </div>
+);
+
 const StopRow: React.FC<{ stop: DeliveryStop; index: number; onUpdate: (p: Partial<DeliveryStop>) => void }> = ({ stop, index, onUpdate }) => {
   const done = !!stop.arrivedAt;
   const markArrived = () => {
@@ -407,54 +474,87 @@ const HistoryList: React.FC<{
   addToast: Props['addToast'];
 }> = ({ deliveries, onDelete, onEdit }) => {
   if (deliveries.length === 0) {
+    // Rich empty state — onboarding-style checklist so the section feels
+    // purposeful on day one instead of an empty page with a lone button.
     return (
-      <div className="bg-zinc-900/40 border border-dashed border-white/10 rounded-2xl p-8 text-center">
-        <Truck className="w-12 h-12 text-zinc-700 mx-auto mb-3" aria-hidden="true" />
-        <p className="text-sm font-bold text-zinc-400">No delivery runs yet</p>
-        <p className="text-[11px] text-zinc-600 mt-1">Hit "New Run" above to start logging mileage.</p>
+      <div className="bg-gradient-to-br from-blue-500/5 via-indigo-500/5 to-transparent border border-white/10 rounded-2xl p-6 sm:p-8">
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center shrink-0">
+            <Truck className="w-6 h-6 text-blue-400" aria-hidden="true" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base sm:text-lg font-black text-white">Start logging your first delivery</h3>
+            <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+              Deliveries track your mileage automatically via GPS — the IRS rate is applied per mile so you get a tax deduction at year-end. Every stop timestamps arrival and captures proof-of-delivery coordinates.
+            </p>
+            <ul className="mt-4 space-y-2 text-xs text-zinc-400">
+              <li className="flex items-start gap-2"><span className="text-blue-400 font-black mt-0.5">1.</span><span><strong className="text-zinc-200">Create a run</strong> — pick a driver, add stops (addresses auto-fill from saved customers)</span></li>
+              <li className="flex items-start gap-2"><span className="text-blue-400 font-black mt-0.5">2.</span><span><strong className="text-zinc-200">Hit Start</strong> — GPS tracking begins, phone stays open in the truck</span></li>
+              <li className="flex items-start gap-2"><span className="text-blue-400 font-black mt-0.5">3.</span><span><strong className="text-zinc-200">Mark each stop arrived</strong> — captures lat/lon + timestamp for records</span></li>
+              <li className="flex items-start gap-2"><span className="text-blue-400 font-black mt-0.5">4.</span><span><strong className="text-zinc-200">Finish</strong> — miles total + duration saved; export CSV for your accountant</span></li>
+            </ul>
+          </div>
+        </div>
       </div>
     );
   }
   return (
-    <div className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-zinc-950/40 border-b border-white/5">
-            <th className="text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2">Run</th>
-            <th className="text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2">Driver</th>
-            <th className="text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2 hidden sm:table-cell">Date</th>
-            <th className="text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2 hidden md:table-cell">Stops</th>
-            <th className="text-right text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2">Miles</th>
-            <th className="text-right text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2 hidden sm:table-cell">Time</th>
-            <th className="text-right text-[10px] font-black text-zinc-500 uppercase tracking-widest px-3 py-2"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {deliveries.map(d => {
-            const cancelled = d.status === 'cancelled';
-            return (
-              <tr key={d.id} className={`border-b border-white/5 hover:bg-white/[0.02] ${cancelled ? 'opacity-50' : ''}`}>
-                <td className="px-3 py-2">
-                  <button type="button" onClick={() => onEdit(d)} className="font-black text-white tabular hover:underline text-left">
-                    {d.runNumber}
-                  </button>
-                  {cancelled && <span className="ml-2 text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/25 rounded px-1">CANCELLED</span>}
-                </td>
-                <td className="px-3 py-2 text-zinc-300">{d.driverName}</td>
-                <td className="px-3 py-2 text-zinc-500 hidden sm:table-cell">{d.startedAt ? fmt(new Date(d.startedAt).toLocaleDateString()) : '—'}</td>
-                <td className="px-3 py-2 text-zinc-400 hidden md:table-cell">{d.stops.length}</td>
-                <td className="px-3 py-2 text-right font-mono font-bold text-blue-400 tabular">{formatMiles(d.milesDriven || 0)}</td>
-                <td className="px-3 py-2 text-right font-mono text-zinc-500 tabular hidden sm:table-cell">{d.durationMinutes ? `${d.durationMinutes}m` : '—'}</td>
-                <td className="px-3 py-2 text-right">
-                  <button type="button" onClick={() => onDelete(d)} aria-label={`Delete ${d.runNumber}`} className="text-zinc-600 hover:text-red-400 p-1">
-                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="space-y-2">
+      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">History</p>
+      {/* Card rows instead of a dense table — each delivery is a tappable
+          card with clear driver, date, miles, and actions. Better on mobile. */}
+      {deliveries.map(d => {
+        const cancelled = d.status === 'cancelled';
+        const customerCount = new Set(d.stops.map(s => s.customerName).filter(Boolean)).size;
+        return (
+          <div
+            key={d.id}
+            className={`bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 flex items-center gap-3 hover:bg-white/[0.03] hover:border-white/10 transition-all group ${cancelled ? 'opacity-60' : ''}`}
+          >
+            {/* Status dot + run number */}
+            <div className="shrink-0 flex flex-col items-center gap-1">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${cancelled ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                {cancelled ? <X className="w-5 h-5" aria-hidden="true" /> : <CheckCircle2 className="w-5 h-5" aria-hidden="true" />}
+              </div>
+            </div>
+
+            {/* Run details — clickable to edit */}
+            <button
+              type="button"
+              onClick={() => onEdit(d)}
+              className="flex-1 min-w-0 text-left"
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-white tabular text-sm sm:text-base">{d.runNumber}</span>
+                {cancelled && <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/25 rounded px-1.5 py-0.5">CANCELLED</span>}
+              </div>
+              <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
+                {d.driverName} · {d.startedAt ? new Date(d.startedAt).toLocaleDateString() : '—'} · {d.stops.length} stop{d.stops.length !== 1 ? 's' : ''}
+                {customerCount > 0 && ` · ${customerCount} customer${customerCount !== 1 ? 's' : ''}`}
+              </div>
+            </button>
+
+            {/* Stats on the right */}
+            <div className="shrink-0 text-right">
+              <p className="text-sm sm:text-base font-black text-blue-400 tabular">{formatMiles(d.milesDriven || 0)}</p>
+              {d.durationMinutes ? (
+                <p className="text-[10px] text-zinc-500 tabular">{d.durationMinutes < 60 ? `${d.durationMinutes}m` : `${(d.durationMinutes / 60).toFixed(1)}h`}</p>
+              ) : <p className="text-[10px] text-zinc-600">—</p>}
+            </div>
+
+            {/* Delete — opacity:0 until hover keeps the row clean */}
+            <button
+              type="button"
+              onClick={() => onDelete(d)}
+              aria-label={`Delete ${d.runNumber}`}
+              title="Delete this run"
+              className="shrink-0 text-zinc-600 hover:text-red-400 p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <Trash2 className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 };
