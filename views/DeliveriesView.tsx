@@ -18,7 +18,7 @@ import {
   Truck, Plus, MapPin, Navigation, CheckCircle2, X, Play, StopCircle,
   Trash2, Download, Clock, Users,
 } from 'lucide-react';
-import type { Delivery, DeliveryStop, Job, User } from '../types';
+import type { Delivery, DeliveryStop, Job, User, SystemSettings, CustomerContact } from '../types';
 import * as DB from '../services/mockDb';
 import { createGpsSession, startTracking, stopTracking, sessionMiles, sessionMinutes, type GpsSession } from '../services/gpsTracker';
 import { directionsUrl, formatMiles } from '../utils/geo';
@@ -35,6 +35,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -42,7 +43,8 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
     const u1 = DB.subscribeDeliveries(setDeliveries);
     const u2 = DB.subscribeJobs(setJobs);
     const u3 = DB.subscribeUsers(setUsers);
-    return () => { u1(); u2(); u3(); };
+    const u4 = DB.subscribeSettings(setSettings);
+    return () => { u1(); u2(); u3(); u4(); };
   }, []);
 
   // Live GPS session — kept as a ref so the watch handle survives re-renders.
@@ -226,9 +228,13 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           drivers={users}
           jobs={jobs}
           allRuns={deliveries}
+          settings={settings}
           onCancel={() => setCreating(false)}
-          onSave={async (d) => {
+          onSave={async (d, updatedContacts) => {
             await DB.saveDelivery(d);
+            if (updatedContacts) {
+              await DB.saveSettings({ ...settings, clientContacts: updatedContacts });
+            }
             setCreating(false);
             addToast('success', `Run ${d.runNumber} created`);
           }}
@@ -245,9 +251,13 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
             drivers={users}
             jobs={jobs}
             allRuns={deliveries}
+            settings={settings}
             onCancel={() => setEditingId(null)}
-            onSave={async (updated) => {
+            onSave={async (updated, updatedContacts) => {
               await DB.saveDelivery(updated);
+              if (updatedContacts) {
+                await DB.saveSettings({ ...settings, clientContacts: updatedContacts });
+              }
               setEditingId(null);
               addToast('success', `Saved ${updated.runNumber}`);
             }}
@@ -450,15 +460,20 @@ const HistoryList: React.FC<{
 };
 
 // ── Delivery editor (create + edit) ──
+// Pulls customer addresses from settings.clientContacts when a customer is
+// picked — so admins don't re-type the same address across runs. If they
+// type a new address for a customer that doesn't have one saved, we pass
+// the updated contact book back up to be persisted.
 const DeliveryEditor: React.FC<{
   existing: Delivery | null;
   drivers: User[];
   jobs: Job[];
   allRuns: Delivery[];
+  settings: SystemSettings;
   currentUser: Props['user'];
   onCancel: () => void;
-  onSave: (d: Delivery) => void;
-}> = ({ existing, drivers, jobs, allRuns, currentUser, onCancel, onSave }) => {
+  onSave: (d: Delivery, updatedContacts?: Record<string, CustomerContact>) => void;
+}> = ({ existing, drivers, jobs, allRuns, settings, currentUser, onCancel, onSave }) => {
   const openJobs = useMemo(() => jobs.filter(j => j.status !== 'completed'), [jobs]);
   const [runNumber, setRunNumber] = useState(existing?.runNumber || DB.nextDeliveryRunNumber(allRuns));
   const [driverId, setDriverId] = useState(existing?.driverId || currentUser.id);
@@ -466,13 +481,25 @@ const DeliveryEditor: React.FC<{
   const [stops, setStops] = useState<DeliveryStop[]>(existing?.stops || []);
 
   const driver = drivers.find(u => u.id === driverId);
+  const clientContacts = settings.clientContacts || {};
 
   const addStop = () => {
     setStops([...stops, { id: `stop_${Date.now()}_${stops.length}`, address: '', jobIds: [] }]);
   };
   const updateStop = (idx: number, patch: Partial<DeliveryStop>) => {
     const next = [...stops];
-    next[idx] = { ...next[idx], ...patch };
+    const prev = next[idx];
+    const merged = { ...prev, ...patch };
+
+    // Auto-fill address when customer picked and we have it saved AND the
+    // stop's address is empty (don't clobber a user's manual entry).
+    if (patch.customerName && patch.customerName !== prev.customerName) {
+      const saved = clientContacts[patch.customerName];
+      if (saved?.address && !merged.address.trim()) {
+        merged.address = saved.address;
+      }
+    }
+    next[idx] = merged;
     setStops(next);
   };
   const removeStop = (idx: number) => setStops(stops.filter((_, i) => i !== idx));
@@ -482,6 +509,20 @@ const DeliveryEditor: React.FC<{
       alert('Add at least one stop with an address.');
       return;
     }
+
+    // Save-back: for each stop where customer is set but had no saved
+    // address, persist the typed address into clientContacts so the next
+    // delivery for that customer pre-fills.
+    let updatedContacts: Record<string, CustomerContact> | undefined;
+    for (const s of stops) {
+      if (!s.customerName || !s.address.trim()) continue;
+      const existing = clientContacts[s.customerName];
+      if (!existing || !existing.address) {
+        updatedContacts = updatedContacts || { ...clientContacts };
+        updatedContacts[s.customerName] = { ...(existing || {}), address: s.address };
+      }
+    }
+
     const now = Date.now();
     const delivery: Delivery = {
       id: existing?.id || `del_${now}`,
@@ -500,16 +541,19 @@ const DeliveryEditor: React.FC<{
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    onSave(delivery);
+    onSave(delivery, updatedContacts);
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in overflow-y-auto"
+      onClick={onCancel}
+    >
       <div
-        className="w-full sm:max-w-2xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)]"
+        className="w-full sm:max-w-2xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)] my-0 sm:my-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between shrink-0 sticky top-0 bg-zinc-900 z-10 rounded-t-none sm:rounded-t-2xl">
           <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
             <Truck className="w-4 h-4 text-blue-400" aria-hidden="true" />
             {existing ? 'Edit Run' : 'New Delivery Run'}

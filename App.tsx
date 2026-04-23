@@ -1549,11 +1549,33 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
 };
 
 // --- PRINTABLE JOB SHEET ---
+// Reads layout preferences from settings.traveler so admins can hide QR
+// codes, change the row count, add a footer notice, etc. without code.
 const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClose: () => void, onPrinted?: (jobId: string) => void }) => {
+  const [appSettings, setAppSettings] = useState<SystemSettings>(DB.getSettings());
+  useEffect(() => DB.subscribeSettings(setAppSettings), []);
+
   if (!job) return null;
   const currentBaseUrl = window.location.href.split('?')[0];
   const deepLinkData = `${currentBaseUrl}?jobId=${job.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
+
+  // Traveler settings with sensible defaults so an unconfigured shop still
+  // gets the full sheet. A missing flag → show it (opt-out model).
+  const t = appSettings.traveler || {};
+  const show = {
+    logo: t.showLogo !== false,
+    qr: t.showQrCode !== false,
+    photo: t.showPartPhoto !== false,
+    instructions: t.showSpecialInstructions !== false,
+    notes: t.showNotes !== false,
+    operationLog: t.showOperationLog !== false,
+    signOff: t.showSignOff !== false,
+    dueDate: t.showDueDate !== false,
+    priority: t.showPriority !== false,
+    customer: t.showCustomer !== false,
+  };
+  const opRows = Math.min(20, Math.max(4, t.operationLogRows ?? 8));
 
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-black/90 backdrop-blur-sm animate-fade-in print-overlay" onClick={onClose}>
@@ -1569,30 +1591,56 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
           </div>
         </div>
         <div id="printable-area" className="flex-1 p-4 sm:p-6 bg-white overflow-y-auto overflow-x-hidden">
-          <div className="flex justify-between items-center border-b-4 border-black pb-2 mb-4">
-            <div>
-              <h1 className="text-3xl font-black tracking-tighter">SC DEBURRING</h1>
-              <p className="text-xs font-bold uppercase tracking-widest text-gray-500 mt-1">Production Traveler</p>
+          {/* Optional header banner above the company name — shops use this
+              for notices like "ITAR Controlled" or "AS9100 Certified". */}
+          {t.headerBanner && (
+            <div className="bg-yellow-100 border-2 border-yellow-500 text-yellow-900 text-center font-black uppercase tracking-widest text-xs px-3 py-1.5 mb-3 rounded">
+              {t.headerBanner}
             </div>
-            <div className="text-right">
+          )}
+          <div className="flex justify-between items-center border-b-4 border-black pb-2 mb-4 gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              {show.logo && appSettings.companyLogo && (
+                <img src={appSettings.companyLogo} alt="" className="h-12 object-contain shrink-0" />
+              )}
+              <div className="min-w-0">
+                <h1 className="text-2xl sm:text-3xl font-black tracking-tighter truncate">{appSettings.companyName || 'SC DEBURRING'}</h1>
+                <p className="text-xs font-bold uppercase tracking-widest text-gray-500 mt-1">Production Traveler</p>
+              </div>
+            </div>
+            <div className="text-right shrink-0">
               <h2 className="text-lg font-bold">{new Date().toLocaleDateString()}</h2>
               <p className="text-xs text-gray-400">Printed On</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4 mb-4">
+
+          <div className={`grid ${show.qr ? 'grid-cols-2' : 'grid-cols-1'} gap-4 mb-4`}>
             <div className="space-y-3 flex flex-col">
               <div className="border-4 border-black p-3">
                 <label className="block text-xs uppercase font-bold text-gray-500 mb-1">PO Number</label>
                 <div className={`print-po font-black leading-tight break-all ${job.poNumber.length > 15 ? 'text-2xl' : job.poNumber.length > 12 ? 'text-3xl' : job.poNumber.length > 8 ? 'text-4xl' : 'text-5xl'}`} style={{wordBreak:'break-all'}}>{job.poNumber}</div>
+                {show.priority && job.priority && job.priority !== 'normal' && (
+                  <div className={`inline-block mt-2 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${job.priority === 'urgent' ? 'bg-red-600 text-white' : job.priority === 'high' ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                    {job.priority}
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Part #</label><div className={`print-field-lg font-black ${(job.partNumber||'').length > 16 ? 'text-sm' : (job.partNumber||'').length > 12 ? 'text-base' : (job.partNumber||'').length > 8 ? 'text-lg' : 'text-2xl'}`} style={{wordBreak:'break-all'}}>{job.partNumber}</div></div>
                 <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Qty</label><div className="print-field-lg text-2xl font-black">{job.quantity || '—'}</div></div>
                 <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Received</label><div className="print-field-md text-base font-bold">{job.dateReceived || '—'}</div></div>
-                <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label><div className="print-field-md text-base font-black text-red-600">{job.dueDate || '—'}</div></div>
+                {show.dueDate && (
+                  <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label><div className="print-field-md text-base font-black text-red-600">{job.dueDate || '—'}</div></div>
+                )}
               </div>
+              {show.customer && job.customer && (
+                <div className="border-2 border-gray-300 p-2">
+                  <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Customer</label>
+                  <div className="text-sm font-bold">{job.customer}</div>
+                </div>
+              )}
               {/* Part Photo — fits in the empty space below dates */}
-              {job.partImage && (
+              {show.photo && job.partImage && (
                 <div className="border-2 border-gray-300 p-2 flex items-center gap-3">
                   <img src={job.partImage} alt="Part" className="print-part-photo object-contain" style={{maxWidth:'120px',maxHeight:'80px'}} />
                   <div>
@@ -1602,15 +1650,17 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
                 </div>
               )}
             </div>
-            <div className="flex flex-col items-center justify-center border-4 border-black p-4 bg-gray-50">
-              <img src={qrUrl} alt="QR Code" className="print-qr-img w-full h-auto mix-blend-multiply max-w-[220px]" crossOrigin="anonymous" />
-              <p className="font-mono text-xs mt-2 text-gray-500 text-center break-all">{job.id}</p>
-              <p className="print-qr-label font-bold uppercase tracking-widest text-xl mt-1">SCAN JOB ID</p>
-            </div>
+            {show.qr && (
+              <div className="flex flex-col items-center justify-center border-4 border-black p-4 bg-gray-50">
+                <img src={qrUrl} alt="QR Code" className="print-qr-img w-full h-auto mix-blend-multiply max-w-[220px]" crossOrigin="anonymous" />
+                <p className="font-mono text-xs mt-2 text-gray-500 text-center break-all">{job.id}</p>
+                <p className="print-qr-label font-bold uppercase tracking-widest text-xl mt-1">SCAN JOB ID</p>
+              </div>
+            )}
           </div>
 
           {/* Special Instructions — always shown prominently if present */}
-          {job.specialInstructions && (
+          {show.instructions && job.specialInstructions && (
             <div className="border-4 border-orange-500 bg-orange-50 p-3 mb-3">
               <label className="block text-xs uppercase font-black text-orange-700 mb-2 tracking-wider">⚠ Special Instructions</label>
               <div className="print-instr text-base font-bold text-gray-900 whitespace-pre-wrap">{job.specialInstructions}</div>
@@ -1618,7 +1668,7 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
           )}
 
           {/* General notes / part info */}
-          {job.info && (
+          {show.notes && job.info && (
             <div className="border-l-4 border-gray-400 pl-3 py-1 bg-gray-50">
               <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Notes</label>
               <div className="print-notes text-sm text-gray-700 whitespace-pre-wrap">{job.info}</div>
@@ -1626,44 +1676,54 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
           )}
 
           {/* Operation Log — lines for operators to sign off each stage */}
-          <div className="mt-4">
-            <label className="block text-xs uppercase font-black text-blue-700 mb-2 tracking-wider">Operation Log</label>
-            <table className="w-full border-collapse text-xs">
-              <thead>
-                <tr className="border-b-2 border-black">
-                  <th className="text-left py-1.5 px-2 font-black">Operation</th>
-                  <th className="text-left py-1.5 px-2 font-black">Operator</th>
-                  <th className="text-left py-1.5 px-2 font-black">Start</th>
-                  <th className="text-left py-1.5 px-2 font-black">End</th>
-                  <th className="text-left py-1.5 px-2 font-black">Qty</th>
-                  <th className="text-left py-1.5 px-2 font-black">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <tr key={i} className="border-b border-gray-300">
-                    <td className="px-2" style={{ height: 26 }}></td>
-                    <td className="px-2"></td>
-                    <td className="px-2"></td>
-                    <td className="px-2"></td>
-                    <td className="px-2"></td>
-                    <td className="px-2"></td>
+          {show.operationLog && (
+            <div className="mt-4">
+              <label className="block text-xs uppercase font-black text-blue-700 mb-2 tracking-wider">Operation Log</label>
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="border-b-2 border-black">
+                    <th className="text-left py-1.5 px-2 font-black">Operation</th>
+                    <th className="text-left py-1.5 px-2 font-black">Operator</th>
+                    <th className="text-left py-1.5 px-2 font-black">Start</th>
+                    <th className="text-left py-1.5 px-2 font-black">End</th>
+                    <th className="text-left py-1.5 px-2 font-black">Qty</th>
+                    <th className="text-left py-1.5 px-2 font-black">Notes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {Array.from({ length: opRows }).map((_, i) => (
+                    <tr key={i} className="border-b border-gray-300">
+                      <td className="px-2" style={{ height: 26 }}></td>
+                      <td className="px-2"></td>
+                      <td className="px-2"></td>
+                      <td className="px-2"></td>
+                      <td className="px-2"></td>
+                      <td className="px-2"></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Sign-off line — operator + inspector */}
-          <div className="mt-6 grid grid-cols-2 gap-8 pt-4 border-t border-gray-300">
-            <div>
-              <div className="border-t border-black pt-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">Operator Sign-off</div>
+          {show.signOff && (
+            <div className="mt-6 grid grid-cols-2 gap-8 pt-4 border-t border-gray-300">
+              <div>
+                <div className="border-t border-black pt-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">Operator Sign-off</div>
+              </div>
+              <div>
+                <div className="border-t border-black pt-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">Inspector Sign-off</div>
+              </div>
             </div>
-            <div>
-              <div className="border-t border-black pt-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">Inspector Sign-off</div>
-            </div>
-          </div>
+          )}
 
+          {/* Custom footer — certifications, safety note, etc. */}
+          {t.footerText && (
+            <div className="mt-4 pt-3 border-t border-gray-200 text-center text-[10px] text-gray-500 whitespace-pre-wrap">
+              {t.footerText}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -7956,6 +8016,97 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
                     <input type="checkbox" checked={(settings as any)[o.key] ?? o.def ?? false} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
                   </label>
                 ))}
+              </div>
+            </details>
+
+            {/* Job Traveler — production route sheet customization. Every shop
+                uses a slightly different traveler; these toggles let them
+                hide sections they don't need without touching code. */}
+            <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <span className="text-sm font-bold text-white flex items-center gap-2">📋 Job Traveler</span>
+                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                <p className="text-[10px] text-zinc-500 leading-relaxed">Controls the production-floor route sheet. Open any job → Print Traveler to preview.</p>
+
+                {/* Section toggles — each maps to a show.* flag in the renderer */}
+                {([
+                  { key: 'showLogo', label: 'Company Logo' },
+                  { key: 'showQrCode', label: 'QR Code', desc: 'Scannable job-ID square' },
+                  { key: 'showPartPhoto', label: 'Part Photo', desc: 'Reference image if uploaded' },
+                  { key: 'showSpecialInstructions', label: 'Special Instructions', desc: 'Orange warning block' },
+                  { key: 'showNotes', label: 'Notes Block' },
+                  { key: 'showOperationLog', label: 'Operation Log', desc: 'Blank rows for sign-off' },
+                  { key: 'showSignOff', label: 'Sign-off Lines', desc: 'Operator + Inspector' },
+                  { key: 'showDueDate', label: 'Due Date', desc: 'Prominently in red' },
+                  { key: 'showPriority', label: 'Priority Badge', desc: 'URGENT / HIGH markers' },
+                  { key: 'showCustomer', label: 'Customer Block' },
+                ] as const).map(o => {
+                  const v = settings.traveler?.[o.key as keyof NonNullable<SystemSettings['traveler']>];
+                  const checked = v !== false; // default ON for all flags (opt-out model)
+                  return (
+                    <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                      <div>
+                        <p className="text-sm text-white">{o.label}</p>
+                        {'desc' in o && o.desc && <p className="text-[10px] text-zinc-600">{o.desc}</p>}
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={checked as boolean}
+                        onChange={e => setSettings({ ...settings, traveler: { ...(settings.traveler || {}), [o.key]: e.target.checked } })}
+                        className="w-5 h-5 rounded accent-blue-500"
+                      />
+                    </label>
+                  );
+                })}
+
+                {/* Operation-log row count */}
+                {(settings.traveler?.showOperationLog !== false) && (
+                  <div className="pt-2 border-t border-white/5">
+                    <label className="text-[10px] text-zinc-500 block mb-1">
+                      Operation Log Rows: <span className="text-white font-black">{settings.traveler?.operationLogRows ?? 8}</span>
+                    </label>
+                    <input
+                      type="range"
+                      min={4}
+                      max={20}
+                      step={1}
+                      value={settings.traveler?.operationLogRows ?? 8}
+                      onChange={e => setSettings({ ...settings, traveler: { ...(settings.traveler || {}), operationLogRows: Number(e.target.value) } })}
+                      className="w-full accent-blue-500"
+                    />
+                    <div className="flex justify-between text-[9px] text-zinc-600">
+                      <span>4</span><span>8</span><span>12</span><span>16</span><span>20</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Header banner — free text that appears above the company name.
+                    Typical use: "ITAR CONTROLLED" or "FIRST ARTICLE INSPECTION". */}
+                <div className="pt-2 border-t border-white/5">
+                  <label className="text-[10px] text-zinc-500 block mb-1">Header Banner (optional)</label>
+                  <input
+                    type="text"
+                    placeholder='e.g. "ITAR Controlled" or "AS9100 Certified"'
+                    value={settings.traveler?.headerBanner || ''}
+                    onChange={e => setSettings({ ...settings, traveler: { ...(settings.traveler || {}), headerBanner: e.target.value } })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white"
+                  />
+                  <p className="text-[9px] text-zinc-600 mt-1">Yellow strip at the very top of every traveler.</p>
+                </div>
+
+                {/* Footer text — certs, legal notice, safety message */}
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Footer Text (optional)</label>
+                  <textarea
+                    rows={2}
+                    placeholder='e.g. "All parts inspected per AS9102. Contact 555-1234 with questions."'
+                    value={settings.traveler?.footerText || ''}
+                    onChange={e => setSettings({ ...settings, traveler: { ...(settings.traveler || {}), footerText: e.target.value } })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white"
+                  />
+                </div>
               </div>
             </details>
 

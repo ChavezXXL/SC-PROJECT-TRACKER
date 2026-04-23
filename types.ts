@@ -371,6 +371,26 @@ export interface SystemSettings {
   defaultQuoteComment?: string; // e.g. "Certificate of Conformance..."
   showShippingOnDocs?: boolean; // show Ship To section
   showDueDateOnDocs?: boolean;  // show due date
+  // ── Job Traveler (shop-floor route sheet) customization ──
+  // Every shop runs their Traveler a bit different. These flags let admins
+  // toggle what lands on the printed sheet without editing code.
+  traveler?: {
+    showLogo?: boolean;              // Company logo at top (default true)
+    showQrCode?: boolean;            // QR of job ID for floor scanning (default true)
+    showPartPhoto?: boolean;         // Part reference photo (default true)
+    showSpecialInstructions?: boolean;
+    showNotes?: boolean;
+    showOperationLog?: boolean;      // Blank rows for operator sign-off (default true)
+    operationLogRows?: number;       // How many blank rows (default 8, range 4-20)
+    showSignOff?: boolean;           // Operator/Inspector sign-off lines (default true)
+    showDueDate?: boolean;           // Due date prominently at top (default true)
+    showPriority?: boolean;          // Priority badge (default true)
+    showCustomer?: boolean;          // Customer block (default true)
+    /** Custom footer message — certifications, safety notice, etc. */
+    footerText?: string;
+    /** Custom header text above the part info (e.g. "ITAR Controlled"). */
+    headerBanner?: string;
+  };
   showTermsOnDocs?: boolean;    // show payment terms
   taxRate?: number;             // default tax rate %
   // ── Document styling/defaults (appear on quote PDFs) ──

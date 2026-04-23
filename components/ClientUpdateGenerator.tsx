@@ -124,9 +124,12 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in overflow-y-auto"
+      onClick={onClose}
+    >
       <div
-        className="w-full sm:max-w-4xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)]"
+        className="w-full sm:max-w-4xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)] my-0 sm:my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
