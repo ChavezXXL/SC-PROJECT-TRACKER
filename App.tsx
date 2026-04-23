@@ -14,7 +14,7 @@ import {
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
   Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
-  PanelLeftClose, PanelLeftOpen, Cloud
+  PanelLeftClose, PanelLeftOpen, Cloud, Truck
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
@@ -29,6 +29,7 @@ import { QuotesView } from './QuotesView';
 import { CustomerPortal } from './CustomerPortal';
 import { ReportsView } from './views/ReportsView';
 import { JobBoardView } from './views/JobBoardView';
+import { DeliveriesView } from './views/DeliveriesView';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
@@ -42,6 +43,7 @@ import { ShopFlowMap } from './components/ShopFlowMap';
 import { RecentStageMoves } from './components/RecentStageMoves';
 import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
+import { CommandPalette, useCommandPalette } from './components/CommandPalette';
 import { isDeveloper } from './utils/devMode';
 import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder } from './services/reminders';
 import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms } from './services/shiftAlarms';
@@ -8675,6 +8677,8 @@ export default function App() {
   // For notifications  track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
+  // Command palette — global Cmd+K / Ctrl+K
+  const [paletteOpen, setPaletteOpen] = useCommandPalette();
   const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user);
 
   // Subscribe globally for notification checks + settings
@@ -8771,6 +8775,7 @@ export default function App() {
     { id: 'admin-quotes',    l: 'Quotes',       i: FileText },
     { id: 'admin-samples',   l: 'Samples',      i: Camera },
     { id: 'admin-quality',   l: 'Quality',      i: AlertTriangle },
+    { id: 'admin-deliveries',l: 'Deliveries',   i: Truck },
     { id: 'admin-reports',   l: 'Reports',      i: Calculator },
     { id: 'admin-team',      l: 'Team',         i: Users },
     { id: 'admin-scan',      l: 'Work Station', i: ScanLine },
@@ -8936,6 +8941,7 @@ export default function App() {
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
           {view === 'admin-board' && <JobBoardView user={user} addToast={addToast} confirm={setConfirm} onEditStages={() => setView('admin-settings')} />}
           {view === 'admin-quality' && <QualityView user={user} addToast={addToast} confirm={setConfirm} />}
+          {view === 'admin-deliveries' && user && <DeliveriesView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />}
           {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
@@ -8982,6 +8988,17 @@ export default function App() {
       </div>
       {/* PWA install prompt — only shows if not installed + not dismissed in last 7 days */}
       <PwaInstallPrompt />
+
+      {/* Command palette — Cmd+K / Ctrl+K jump anywhere.
+          Only wired up when a user is logged in; the login view has no nav. */}
+      {user && (
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          onNavigate={(v) => { setView(v as AppView); setPaletteOpen(false); }}
+          jobs={allJobs}
+        />
+      )}
 
       {/* Onboarding wizard — first-run only for admin/manager on a TRULY new account.
           Suppressed for existing shops (they already have data) so it doesn't nag during dev.

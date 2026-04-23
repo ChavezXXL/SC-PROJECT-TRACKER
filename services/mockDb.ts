@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery } from "../types";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -194,6 +194,7 @@ const COL = {
   users: "users",
   settings: "settings",
   quotes: "quotes",
+  deliveries: "deliveries",
 };
 
 // --------------------
@@ -1208,6 +1209,70 @@ export async function saveRework(entry: ReworkEntry): Promise<void> {
   if (idx >= 0) list[idx] = entry;
   else list.push(entry);
   writeLS(LS_REWORK, list);
+}
+
+// ── DELIVERIES ────────────────────────────────────────────────────
+// GPS-tracked courier runs. Stored in Firestore when online, localStorage
+// fallback otherwise. Same CRUD shape as the other collections.
+const LS_DELIVERIES = "nexus_deliveries";
+
+export function subscribeDeliveries(cb: (deliveries: Delivery[]) => void): () => void {
+  if (dbInstance) {
+    const colRef = collection(dbInstance, COL.deliveries);
+    return onSnapshot(colRef,
+      (snap: any) => {
+        firebaseStatus = { connected: true };
+        const rows = snap.docs.map((d: any) => d.data() as Delivery)
+          .sort((a: Delivery, b: Delivery) => (b.createdAt || 0) - (a.createdAt || 0));
+        cb(rows);
+      },
+      (err: any) => {
+        handleError(err);
+        cb(readLS<Delivery[]>(LS_DELIVERIES, []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+      }
+    );
+  }
+  return localSubscribe(
+    () => readLS<Delivery[]>(LS_DELIVERIES, []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    cb,
+  );
+}
+
+export async function saveDelivery(d: Delivery): Promise<void> {
+  const withUpdated: Delivery = { ...d, updatedAt: Date.now() };
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, COL.deliveries, d.id), sanitize(withUpdated), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const list = readLS<Delivery[]>(LS_DELIVERIES, []);
+  const idx = list.findIndex(x => x.id === d.id);
+  if (idx >= 0) list[idx] = withUpdated; else list.push(withUpdated);
+  writeLS(LS_DELIVERIES, list);
+}
+
+export async function deleteDelivery(id: string): Promise<void> {
+  if (dbInstance) {
+    try {
+      await deleteDoc(doc(dbInstance, COL.deliveries, id));
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  writeLS(LS_DELIVERIES, readLS<Delivery[]>(LS_DELIVERIES, []).filter(d => d.id !== id));
+}
+
+/** Auto-generate the next run number — "DEL-001", "DEL-002" etc.
+ *  Scans existing runs for max + 1. Non-numeric custom runs are ignored. */
+export function nextDeliveryRunNumber(list: Delivery[]): string {
+  let max = 0;
+  for (const d of list) {
+    const m = /^DEL-(\d+)$/.exec(d.runNumber || '');
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `DEL-${String(max + 1).padStart(3, '0')}`;
 }
 
 export async function deleteRework(id: string): Promise<void> {

@@ -236,6 +236,55 @@ export interface TimeLog {
   sessionQty?: number;
 }
 
+// ── Deliveries — track driver runs, GPS miles, and attach to jobs.
+// Designed so a shop with an in-house courier can log mileage for tax
+// purposes and tell customers "your parts are on the way."
+export type DeliveryStatus = 'scheduled' | 'in-progress' | 'delivered' | 'cancelled';
+
+export interface DeliveryStop {
+  id: string;
+  address: string;
+  customerName?: string;
+  /** Linked job ids being delivered to this stop (so "what's in the truck"
+   *  is a click away from either the Jobs list or the Delivery detail). */
+  jobIds: string[];
+  /** Set when the driver taps "Arrived at this stop". */
+  arrivedAt?: number;
+  /** Optional signed-for-by / recipient name captured at delivery. */
+  signedBy?: string;
+  notes?: string;
+  /** Captured lat/lon at arrival for accurate mileage proof. */
+  arrivalLat?: number;
+  arrivalLon?: number;
+}
+
+export interface Delivery {
+  id: string;
+  /** Auto-generated run number like "DEL-042" for receipts and emails. */
+  runNumber: string;
+  driverId: string;
+  driverName: string;
+  status: DeliveryStatus;
+  stops: DeliveryStop[];
+  startedAt?: number;
+  endedAt?: number;
+  /** GPS breadcrumbs captured every ~30s while active. Decimated on save. */
+  track?: Array<{ lat: number; lon: number; t: number; acc?: number }>;
+  /** Computed from the track — final miles driven. Cached here so reports
+   *  don't re-walk the polyline every render. */
+  milesDriven?: number;
+  /** Wall-clock drive time in minutes. */
+  durationMinutes?: number;
+  /** Cost basis — IRS mileage rate at time of trip × miles. Saved so
+   *  historical tax exports don't shift when the IRS rate changes. */
+  mileageRateCents?: number;
+  /** Optional free-form notes (weather, detours, gas stop, etc.). */
+  notes?: string;
+  createdAt: number;
+  /** Last-updated cache for Firestore subscribe ordering. */
+  updatedAt: number;
+}
+
 // ── Shift Alarms — configurable audible/visual alerts at specific times of day.
 // Fire via browser notification (works backgrounded) + optional audio bell.
 // Each value maps to a different synthesized sound in services/shiftAlarms.ts.
@@ -544,7 +593,7 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-quality' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-quality' | 'admin-deliveries' | 'employee-scan' | 'employee-job';
 
 // ── Quality / Rework Tracking ──
 export type ReworkReason = 'finish' | 'dimensional' | 'missed-area' | 'damage' | 'wrong-part' | 'other';
