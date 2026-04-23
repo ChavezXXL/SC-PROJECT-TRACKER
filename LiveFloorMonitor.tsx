@@ -1175,7 +1175,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
   const isAdmin = !standalone && user?.role === 'admin';
 
-  // TV Mode effects: fullscreen, body class, Esc to exit
+  // TV Mode effects: fullscreen + wake lock (no screen sleep) + body class.
+  // Wake Lock keeps the TV / monitor from dimming or sleeping while TV mode
+  // is active. Without it, most displays go to screen saver in 10-15 min.
+  // Re-requested when the tab regains focus because the lock drops on blur.
   useEffect(() => {
     if (tvMode) {
       document.body.classList.add('tv-mode');
@@ -1186,6 +1189,37 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     }
     return () => {
       document.body.classList.remove('tv-mode');
+    };
+  }, [tvMode]);
+
+  // Screen Wake Lock — keeps the display awake while TV mode is active.
+  // Works on Chrome / Edge / Safari 16.4+ (exactly the browsers shops use
+  // on wall-mounted TVs). Ignored silently on older browsers.
+  useEffect(() => {
+    if (!tvMode) return;
+    let lock: any = null;
+    let cancelled = false;
+
+    const acquire = async () => {
+      try {
+        const wl = (navigator as any).wakeLock;
+        if (!wl || cancelled) return;
+        lock = await wl.request('screen');
+        // If the OS releases the lock (e.g. tab backgrounded), re-acquire
+        // when we come back to foreground.
+        lock?.addEventListener?.('release', () => { lock = null; });
+      } catch { /* browser doesn't support it — fine, TV just won't force-awake */ }
+    };
+    acquire();
+
+    // Browsers drop the wake lock on visibility change — re-acquire on focus
+    const onVis = () => { if (!document.hidden && tvMode) acquire(); };
+    document.addEventListener('visibilitychange', onVis);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVis);
+      try { lock?.release?.(); } catch {}
     };
   }, [tvMode]);
 
@@ -1208,10 +1242,30 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         setTvPaused(p => !p);
       }
     };
-    const fsChange = () => { if (!document.fullscreenElement) setTvMode(false); };
+    // NOTE: Intentionally NOT listening to fullscreenchange here anymore.
+    // Previously we exited TV mode whenever fullscreen dropped — but TVs drop
+    // fullscreen automatically after ~15 min on many browsers, which kicked
+    // the shop out of TV mode even though they wanted to stay. Now the only
+    // exit is the Esc key or the explicit Exit button. Fullscreen is
+    // best-effort: we ask for it on entry and let the OS/browser manage it.
     window.addEventListener('keydown', h);
+    return () => { window.removeEventListener('keydown', h); };
+  }, [tvMode]);
+
+  // If fullscreen drops (some TVs/Chromium builds force-exit every ~15 min),
+  // silently request it again — don't yank the user out of TV mode.
+  useEffect(() => {
+    if (!tvMode) return;
+    const fsChange = () => {
+      if (!document.fullscreenElement && tvMode) {
+        // Re-request fullscreen, but swallow rejections — some browsers block
+        // a re-request without a fresh user gesture. Worst case: TV mode stays
+        // active but not fullscreen, which is still better than fully exiting.
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+    };
     document.addEventListener('fullscreenchange', fsChange);
-    return () => { window.removeEventListener('keydown', h); document.removeEventListener('fullscreenchange', fsChange); };
+    return () => { document.removeEventListener('fullscreenchange', fsChange); };
   }, [tvMode]);
 
   const [openReworkCount, setOpenReworkCount] = useState(0);
