@@ -483,85 +483,76 @@ const PWAInstallBanner = () => {
 };
 
 // --- PRINT STYLES ---
+// Uses the proven "visibility-only" pattern: hide everything, un-hide the
+// printable-area and its descendants, then reposition the printable-area
+// to the page origin. Previous approach used `display: none` on the parent
+// `main` element, which accidentally hid the printable modal too (the modal
+// lives inside main in the DOM) — result was a blank print.
 const PrintStyles = () => (
   <style>{`
     @media print {
+      @page { size: letter; margin: 10mm; }
       html, body, #root {
-        height: auto !important;
-        overflow: visible !important;
+        background: white !important;
         margin: 0 !important;
         padding: 0 !important;
-        background: white !important;
-      }
-      /* Hide sidebar nav completely */
-      aside, nav { display: none !important; }
-      /* Hide the main app content (jobs list, header, etc.) */
-      main { display: none !important; }
-      /* Hide mobile header bar */
-      header { display: none !important; }
-      /* Hide the no-print elements (Print Preview bar, Cancel, Print buttons) */
-      .no-print { display: none !important; }
-      /* The print overlay becomes static, full width, white background */
-      .print-overlay {
-        position: static !important;
-        display: block !important;
-        width: 100% !important;
-        height: auto !important;
-        background: white !important;
-        padding: 0 !important;
-        margin: 0 !important;
         overflow: visible !important;
       }
-      /* The modal card fills the page */
-      #printable-modal {
-        position: static !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        height: auto !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        background: white !important;
-        border-radius: 0 !important;
-        box-shadow: none !important;
-        overflow: visible !important;
+      /* Hide EVERYTHING with visibility — this preserves DOM structure so the
+         printable content's ancestors (which wrap the printable via position)
+         still render even though sidebar/overlays vanish. */
+      body * { visibility: hidden !important; }
+
+      /* Un-hide the printable area and every descendant */
+      #printable-area,
+      #printable-area * {
+        visibility: visible !important;
       }
-      /* App wrapper should not constrain */
-      #root > div {
-        min-height: 0 !important;
-        height: auto !important;
-        display: block !important;
-        background: white !important;
-      }
+
+      /* Force the printable area to the page origin so it fills the sheet
+         regardless of any transforms/positioning its ancestors had. */
       #printable-area {
-        padding: 20px !important;
-        overflow: visible !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
         width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: white !important;
+        overflow: visible !important;
+        box-shadow: none !important;
       }
-      /* Scale text for printing — auto-fit long values */
-      #printable-area h1 { font-size: 36pt !important; }
+
+      /* Explicitly hide print-preview chrome (Cancel/Print buttons in the
+         in-app modal). They're marked with .no-print. */
+      .no-print, .no-print * { visibility: hidden !important; display: none !important; }
+
+      /* Readable font scaling for print output */
+      #printable-area h1 { font-size: 28pt !important; }
       #printable-area .print-po { font-size: inherit !important; }
       #printable-area .print-field-lg { font-size: inherit !important; }
       #printable-area .print-field-md { font-size: inherit !important; }
-      #printable-area .print-qr-img { max-width: 280px !important; width: 280px !important; }
-      #printable-area .print-qr-label { font-size: 16pt !important; }
-      #printable-area .print-notes { font-size: 14pt !important; min-height: auto !important; line-height: 1.5 !important; }
-      #printable-area .print-instr { font-size: 15pt !important; font-weight: 700 !important; line-height: 1.5 !important; }
-      #printable-area label { font-size: 11pt !important; }
-      #printable-area .grid { gap: 12px !important; }
-      #printable-area .border-4 { overflow: hidden !important; }
-      #printable-area .border-2 { overflow: hidden !important; }
+      #printable-area .print-qr-img { max-width: 240px !important; width: 240px !important; mix-blend-mode: normal !important; }
+      #printable-area .print-qr-label { font-size: 14pt !important; }
+      #printable-area .print-notes { font-size: 12pt !important; line-height: 1.5 !important; }
+      #printable-area .print-instr { font-size: 13pt !important; font-weight: 700 !important; line-height: 1.5 !important; }
+      #printable-area label { font-size: 10pt !important; }
       #printable-area .print-part-photo { max-width: 180px !important; max-height: 140px !important; }
-      /* Never split a field block or the QR card across pages */
-      #printable-area .border-4, #printable-area .border-2 { page-break-inside: avoid !important; break-inside: avoid !important; }
-      /* Images must never overflow the page width */
+
+      /* Never split field blocks, the QR card, or log rows across pages */
+      #printable-area .border-4,
+      #printable-area .border-2,
+      #printable-area table,
+      #printable-area tr {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      /* Images never overflow the page width */
       #printable-area img { max-width: 100% !important; height: auto !important; }
-      /* mix-blend-multiply can blank the QR on thermal + ink-jet printers — flatten it */
-      #printable-area .print-qr-img { mix-blend-mode: normal !important; }
-      /* Keep the Operation Log rows intact per page */
-      #printable-area table, #printable-area tr { page-break-inside: avoid !important; break-inside: avoid !important; }
-      /* Drop shadows + backdrop blur from the overlay so nothing looks washed out */
+
+      /* Drop every box-shadow so nothing prints washed out */
       #printable-area [class*="shadow"] { box-shadow: none !important; }
-      @page { size: letter; margin: 10mm; }
     }
   `}</style>
 );
@@ -7511,6 +7502,9 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
   const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'goals' | 'documents' | 'tv' | 'system'>('profile');
+  // Within the Documents tab, split customer-facing Quote/Invoice settings
+  // from internal Job Traveler settings — admins were confusing them.
+  const [docSubTab, setDocSubTab] = useState<'quote' | 'traveler'>('quote');
   const [opsOpen, setOpsOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
   // Live data for TV preview
@@ -7938,18 +7932,40 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
         />
       )}
 
-      {/* ── DOCUMENTS — Split-pane with live preview ── */}
+      {/* ── DOCUMENTS — Split-pane with live preview.
+          Sub-tab toggle at the top separates Quote/Invoice (customer-facing)
+          from Job Traveler (shop-floor route sheet) — admins were getting
+          them confused when they were mixed in one list. */}
       {settingsTab === 'documents' && (() => {
         const accent = settings.accentColor || '#3b82f6';
-        const [docSection, setDocSection] = [undefined, undefined]; // accordion placeholder
         return (
         <div className="flex gap-4 flex-col lg:flex-row">
           {/* ── LEFT: Settings Controls ── */}
           <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
-            {/* Logo */}
+            {/* Sub-tab toggle */}
+            <div className="inline-flex gap-1 p-1 bg-zinc-900/60 border border-white/5 rounded-xl w-full">
+              <button
+                type="button"
+                onClick={() => setDocSubTab('quote')}
+                aria-pressed={docSubTab === 'quote'}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${docSubTab === 'quote' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}
+              >
+                <FileText className="w-3.5 h-3.5" aria-hidden="true" /> Quote / Invoice
+              </button>
+              <button
+                type="button"
+                onClick={() => setDocSubTab('traveler')}
+                aria-pressed={docSubTab === 'traveler'}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${docSubTab === 'traveler' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}
+              >
+                📋 Job Traveler
+              </button>
+            </div>
+
+            {/* Logo — shared between both docs */}
             <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
-                <span className="text-sm font-bold text-white">Logo</span>
+                <span className="text-sm font-bold text-white">Logo <span className="text-[9px] text-zinc-600 ml-1 normal-case font-normal">(shared)</span></span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
               </summary>
               <div className="px-4 pb-4">
@@ -7976,6 +7992,8 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
               </div>
             </details>
 
+            {/* ─── Quote/Invoice only sections ─── */}
+            {docSubTab === 'quote' && <>
             {/* Numbering */}
             <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
@@ -8018,7 +8036,11 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
                 ))}
               </div>
             </details>
+            </>}
+            {/* ─── End Quote-only sections ─── */}
 
+            {/* ─── Job Traveler sections (only shown on Traveler sub-tab) ─── */}
+            {docSubTab === 'traveler' && <>
             {/* Job Traveler — production route sheet customization. Every shop
                 uses a slightly different traveler; these toggles let them
                 hide sections they don't need without touching code. */}
@@ -8109,6 +8131,11 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
                 </div>
               </div>
             </details>
+            </>}
+            {/* ─── End Job Traveler sections ─── */}
+
+            {/* Remaining sections below are Quote-only — keep them gated too */}
+            {docSubTab === 'quote' && <>
 
             {/* Table */}
             <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
@@ -8225,10 +8252,22 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
                 </div>
               </div>
             </details>
+            </>}
+            {/* ─── End second Quote-only block ─── */}
           </div>
 
           {/* ── RIGHT: Live Document Preview ── */}
           <div className="flex-1 hidden lg:block min-w-0">
+            {docSubTab === 'traveler' ? (
+              <div className="sticky top-4 bg-zinc-900 border border-white/5 rounded-2xl p-8 text-center">
+                <div className="text-5xl mb-3">📋</div>
+                <p className="text-sm font-black text-white">Job Traveler Preview</p>
+                <p className="text-[11px] text-zinc-500 mt-2 leading-relaxed max-w-xs mx-auto">
+                  The Traveler is rendered per-job with that job's data.
+                  <br />Open any job → <strong className="text-zinc-300">Print Traveler</strong> to see your changes live.
+                </p>
+              </div>
+            ) : (
             <div className="sticky top-4 bg-white text-black rounded-2xl shadow-2xl overflow-hidden" style={{ fontFamily: '-apple-system, sans-serif' }}>
             <div className="p-10" style={{ fontSize: 13 }}>
               {/* Mini Preview */}
@@ -8295,6 +8334,7 @@ const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) 
               )}
             </div>
             </div>
+            )}
           </div>
         </div>
         );
