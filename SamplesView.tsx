@@ -159,7 +159,7 @@ const EditEntryModal: React.FC<{
   };
 
   return (
-    <Overlay open onClose={onClose} ariaLabel="Edit work entry" zIndex={150} backdrop="bg-black/70 backdrop-blur-xl">
+    <Overlay open onClose={onClose} ariaLabel="Edit work entry" zIndex={150} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden my-4">
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
           <h3 className="font-bold text-white text-lg">Edit Work Entry</h3>
@@ -215,7 +215,7 @@ const WorkHistoryModal: React.FC<{
   const [editingEntry, setEditingEntry] = useState<SampleWorkEntry | null>(null);
 
   return (
-    <Overlay open onClose={onClose} ariaLabel="Work history" zIndex={100} backdrop="bg-black/70 backdrop-blur-xl">
+    <Overlay open onClose={onClose} ariaLabel="Work history" zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
           <div>
@@ -332,7 +332,7 @@ const StartWorkModal: React.FC<{
   const [op, setOp] = useState(operations[0] || 'Deburring');
   const [qty, setQty] = useState<number>(0);
   return (
-    <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-black/70 backdrop-blur-xl">
+    <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden my-4">
         <div className="p-5 border-b border-white/10 bg-zinc-800/50">
           <h3 className="font-bold text-white text-lg">Start Working</h3>
@@ -439,7 +439,7 @@ const SampleModal = ({
   };
 
   return (
-    <Overlay open onClose={onClose} ariaLabel={form.id ? 'Edit sample' : 'Add sample'} zIndex={100} backdrop="bg-black/70 backdrop-blur-xl">
+    <Overlay open onClose={onClose} ariaLabel={form.id ? 'Edit sample' : 'Add sample'} zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
           <h3 className="font-bold text-white text-lg">{form.id ? 'Edit Sample' : 'Add Sample'}</h3>

@@ -952,7 +952,7 @@ ${settings.companyPhone || ''}`.trim()
         const currentIdx = stepperSteps.findIndex(s => !s.done);
         const activeIdx = currentIdx === -1 ? stepperSteps.length - 1 : currentIdx;
         return (
-        <Overlay open onClose={() => setShowModal(false)} ariaLabel={editing ? 'Edit quote' : 'Create quote'} zIndex={1000} backdrop="bg-zinc-950/95 backdrop-blur-md" padding="p-2 sm:p-4">
+        <Overlay open onClose={() => setShowModal(false)} ariaLabel={editing ? 'Edit quote' : 'Create quote'} zIndex={1000} backdrop="bg-zinc-950" padding="p-2 sm:p-4">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col my-2 sm:my-4" style={{ maxHeight: 'calc(100dvh - 1rem)' }} onClick={e => e.stopPropagation()}>
             {/* ── Modal Header + Tabs ── */}
             <div className="border-b border-white/10 bg-zinc-800/50">
@@ -1177,7 +1177,7 @@ ${settings.companyPhone || ''}`.trim()
 
                 {/* Process Picker Modal */}
                 {showProcessPicker && (
-                  <Overlay open onClose={() => setShowProcessPicker(false)} ariaLabel="Process library" zIndex={1100} backdrop="bg-black/70 backdrop-blur-xl">
+                  <Overlay open onClose={() => setShowProcessPicker(false)} ariaLabel="Process library" zIndex={1100} backdrop="bg-zinc-950">
                     <div className="bg-zinc-900 border border-emerald-500/25 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }} onClick={e => e.stopPropagation()}>
                       <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3 bg-gradient-to-b from-emerald-500/10 to-transparent">
                         <div className="min-w-0">
@@ -1501,7 +1501,7 @@ ${settings.companyPhone || ''}`.trim()
           return (b.lastUsedAt || b.createdAt) - (a.lastUsedAt || a.createdAt);
         });
         return (
-          <Overlay open onClose={() => setShowTemplatePicker(false)} ariaLabel="Quote templates" zIndex={1100} backdrop="bg-black/70 backdrop-blur-xl">
+          <Overlay open onClose={() => setShowTemplatePicker(false)} ariaLabel="Quote templates" zIndex={1100} backdrop="bg-zinc-950">
             <div className="bg-zinc-900 border border-purple-500/25 rounded-2xl shadow-2xl w-full max-w-xl flex flex-col overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }} onClick={e => e.stopPropagation()}>
               <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3 bg-gradient-to-b from-purple-500/10 to-transparent">
                 <div className="min-w-0">

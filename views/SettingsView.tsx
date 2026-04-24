@@ -3944,7 +3944,12 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
       {settingsTab === 'documents' && (() => {
         const accent = settings.accentColor || '#3b82f6';
         return (
-        <div className="flex gap-4 flex-col lg:flex-row">
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-1">Documents</h3>
+            <p className="text-sm text-zinc-500">Quote / invoice defaults, branding, and the shop-floor Job Traveler layout.</p>
+          </div>
+          <div className="flex gap-4 flex-col lg:flex-row">
           {/* ── LEFT: Settings Controls ── */}
           <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
             {/* Sub-tab toggle */}
@@ -4334,13 +4339,19 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
             )}
           </div>
+          </div>
         </div>
         );
       })()}
 
       {/* ── TV DISPLAY — Split-pane with live preview ── */}
       {settingsTab === 'tv' && (
-        <div className="flex gap-4 flex-col lg:flex-row">
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-1">TV Display</h3>
+            <p className="text-sm text-zinc-500">Shop-floor TV mode — slides, weather, and the shareable stream link. Changes preview live on the right.</p>
+          </div>
+          <div className="flex gap-4 flex-col lg:flex-row">
           {/* LEFT: TV Controls — scrollable inside its own column on desktop, free-flow on mobile */}
           <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
 
@@ -4462,6 +4473,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           {/* RIGHT: True TV-mode Mirror Preview */}
           <div className="flex-1 min-w-0">
             <TvMirrorPreview settings={settings} activeLogs={tvActiveLogs} jobs={tvJobs} allLogs={tvAllLogs} />
+          </div>
           </div>
         </div>
       )}

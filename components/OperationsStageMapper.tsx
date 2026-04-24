@@ -209,7 +209,7 @@ export const OperationsStageMapper: React.FC<Props> = ({ settings, setSettings }
 
       {/* Mobile fallback: tap a chip → modal picker of target stages */}
       {pickerOp && (
-        <Overlay open onClose={() => setPickerOp(null)} ariaLabel="Move operation to stage" zIndex={200} backdrop="bg-black/70 backdrop-blur-sm" padding="p-0 sm:p-4">
+        <Overlay open onClose={() => setPickerOp(null)} ariaLabel="Move operation to stage" zIndex={200} backdrop="bg-zinc-950" padding="p-0 sm:p-4">
           <div
             className="w-full sm:max-w-md bg-zinc-950 border border-white/10 rounded-t-2xl sm:rounded-2xl p-4 space-y-2 self-end sm:self-auto"
             onClick={(e) => e.stopPropagation()}
