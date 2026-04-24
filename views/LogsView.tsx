@@ -21,6 +21,13 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [users, setUsers] = useState<User[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
+  // Separate string state for the two datetime-local inputs. Without this,
+  // every keystroke tries to round-trip through `new Date().getTime()` —
+  // partial values like "2026-04-24T1" parse to NaN, which blanks the
+  // input and throws the cursor around. We hold the raw string while the
+  // user types and only commit to the log object on save.
+  const [editStartStr, setEditStartStr] = useState('');
+  const [editEndStr, setEditEndStr] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
   const savedScrollRef = useRef(0);
   const [ops, setOps] = useState<string[]>([]);
@@ -71,12 +78,16 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const handleEditLog = (log: TimeLog) => {
     savedScrollRef.current = document.querySelector('main')?.scrollTop ?? 0;
     setEditingLog({ ...log });
+    setEditStartStr(toDateTimeLocal(log.startTime));
+    setEditEndStr(toDateTimeLocal(log.endTime));
     setShowEditModal(true);
   };
 
   const closeEditModal = () => {
     setShowEditModal(false);
     setEditingLog(null);
+    setEditStartStr('');
+    setEditEndStr('');
     requestAnimationFrame(() => {
       const main = document.querySelector('main');
       if (main) main.scrollTop = savedScrollRef.current;
@@ -85,12 +96,29 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
 
   const handleSaveLog = async () => {
     if (!editingLog) return;
-    if (editingLog.endTime && editingLog.endTime < editingLog.startTime) {
+    // Convert the string state to timestamps NOW, at save time, after the
+    // user is done typing. Empty end = still-running timer.
+    const startTs = new Date(editStartStr).getTime();
+    if (!editStartStr || Number.isNaN(startTs)) {
+      addToast('error', 'Start time is required and must be valid');
+      return;
+    }
+    const endTs = editEndStr ? new Date(editEndStr).getTime() : null;
+    if (editEndStr && Number.isNaN(endTs as number)) {
+      addToast('error', 'End time must be valid or empty');
+      return;
+    }
+    if (endTs && endTs < startTs) {
       addToast('error', 'End time cannot be before Start time');
       return;
     }
+    const updated: TimeLog = {
+      ...editingLog,
+      startTime: startTs,
+      endTime: endTs as any,
+    };
     try {
-      await DB.updateTimeLog(editingLog);
+      await DB.updateTimeLog(updated);
       addToast('success', 'Log updated successfully');
       closeEditModal();
     } catch (e) { addToast('error', 'Failed to update log'); }
@@ -189,12 +217,16 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     }> = {};
 
     filtered.forEach(log => {
-      const displayKey = log.jobIdsDisplay || log.jobId || 'Unknown Job';
-      if (!groups[displayKey]) {
+      // Key by the actual jobId — previously we keyed by `jobIdsDisplay`
+      // which is human-readable and can collide across jobs (two jobs sharing
+      // "J-1234" would merge their logs). That caused the "I clicked Edit on
+      // Job A and got Job B's log" bug.
+      const groupKey = log.jobId || log.jobIdsDisplay || 'unknown';
+      if (!groups[groupKey]) {
         // Pull extra info from the jobs list
         const job = jobs.find(j => j.id === log.jobId);
-        groups[displayKey] = {
-          jobId: displayKey,
+        groups[groupKey] = {
+          jobId: log.jobIdsDisplay || log.jobId || 'Unknown Job',
           internalJobId: log.jobId,
           partNumber: log.partNumber || job?.partNumber || 'N/A',
           customer:   log.customer  || job?.customer  || '',
@@ -211,7 +243,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           stoppedCount: 0,
         };
       }
-      const g = groups[displayKey];
+      const g = groups[groupKey];
       g.logs.push(log);
       if (log.durationMinutes) g.totalDurationMinutes += log.durationMinutes;
       g.users.add(log.userName);
@@ -729,6 +761,29 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
               <button aria-label="Close dialog" onClick={closeEditModal} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
             </div>
+            {/* Job context strip — always shows WHICH job this log belongs to
+                so the user can confirm they're editing the right row. */}
+            {(() => {
+              const parentJob = jobMap[editingLog.jobId];
+              const poNumber = parentJob?.poNumber || editingLog.jobIdsDisplay || editingLog.jobId;
+              const partNumber = parentJob?.partNumber || editingLog.partNumber || '';
+              const customer = parentJob?.customer || editingLog.customer || '';
+              return (
+                <div className="px-6 py-3 bg-blue-500/5 border-b border-blue-500/20 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+                    <Briefcase className="w-4 h-4 text-blue-400" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest">Job</p>
+                    <p className="text-sm font-bold text-white truncate tabular">
+                      {poNumber}
+                      {partNumber && <span className="text-zinc-400 font-normal"> · {partNumber}</span>}
+                      {customer && <span className="text-zinc-500 font-normal"> · {customer}</span>}
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="p-6 space-y-5">
               <div>
                 <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Employee</label>
@@ -753,18 +808,23 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Start Time</label>
-                  <input type="datetime-local" className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
-                    value={toDateTimeLocal(editingLog.startTime)}
-                    onChange={e => setEditingLog({ ...editingLog, startTime: new Date(e.target.value).getTime() })} />
+                  <input
+                    type="datetime-local"
+                    step="60"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
+                    value={editStartStr}
+                    onChange={e => setEditStartStr(e.target.value)}
+                  />
                 </div>
                 <div>
                   <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">End Time</label>
-                  <input type="datetime-local" className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
-                    value={toDateTimeLocal(editingLog.endTime)}
-                    onChange={e => {
-                      const val = e.target.value ? new Date(e.target.value).getTime() : null;
-                      setEditingLog({ ...editingLog, endTime: val });
-                    }} />
+                  <input
+                    type="datetime-local"
+                    step="60"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm"
+                    value={editEndStr}
+                    onChange={e => setEditEndStr(e.target.value)}
+                  />
                   <p className="text-[10px] text-zinc-500 mt-1">Clear to mark as active.</p>
                 </div>
               </div>
