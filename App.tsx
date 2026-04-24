@@ -1555,7 +1555,7 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
   if (!isOpen) return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] overflow-y-auto bg-black/70 backdrop-blur-xl animate-fade-in"
+      className="fixed inset-0 z-[400] overflow-y-auto bg-zinc-950 animate-fade-in"
       role="dialog"
       aria-modal="true"
       onClick={onCancel}
