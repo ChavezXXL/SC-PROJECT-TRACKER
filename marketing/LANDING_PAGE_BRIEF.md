@@ -1,13 +1,15 @@
-# Shop OS — Landing Page Brief
+# FabTrack IO — Landing Page Brief
 
 > Hand this whole file to the landing-page build chat. Everything they need is inside.
+> Brand reference + logos: see [`../BRAND.md`](../BRAND.md) and [`../public/brand/`](../public/brand/README.md).
 
 ---
 
 ## 🎯 What We're Selling
 
-**Name:** Shop OS (working title — by SC Deburring LLC)
-**Tagline:** *"The operating system for precision job shops."*
+**Name:** FabTrack IO (by SC Deburring LLC)
+**Short:** FabTrack · Badge: FTIO
+**Tagline:** *"Tracking made for the shop floor."*
 **One-liner:** A complete shop management platform built by a working deburring shop — job routing, quoting, customer portals, purchase orders, deliveries, quality tracking, and real-time floor visibility in one tool.
 
 **Target buyer:**
@@ -31,7 +33,7 @@ Job tracking, quoting, customer portals, POs, GPS deliveries, rework logs — ev
 **"Start free trial · 14 days, no card"**
 
 ### Social-proof one-liner (use once we have customers)
-*"Built and battle-tested at SC Deburring — a working Fresno deburring shop tracking 3,000+ jobs a year on Shop OS."*
+*"Built and battle-tested at SC Deburring — a working Fresno deburring shop tracking 3,000+ jobs a year on FabTrack IO."*
 
 ---
 
@@ -49,7 +51,7 @@ Job tracking, quoting, customer portals, POs, GPS deliveries, rework logs — ev
 - 📌 **Whiteboards** — "Nobody can read Anthony's handwriting"
 - 📱 **Text threads** — "'Where's the PAMCO job?' — asked 40 times a day"
 
-### Section 3 — How Shop OS Replaces All Of That
+### Section 3 — How FabTrack IO Replaces All Of That
 Three-column feature group, each with a screenshot:
 1. **Live Floor Map** — Every stage, every stuck job, who's on what. Updated every 30 seconds.
 2. **Customer Portal** — Your customers get a link. They see status, ETAs, completed jobs by year. You get questions answered without a single phone call.
@@ -127,10 +129,10 @@ Three-tier cards, center tier marked "MOST POPULAR":
 
 **Below pricing:** *"All plans: no long-term contract, monthly billing, your data exports any time, USD."*
 
-### Section 6 — Why Shop OS (vs alternatives)
-Comparison table — Shop OS vs the usual suspects:
+### Section 6 — Why FabTrack IO (vs alternatives)
+Comparison table — FabTrack IO vs the usual suspects:
 
-| | Shop OS | Jobber | Paperless Parts | Steelhead | ProShop |
+| | FabTrack IO | Jobber | Paperless Parts | Steelhead | ProShop |
 |---|---|---|---|---|---|
 | Built by a working shop | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Price range | $29–149 | $49–199 | $$$ enterprise | $$$ | $$$$ |
@@ -202,7 +204,7 @@ Gate at the **feature flag layer** in code (`settings.enabledFeatures`):
 - `enabledFeatures.shiftAlarms` → Hide Schedule→Alarms section in Settings
 - `enabledFeatures.workerBadges` → Hide badge print button in Team
 
-### Behind Shop OS only
+### Behind FabTrack IO only
 - `enabledFeatures.quality` → Hide Quality nav
 - `enabledFeatures.reports` → Hide Reports nav
 - `enabledFeatures.financials` → Hide Financial settings tab
@@ -224,8 +226,8 @@ These exist in the codebase but would confuse buyers or dilute the pitch. Keep i
 
 - **Onboarding Wizard** — keep but auto-skip if user is on free trial
 - **TV Slideshow message editor** (too niche for sales page; keep as Pro feature, show in docs only)
-- **Push notifications setup** (too technical for shop owners; Shop OS tier only, email only by default)
-- **Manual weather override** (was a debug tool — hide unless Shop OS)
+- **Push notifications setup** (too technical for shop owners; FabTrack IO tier only, email only by default)
+- **Manual weather override** (was a debug tool — hide unless FabTrack IO)
 - **Sample merge/dedupe tool** (internal cleanup; show as "Duplicate detection" in Pro+ features)
 - **VAPID key diagnostic panel** — dev-only, already gated by `isDeveloper()`
 
@@ -292,7 +294,7 @@ Ship a "Play with a sample shop" option:
 **"Stop running your shop on sticky notes."**
 
 ### Sub
-Shop OS is the everything-in-one-place platform built by a working deburring shop. Jobs, quotes, customers, POs, deliveries — all talking to each other, all on your phone.
+FabTrack IO is the everything-in-one-place platform built by a working deburring shop. Jobs, quotes, customers, POs, deliveries — all talking to each other, all on your phone.
 
 ### Why-us one-liner
 *"We ship the features we need to run our own shop. Your shop gets them too."*
@@ -324,7 +326,7 @@ Shop OS is the everything-in-one-place platform built by a working deburring sho
 ## Questions for the Landing-Page Chat to Ask Us
 
 Before starting, they should confirm:
-1. Final product name — Shop OS, or something else?
+1. Final product name — FabTrack IO, or something else?
 2. Primary domain — what are we registering?
 3. Hero video — do we have it, or are they producing it?
 4. Real customer quotes — do we have any yet, or use SC Deburring as the sole testimonial?
