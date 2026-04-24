@@ -94,7 +94,25 @@ export function findStageForOperation(operation: string, stages: JobStage[]): Jo
     if (labelTokens.some(lt => opRealTokens.some(ot => ot === lt))) return stage;
   }
 
-  // 5. Substring containment — final fallback. 3-char minimum to avoid
+  // 5. Acronym match — if the stage label is a short all-letters abbreviation
+  //    (≤ 4 chars, e.g. "QC", "NCR", "OT", "FAI"), check the first-letters of
+  //    the op's tokens against it. "Quality Check" → "QC" matches "QC" stage.
+  //    This was the real "why doesn't QC routing work?" bug: the user's
+  //    operation was "Quality Check" (two words) but stage was "QC", and
+  //    token overlap needs at least one shared word. Acronym check fixes that.
+  for (const stage of stages) {
+    const lbl = norm(stage.label).replace(/\s/g, '');
+    if (lbl.length === 0 || lbl.length > 4) continue;
+    // Only consider if the label is purely letters (skip "24h" / "v2" / etc.)
+    if (!/^[a-z]+$/.test(lbl)) continue;
+    const acronym = opTokens
+      .filter(t => t.length > 0 && !NOISE.has(t))
+      .map(t => t[0])
+      .join('');
+    if (acronym.length >= 2 && acronym === lbl) return stage;
+  }
+
+  // 6. Substring containment — final fallback. 3-char minimum to avoid
   //    "Pre-polish" matching "Shipping" because both have "ip".
   for (const stage of stages) {
     const lbl = norm(stage.label);

@@ -1196,6 +1196,15 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // Screen Wake Lock — keeps the display awake while TV mode is active.
   // Works on Chrome / Edge / Safari 16.4+ (exactly the browsers shops use
   // on wall-mounted TVs). Ignored silently on older browsers.
+  //
+  // Triple safety net because TVs are LAZY about holding the lock:
+  //   1. Initial request on TV mode entry
+  //   2. Re-request on visibilitychange (handles background/foreground)
+  //   3. Re-request every 90s on a timer regardless (handles the case
+  //      where the lock silently drops on TVs with no focus events)
+  //   4. Also bumps a meaningless DOM write every 90s so the tab never
+  //      enters the "idle" background-tier that browsers use to throttle
+  //      / discard long-idle tabs.
   useEffect(() => {
     if (!tvMode) return;
     let lock: any = null;
@@ -1205,9 +1214,12 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       try {
         const wl = (navigator as any).wakeLock;
         if (!wl || cancelled) return;
+        // Release the prior lock before acquiring — some browsers reject
+        // double-acquires instead of reusing the existing lock.
+        if (lock && !lock.released) {
+          try { await lock.release(); } catch {}
+        }
         lock = await wl.request('screen');
-        // If the OS releases the lock (e.g. tab backgrounded), re-acquire
-        // when we come back to foreground.
         lock?.addEventListener?.('release', () => { lock = null; });
       } catch { /* browser doesn't support it — fine, TV just won't force-awake */ }
     };
@@ -1217,9 +1229,23 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const onVis = () => { if (!document.hidden && tvMode) acquire(); };
     document.addEventListener('visibilitychange', onVis);
 
+    // Periodic heartbeat every 90s: re-acquire the wake lock + do a tiny
+    // DOM write. Both keep the tab "alive" from the browser's tier-down
+    // policy. Must be short enough to beat the typical 5-min background
+    // throttle, long enough not to burn battery on passive TVs.
+    const heartbeat = window.setInterval(() => {
+      if (!tvMode || cancelled) return;
+      acquire();
+      // Ping the DOM with a data-attr so the tab isn't pure-idle. Cheap.
+      try {
+        document.body.dataset.tvHeartbeat = String(Date.now());
+      } catch {}
+    }, 90_000);
+
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVis);
+      window.clearInterval(heartbeat);
       try { lock?.release?.(); } catch {}
     };
   }, [tvMode]);
