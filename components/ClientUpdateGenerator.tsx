@@ -18,6 +18,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { X, Copy, Mail, MessageSquare, Check, FileText } from 'lucide-react';
 import type { Job, JobStage, SystemSettings, CustomerContact } from '../types';
 import { BUILT_IN_TEMPLATES, renderClientUpdate, buildMailto, buildSms, type ClientUpdateTemplate } from '../utils/clientUpdate';
+import { uniqueCustomers } from '../utils/customers';
+import { Overlay } from './Overlay';
 
 interface Props {
   jobs: Job[];              // all jobs in the shop — we filter by customer
@@ -36,12 +38,9 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
   jobs, stages, settings, userName, initialCustomer, initialJobIds, onClose, onToast,
 }) => {
   // Unique customers (only those with at least one job — we don't care
-  // about the full contact book for this flow).
-  const customers = useMemo(() => {
-    const set = new Set<string>();
-    jobs.forEach(j => { if (j.customer) set.add(j.customer); });
-    return [...set].sort();
-  }, [jobs]);
+  // about the full contact book for this flow). Uses the shared helper
+  // so "ACME" and "ACME " don't appear twice.
+  const customers = useMemo(() => uniqueCustomers(jobs), [jobs]);
 
   const [customer, setCustomer] = useState<string>(initialCustomer || customers[0] || '');
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(() => new Set(initialJobIds || []));
@@ -124,14 +123,10 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-start justify-center bg-zinc-950/95 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
-      onClick={onClose}
-    >
-      {/* 2-pane modal — constrained height + internal scroll per pane.
-          Slight top offset on desktop so it doesn't hug the top edge. */}
+    <Overlay open onClose={onClose} ariaLabel="Client update" align="start" padding="p-0 sm:p-4" zIndex={200}>
+      {/* 2-pane modal — constrained height + internal scroll per pane. */}
       <div
-        className="w-full sm:max-w-4xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)] sm:mt-4"
+        className="w-full sm:max-w-4xl bg-zinc-900 border border-white/10 rounded-none sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[calc(100dvh-2rem)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -337,6 +332,6 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
           </div>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 };

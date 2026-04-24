@@ -22,6 +22,7 @@ import type { Delivery, DeliveryStop, Job, User, SystemSettings, CustomerContact
 import * as DB from '../services/mockDb';
 import { createGpsSession, startTracking, stopTracking, sessionMiles, sessionMinutes, type GpsSession } from '../services/gpsTracker';
 import { directionsUrl, formatMiles } from '../utils/geo';
+import { uniqueCustomers } from '../utils/customers';
 import { fmt, todayFmt } from '../utils/date';
 import { Modal } from '../components/Modal';
 
@@ -710,11 +711,7 @@ const StopEditor: React.FC<{
   onChange: (p: Partial<DeliveryStop>) => void;
   onRemove: () => void;
 }> = ({ stop, index, openJobs, onChange, onRemove }) => {
-  const customers = useMemo(() => {
-    const set = new Set<string>();
-    openJobs.forEach(j => { if (j.customer) set.add(j.customer); });
-    return [...set].sort();
-  }, [openJobs]);
+  const customers = useMemo(() => uniqueCustomers(openJobs), [openJobs]);
   const jobsForCustomer = useMemo(
     () => openJobs.filter(j => !stop.customerName || j.customer === stop.customerName),
     [openJobs, stop.customerName],

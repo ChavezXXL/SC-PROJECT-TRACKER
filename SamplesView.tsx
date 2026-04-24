@@ -21,6 +21,7 @@ import {
 
 import { Sample, SampleWorkEntry } from './types';
 import * as DB from './services/mockDb';
+import { Overlay } from './components/Overlay';
 
 // ── Compress image ──────────────────────────────────────────────
 function compressImage(file: File, maxWidth = 1200): Promise<string> {
@@ -114,12 +115,19 @@ const LiveTimer: React.FC<{ startTime: number; pausedAt?: number | null; totalPa
 
 // ── Full screen photo viewer ────────────────────────────────────
 const PhotoViewer = ({ url, onClose }: { url: string; onClose: () => void }) => (
-  <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4" onClick={onClose}>
-    <button onClick={onClose} className="absolute top-4 right-4 text-white/60 hover:text-white z-10">
-      <X className="w-8 h-8" />
-    </button>
-    <img src={url} alt="Sample" className="max-w-full max-h-full object-contain rounded-xl" />
-  </div>
+  <Overlay open onClose={onClose} backdrop="bg-black/95" ariaLabel="Sample photo" zIndex={200}>
+    <div className="relative w-full flex items-center justify-center" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute top-0 right-0 text-white/60 hover:text-white z-10 p-2"
+      >
+        <X className="w-8 h-8" />
+      </button>
+      <img src={url} alt="Sample" className="max-w-full object-contain rounded-xl" style={{ maxHeight: 'calc(100dvh - 2rem)' }} />
+    </div>
+  </Overlay>
 );
 
 // ── Edit Work Entry Modal ───────────────────────────────────────
@@ -151,9 +159,9 @@ const EditEntryModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
-        <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+    <Overlay open onClose={onClose} ariaLabel="Edit work entry" zIndex={150} backdrop="bg-black/70 backdrop-blur-xl">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden my-4">
+        <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
           <h3 className="font-bold text-white text-lg">Edit Work Entry</h3>
           <button aria-label="Close dialog" onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
         </div>
@@ -191,7 +199,7 @@ const EditEntryModal: React.FC<{
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 };
 
@@ -207,9 +215,9 @@ const WorkHistoryModal: React.FC<{
   const [editingEntry, setEditingEntry] = useState<SampleWorkEntry | null>(null);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+    <Overlay open onClose={onClose} ariaLabel="Work history" zIndex={100} backdrop="bg-black/70 backdrop-blur-xl">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
+        <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
           <div>
             <h3 className="font-bold text-white text-lg">Work History</h3>
             <p className="text-zinc-500 text-xs">{sample.partNumber} — {sample.companyName}</p>
@@ -309,7 +317,7 @@ const WorkHistoryModal: React.FC<{
           onClose={() => setEditingEntry(null)}
         />
       )}
-    </div>
+    </Overlay>
   );
 };
 
@@ -324,8 +332,8 @@ const StartWorkModal: React.FC<{
   const [op, setOp] = useState(operations[0] || 'Deburring');
   const [qty, setQty] = useState<number>(0);
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
+    <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-black/70 backdrop-blur-xl">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden my-4">
         <div className="p-5 border-b border-white/10 bg-zinc-800/50">
           <h3 className="font-bold text-white text-lg">Start Working</h3>
           <p className="text-zinc-500 text-xs mt-1">{sample.partNumber} — {sample.companyName}</p>
@@ -353,7 +361,7 @@ const StartWorkModal: React.FC<{
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 };
 
@@ -431,9 +439,9 @@ const SampleModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+    <Overlay open onClose={onClose} ariaLabel={form.id ? 'Edit sample' : 'Add sample'} zIndex={100} backdrop="bg-black/70 backdrop-blur-xl">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
+        <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
           <h3 className="font-bold text-white text-lg">{form.id ? 'Edit Sample' : 'Add Sample'}</h3>
           <button aria-label="Close dialog" onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
         </div>
@@ -548,7 +556,7 @@ const SampleModal = ({
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 };
 

@@ -27,6 +27,7 @@ import {
 import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, GoalPeriod } from './types';
 import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
+import { countByCustomer } from './utils/customers';
 
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [
@@ -721,9 +722,9 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
     return d && j.completedAt && j.completedAt <= d.getTime() + 86400000;
   }).length;
   const onTimePct = completedCount > 0 ? Math.round((onTimeCount / completedCount) * 100) : 0;
-  // Top customer
-  const customerCounts = new Map<string, number>();
-  completedThisWeek.forEach(j => { if (j.customer) customerCounts.set(j.customer, (customerCounts.get(j.customer) || 0) + 1); });
+  // Top customer — uses shared helper that normalizes case/whitespace
+  // so "ACME " and "ACME" aggregate together.
+  const customerCounts = countByCustomer(completedThisWeek);
   let topCustomer = '—'; let topCustCount = 0;
   customerCounts.forEach((c, name) => { if (c > topCustCount) { topCustCount = c; topCustomer = name; } });
   // Revenue this week

@@ -1,4 +1,4 @@
-import type { Job, Quote, SystemSettings } from '../types';
+import type { Job, Quote, SystemSettings, PurchaseOrder } from '../types';
 
 // ── Shared PDF Utilities ──
 
@@ -340,6 +340,126 @@ export function printJobTravelerPDF(job: Job, settings: SystemSettings) {
 }
 
 // ── Invoice PDF ──
+
+// ── Purchase Order PDF ──
+// Prints the PO you send to vendors. Matches the same visual style as
+// Quote / Invoice so the shop's documents look like a cohesive set.
+// Includes PO-level QA requirements, instructions, terms, and attachment
+// reference list (files are NOT embedded — vendor gets them as separate
+// emails since blueprints can be 10+ MB each).
+export function printPurchaseOrderPDF(po: PurchaseOrder, settings: SystemSettings) {
+  const attachmentCount = (po.attachments?.length || 0)
+    + po.items.reduce((a, i) => a + (i.attachments?.length || 0), 0);
+
+  const html = `<div class="page">
+    ${settings.companyLogo ? `<img src="${settings.companyLogo}" class="company-logo-center" />` : ''}
+
+    <div class="doc-header">
+      <div class="company-left">
+        <div class="company-name">${settings.companyName || 'Company Name'}</div>
+      </div>
+      <div class="doc-type">Purchase Order</div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-left">
+        <div class="info-row"><span class="info-label">PO Number:</span><span class="info-value" style="font-weight:700">${po.poNumber}</span></div>
+        <div class="info-row"><span class="info-label">Ordered:</span><span class="info-value">${formatDate(po.orderedDate)}</span></div>
+        ${po.requiredDate ? `<div class="info-row"><span class="info-label">Required By:</span><span class="info-value" style="color:#dc2626;font-weight:700">${po.requiredDate}</span></div>` : ''}
+        ${po.expectedDate ? `<div class="info-row"><span class="info-label">Expected:</span><span class="info-value">${po.expectedDate}</span></div>` : ''}
+      </div>
+      <div class="info-right">
+        <div class="info-right-text">
+          ${settings.companyAddress || ''}<br/>
+          ${settings.companyPhone ? settings.companyPhone + '<br/>' : ''}
+          ${settings.companyEmail || ''}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div class="client-block">
+        <div class="client-label">Vendor</div>
+        <div class="client-name">${po.vendorName}</div>
+        ${po.vendorContact?.name ? `<div class="client-detail">${po.vendorContact.name}</div>` : ''}
+        ${po.vendorContact?.email ? `<div class="client-detail">${po.vendorContact.email}</div>` : ''}
+        ${po.vendorContact?.phone ? `<div class="client-detail">${po.vendorContact.phone}</div>` : ''}
+        ${po.vendorContact?.address ? `<div class="client-detail">${po.vendorContact.address}</div>` : ''}
+      </div>
+      ${po.billTo ? `<div class="client-block">
+        <div class="client-label">Bill To / Ship To</div>
+        <div class="client-name">${po.billTo.name}</div>
+        ${po.billTo.address ? `<div class="client-detail">${po.billTo.address}</div>` : ''}
+        ${po.billTo.phone ? `<div class="client-detail">${po.billTo.phone}</div>` : ''}
+      </div>` : ''}
+    </div>
+
+    ${po.qualityRequirements && po.qualityRequirements.length > 0 ? `
+    <div class="special-block" style="border-color:#10b981;background:#f0fdf4">
+      <div class="special-label" style="color:#065f46">✓ Quality Requirements</div>
+      <div class="special-text" style="color:#064e3b">${po.qualityRequirements.map(r => `• ${r}`).join(' &nbsp; ')}</div>
+    </div>` : ''}
+
+    ${po.instructions ? `<div class="notes-block"><div class="notes-label">Special Instructions</div><div class="notes-text">${po.instructions}</div></div>` : ''}
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px">#</th>
+          <th>Description</th>
+          <th style="width:80px">Part #</th>
+          <th class="center" style="width:50px">Qty</th>
+          <th class="center" style="width:40px">Unit</th>
+          <th class="right" style="width:70px">Price</th>
+          <th class="right" style="width:80px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${po.items.map((item, i) => `<tr>
+          <td style="text-align:center;color:#6b7280">${i + 1}</td>
+          <td>
+            <strong>${item.description}</strong>
+            ${item.instructions ? `<div style="font-size:10px;color:#6b7280;margin-top:2px;font-style:italic">${item.instructions}</div>` : ''}
+            ${item.qualityReqs && item.qualityReqs.length > 0 ? `<div style="font-size:9px;color:#059669;margin-top:2px">✓ ${item.qualityReqs.join(' · ')}</div>` : ''}
+            ${item.attachments && item.attachments.length > 0 ? `<div style="font-size:9px;color:#2563eb;margin-top:2px">📎 ${item.attachments.length} file${item.attachments.length !== 1 ? 's' : ''} attached</div>` : ''}
+          </td>
+          <td style="font-size:10px;color:#374151">${item.partNumber || '—'}</td>
+          <td class="center">${item.quantity}</td>
+          <td class="center">${item.unit || 'ea'}</td>
+          <td class="right">$${item.unitPrice.toFixed(2)}</td>
+          <td class="right bold">$${item.total.toFixed(2)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+
+    <div class="totals-wrap">
+      <div class="totals">
+        <div class="total-row"><span class="total-label">Subtotal</span><span class="total-value">$${po.subtotal.toFixed(2)}</span></div>
+        ${po.taxAmt ? `<div class="total-row"><span class="total-label">Tax (${(po.taxRate || 0).toFixed(1)}%)</span><span class="total-value">$${po.taxAmt.toFixed(2)}</span></div>` : ''}
+        ${po.shippingAmt ? `<div class="total-row"><span class="total-label">Shipping</span><span class="total-value">$${po.shippingAmt.toFixed(2)}</span></div>` : ''}
+        <div class="total-row grand"><span>Total</span><span>$${po.total.toFixed(2)}</span></div>
+      </div>
+    </div>
+
+    ${po.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${po.terms}</div></div>` : ''}
+
+    ${attachmentCount > 0 ? `<div class="notes-block" style="background:#eff6ff;border-color:#bfdbfe"><div class="notes-label" style="color:#1e40af">📎 Attachments</div><div class="notes-text" style="color:#1e3a8a">This PO references ${attachmentCount} attached file${attachmentCount !== 1 ? 's' : ''}. See accompanying email or file transfer for drawings / specs.</div></div>` : ''}
+
+    <div class="sig-section">
+      <div class="sig-block">
+        <div class="sig-company">${settings.companyName || 'Purchaser'}</div>
+        <div class="sig-line">Authorized By${po.approvedByName ? ` — ${po.approvedByName}` : ''}</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-company">${po.vendorName}</div>
+        <div class="sig-line">Vendor Acknowledgment</div>
+      </div>
+    </div>
+
+    <div class="page-num">PO ${po.poNumber} · 1 / 1</div>
+  </div>`;
+  openPrintWindow(html, `PO ${po.poNumber}`);
+}
 
 export function printInvoicePDF(quote: Quote, job: Job | null, settings: SystemSettings) {
   const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([,v]) => v) : [];

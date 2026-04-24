@@ -4,6 +4,7 @@ import type { Quote, QuoteLineItem, QuoteStatus, SystemSettings, CustomerContact
 import * as DB from './services/mockDb';
 import { printQuotePDF } from './services/pdfService';
 import { fmtMoneyK } from './utils/format';
+import { Overlay } from './components/Overlay';
 
 interface QuotesViewProps {
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
@@ -951,8 +952,8 @@ ${settings.companyPhone || ''}`.trim()
         const currentIdx = stepperSteps.findIndex(s => !s.done);
         const activeIdx = currentIdx === -1 ? stepperSteps.length - 1 : currentIdx;
         return (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-zinc-950/95 p-2 sm:p-4 animate-fade-in" onClick={() => setShowModal(false)}>
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <Overlay open onClose={() => setShowModal(false)} ariaLabel={editing ? 'Edit quote' : 'Create quote'} zIndex={1000} backdrop="bg-zinc-950/95 backdrop-blur-md" padding="p-2 sm:p-4">
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col my-2 sm:my-4" style={{ maxHeight: 'calc(100dvh - 1rem)' }} onClick={e => e.stopPropagation()}>
             {/* ── Modal Header + Tabs ── */}
             <div className="border-b border-white/10 bg-zinc-800/50">
               <div className="p-4 pb-0 flex justify-between items-start flex-wrap gap-2">
@@ -1176,8 +1177,8 @@ ${settings.companyPhone || ''}`.trim()
 
                 {/* Process Picker Modal */}
                 {showProcessPicker && (
-                  <div className="fixed inset-0 z-[1100] bg-black/70 backdrop-blur-xl flex items-center justify-center p-4 animate-fade-in" onClick={() => setShowProcessPicker(false)}>
-                    <div className="bg-zinc-900 border border-emerald-500/25 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                  <Overlay open onClose={() => setShowProcessPicker(false)} ariaLabel="Process library" zIndex={1100} backdrop="bg-black/70 backdrop-blur-xl">
+                    <div className="bg-zinc-900 border border-emerald-500/25 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }} onClick={e => e.stopPropagation()}>
                       <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3 bg-gradient-to-b from-emerald-500/10 to-transparent">
                         <div className="min-w-0">
                           <h3 className="font-bold text-white flex items-center gap-2"><Zap className="w-5 h-5 text-emerald-400" aria-hidden="true" /> Process Library</h3>
@@ -1239,7 +1240,7 @@ ${settings.companyPhone || ''}`.trim()
                         })()}
                       </div>
                     </div>
-                  </div>
+                  </Overlay>
                 )}
               </div>
 
@@ -1484,7 +1485,7 @@ ${settings.companyPhone || ''}`.trim()
               </div>
             )}
           </div>
-        </div>
+        </Overlay>
         );
       })()}
 
@@ -1500,8 +1501,8 @@ ${settings.companyPhone || ''}`.trim()
           return (b.lastUsedAt || b.createdAt) - (a.lastUsedAt || a.createdAt);
         });
         return (
-          <div className="fixed inset-0 z-[1100] bg-black/70 backdrop-blur-xl flex items-center justify-center p-4 animate-fade-in" onClick={() => setShowTemplatePicker(false)}>
-            <div className="bg-zinc-900 border border-purple-500/25 rounded-2xl shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          <Overlay open onClose={() => setShowTemplatePicker(false)} ariaLabel="Quote templates" zIndex={1100} backdrop="bg-black/70 backdrop-blur-xl">
+            <div className="bg-zinc-900 border border-purple-500/25 rounded-2xl shadow-2xl w-full max-w-xl flex flex-col overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }} onClick={e => e.stopPropagation()}>
               <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3 bg-gradient-to-b from-purple-500/10 to-transparent">
                 <div className="min-w-0">
                   <h3 className="font-bold text-white flex items-center gap-2">📋 Quote Templates</h3>
@@ -1533,7 +1534,7 @@ ${settings.companyPhone || ''}`.trim()
                 })}
               </div>
             </div>
-          </div>
+          </Overlay>
         );
       })()}
 

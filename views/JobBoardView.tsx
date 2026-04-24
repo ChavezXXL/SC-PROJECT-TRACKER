@@ -9,6 +9,7 @@ import { Columns3, Search, ArrowRight, GripVertical, Settings as SettingsIcon } 
 import { Job, SystemSettings } from '../types';
 import * as DB from '../services/mockDb';
 import { dateNum, todayFmt } from '../utils/date';
+import { uniqueCustomers } from '../utils/customers';
 import { getStages, getJobStage, getNextStage, useIsMobile } from '../App';
 
 // --- ADMIN: JOB FLOW BOARD (Kanban) ---
@@ -33,11 +34,9 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
   const todayN = dateNum(todayFmt());
   const in3N = dateNum(new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
 
-  // Unique customers for filter
-  const customers = useMemo(() => {
-    const set = new Set(jobs.map(j => j.customer).filter(Boolean) as string[]);
-    return [...set].sort();
-  }, [jobs]);
+  // Unique customers for filter — case/whitespace-insensitive dedup
+  // so "ACME" and "acme " aren't two separate filter entries.
+  const customers = useMemo(() => uniqueCustomers(jobs), [jobs]);
 
   // Completion window cutoff
   const completedCutoff = useMemo(() => {

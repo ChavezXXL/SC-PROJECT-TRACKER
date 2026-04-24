@@ -16,6 +16,7 @@ import {
 import { Job, User, ReworkEntry, ReworkReason, ReworkStatus } from '../types';
 import * as DB from '../services/mockDb';
 import { Avatar } from '../App';
+import { Overlay } from '../components/Overlay';
 
 export const REWORK_REASONS: { value: ReworkReason; label: string; color: string }[] = [
   { value: 'finish',       label: 'Finish quality',  color: '#f59e0b' },
@@ -59,8 +60,8 @@ export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xl p-0 sm:p-4 animate-fade-in" onClick={onClose}>
-      <div className="bg-zinc-900/95 backdrop-blur-xl border border-white/10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-slide-up" onClick={e => e.stopPropagation()}>
+    <Overlay open onClose={onClose} ariaLabel={isEdit ? 'Edit rework' : 'Report rework'} zIndex={200}>
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col my-0 sm:my-4 animate-slide-up" style={{ maxHeight: 'calc(100dvh - 2rem)' }} onClick={e => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/40 to-transparent shrink-0">
           <div>
             <h3 className="font-black text-white text-base tracking-tight flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-400" aria-hidden="true" /> {isEdit ? 'Edit Rework' : 'Report Rework'}</h3>
@@ -126,7 +127,7 @@ export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: 
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 };
 

@@ -16,7 +16,27 @@
 // where it is — we never move a job to a stage we're not confident about.
 // ═════════════════════════════════════════════════════════════════════
 
-import type { Job, JobStage } from '../types';
+import type { Job, JobStage, CustomerContact } from '../types';
+
+/**
+ * Filter a stage list down to the subset that applies to a given customer.
+ * Shops often have one customer requiring extra steps (e.g. only Boeing
+ * needs "Stamp") — setting `customStageIds` on that customer lets them run
+ * a custom pipeline while everyone else stays on the default.
+ *
+ * Rules:
+ *   • customStageIds empty / unset → return all stages unchanged
+ *   • A stage marked `isComplete` is ALWAYS kept (jobs need a terminus)
+ *   • Order preserved from the original stages list
+ */
+export function stagesForCustomer(
+  stages: JobStage[],
+  customer: CustomerContact | undefined,
+): JobStage[] {
+  const allowed = customer?.customStageIds;
+  if (!allowed || allowed.length === 0) return stages;
+  return stages.filter(s => allowed.includes(s.id) || s.isComplete);
+}
 
 /** Normalize for comparison — strip punctuation, lowercase, collapse whitespace. */
 function norm(s: string): string {

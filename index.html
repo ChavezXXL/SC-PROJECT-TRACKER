@@ -383,6 +383,13 @@
                 }
                 .glow-live { animation: glow-pulse 2s ease-in-out infinite; }
 
+                /* Flow-map node active pulse — contained inside the node, never overflows
+                   into adjacent stages. Opacity-only animation, no scale or spread. */
+                @keyframes flow-node-pulse {
+                    0%, 100% { opacity: 0.35; }
+                    50%      { opacity: 0.9; }
+                }
+
                 /* Mobile-friendly tap highlights gone, scale instead */
                 @media (hover: none) and (pointer: coarse) {
                     button:active:not(:disabled) { transform: scale(0.96); }

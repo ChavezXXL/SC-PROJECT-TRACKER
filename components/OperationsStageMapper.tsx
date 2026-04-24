@@ -19,6 +19,7 @@
 import React, { useMemo, useState } from 'react';
 import { GripVertical, AlertTriangle, CheckCircle2, Zap } from 'lucide-react';
 import type { JobStage, SystemSettings } from '../types';
+import { Overlay } from './Overlay';
 
 interface Props {
   settings: SystemSettings;
@@ -208,12 +209,9 @@ export const OperationsStageMapper: React.FC<Props> = ({ settings, setSettings }
 
       {/* Mobile fallback: tap a chip → modal picker of target stages */}
       {pickerOp && (
-        <div
-          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
-          onClick={() => setPickerOp(null)}
-        >
+        <Overlay open onClose={() => setPickerOp(null)} ariaLabel="Move operation to stage" zIndex={200} backdrop="bg-black/70 backdrop-blur-sm" padding="p-0 sm:p-4">
           <div
-            className="w-full sm:max-w-md bg-zinc-950 border border-white/10 rounded-t-2xl sm:rounded-2xl p-4 space-y-2"
+            className="w-full sm:max-w-md bg-zinc-950 border border-white/10 rounded-t-2xl sm:rounded-2xl p-4 space-y-2 self-end sm:self-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Move operation</p>
@@ -247,7 +245,7 @@ export const OperationsStageMapper: React.FC<Props> = ({ settings, setSettings }
               Cancel
             </button>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   );

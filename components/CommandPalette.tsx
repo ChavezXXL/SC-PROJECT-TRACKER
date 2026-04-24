@@ -17,6 +17,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search, Briefcase, Columns3, Calendar, Activity, History, FileText,
   Camera, AlertTriangle, Calculator, Users, Settings as SettingsIcon,
@@ -169,13 +170,19 @@ export const CommandPalette: React.FC<Props> = ({ open, onClose, onNavigate, job
     (grouped[r.group] ||= []).push(r);
   }
 
-  return (
+  // Portal to body so the palette floats above EVERYTHING — sidebar, modals,
+  // TV mode. Responsive offset: less pushed-down on mobile where vh is tight.
+  return createPortal(
     <div
-      className="fixed inset-0 z-[300] flex items-start justify-center bg-black/70 backdrop-blur-sm pt-[10vh] px-4 animate-fade-in"
+      className="fixed inset-0 z-[300] flex items-start justify-center bg-black/70 backdrop-blur-sm pt-[6vh] sm:pt-[10vh] px-3 sm:px-4 animate-fade-in"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command palette"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]"
+        className="w-full max-w-xl bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        style={{ maxHeight: 'min(70vh, calc(100dvh - 8rem))' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Input */}
@@ -236,7 +243,8 @@ export const CommandPalette: React.FC<Props> = ({ open, onClose, onNavigate, job
           <span>{results.length} match{results.length === 1 ? '' : 'es'}</span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

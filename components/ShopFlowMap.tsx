@@ -124,7 +124,7 @@ export const ShopFlowMap: React.FC<Props> = ({ jobs, stages, activeLogs, onStage
 
             return (
               <React.Fragment key={stage.id}>
-                <div className="flex flex-col items-center gap-1">
+                <div className="flex flex-col items-center gap-1 w-20 sm:w-24 shrink-0">
                   <button
                     type="button"
                     onClick={() => handleNodeClick(stage.id)}
@@ -132,7 +132,10 @@ export const ShopFlowMap: React.FC<Props> = ({ jobs, stages, activeLogs, onStage
                     aria-expanded={!compact && !onStageSelect ? isExpanded : undefined}
                     className={`group relative flex flex-col items-center gap-1.5 transition-all ${(onStageSelect || !compact) ? 'cursor-pointer hover:scale-105 active:scale-95' : 'cursor-default'}`}
                   >
-                    {/* Node circle */}
+                    {/* Node circle — no overflow-hidden so the flame + WIP
+                        badges can sit at the -top/-right corners like stickers.
+                        The active pulse uses an `inset` box-shadow so it can't
+                        overflow either way. */}
                     <div
                       className={`relative ${nodeSize} rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
                         isActive
@@ -146,12 +149,15 @@ export const ShopFlowMap: React.FC<Props> = ({ jobs, stages, activeLogs, onStage
                         boxShadow: isActive ? `0 0 24px ${stage.color}40` : undefined,
                       }}
                     >
-                      {/* Live pulse ring when workers are active */}
+                      {/* Live pulse — contained inset glow, no overflow into adjacent nodes */}
                       {isActive && (
                         <span
                           aria-hidden="true"
-                          className="absolute inset-0 rounded-2xl border-2 animate-ping opacity-60"
-                          style={{ borderColor: stage.color, animationDuration: '2s' }}
+                          className="absolute inset-0 rounded-2xl pointer-events-none"
+                          style={{
+                            boxShadow: `inset 0 0 0 2px ${stage.color}`,
+                            animation: 'flow-node-pulse 2.4s ease-in-out infinite',
+                          }}
                         />
                       )}
                       {/* Stuck-job flame badge */}
@@ -177,18 +183,19 @@ export const ShopFlowMap: React.FC<Props> = ({ jobs, stages, activeLogs, onStage
                       )}
                     </div>
 
-                    {/* Label below */}
-                    <div className="text-center min-w-0">
-                      <p className={`${labelSize} font-black uppercase tracking-wider truncate max-w-[110px]`} style={{ color: isActive ? stage.color : 'rgb(161 161 170)' }}>
+                    {/* Label below — constrained to parent width so text can
+                        never overflow into the arrow gap between stages. */}
+                    <div className="text-center w-full max-w-full overflow-hidden">
+                      <p className={`${labelSize} font-black uppercase tracking-wider truncate`} style={{ color: isActive ? stage.color : 'rgb(161 161 170)' }}>
                         {stage.label}
                       </p>
                       {!compact && m && m.jobCount > 0 && (
-                        <p className="text-[9px] text-white/40 font-semibold tabular">
+                        <p className="text-[9px] text-white/40 font-semibold tabular truncate">
                           avg {formatDwell(m.avgDwellMs)}
                         </p>
                       )}
                       {workers.length > 0 && !compact && (
-                        <p className="text-[9px] text-white/50 font-semibold truncate max-w-[110px]">
+                        <p className="text-[9px] text-white/50 font-semibold truncate">
                           {workers.slice(0, 2).map(w => w.name.split(' ')[0]).join(', ')}
                           {workers.length > 2 && ` +${workers.length - 2}`}
                         </p>

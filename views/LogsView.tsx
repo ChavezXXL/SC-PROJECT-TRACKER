@@ -13,6 +13,7 @@ import {
 import { Job, User, TimeLog } from '../types';
 import * as DB from '../services/mockDb';
 import { fmt, toDateTimeLocal, formatDuration, getLogDurationMins } from '../utils/date';
+import { Overlay } from '../components/Overlay';
 
 export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) => void }) => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -722,9 +723,9 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
 
       {/* Edit Modal */}
       {showEditModal && editingLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+        <Overlay open onClose={closeEditModal} ariaLabel="Edit time log" zIndex={200}>
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
+            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
               <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
               <button aria-label="Close dialog" onClick={closeEditModal} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
             </div>
@@ -768,7 +769,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 </div>
               </div>
             </div>
-            <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center">
+            <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center sticky bottom-0 z-10">
               <button onClick={handleDeleteLog} className="text-red-500 hover:text-red-400 text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /> Delete Log</button>
               <div className="flex gap-2">
                 <button onClick={closeEditModal} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
@@ -776,13 +777,13 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               </div>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* ── Backfill Entry Modal ──────────────────────────────────── */}
       {showBackfill && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-xl p-0 sm:p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
+        <Overlay open onClose={() => setShowBackfill(false)} ariaLabel="Backfill time entry" zIndex={200} padding="p-0 sm:p-4">
+          <div className="bg-zinc-900 border border-white/10 w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col my-0 sm:my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div><h3 className="text-lg font-bold text-white flex items-center gap-2"><Clock className="w-5 h-5 text-blue-400" /> Backfill Time Entry</h3><p className="text-sm text-zinc-400 mt-0.5">Add a past entry for a worker who forgot to scan</p></div>
               <button onClick={() => setShowBackfill(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400"><X className="w-4 h-4" /></button>
@@ -851,15 +852,15 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* ── Export CSV Modal ─────────────────────────────────────────── */}
       {showExportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col max-h-[85vh]">
+        <Overlay open onClose={() => setShowExportModal(false)} ariaLabel="Export work logs" zIndex={200}>
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             {/* Header */}
-            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50">
+            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
               <div>
                 <h3 className="font-bold text-white text-lg flex items-center gap-2">
                   <Download className="w-5 h-5 text-emerald-400" /> Export Work Logs
@@ -961,7 +962,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               </div>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   );

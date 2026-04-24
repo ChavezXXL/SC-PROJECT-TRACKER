@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder } from "../types";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -195,6 +195,8 @@ const COL = {
   settings: "settings",
   quotes: "quotes",
   deliveries: "deliveries",
+  vendors: "vendors",
+  purchaseOrders: "purchase_orders",
 };
 
 // --------------------
@@ -1273,6 +1275,124 @@ export function nextDeliveryRunNumber(list: Delivery[]): string {
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return `DEL-${String(max + 1).padStart(3, '0')}`;
+}
+
+// ── VENDORS ────────────────────────────────────────────────────────
+// Reusable supplier records — created once, referenced by many POs.
+const LS_VENDORS = 'nexus_vendors';
+
+export function subscribeVendors(cb: (vendors: Vendor[]) => void): () => void {
+  if (dbInstance) {
+    const colRef = collection(dbInstance, COL.vendors);
+    return onSnapshot(colRef,
+      (snap: any) => {
+        firebaseStatus = { connected: true };
+        const rows = snap.docs.map((d: any) => d.data() as Vendor)
+          .sort((a: Vendor, b: Vendor) => a.name.localeCompare(b.name));
+        cb(rows);
+      },
+      (err: any) => {
+        handleError(err);
+        cb(readLS<Vendor[]>(LS_VENDORS, []).sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    );
+  }
+  return localSubscribe(
+    () => readLS<Vendor[]>(LS_VENDORS, []).sort((a, b) => a.name.localeCompare(b.name)),
+    cb,
+  );
+}
+
+export async function saveVendor(v: Vendor): Promise<void> {
+  const stamped: Vendor = { ...v, updatedAt: Date.now() };
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, COL.vendors, v.id), sanitize(stamped), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const list = readLS<Vendor[]>(LS_VENDORS, []);
+  const idx = list.findIndex(x => x.id === v.id);
+  if (idx >= 0) list[idx] = stamped; else list.push(stamped);
+  writeLS(LS_VENDORS, list);
+}
+
+export async function deleteVendor(id: string): Promise<void> {
+  if (dbInstance) {
+    try {
+      await deleteDoc(doc(dbInstance, COL.vendors, id));
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  writeLS(LS_VENDORS, readLS<Vendor[]>(LS_VENDORS, []).filter(v => v.id !== id));
+}
+
+// ── PURCHASE ORDERS ───────────────────────────────────────────────
+// Outbound POs we send to vendors. Big, complex documents — we store
+// them as a single doc per PO (like quotes) since they're loaded one
+// at a time and edited as a unit.
+const LS_PURCHASE_ORDERS = 'nexus_purchase_orders';
+
+export function subscribePurchaseOrders(cb: (pos: PurchaseOrder[]) => void): () => void {
+  if (dbInstance) {
+    const colRef = collection(dbInstance, COL.purchaseOrders);
+    return onSnapshot(colRef,
+      (snap: any) => {
+        firebaseStatus = { connected: true };
+        const rows = snap.docs.map((d: any) => d.data() as PurchaseOrder)
+          .sort((a: PurchaseOrder, b: PurchaseOrder) => (b.createdAt || 0) - (a.createdAt || 0));
+        cb(rows);
+      },
+      (err: any) => {
+        handleError(err);
+        cb(readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+      }
+    );
+  }
+  return localSubscribe(
+    () => readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    cb,
+  );
+}
+
+export async function savePurchaseOrder(po: PurchaseOrder): Promise<void> {
+  const stamped: PurchaseOrder = { ...po, updatedAt: Date.now() };
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, COL.purchaseOrders, po.id), sanitize(stamped), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const list = readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []);
+  const idx = list.findIndex(x => x.id === po.id);
+  if (idx >= 0) list[idx] = stamped; else list.push(stamped);
+  writeLS(LS_PURCHASE_ORDERS, list);
+}
+
+export async function deletePurchaseOrder(id: string): Promise<void> {
+  if (dbInstance) {
+    try {
+      await deleteDoc(doc(dbInstance, COL.purchaseOrders, id));
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  writeLS(LS_PURCHASE_ORDERS, readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []).filter(p => p.id !== id));
+}
+
+/** PO numbers format: "PO-YYYY-NNNN". Year-prefixed so new fiscal year
+ *  resets the counter without clashing with prior years in history. */
+export function nextPurchaseOrderNumber(list: PurchaseOrder[]): string {
+  const year = new Date().getFullYear();
+  let max = 0;
+  for (const p of list) {
+    const m = new RegExp(`^PO-${year}-(\\d+)$`).exec(p.poNumber || '');
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `PO-${year}-${String(max + 1).padStart(4, '0')}`;
 }
 
 export async function deleteRework(id: string): Promise<void> {

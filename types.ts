@@ -56,12 +56,35 @@ export interface PriceTier {
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'expired';
 
 // ── Customer Contact (reusable across quotes, jobs, invoices) ──
+// Used across quotes, jobs, delivery stops, and the Customers view as the
+// single source of truth for everything the shop knows about a customer.
 export interface CustomerContact {
   name: string;              // Company / customer name
-  contactPerson?: string;    // Person name
-  email?: string;
-  phone?: string;
+  contactPerson?: string;    // Primary contact person name
+  email?: string;            // Primary email for quotes/invoices
+  phone?: string;            // Primary phone
   address?: string;          // Full address (street, city, state, zip)
+  // Extra details the shop typically tracks per customer — all optional so
+  // existing records stay valid without a migration.
+  shippingAddress?: string;  // Defaults to `address` when empty
+  billingEmail?: string;     // For accounting if different from primary
+  taxId?: string;            // EIN / resale cert number
+  poPrefix?: string;         // e.g. "BOE-" for autofill on new jobs
+  paymentTerms?: string;     // "Net 30", "COD", "Prepaid" — defaults on their quotes
+  defaultPriority?: JobPriority;  // Rush customer? set to 'high' here
+  // ── Per-customer workflow routing ──
+  // When set, NEW jobs for this customer only pass through these stages.
+  // Enables "we don't stamp for Boeing" without changing the global pipeline.
+  // Empty / unset = use the shop's default jobStages list.
+  customStageIds?: string[];
+  // Hidden from active dropdowns but history is preserved. Useful for
+  // one-off or defunct customers.
+  archived?: boolean;
+  // Internal notes — ops-facing; not shown on printed docs.
+  notes?: string;
+  // ── Audit ──
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface Quote {
@@ -179,6 +202,17 @@ export interface Job {
   attachments?: JobAttachment[];
   // ── Time estimates (Jobs R1 #3) — expected vs actual per stage ──
   stageEstimates?: Record<string, number>;  // { stageId: expectedHours }
+  // ── Portal note (customer-facing) ──
+  // Free-text human-friendly status update that shows on the customer portal.
+  // Think "Shipping Friday EOD" or "On track for Tuesday — 2 parts left in QC."
+  // Admins edit this; customers see it alongside the stage pipeline. The
+  // optional `expectedDate` renders as a highlighted ETA when set.
+  portalNote?: {
+    text: string;
+    expectedDate?: string;   // MM/DD/YYYY — shown as "Expected by …"
+    updatedAt: number;
+    updatedBy?: string;
+  };
 }
 
 /** A single checklist / routing operation within a job. */
@@ -235,6 +269,190 @@ export interface TimeLog {
   machineId?: string;
   sessionQty?: number;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// ── Purchase Orders — outbound POs WE send to vendors.
+//
+// Why: finishing / manufacturing shops routinely outsource work (heat
+// treat, plating, coatings) or buy raw material. Every one of their
+// customers has a different PO template — copying by hand into Word
+// docs leads to missed quality callouts + late payments. This gives
+// them a real PO system matching what big OEMs use:
+//
+//   • Vendor database (name / contact / terms / categories)
+//   • Line items with qty/rate/total, per-line QA reqs + instructions
+//   • File attachments at PO level (terms, blueprints) AND per line item
+//     (drawing for that specific part)
+//   • Quality requirements checklist (CoC, Mat-Cert, FAI, AS9102, etc.)
+//   • Status lifecycle: draft → sent → acknowledged → received → closed
+//   • Approval flow (created_by / approved_by)
+//   • Link back to internal Jobs so "what customer job is this for"
+//     is a click away
+//   • Status history for ISO audit trail
+//   • Printable PO PDF in the same style as quotes/travelers
+// ═══════════════════════════════════════════════════════════════════
+
+/** Reusable vendor / supplier record. Saved once, used across POs. */
+export interface Vendor {
+  id: string;
+  name: string;
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  website?: string;
+  taxId?: string;
+  /** What they do — "Heat Treat", "Plating", "Raw Material", "Tooling" etc.
+   *  Used for filtering + category-specific default terms. */
+  categories?: string[];
+  /** Default payment terms for this vendor — "Net 30", "COD", etc. */
+  defaultTerms?: string;
+  /** Free-form internal notes. */
+  notes?: string;
+  /** Set to true to hide from the vendor picker without deleting history. */
+  archived?: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+/** File attached to a PO or a PO line item (drawings, specs, docs). */
+export interface POAttachment {
+  id: string;
+  name: string;
+  /** base64 data URL — same storage pattern used by part photos. */
+  url: string;
+  mimeType: string;
+  size: number;
+  /** Kind of document — helps sort in the receiving dock. */
+  kind?: 'drawing' | 'spec' | 'photo' | 'cert' | 'other';
+}
+
+export interface POLineItem {
+  id: string;
+  partNumber?: string;
+  description: string;
+  quantity: number;
+  unit?: string;            // "ea", "lb", "hr", "lot", "ft"
+  unitPrice: number;
+  total: number;
+  /** Per-line required certifications / inspections (CoC, FAI, Mat-Cert, etc.) */
+  qualityReqs?: string[];
+  /** Per-line instructions to the vendor — e.g. "per customer drawing rev C". */
+  instructions?: string;
+  /** Per-line blueprints / specs. Separate from PO-level attachments so
+   *  each line has its OWN drawing when the PO covers multiple parts. */
+  attachments?: POAttachment[];
+}
+
+export type POStatus =
+  | 'draft'              // Being created, not yet sent
+  | 'sent'               // Emailed / delivered to vendor
+  | 'acknowledged'       // Vendor confirmed receipt
+  | 'in-progress'        // Vendor is working on it
+  | 'partially-received' // Some items received
+  | 'received'           // All items received + inspected
+  | 'closed'             // Invoice paid, PO complete
+  | 'cancelled';         // Voided before completion
+
+export interface POStatusHistoryEntry {
+  status: POStatus;
+  timestamp: number;
+  userId: string;
+  userName: string;
+  note?: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  /** Human-readable number — e.g. "PO-2026-0042". Auto-generated. */
+  poNumber: string;
+  status: POStatus;
+  vendorId: string;
+  /** Snapshot of vendor name at time of creation (so renames don't break history). */
+  vendorName: string;
+  /** Snapshot of vendor contact — kept inline for quick printing. */
+  vendorContact?: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+  };
+  /** Our shop — usually pulled from SystemSettings at creation time. */
+  billTo?: {
+    name: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+  };
+  /** Where the vendor ships the finished work. Default = bill-to. */
+  shipTo?: {
+    name: string;
+    address?: string;
+  };
+  /** Internal jobs this PO is for — lets a customer job show "outsourced to X". */
+  linkedJobIds?: string[];
+
+  orderedDate: number;       // When we placed it
+  requiredDate?: string;     // When WE need it (date string MM/DD/YYYY)
+  expectedDate?: string;     // When vendor promised
+  receivedDate?: number;     // When parts came back
+
+  items: POLineItem[];
+
+  subtotal: number;
+  taxRate?: number;
+  taxAmt?: number;
+  shippingAmt?: number;
+  total: number;
+
+  /** PO-level required certifications / inspections — applies to the whole order. */
+  qualityRequirements?: string[];
+  /** Special instructions to the vendor — "call on arrival", "pack with cardboard". */
+  instructions?: string;
+  /** Terms & conditions — payment, warranty, liability. Printed at the bottom. */
+  terms?: string;
+  /** Internal notes — NOT printed, just for shop admins. */
+  internalNotes?: string;
+
+  /** Who created this. Populated from the logged-in user. */
+  createdBy: string;
+  createdByName: string;
+  /** Optional approval chain (senior admins approve high-$ POs). */
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: number;
+  /** If the shop has a dollar threshold requiring approval, this flips true. */
+  approvalRequired?: boolean;
+
+  /** Shipping details when parts come back. */
+  shipVia?: string;          // "UPS Ground", "Customer Pickup", "Freight"
+  trackingNumber?: string;
+
+  /** PO-level attachments — Ts&Cs, blanket terms, etc. */
+  attachments?: POAttachment[];
+
+  /** Audit trail — who changed status when, with a note. */
+  statusHistory?: POStatusHistoryEntry[];
+
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Standard quality callouts shops put on POs. Extensible in settings. */
+export const DEFAULT_QUALITY_REQUIREMENTS = [
+  'Certificate of Conformance (CoC)',
+  'Material Certification',
+  'First Article Inspection (FAI)',
+  'AS9102 FAI Report',
+  'ISO 9001 Compliance',
+  'Source Inspection Required',
+  'RoHS Certification',
+  'ITAR / EAR Compliance',
+  'Calibration Certificate',
+  'Heat Treat Certification',
+  'Plating Thickness Report',
+  'Test / Inspection Data Packet',
+] as const;
 
 // ── Deliveries — track driver runs, GPS miles, and attach to jobs.
 // Designed so a shop with an in-house courier can log mileage for tax
@@ -616,7 +834,7 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-quality' | 'admin-deliveries' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
 
 // ── Quality / Rework Tracking ──
 export type ReworkReason = 'finish' | 'dimensional' | 'missed-area' | 'damage' | 'wrong-part' | 'other';

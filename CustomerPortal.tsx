@@ -1,7 +1,61 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Package, Clock, CheckCircle, Truck, AlertTriangle, Search, FileText, Check, X, DollarSign, Copy, Link2, Phone, Mail } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Package, Clock, CheckCircle, Truck, AlertTriangle, Search, FileText, Check, X, DollarSign, Copy, Link2, Phone, Mail, Calendar, MessageSquare, ChevronDown } from 'lucide-react';
 import type { Job, SystemSettings, JobStage, Quote, QuoteViewEvent } from './types';
 import * as DB from './services/mockDb';
+import { stagesForCustomer } from './utils/stageRouting';
+
+/** Human-friendly "3 days ago" / "2 hrs ago" — for the "last updated" hint. */
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+/** Group completed jobs by year → month. Newest year first, with monthly
+ *  sub-groups inside. Enables a "2026 — 47 orders" roll-up with drilldown
+ *  into individual months and jobs. */
+export interface MonthBucket { label: string; key: string; jobs: Job[]; }
+export interface YearBucket { year: number; jobs: Job[]; months: MonthBucket[]; }
+
+function groupByYear(jobs: Job[]): YearBucket[] {
+  const byYear = new Map<number, Job[]>();
+  for (const j of jobs) {
+    const t = j.completedAt || j.createdAt || 0;
+    if (!t) continue;
+    const year = new Date(t).getFullYear();
+    (byYear.get(year) || byYear.set(year, []).get(year)!).push(j);
+  }
+  return [...byYear.entries()]
+    .sort(([a], [b]) => b - a)
+    .map(([year, yjobs]) => {
+      // Inside each year, group by month
+      const byMonth = new Map<string, Job[]>();
+      for (const j of yjobs) {
+        const t = j.completedAt || j.createdAt || 0;
+        const d = new Date(t);
+        const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`;
+        (byMonth.get(key) || byMonth.set(key, []).get(key)!).push(j);
+      }
+      const months: MonthBucket[] = [...byMonth.entries()]
+        .sort(([a], [b]) => (a < b ? 1 : -1))
+        .map(([key, mjobs]) => {
+          const [y, m] = key.split('-').map(Number);
+          return {
+            key,
+            label: new Date(y, m, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+            jobs: mjobs.sort((a, b) => (b.completedAt || b.createdAt || 0) - (a.completedAt || a.createdAt || 0)),
+          };
+        });
+      return {
+        year,
+        jobs: yjobs.sort((a, b) => (b.completedAt || b.createdAt || 0) - (a.completedAt || a.createdAt || 0)),
+        months,
+      };
+    });
+}
 
 interface CustomerPortalProps {
   customerFilter: string;
@@ -409,11 +463,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
             {/* Active Jobs */}
             {activeJobs.length > 0 && (
               <div>
-                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Active Orders</h3>
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Active Orders · {activeJobs.length}</h3>
                 <div className="space-y-3">
                   {activeJobs.map(job => {
-                    const stageIdx = getStageIndex(job, stages);
+                    // Stages filtered to THIS customer's workflow (skips Stamp
+                    // if the customer profile excludes it, etc.)
+                    const custStages = stagesForCustomer(
+                      stages,
+                      settings.clientContacts?.[job.customer || ''],
+                    );
+                    const stageIdx = getStageIndex(job, custStages);
                     const isOverdue = job.dueDate && new Date(job.dueDate).getTime() < Date.now();
+                    const portalNote = job.portalNote;
                     return (
                       <div key={job.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 space-y-4">
                         <div className="flex items-start justify-between gap-3">
@@ -421,6 +482,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-white font-black text-base sm:text-lg truncate max-w-[180px] sm:max-w-none">{job.poNumber}</span>
                               {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> OVERDUE</span>}
+                              {portalNote?.expectedDate && !isOverdue && (
+                                <span className="text-[10px] font-black text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/25 flex items-center gap-1">
+                                  <Calendar className="w-3 h-3" /> Expected {portalNote.expectedDate}
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs sm:text-sm text-zinc-400 truncate">{job.partNumber}</p>
                           </div>
@@ -429,9 +495,38 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                             {job.dueDate && <p className="text-[10px] sm:text-xs text-zinc-500">Due: <span className={isOverdue ? 'text-red-400' : 'text-zinc-300'}>{job.dueDate}</span></p>}
                           </div>
                         </div>
-                        {/* Stage Pipeline */}
+
+                        {/* Portal note — the human-friendly status message.
+                            Big, blue, and glowing so it's impossible to miss.
+                            Fresh notes (<24h) pulse a subtle "new" halo. */}
+                        {portalNote?.text && (() => {
+                          const isFresh = Date.now() - portalNote.updatedAt < 86_400_000;
+                          return (
+                            <div
+                              className={`relative rounded-xl p-4 flex items-start gap-3 bg-gradient-to-br from-blue-500/15 to-blue-500/5 border-2 ${
+                                isFresh ? 'border-blue-400/60 shadow-lg shadow-blue-500/20' : 'border-blue-500/30'
+                              }`}
+                            >
+                              {isFresh && (
+                                <span className="absolute -top-2 left-4 bg-blue-500 text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-md">
+                                  ● New Update
+                                </span>
+                              )}
+                              <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
+                                <MessageSquare className="w-4 h-4 text-blue-300" aria-hidden="true" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest mb-1">Latest Update</p>
+                                <p className="text-sm text-white font-medium leading-relaxed whitespace-pre-line">{portalNote.text}</p>
+                                <p className="text-[10px] text-blue-400/80 mt-2">Posted {relativeTime(portalNote.updatedAt)}</p>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Stage Pipeline — uses customer-specific stages */}
                         <div className="flex items-center gap-1">
-                          {stages.map((stage, i) => (
+                          {custStages.map((stage, i) => (
                             <div key={stage.id} className="flex-1 flex flex-col items-center gap-1">
                               <div className={`h-2 w-full rounded-full transition-all ${i <= stageIdx ? '' : 'opacity-20'}`} style={{ background: i <= stageIdx ? stage.color : '#3f3f46' }} />
                               <span className={`text-[9px] font-bold ${i <= stageIdx ? 'text-zinc-300' : 'text-zinc-600'}`}>{stage.label}</span>
@@ -450,28 +545,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
               </div>
             )}
 
-            {/* Completed Jobs */}
+            {/* Completed Jobs — grouped by month, collapsible, with totals.
+                Shows the most recent 2 months expanded; everything older
+                collapsed by default so the page doesn't scroll forever. */}
             {completedJobs.length > 0 && (
-              <div>
-                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Completed Orders</h3>
-                <div className="space-y-2">
-                  {completedJobs.slice(0, 10).map(job => (
-                    <div key={job.id} className="bg-zinc-900/30 border border-white/5 rounded-xl p-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                        <div>
-                          <span className="text-white font-bold text-sm">{job.poNumber}</span>
-                          <span className="text-zinc-500 text-sm ml-2">{job.partNumber}</span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs text-zinc-500">Qty: {job.quantity}</p>
-                        {job.completedAt && <p className="text-[10px] text-zinc-600">{new Date(job.completedAt).toLocaleDateString()}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <CompletedJobsSection jobs={completedJobs} />
             )}
           </>
         )}
@@ -499,6 +577,159 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
           <p className="text-zinc-600 text-xs">Powered by <span className="text-zinc-500 font-bold">{settings.companyName || 'SC Tracker'}</span></p>
           <p className="text-zinc-700 text-[10px] mt-1 font-mono truncate max-w-md mx-auto px-2">{canonicalUrl}</p>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Completed jobs — two-level hierarchy (Year → Month → Jobs).
+//
+// Top: a big "This Year" summary card so customers see their running
+// total at a glance.
+// Below: each year is a collapsible card with inner monthly sub-groups.
+// Current year expanded by default; everything older collapsed.
+// ═════════════════════════════════════════════════════════════════════
+const CompletedJobsSection: React.FC<{ jobs: Job[] }> = ({ jobs }) => {
+  const years = useMemo(() => groupByYear(jobs), [jobs]);
+  const currentYear = new Date().getFullYear();
+  const [openYears, setOpenYears] = useState<Set<number>>(() => new Set([currentYear]));
+  const [openMonths, setOpenMonths] = useState<Set<string>>(() => new Set());
+
+  const toggleYear = (y: number) => {
+    setOpenYears(prev => {
+      const next = new Set(prev);
+      if (next.has(y)) next.delete(y); else next.add(y);
+      return next;
+    });
+  };
+  const toggleMonth = (k: string) => {
+    setOpenMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
+
+  // "This year" stats — prominent so customers can brag about it
+  const thisYearBucket = years.find(y => y.year === currentYear);
+  const thisYearQty = thisYearBucket?.jobs.reduce((a, j) => a + (j.quantity || 0), 0) || 0;
+  const thisYearCount = thisYearBucket?.jobs.length || 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Completed Orders · {jobs.length} total</h3>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setOpenYears(new Set(years.map(y => y.year)))}
+            className="text-[10px] font-bold text-zinc-500 hover:text-white bg-zinc-900/40 hover:bg-white/5 border border-white/5 rounded px-2 py-1 transition-colors"
+          >
+            Expand all
+          </button>
+          <button
+            type="button"
+            onClick={() => { setOpenYears(new Set()); setOpenMonths(new Set()); }}
+            className="text-[10px] font-bold text-zinc-500 hover:text-white bg-zinc-900/40 hover:bg-white/5 border border-white/5 rounded px-2 py-1 transition-colors"
+          >
+            Collapse all
+          </button>
+        </div>
+      </div>
+
+      {/* "This year" hero card — simple, big, clear */}
+      {thisYearCount > 0 && (
+        <div className="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border border-emerald-500/25 rounded-2xl p-4 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+            <CheckCircle className="w-6 h-6 text-emerald-400" aria-hidden="true" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">This Year · {currentYear}</p>
+            <p className="text-white text-lg font-black tabular">
+              {thisYearCount} order{thisYearCount !== 1 ? 's' : ''}
+              <span className="text-zinc-500 font-normal mx-2">·</span>
+              {thisYearQty.toLocaleString()} piece{thisYearQty !== 1 ? 's' : ''} completed
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Year → Month → Jobs tree */}
+      <div className="space-y-2">
+        {years.map(y => {
+          const open = openYears.has(y.year);
+          const totalQty = y.jobs.reduce((a, j) => a + (j.quantity || 0), 0);
+          return (
+            <div key={y.year} className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => toggleYear(y.year)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors"
+                aria-expanded={open}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-lg bg-zinc-800 border border-white/10 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-black text-zinc-300 tabular">{String(y.year).slice(-2)}</span>
+                  </div>
+                  <div className="text-left min-w-0">
+                    <p className="text-base font-black text-white tabular">{y.year}</p>
+                    <p className="text-[11px] text-zinc-500">
+                      {y.jobs.length} order{y.jobs.length !== 1 ? 's' : ''} · {totalQty.toLocaleString()} piece{totalQty !== 1 ? 's' : ''}
+                      {y.months.length > 1 && ` · ${y.months.length} months`}
+                    </p>
+                  </div>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-zinc-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
+              {open && (
+                <div className="border-t border-white/5 divide-y divide-white/5">
+                  {y.months.map(m => {
+                    const mOpen = openMonths.has(m.key);
+                    const mQty = m.jobs.reduce((a, j) => a + (j.quantity || 0), 0);
+                    return (
+                      <div key={m.key}>
+                        <button
+                          type="button"
+                          onClick={() => toggleMonth(m.key)}
+                          className="w-full flex items-center justify-between px-5 py-2.5 hover:bg-white/[0.02] transition-colors"
+                          aria-expanded={mOpen}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500/70 shrink-0" aria-hidden="true" />
+                            <div className="text-left min-w-0">
+                              <p className="text-sm font-bold text-zinc-200">{m.label.replace(` ${y.year}`, '')}</p>
+                              <p className="text-[10px] text-zinc-500">{m.jobs.length} order{m.jobs.length !== 1 ? 's' : ''} · {mQty.toLocaleString()} pcs</p>
+                            </div>
+                          </div>
+                          <ChevronDown className={`w-3.5 h-3.5 text-zinc-600 shrink-0 transition-transform ${mOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                        </button>
+                        {mOpen && (
+                          <div className="bg-zinc-950/40 border-t border-white/5 divide-y divide-white/5">
+                            {m.jobs.map(job => (
+                              <div key={job.id} className="px-6 py-2.5 flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-colors">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-bold text-white truncate">{job.poNumber}</p>
+                                  <p className="text-[11px] text-zinc-500 truncate">{job.partNumber}</p>
+                                </div>
+                                <div className="text-right shrink-0 flex items-center gap-3">
+                                  <span className="text-[11px] text-zinc-400 font-mono tabular">{(job.quantity || 0).toLocaleString()} ea</span>
+                                  {job.completedAt && (
+                                    <span className="text-[10px] text-zinc-600 font-mono tabular w-20 text-right">{new Date(job.completedAt).toLocaleDateString()}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

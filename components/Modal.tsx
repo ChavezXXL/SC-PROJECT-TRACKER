@@ -18,6 +18,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export interface ModalProps {
@@ -86,11 +87,13 @@ export const Modal: React.FC<ModalProps> = ({
 
   if (!open) return null;
 
-  return (
+  // Portal to body — escapes any parent transform/opacity stacking context
+  // so modals always render above the page (top-bar, sidebar, etc.).
+  return createPortal(
     <div
       ref={backdropRef}
       onClick={onBackdropClick}
-      className="fixed inset-0 overflow-y-auto bg-zinc-950/95 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 overflow-y-auto bg-zinc-950 animate-fade-in"
       style={{ zIndex }}
       role="dialog"
       aria-modal="true"
@@ -138,6 +141,7 @@ export const Modal: React.FC<ModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
