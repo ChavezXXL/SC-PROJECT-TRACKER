@@ -1,0 +1,16 @@
+# ═════════════════════════════════════════════════════════════════════
+# Cloudflare Pages routing — replaces netlify.toml [[redirects]]
+# ═════════════════════════════════════════════════════════════════════
+
+# ── Legacy Netlify-style function URLs → new /api/ URLs ──
+# Existing client code (POScanner, SettingsView, geminiService) still
+# fetches /.netlify/functions/*; this rewrite makes those work on CF
+# without code changes during the migration window.
+#   200 = rewrite (URL stays the same in browser, server serves new path)
+/.netlify/functions/gemini      /api/gemini     200
+/.netlify/functions/send-push   /api/send-push  200
+
+# ── SPA fallback ──
+# Anything that's not a static asset or function falls back to index.html
+# so React Router (or our own URL params) can render the right view.
+/*    /index.html   200

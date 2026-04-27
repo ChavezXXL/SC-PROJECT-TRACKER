@@ -20,6 +20,21 @@ import {
   saveFirebaseConfig as saveCfg,
   validateConnection
 } from "./firebaseClient";
+// ── Phase 1 tenant paths ─────────────────────────────────────────────
+// Tenant-scoped Firestore path helper. For the legacy SC Deburring
+// install, `colPath('sc_deburring', 'jobs')` returns the flat string
+// "jobs" — identical to the pre-multitenant behavior. For new tenants,
+// returns "tenants/{tid}/jobs". Nothing changes for SC Deburring until
+// we explicitly switch `getTenantId()` to return something else.
+import { colPath, LEGACY_TENANT_ID } from "../backend/tenantContext";
+
+/** Current tenant resolver. Returns the legacy SC Deburring tenant until
+ *  Phase 2 wires this to Firebase Auth + account lookup. Any future change
+ *  to multi-tenancy starts here — swap this single function and every
+ *  collection path moves with it. */
+function getTenantId(): string {
+  return LEGACY_TENANT_ID;
+}
 
 // --------------------
 // STATUS MANAGEMENT
@@ -188,15 +203,27 @@ function localSubscribe<T>(getter: () => T, cb: (v: T) => void) {
   return () => { localSubscribers.delete(notify); clearInterval(i); };
 }
 
+// ── Firestore collection paths ──
+// Uses getters so each access resolves the CURRENT tenant. For the
+// legacy SC Deburring tenant these return the same flat strings the
+// code has always used ("jobs", "logs", etc.). For future tenants they
+// return "tenants/{tid}/jobs" etc.
+//
+// NEVER replace a COL.x reference with a hardcoded string — that path
+// won't move correctly when multi-tenancy goes live.
 const COL = {
-  jobs: "jobs",
-  logs: "logs",
-  users: "users",
-  settings: "settings",
-  quotes: "quotes",
-  deliveries: "deliveries",
-  vendors: "vendors",
-  purchaseOrders: "purchase_orders",
+  get jobs()              { return colPath(getTenantId(), "jobs"); },
+  get logs()              { return colPath(getTenantId(), "logs"); },
+  get users()             { return colPath(getTenantId(), "users"); },
+  get settings()          { return colPath(getTenantId(), "settings"); },
+  get quotes()            { return colPath(getTenantId(), "quotes"); },
+  get deliveries()        { return colPath(getTenantId(), "deliveries"); },
+  get vendors()           { return colPath(getTenantId(), "vendors"); },
+  get purchaseOrders()    { return colPath(getTenantId(), "purchase_orders"); },
+  get samples()           { return colPath(getTenantId(), "samples"); },
+  get rework()            { return colPath(getTenantId(), "rework"); },
+  get userProgress()      { return colPath(getTenantId(), "userProgress"); },
+  get pushSubscriptions() { return colPath(getTenantId(), "push_subscriptions"); },
 };
 
 // --------------------
@@ -787,7 +814,7 @@ async function updateUserProgress(
     const today = new Date().toISOString().split('T')[0];
     const weekKey = getISOWeek();
     const prKey = jobId + '|' + operation;
-    const ref = doc(dbInstance, 'userProgress', userId);
+    const ref = doc(dbInstance, COL.userProgress, userId);
     const snap = await getDoc(ref);
     const now: any = snap.exists() ? snap.data() : {};
 
@@ -826,7 +853,7 @@ async function updateUserProgress(
 
 export function subscribeUserProgress(userId: string, cb: (data: any) => void): () => void {
   if (!dbInstance) { cb(null); return () => {}; }
-  const ref = doc(dbInstance, 'userProgress', userId);
+  const ref = doc(dbInstance, COL.userProgress, userId);
   return onSnapshot(ref,
     (snap: any) => cb(snap.exists() ? snap.data() : null),
     () => cb(null)
@@ -1057,7 +1084,7 @@ export async function savePushSubscription(userId: string, subscription: any): P
   // Key by userId + endpoint hash so one user can have multiple devices
   const endpoint: string = subscription.endpoint || '';
   const key = userId + '_' + btoa(endpoint).slice(-20).replace(/[^a-zA-Z0-9]/g, '');
-  await setDoc(doc(db, 'push_subscriptions', key), {
+  await setDoc(doc(db, COL.pushSubscriptions, key), {
     userId,
     subscription,
     updatedAt: Date.now(),
@@ -1125,7 +1152,7 @@ const LS_SAMPLES = "nexus_samples";
 
 export function subscribeSamples(cb: (samples: Sample[]) => void): () => void {
   if (dbInstance) {
-    const colRef = collection(dbInstance, "samples");
+    const colRef = collection(dbInstance, COL.samples);
     return onSnapshot(colRef,
       (snap: any) => {
         firebaseStatus = { connected: true };
@@ -1144,7 +1171,7 @@ export function subscribeSamples(cb: (samples: Sample[]) => void): () => void {
 export async function saveSample(sample: Sample): Promise<void> {
   if (dbInstance) {
     try {
-      await setDoc(doc(dbInstance, "samples", sample.id), sanitize(sample), { merge: true });
+      await setDoc(doc(dbInstance, COL.samples, sample.id), sanitize(sample), { merge: true });
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1161,7 +1188,7 @@ export async function saveSample(sample: Sample): Promise<void> {
 export async function deleteSample(id: string): Promise<void> {
   if (dbInstance) {
     try {
-      await deleteDoc(doc(dbInstance, "samples", id));
+      await deleteDoc(doc(dbInstance, COL.samples, id));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1177,7 +1204,7 @@ const LS_REWORK = "nexus_rework";
 
 export function subscribeRework(cb: (entries: ReworkEntry[]) => void): () => void {
   if (dbInstance) {
-    const colRef = collection(dbInstance, "rework");
+    const colRef = collection(dbInstance, COL.rework);
     return onSnapshot(colRef,
       (snap: any) => {
         firebaseStatus = { connected: true };
@@ -1199,7 +1226,7 @@ export function subscribeRework(cb: (entries: ReworkEntry[]) => void): () => voi
 export async function saveRework(entry: ReworkEntry): Promise<void> {
   if (dbInstance) {
     try {
-      await setDoc(doc(dbInstance, "rework", entry.id), sanitize(entry), { merge: true });
+      await setDoc(doc(dbInstance, COL.rework, entry.id), sanitize(entry), { merge: true });
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1398,7 +1425,7 @@ export function nextPurchaseOrderNumber(list: PurchaseOrder[]): string {
 export async function deleteRework(id: string): Promise<void> {
   if (dbInstance) {
     try {
-      await deleteDoc(doc(dbInstance, "rework", id));
+      await deleteDoc(doc(dbInstance, COL.rework, id));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1431,7 +1458,7 @@ export async function startSampleWork(
 
   if (dbInstance) {
     try {
-      const ref = doc(dbInstance, "samples", sampleId);
+      const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       await updateDoc(ref, sanitize({
@@ -1457,7 +1484,7 @@ export async function stopSampleWork(sampleId: string, notes?: string): Promise<
 
   if (dbInstance) {
     try {
-      const ref = doc(dbInstance, "samples", sampleId);
+      const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
@@ -1536,7 +1563,7 @@ export async function pauseSampleWork(sampleId: string, reason?: string): Promis
   const now = Date.now();
   if (dbInstance) {
     try {
-      const ref = doc(dbInstance, "samples", sampleId);
+      const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
@@ -1567,7 +1594,7 @@ export async function resumeSampleWork(sampleId: string): Promise<void> {
   const now = Date.now();
   if (dbInstance) {
     try {
-      const ref = doc(dbInstance, "samples", sampleId);
+      const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
@@ -1608,7 +1635,7 @@ export async function editSampleWorkEntry(
 
   if (dbInstance) {
     try {
-      const ref = doc(dbInstance, "samples", sampleId);
+      const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
@@ -1669,7 +1696,7 @@ export async function deleteSampleWorkEntry(sampleId: string, entryId: string): 
 
   if (dbInstance) {
     try {
-      const ref = doc(dbInstance, "samples", sampleId);
+      const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;

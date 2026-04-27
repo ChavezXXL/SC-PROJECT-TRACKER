@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:cf": "wrangler pages dev -- vite",
+    "deploy:cf": "npm run build && wrangler pages deploy dist",
+    "cf:secret": "wrangler pages secret put"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
@@ -18,10 +21,12 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250410.0",
     "@netlify/functions": "^5.2.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "wrangler": "^4.13.0"
   }
 }

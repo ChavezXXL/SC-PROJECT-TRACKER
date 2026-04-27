@@ -1,0 +1,183 @@
+// ═════════════════════════════════════════════════════════════════════
+// FabTrack IO — Firestore Security Rules (DRAFT)
+//
+// STATUS: Not deployed. Rename to `firestore.rules` and deploy via
+//   `firebase deploy --only firestore:rules`
+//   — ONLY after Phase 2 (auth) is wired, or the SC Deburring install
+//   will lose the ability to read its flat-path collections.
+//
+// Design:
+//   • Default deny for everything.
+//   • Authenticated members read/write only inside `tenants/{tid}` where
+//     they have a matching `members/{uid}` record.
+//   • Super-admins (`accounts/{uid}.superAdmin == true`) can read/write
+//     any tenant.
+//   • Public portal pages (`public_portal/{slug}/**`) readable by anyone.
+//   • LEGACY: The flat-path collections (`jobs`, `logs`, `settings`,
+//     `users`, `quotes`, etc) stay allowed for anyone during the
+//     transition, with a sunset date — lock them down after Phase 7.
+// ═════════════════════════════════════════════════════════════════════
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.superAdmin == true
+        && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.banned != true;
+    }
+
+    function memberOf(tenantId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
+    }
+
+    function memberRole(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function isTenantOwnerOrAdmin(tenantId) {
+      return memberOf(tenantId)
+        && (memberRole(tenantId) == 'owner' || memberRole(tenantId) == 'admin');
+    }
+
+    function tenantIsActive(tenantId) {
+      let t = get(/databases/$(database)/documents/tenants/$(tenantId)).data;
+      return t.status != 'suspended'
+        && t.status != 'canceled'
+        && t.status != 'paused';
+    }
+
+    function isLegacyTenant(tenantId) {
+      return tenantId == 'sc_deburring';
+    }
+
+    // ── accounts/{uid} ─────────────────────────────────────────────
+    match /accounts/{uid} {
+      // Only the account owner reads their account. Super-admins read all.
+      allow read: if (isSignedIn() && request.auth.uid == uid) || isSuperAdmin();
+      // Can create own account on first login.
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.superAdmin != true   // can't self-promote
+        && request.resource.data.banned != true;
+      // Can edit non-privileged fields.
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.superAdmin == resource.data.superAdmin
+        && request.resource.data.banned == resource.data.banned;
+      // Only super-admin can delete or change sensitive fields.
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── tenants/{tenantId} (metadata) ──────────────────────────────
+    match /tenants/{tenantId} {
+      allow read: if memberOf(tenantId) || isSuperAdmin();
+      allow create: if isSignedIn();  // new tenant at signup
+      allow update: if (isTenantOwnerOrAdmin(tenantId)
+        && request.resource.data.status == resource.data.status  // only ops can change status
+        && request.resource.data.isLegacy == resource.data.isLegacy
+        && request.resource.data.comp == resource.data.comp
+        && request.resource.data.featureOverrides == resource.data.featureOverrides
+      ) || isSuperAdmin();
+      allow delete: if isSuperAdmin();
+
+      // ── members ────────────────────────────────────────────────
+      match /members/{uid} {
+        allow read: if memberOf(tenantId) || isSuperAdmin();
+        // Owner/admin can invite; the invited user accepts via /invites.
+        allow create, update, delete: if isTenantOwnerOrAdmin(tenantId) || isSuperAdmin();
+      }
+
+      // ── subscription (read-only to tenant; only webhook writes) ─
+      match /subscription/{doc} {
+        allow read: if memberOf(tenantId) || isSuperAdmin();
+        allow write: if isSuperAdmin();   // webhook runs server-side with admin SDK
+      }
+
+      // ── settings ───────────────────────────────────────────────
+      match /settings/{doc} {
+        allow read: if memberOf(tenantId) || isSuperAdmin();
+        allow write: if isTenantOwnerOrAdmin(tenantId) || isSuperAdmin();
+      }
+
+      // ── data collections (scoped reads/writes require active tenant) ─
+      match /jobs/{jobId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /logs/{logId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /quotes/{quoteId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /samples/{sampleId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /deliveries/{deliveryId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /purchaseOrders/{poId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /vendors/{vendorId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /reworkEntries/{entryId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /workers/{workerId} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+      match /push_subscriptions/{key} {
+        allow read, write: if (memberOf(tenantId) && tenantIsActive(tenantId)) || isSuperAdmin();
+      }
+    }
+
+    // ── invites/{inviteId} ─────────────────────────────────────────
+    match /invites/{inviteId} {
+      // Invitee reads by token in URL; we check token match in the client.
+      allow read: if true;   // token is the security; we won't list all
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();   // acceptance updates status
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── public_portal/{slug}/** (customer-facing read-only) ────────
+    match /public_portal/{slug}/{document=**} {
+      allow read: if true;
+      allow write: if false;   // only server-side scheduled job mirrors data here
+    }
+
+    // ── audit log (operator-only) ──────────────────────────────────
+    match /operator_audit/{entryId} {
+      allow read: if isSuperAdmin();
+      allow write: if isSuperAdmin();
+    }
+
+    // ── LEGACY flat-path collections (SC Deburring) ────────────────
+    // During Phase 0-6, the live install still reads/writes these.
+    // After Phase 7 migration + verified, switch these rules to deny.
+    match /jobs/{jobId}              { allow read, write: if true; }
+    match /logs/{logId}              { allow read, write: if true; }
+    match /settings/{doc}            { allow read, write: if true; }
+    match /quotes/{quoteId}          { allow read, write: if true; }
+    match /samples/{sampleId}        { allow read, write: if true; }
+    match /deliveries/{deliveryId}   { allow read, write: if true; }
+    match /purchase_orders/{poId}    { allow read, write: if true; }
+    match /vendors/{vendorId}        { allow read, write: if true; }
+    match /rework_entries/{entryId}  { allow read, write: if true; }
+    match /users/{userId}            { allow read, write: if true; }
+    match /__debug/{doc}             { allow read, write: if true; }
+
+    // ── Default deny ───────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

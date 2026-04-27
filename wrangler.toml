@@ -1,0 +1,63 @@
+# ═════════════════════════════════════════════════════════════════════
+# FabTrack IO — Cloudflare Pages + Workers config
+#
+# This file configures the Cloudflare deploy. The static build comes
+# from `npm run build` (output: dist/), and `functions/` becomes Pages
+# Functions automatically (any file under functions/ → an endpoint).
+#
+# Deploy:
+#   1. Connect this GitHub repo to Cloudflare Pages (one-time, dashboard)
+#   2. Push to master → Pages auto-builds + deploys
+#   3. Set env vars + bindings in Cloudflare dashboard (or via wrangler):
+#        wrangler pages secret put GEMINI_API_KEY
+#        wrangler pages secret put VAPID_PUBLIC_KEY
+#        wrangler pages secret put VAPID_PRIVATE_KEY
+#        wrangler pages secret put VAPID_SUBJECT
+#
+# Local dev (test functions before deploy):
+#   npm run dev:functions
+# ═════════════════════════════════════════════════════════════════════
+
+name = "fabtrack-io"
+compatibility_date = "2025-04-01"
+
+# Enable the Node.js compatibility layer so npm packages that use
+# `Buffer`, `crypto.createHmac`, etc. (e.g. `web-push`) just work.
+compatibility_flags = ["nodejs_compat"]
+
+# Pages-specific config (most settings live in the dashboard, but the
+# build output dir is canonical here for `wrangler pages dev`).
+pages_build_output_dir = "dist"
+
+# ─────────────────────────────────────────────────────────────────────
+# Bindings — uncomment + run `wrangler r2 bucket create` etc. as needed
+# ─────────────────────────────────────────────────────────────────────
+
+# R2 bucket for drawing PDFs / part photos / PO attachments.
+# Phase 4+ — when we wire file uploads off Firestore base64 inline storage.
+# [[r2_buckets]]
+# binding = "ATTACHMENTS"
+# bucket_name = "fabtrack-attachments"
+
+# KV namespace — fast cache for tenant lookup, feature flags, rate limiting.
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "<from `wrangler kv:namespace create CACHE`>"
+
+# D1 database — SQLite for non-Firestore data (audit log, analytics).
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "fabtrack-ops"
+# database_id = "<from `wrangler d1 create`>"
+
+# Queue for outbound transactional emails (welcome, trial-ending, dunning).
+# [[queues.producers]]
+# binding = "EMAIL_QUEUE"
+# queue = "fabtrack-email"
+
+# Cron triggers (trial-expiry, dunning, scheduled exports).
+# [triggers]
+# crons = [
+#   "0 14 * * *",   # daily at 14:00 UTC — trial-ending check
+#   "0 */4 * * *",  # every 4h — dunning + scheduled report runs
+# ]
