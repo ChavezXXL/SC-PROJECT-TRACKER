@@ -26,14 +26,18 @@ import {
 // "jobs" — identical to the pre-multitenant behavior. For new tenants,
 // returns "tenants/{tid}/jobs". Nothing changes for SC Deburring until
 // we explicitly switch `getTenantId()` to return something else.
-import { colPath, LEGACY_TENANT_ID } from "../backend/tenantContext";
+import { colPath, resolveCurrentTenantId } from "../backend/tenantContext";
 
-/** Current tenant resolver. Returns the legacy SC Deburring tenant until
- *  Phase 2 wires this to Firebase Auth + account lookup. Any future change
- *  to multi-tenancy starts here — swap this single function and every
- *  collection path moves with it. */
+/** Current tenant resolver. Reads from URL param → localStorage →
+ *  legacy SC Deburring fallback (LEGACY_TENANT_ID). AuthProvider writes
+ *  the localStorage entry on sign-in / sign-up; sign-out clears it,
+ *  which falls back to legacy paths.
+ *
+ *  This is the single switch point. Every Firestore path in this file
+ *  resolves through here. Swap the implementation here to change how
+ *  multi-tenancy works app-wide. */
 function getTenantId(): string {
-  return LEGACY_TENANT_ID;
+  return resolveCurrentTenantId();
 }
 
 // --------------------
@@ -137,12 +141,24 @@ export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Pr
 // --------------------
 // LOCAL STORAGE FALLBACK CONSTANTS
 // --------------------
+// Tenant-scoped so a second tenant's offline cache doesn't bleed into
+// the first. SC Deburring (legacy) keeps the original keys ("nexus_jobs"
+// etc.) so its existing cached data is preserved across this change.
+// New tenants get prefixed keys: "t_{tid}__nexus_jobs".
+function lsPrefix(): string {
+  try {
+    const tid = getTenantId();
+    return tid && tid !== 'sc_deburring' ? `t_${tid}__` : '';
+  } catch {
+    return '';
+  }
+}
 const LS = {
-  jobs: "nexus_jobs",
-  logs: "nexus_logs",
-  users: "nexus_users",
-  settings: "nexus_settings",
-  quotes: "nexus_quotes",
+  get jobs()     { return lsPrefix() + 'nexus_jobs'; },
+  get logs()     { return lsPrefix() + 'nexus_logs'; },
+  get users()    { return lsPrefix() + 'nexus_users'; },
+  get settings() { return lsPrefix() + 'nexus_settings'; },
+  get quotes()   { return lsPrefix() + 'nexus_quotes'; },
 };
 
 function readLS<T>(key: string, fallback: T): T {

@@ -31,6 +31,7 @@ import {
   type SignupInput,
   type SignupResult,
 } from './authService';
+import { clearCurrentTenantId, setCurrentTenantId as persistTenantId } from './tenantContext';
 
 export interface AuthContextValue {
   /** Current signed-in account, or null when signed out. */
@@ -97,11 +98,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     },
     logOut: async () => {
       await logOut();
+      clearCurrentTenantId();          // wipe localStorage so legacy fallback re-engages
       setAccount(null);
       setTenants([]);
       setCurrentTenantId(null);
+      // Reload to a clean state — clears any cached tenant data in mockDb subscriptions.
+      window.location.href = '/login';
     },
-    switchTenant: (tid) => setCurrentTenantId(tid),
+    switchTenant: (tid) => {
+      persistTenantId(tid);            // persist in localStorage so mockDb sees it next read
+      setCurrentTenantId(tid);
+    },
   }), [account, tenants, currentTenantId, isLoading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
