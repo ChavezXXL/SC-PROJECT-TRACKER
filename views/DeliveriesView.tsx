@@ -25,6 +25,7 @@ import { directionsUrl, formatMiles } from '../utils/geo';
 import { uniqueCustomers } from '../utils/customers';
 import { fmt, todayFmt } from '../utils/date';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/useConfirm';
 
 const IRS_MILEAGE_RATE_CENTS_2025 = 70; // $0.70/mi — update annually
 
@@ -40,6 +41,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
 
   useEffect(() => {
     const u1 = DB.subscribeDeliveries(setDeliveries);
@@ -108,7 +110,14 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
   };
 
   const cancelRun = async (d: Delivery) => {
-    if (!confirm('Cancel this delivery? Any GPS track will be discarded.')) return;
+    const ok = await confirmDialog({
+      title: 'Cancel this delivery?',
+      message: 'Any GPS track will be discarded. The run will be marked cancelled.',
+      tone: 'warning',
+      confirmLabel: 'Cancel run',
+      cancelLabel: 'Keep running',
+    });
+    if (!ok) return;
     if (gpsRef.current?.id === d.id) {
       stopTracking(gpsRef.current.session);
       gpsRef.current = null;
@@ -118,7 +127,13 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
   };
 
   const deleteRun = async (d: Delivery) => {
-    if (!confirm(`Delete run ${d.runNumber}? This can't be undone.`)) return;
+    const ok = await confirmDialog({
+      title: `Delete run ${d.runNumber}?`,
+      message: "This can't be undone. The mileage log entry will be removed.",
+      tone: 'danger',
+      confirmLabel: 'Delete run',
+    });
+    if (!ok) return;
     await DB.deleteDelivery(d.id);
     addToast('info', 'Deleted');
   };
@@ -295,6 +310,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
             addToast('success', `Run ${d.runNumber} created`);
           }}
           currentUser={user}
+          addToast={addToast}
         />
       )}
 
@@ -318,9 +334,11 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
               addToast('success', `Saved ${updated.runNumber}`);
             }}
             currentUser={user}
+            addToast={addToast}
           />
         );
       })()}
+      {ConfirmHost}
     </div>
   );
 };
@@ -575,7 +593,8 @@ const DeliveryEditor: React.FC<{
   currentUser: Props['user'];
   onCancel: () => void;
   onSave: (d: Delivery, updatedContacts?: Record<string, CustomerContact>) => void;
-}> = ({ existing, drivers, jobs, allRuns, settings, currentUser, onCancel, onSave }) => {
+  addToast: Props['addToast'];
+}> = ({ existing, drivers, jobs, allRuns, settings, currentUser, onCancel, onSave, addToast }) => {
   const openJobs = useMemo(() => jobs.filter(j => j.status !== 'completed'), [jobs]);
   const [runNumber, setRunNumber] = useState(existing?.runNumber || DB.nextDeliveryRunNumber(allRuns));
   const [driverId, setDriverId] = useState(existing?.driverId || currentUser.id);
@@ -608,7 +627,9 @@ const DeliveryEditor: React.FC<{
 
   const handleSave = () => {
     if (stops.length === 0 || stops.some(s => !s.address.trim())) {
-      alert('Add at least one stop with an address.');
+      // Toast (not alert) — alert() inside a modal makes the modal feel
+      // broken (the native dialog can hide behind the overlay on some OSes).
+      addToast('error', 'Add at least one stop with an address.');
       return;
     }
 

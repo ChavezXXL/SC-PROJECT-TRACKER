@@ -22,6 +22,7 @@ import {
 import { Sample, SampleWorkEntry } from './types';
 import * as DB from './services/mockDb';
 import { Overlay } from './components/Overlay';
+import { useConfirm } from './components/useConfirm';
 
 // ── Compress image ──────────────────────────────────────────────
 function compressImage(file: File, maxWidth = 1200): Promise<string> {
@@ -213,9 +214,11 @@ const WorkHistoryModal: React.FC<{
 }> = ({ sample, operations, onEditEntry, onDeleteEntry, onClose }) => {
   const entries = [...(sample.workEntries || [])].sort((a, b) => b.startTime - a.startTime);
   const [editingEntry, setEditingEntry] = useState<SampleWorkEntry | null>(null);
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
 
   return (
     <Overlay open onClose={onClose} ariaLabel="Work history" zIndex={100} backdrop="bg-zinc-950">
+      {ConfirmHost}
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
           <div>
@@ -293,7 +296,15 @@ const WorkHistoryModal: React.FC<{
                       className="flex-1 text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg hover:bg-blue-500/20 font-bold flex items-center justify-center gap-1">
                       <Edit2 className="w-3 h-3" /> Edit
                     </button>
-                    <button onClick={() => { if (confirm('Delete this work entry?')) onDeleteEntry(e.id); }}
+                    <button onClick={async () => {
+                      const ok = await confirmDialog({
+                        title: 'Delete this work entry?',
+                        message: `Removes the ${e.userName || 'session'} entry from history.`,
+                        tone: 'danger',
+                        confirmLabel: 'Delete entry',
+                      });
+                      if (ok) onDeleteEntry(e.id);
+                    }}
                       className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 font-bold flex items-center justify-center gap-1">
                       <Trash2 className="w-3 h-3" /> Delete
                     </button>
@@ -574,6 +585,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
   const [showModal, setShowModal] = useState(false);
   const [editingSample, setEditingSample] = useState<Partial<Sample> | null>(null);
   const [viewPhoto, setViewPhoto] = useState<string | null>(null);
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [startWorkSample, setStartWorkSample] = useState<Sample | null>(null);
   const [histSample, setHistSample] = useState<Sample | null>(null);
@@ -608,7 +620,14 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this sample?')) return;
+    const sample = samples.find(s => s.id === id);
+    const ok = await confirmDialog({
+      title: 'Delete this sample?',
+      message: sample ? `${sample.partNumber} — ${sample.companyName}. Removes all work history for this sample.` : 'Removes all work history for this sample.',
+      tone: 'danger',
+      confirmLabel: 'Delete sample',
+    });
+    if (!ok) return;
     try { await DB.deleteSample(id); addToast('success', 'Sample deleted'); }
     catch { addToast('error', 'Failed to delete'); }
   };
@@ -695,6 +714,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
 
   return (
     <div className="space-y-6">
+      {ConfirmHost}
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>

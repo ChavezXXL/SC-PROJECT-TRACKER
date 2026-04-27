@@ -89,6 +89,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'quote' | 'jobs'>(quoteId ? 'quote' : 'jobs');
   const [approvalDone, setApprovalDone] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
@@ -182,23 +183,25 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
 
   const handleApprove = async () => {
     if (!linkedQuote) return;
+    setApprovalError(null);
     try {
       await DB.saveQuote({ ...linkedQuote, status: 'accepted', acceptedAt: Date.now() });
       setApprovalDone(true);
     } catch (e) {
       console.error('Failed to approve quote:', e);
-      alert('Something went wrong approving this quote. Please try again or contact us.');
+      setApprovalError('Something went wrong approving this quote. Please try again or contact us directly.');
     }
   };
 
   const handleDecline = async () => {
     if (!linkedQuote) return;
+    setApprovalError(null);
     try {
       await DB.saveQuote({ ...linkedQuote, status: 'declined', declinedAt: Date.now() });
       setApprovalDone(true);
     } catch (e) {
       console.error('Failed to decline quote:', e);
-      alert('Something went wrong. Please try again or contact us.');
+      setApprovalError('Something went wrong submitting your response. Please try again or contact us directly.');
     }
   };
 
@@ -402,6 +405,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                 </div>
               )}
             </div>
+
+            {/* Inline error — replaces the old window.alert(). Customer-facing
+                so the wording is friendly + actionable, not a stack trace. */}
+            {approvalError && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl px-4 py-3 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                <p className="text-sm flex-1">{approvalError}</p>
+                <button type="button" onClick={() => setApprovalError(null)} aria-label="Dismiss" className="text-red-300 hover:text-white p-0.5">
+                  <X className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            )}
 
             {/* Approve/Decline Buttons (bottom) */}
             {linkedQuote.status === 'sent' && !approvalDone && (

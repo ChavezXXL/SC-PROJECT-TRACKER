@@ -5,6 +5,7 @@ import * as DB from './services/mockDb';
 import { printQuotePDF } from './services/pdfService';
 import { fmtMoneyK } from './utils/format';
 import { Overlay } from './components/Overlay';
+import { useConfirm } from './components/useConfirm';
 
 interface QuotesViewProps {
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
@@ -190,6 +191,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [filter, setFilter] = useState<QuoteStatus | 'all'>('all');
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
   // View mode — list or kanban pipeline (Round 2 #9)
   const [viewMode, setViewMode] = useState<'list' | 'pipeline'>(() => {
     try { return (localStorage.getItem('quotes_view_mode') as 'list' | 'pipeline') || 'list'; } catch { return 'list'; }
@@ -397,8 +399,15 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     addToast('success', `Loaded template "${tpl.label}"`);
   };
 
-  const deleteTemplate = (id: string) => {
-    if (!confirm('Delete this template?')) return;
+  const deleteTemplate = async (id: string) => {
+    const tpl = (settings.quoteTemplates || []).find(t => t.id === id);
+    const ok = await confirmDialog({
+      title: 'Delete this template?',
+      message: tpl ? `"${tpl.label}" will be removed from your quote templates.` : 'Removes this template from your quote templates.',
+      tone: 'danger',
+      confirmLabel: 'Delete template',
+    });
+    if (!ok) return;
     const templates = (settings.quoteTemplates || []).filter(t => t.id !== id);
     const updated = { ...settings, quoteTemplates: templates };
     setSettings(updated);
@@ -660,6 +669,7 @@ ${settings.companyPhone || ''}`.trim()
   return (
     // Full-width so large monitors don't show a dead column on the right
     <div className="w-full space-y-6">
+      {ConfirmHost}
       {/* ── Page Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

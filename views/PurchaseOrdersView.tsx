@@ -21,6 +21,7 @@ import type {
 import { DEFAULT_QUALITY_REQUIREMENTS } from '../types';
 import * as DB from '../services/mockDb';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/useConfirm';
 import { fmtMoneyK } from '../utils/format';
 import { printPurchaseOrderPDF } from '../services/pdfService';
 
@@ -50,6 +51,7 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<'all' | POStatus>('all');
   const [search, setSearch] = useState('');
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
 
   useEffect(() => {
     const u1 = DB.subscribePurchaseOrders(setPos);
@@ -90,7 +92,13 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
   }, [pos]);
 
   const handleDelete = async (p: PurchaseOrder) => {
-    if (!confirm(`Delete ${p.poNumber}? Audit history will be lost.`)) return;
+    const ok = await confirmDialog({
+      title: `Delete ${p.poNumber}?`,
+      message: 'Audit history will be lost. This cannot be undone.',
+      tone: 'danger',
+      confirmLabel: 'Delete PO',
+    });
+    if (!ok) return;
     await DB.deletePurchaseOrder(p.id);
     addToast('info', `Deleted ${p.poNumber}`);
   };
@@ -118,6 +126,7 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
 
   return (
     <div className="space-y-5 animate-fade-in w-full">
+      {ConfirmHost}
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
         <div>
@@ -461,9 +470,9 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
   };
 
   const handleSave = () => {
-    if (!po.vendorId) { alert('Pick a vendor'); return; }
-    if (po.items.length === 0) { alert('Add at least one line item'); return; }
-    if (po.items.some(i => !i.description.trim())) { alert('Every line item needs a description'); return; }
+    if (!po.vendorId) { addToast('error', 'Pick a vendor before saving'); return; }
+    if (po.items.length === 0) { addToast('error', 'Add at least one line item'); return; }
+    if (po.items.some(i => !i.description.trim())) { addToast('error', 'Every line item needs a description'); return; }
     onSave(po);
   };
 

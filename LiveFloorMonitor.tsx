@@ -28,6 +28,7 @@ import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, 
 import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
+import { useConfirm } from './components/useConfirm';
 
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [
@@ -1165,6 +1166,7 @@ const TvJobsBelt: React.FC<{ jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'n
 
 export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack, addToast: addToastProp, standalone }) => {
   const addToast = addToastProp || (() => {});
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
   const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -1336,7 +1338,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   };
 
   const handleForceStop = async (logId: string) => {
-    if (!confirm('Force stop this timer?')) return;
+    const ok = await confirmDialog({
+      title: 'Force stop this timer?',
+      message: 'The worker may still be running it. They will need to clock back in if this was a mistake.',
+      tone: 'warning',
+      confirmLabel: 'Force stop',
+    });
+    if (!ok) return;
     try { await DB.stopTimeLog(logId); addToast('success', 'Timer stopped'); }
     catch { addToast('error', 'Failed to stop timer'); }
   };
@@ -1705,6 +1713,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
   return (
     <div className={`min-h-screen transition-all duration-500 ${dimMode ? 'bg-black' : 'bg-zinc-950'}`}>
+      {ConfirmHost}
       {/* HEADER */}
       <div className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-xl border-b border-white/5">
         <div className="flex items-center justify-between px-4 py-3">

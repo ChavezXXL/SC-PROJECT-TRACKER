@@ -21,10 +21,10 @@ import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry } from './types';
 import * as DB from './services/mockDb';
-import { parseJobDetails } from './services/geminiService';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
 import { SamplesView } from './SamplesView';
-import { POScanner } from './POScanner';
+// AI scanning (parseJobDetails / POScanner) removed from production —
+// see Jobs view comment. Gemini service file stays for future re-enable.
 import { QuotesView } from './QuotesView';
 import { CustomerPortal } from './CustomerPortal';
 import { ReportsView } from './views/ReportsView';
@@ -3276,7 +3276,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Plus className="w-4 h-4" /> New Job</button>
-          <button onClick={onOpenPOScanner} className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-bold border border-white/10 text-sm transition-all"><ScanLine className="w-4 h-4" /> Scan PO</button>
+          {/* AI "Scan PO" button removed — was unreliable + costly + slow vs typing 5 fields manually. */}
           <button
             onClick={() => setShowClientUpdate(true)}
             title="Generate a status message for a customer based on their open jobs"
@@ -5198,7 +5198,7 @@ export default function App() {
       return next;
     });
   }, []);
-  const [showPOScanner, setShowPOScanner] = useState(false);
+  // AI POScanner state retained as inert placeholder; UI button removed.
   const [appSettings, setAppSettings] = useState<SystemSettings>(DB.getSettings());
   // For notifications  track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
@@ -5327,32 +5327,8 @@ export default function App() {
     .map(g => ({ ...g, items: g.items.filter(n => !n.adminOnly || user?.role === 'admin') }))
     .filter(g => g.items.length > 0);
 
- //  PO SCANNER 
-  const handlePOJobCreate = async (jobData: { poNumber: string; partNumber: string; customer: string; quantity: number; dueDate: string; dateReceived?: string; priority?: string; info: string; specialInstructions?: string; }) => {
-
-    // Safety Fallback: Clear the placeholder if the AI failed to find a date
-    let cleanDueDate = jobData.dueDate;
-    if (cleanDueDate === "MM/DD/YYYY" || !cleanDueDate) {
-      cleanDueDate = "";
-    }
-
-    const newJob: Job = {
-      id: `job_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
-      jobIdsDisplay: `J-${Date.now().toString().slice(-6)}`,
-      poNumber: jobData.poNumber,
-      partNumber: jobData.partNumber,
-      customer: jobData.customer || '',
-      quantity: jobData.quantity,
-      dueDate: normDate(cleanDueDate),
-      dateReceived: jobData.dateReceived || todayFmt(),
-      info: jobData.info,
-      specialInstructions: jobData.specialInstructions || '',
-      status: 'pending',
-      priority: (jobData.priority as any) || 'normal',
-      createdAt: Date.now(),
-    };
-    await DB.saveJob(newJob);
-  };
+  // (handlePOJobCreate removed — only used by the AI POScanner which we
+  // pulled out. New jobs come in via the New Job modal in JobsView.)
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex font-sans">
@@ -5500,12 +5476,12 @@ export default function App() {
 
         <div className="p-4 md:p-8">
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
-          {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} />}
+          {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} />}
           {view === 'admin-board' && <JobBoardView user={user} addToast={addToast} confirm={setConfirm} onEditStages={() => setView('admin-settings')} />}
           {view === 'admin-quality' && <QualityView user={user} addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-deliveries' && user && <DeliveriesView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />}
           {view === 'admin-purchase-orders' && user && <PurchaseOrdersView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />}
-          {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => setShowPOScanner(true)} calendarOnly />}
+          {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} userId={user?.id} />}
@@ -5537,13 +5513,9 @@ export default function App() {
         </div>
       </main>
 
-     {showPOScanner && (
-  <POScanner
-    onJobCreate={handlePOJobCreate}
-    onClose={() => setShowPOScanner(false)}
-    clients={appSettings.clients || []}
-  />
-)}
+     {/* AI POScanner removed — kept the file in repo so we can re-enable
+         later as a Shop OS-tier feature. For now, manual entry is faster
+         and free vs. paying Gemini per scan. */}
             <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
         <div className="pointer-events-auto flex flex-col items-end gap-2">
           {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}

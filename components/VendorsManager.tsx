@@ -8,6 +8,7 @@ import { Plus, Trash2, Archive, Store, Mail, Phone, MapPin, Tag } from 'lucide-r
 import type { Vendor } from '../types';
 import * as DB from '../services/mockDb';
 import { Modal } from './Modal';
+import { useConfirm } from './useConfirm';
 
 interface Props {
   addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
@@ -26,6 +27,7 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const { confirm: confirmDialog, ConfirmHost } = useConfirm();
 
   useEffect(() => DB.subscribeVendors(setVendors), []);
 
@@ -49,7 +51,13 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
   };
 
   const handleDelete = async (v: Vendor) => {
-    if (!confirm(`Delete vendor "${v.name}"? This can't be undone. Archive instead?`)) return;
+    const ok = await confirmDialog({
+      title: `Delete vendor "${v.name}"?`,
+      message: "This can't be undone. Consider archiving instead so PO history is preserved.",
+      tone: 'danger',
+      confirmLabel: 'Delete vendor',
+    });
+    if (!ok) return;
     await DB.deleteVendor(v.id);
     addToast('info', `Deleted ${v.name}`);
   };
@@ -61,6 +69,7 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
 
   return (
     <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+      {ConfirmHost}
       <div className="px-4 py-3 flex items-center justify-between border-b border-white/5 gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <Store className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
@@ -151,6 +160,7 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
           existing={editing}
           onClose={() => { setEditing(null); setCreating(false); }}
           onSave={handleSave}
+          addToast={addToast}
         />
       )}
     </div>
@@ -162,7 +172,8 @@ const VendorEditor: React.FC<{
   existing: Vendor | null;
   onClose: () => void;
   onSave: (v: Vendor) => void;
-}> = ({ existing, onClose, onSave }) => {
+  addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
+}> = ({ existing, onClose, onSave, addToast }) => {
   const [v, setV] = useState<Vendor>(() => existing || {
     id: `vendor_${Date.now()}`,
     name: '',
@@ -178,7 +189,7 @@ const VendorEditor: React.FC<{
   };
 
   const handleSave = () => {
-    if (!v.name.trim()) { alert('Vendor name is required'); return; }
+    if (!v.name.trim()) { addToast('error', 'Vendor name is required'); return; }
     onSave(v);
   };
 
