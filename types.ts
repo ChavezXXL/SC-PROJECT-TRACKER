@@ -335,6 +335,8 @@ export interface POLineItem {
   unit?: string;            // "ea", "lb", "hr", "lot", "ft"
   unitPrice: number;
   total: number;
+  /** Quantity actually received — used for partial-receipt tracking. */
+  receivedQty?: number;
   /** Per-line required certifications / inspections (CoC, FAI, Mat-Cert, etc.) */
   qualityReqs?: string[];
   /** Per-line instructions to the vendor — e.g. "per customer drawing rev C". */
