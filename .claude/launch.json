@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "marketing",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "serve", "marketing", "-l", "5500"],
+      "port": 5500
     }
   ]
 }

@@ -1203,7 +1203,12 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [compact, setCompact] = useState(false);
   const [dimMode, setDimMode] = useState(false);
-  const [tvMode, setTvMode] = useState(false);
+  // STANDALONE TV LINK (?tv=TOKEN): auto-enter slideshow on page load — the
+  // whole point of that URL is "stick this on a wall TV and never touch it
+  // again". Previously tvMode defaulted to false even with standalone, so
+  // every refresh / browser hiccup dumped the TV back to the admin-style
+  // view and someone had to walk over and re-click "TV Mode".
+  const [tvMode, setTvMode] = useState(() => !!standalone);
   const prevLogIdsRef = useRef<Set<string>>(new Set());
 
   const isAdmin = !standalone && user?.role === 'admin';
@@ -1288,7 +1293,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode) return;
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setTvMode(false); return; }
+      // Standalone TV link locks itself in TV mode — Esc would otherwise
+      // drop a wall-mounted display into an unusable admin view nobody can
+      // recover without a keyboard. Admin-mode TV (no standalone) keeps the
+      // Esc-to-exit affordance because they have a "Back" button to return to.
+      if (e.key === 'Escape') {
+        if (!standalone) setTvMode(false);
+        return;
+      }
       const n = Math.max(1, slideCountRef.current);
       if (e.key === 'ArrowRight') {
         setTvFade(false);

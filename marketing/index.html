@@ -3,729 +3,1334 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shop OS — Shop-floor software that doesn't charge per operator</title>
-  <meta name="description" content="Run your machine shop, finishing shop, or fabrication floor on flat-rate software. Unlimited operators. Live TV, quote-to-job, portal, and reporting built for how shops actually work." />
-  <meta name="theme-color" content="#09090b" />
-  <meta property="og:title" content="Shop OS — Shop-floor software that doesn't charge per operator" />
-  <meta property="og:description" content="Unlimited floor seats, flat pricing. Live TV, quote-to-job, customer portal, PDF quotes, push alerts. Built for finishing shops, machine shops, and fabricators." />
-  <meta property="og:type" content="website" />
+  <title>FabTrack IO — Shop-floor software for finishing shops</title>
+  <meta name="description" content="Track every job, every rack, every quote — from RFQ to ship. Flat pricing, unlimited operators. Built by a deburring shop, for finishing shops." />
+  <meta name="theme-color" content="#f6f4ef" />
+  <meta property="og:title" content="FabTrack IO — Shop-floor software for finishing shops" />
+  <meta property="og:description" content="Track every job, every rack, every quote — from RFQ to ship. Flat pricing, unlimited operators. Built by a shop owner." />
 
-  <!-- Fonts -->
+  <!-- Fonts: Source Serif 4 (display), Inter Tight (body), JetBrains Mono (eyebrows) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-
-  <!-- Tailwind CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: { zinc: { 950: '#09090b' } },
-          fontFamily: {
-            sans: ['Inter', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
-          },
-        },
-      },
-    };
-  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css" />
 </head>
 
-<body class="bg-zinc-950 text-zinc-100">
+<body>
 
-  <!-- ═══════════════════════════════════ NAV ═══════════════════════════════════ -->
-  <nav class="nav-root">
-    <div class="container-lg flex items-center justify-between h-16">
-      <a href="/" class="flex items-center gap-2.5 font-bold text-lg tracking-tight">
-        <span class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-lg shadow-blue-500/30">SO</span>
-        <span>Shop OS</span>
-      </a>
-
-      <!-- Desktop nav -->
-      <div class="hidden md:flex items-center gap-1">
-        <a href="features.html" class="nav-link">Features</a>
-        <a href="pricing.html" class="nav-link">Pricing</a>
-        <a href="#customers" class="nav-link">Customers</a>
-        <a href="contact.html" class="nav-link">Contact</a>
-      </div>
-
-      <div class="hidden md:flex items-center gap-2">
-        <a href="https://app.yourdomain.com" class="nav-link">Log in</a>
-        <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-sm">
-          Start free trial
-          <i data-lucide="arrow-right" class="w-4 h-4"></i>
-        </a>
-      </div>
-
-      <!-- Mobile toggle -->
-      <button class="md:hidden p-2 rounded-lg hover:bg-white/5" data-nav-toggle aria-label="Menu" aria-expanded="false">
-        <i data-lucide="menu" class="w-6 h-6" data-icon-open></i>
-        <i data-lucide="x" class="w-6 h-6" data-icon-close style="display:none"></i>
-      </button>
+  <!-- ═══════════════════════════════════ FLOATING PILL NAV ═══════════════════════════════════ -->
+  <nav class="pill-nav" data-pill-nav>
+    <a href="/" class="pill-brand" aria-label="FabTrack IO home">
+      <svg width="26" height="26" viewBox="0 0 36 36" fill="none" class="shrink-0">
+        <rect width="36" height="36" rx="8" fill="#0e0e10"/>
+        <text x="18" y="24" font-family="Inter Tight, sans-serif" font-weight="800" font-size="14" fill="#ff5b1f" text-anchor="middle" letter-spacing="-0.5">FT</text>
+      </svg>
+      <span>FabTrack <em>IO</em></span>
+    </a>
+    <div class="pill-links">
+      <a href="#workflow">Workflow</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#shopfloor">Shops</a>
+      <a href="#faq">Q&amp;A</a>
     </div>
-
-    <!-- Mobile drawer -->
-    <div class="mobile-nav" data-mobile-nav>
-      <a href="features.html">Features</a>
-      <a href="pricing.html">Pricing</a>
-      <a href="#customers">Customers</a>
-      <a href="contact.html">Contact</a>
-      <div class="h-px bg-white/5 my-2"></div>
-      <a href="https://app.yourdomain.com">Log in</a>
-      <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-md mt-2">Start free trial</a>
-    </div>
+    <a href="https://app.fabtrackio.com/signup" class="pill-cta">
+      Start trial <span aria-hidden="true">→</span>
+    </a>
+    <button class="pill-toggle" data-pill-toggle aria-label="Menu" aria-expanded="false">
+      <span class="bar"></span><span class="bar"></span>
+    </button>
   </nav>
 
+  <!-- Mobile drawer -->
+  <div class="pill-drawer" data-pill-drawer>
+    <a href="#workflow">Workflow</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#shopfloor">Shops</a>
+    <a href="#faq">Q&amp;A</a>
+    <a href="https://app.fabtrackio.com/signup" class="drawer-cta">Start trial →</a>
+  </div>
+
   <!-- ═══════════════════════════════════ HERO ═══════════════════════════════════ -->
-  <section class="relative pt-16 pb-20 md:pt-24 md:pb-32 overflow-hidden">
-    <div class="hero-glow"></div>
-    <div class="absolute inset-0 grid-bg opacity-40 pointer-events-none"></div>
-
-    <div class="container-lg relative z-10">
-      <div class="flex justify-center mb-6 reveal">
-        <a href="#customers" class="chip chip-primary hover:border-blue-400/40 transition-colors">
-          <span class="dot"></span>
-          New: Quote-to-Job sync with QuickBooks
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+  <header class="hero">
+    <div class="hero-grid">
+      <!-- LEFT — editorial column -->
+      <div class="hero-left reveal" style="--i:0">
+        <a href="#changelog" class="status-pill">
+          <span class="status-dot"></span>
+          v.2.4 — QC routing &amp; TV wake-lock shipped today
+          <span class="arrow">↗</span>
         </a>
+
+        <h1 class="hero-headline">
+          <span class="line line-1">Track every job.</span>
+          <span class="line line-2">From quote to ship.</span>
+        </h1>
+
+        <p class="hero-sub reveal-words">
+          Shop-floor software for finishing shops. Built by a deburring shop owner who got tired of paying $150 a seat for software the floor wouldn&rsquo;t open.
+        </p>
+
+        <div class="hero-cta">
+          <a href="https://app.fabtrackio.com/signup" class="btn-primary">
+            Start free 14-day trial <span aria-hidden="true">→</span>
+          </a>
+          <a href="#dashboard" class="btn-link">
+            <span class="play-mark" aria-hidden="true">▷</span> See it on a real floor
+          </a>
+        </div>
+
+        <p class="hero-fineprint">
+          <span class="mono">FLAT $79/MO</span> · unlimited operators · no card to start
+        </p>
       </div>
 
-      <h1 class="reveal text-center text-5xl sm:text-6xl md:text-7xl lg:text-[5.5rem] font-extrabold tracking-tighter leading-[1.02] max-w-5xl mx-auto">
-        Your shop floor.<br />
-        <span class="text-gradient">Not theirs.</span>
-      </h1>
+      <!-- RIGHT — editorial sidebar (numerical credibility) -->
+      <aside class="hero-right reveal" style="--i:1" aria-label="Live shop floor stats">
+        <div class="hero-side-card">
+          <div class="side-label">
+            <span>From the floor</span>
+            <span class="mono side-time" data-clock>14:32</span>
+          </div>
 
-      <p class="reveal mt-7 text-center text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto leading-relaxed">
-        Shop-floor software that doesn't charge per operator.<br class="hidden md:block" />
-        Flat pricing, unlimited floor seats, and every tool your team actually uses.
-      </p>
+          <div class="side-num-block">
+            <div class="side-num">12,400<span class="side-num-suf">/wk</span></div>
+            <div class="side-num-key">jobs tracked</div>
+          </div>
 
-      <div class="reveal mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-        <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-lg w-full sm:w-auto">
-          Start free trial
-          <i data-lucide="arrow-right" class="w-5 h-5"></i>
-        </a>
-        <a href="#demo" class="btn btn-secondary btn-lg w-full sm:w-auto">
-          <i data-lucide="play-circle" class="w-5 h-5"></i>
-          Watch demo
-        </a>
-      </div>
+          <div class="side-num-block">
+            <div class="side-num">98.2<span class="side-num-suf">%</span></div>
+            <div class="side-num-key">on-time ship rate</div>
+          </div>
 
-      <p class="reveal mt-5 text-center text-sm text-zinc-500">
-        14-day free trial · No credit card · Cancel anytime
-      </p>
+          <div class="side-num-block">
+            <div class="side-num">$1.84<span class="side-num-suf">M</span></div>
+            <div class="side-num-key">scrap saved YTD</div>
+          </div>
 
-      <!-- Hero screenshot -->
-      <div id="demo" class="reveal mt-16 md:mt-20 max-w-6xl mx-auto">
-        <div class="screenshot-framed">
-          <div class="screenshot screenshot-lg">
-            SCREENSHOT — LIVE FLOOR DASHBOARD
+          <div class="side-foot">
+            <span class="mono">— rolling 90 days, all shops</span>
           </div>
         </div>
+
+        <!-- Origin stamp -->
+        <div class="origin-stamp">
+          <div class="origin-line">Made by a shop.</div>
+          <div class="origin-line">Not a startup.</div>
+          <div class="origin-mark">SC DEBURRING LLC · FRESNO CA</div>
+        </div>
+      </aside>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════ SECTION § 01 — THE FLOOR ═══════════════════════════════════ -->
+  <section id="dashboard" class="section">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№01</span>
+        <span class="title">— THE FLOOR</span>
+        <span class="sub">live readout, every screen</span>
       </div>
 
-      <!-- Logo strip -->
-      <div class="reveal mt-16 md:mt-24">
-        <p class="text-center text-xs uppercase tracking-[0.2em] text-zinc-600 mb-6 font-semibold">Trusted by shops across North America</p>
-        <div class="logo-strip">
-          <span class="logo-item">ACME&nbsp;MFG</span>
-          <span class="logo-item">STEELRIVER</span>
-          <span class="logo-item">PRECISION&nbsp;CO</span>
-          <span class="logo-item">NORTH&nbsp;METAL</span>
-          <span class="logo-item">VERTEX&nbsp;FAB</span>
-          <span class="logo-item">IRONWORK&nbsp;LLC</span>
+      <h2 class="section-headline reveal" style="--i:0">
+        The whole shop on one&nbsp;screen.<br />
+        <span class="muted">Or every TV. Or every phone.</span>
+      </h2>
+
+      <!-- LIGHT-MODE DASHBOARD MOCKUP -->
+      <figure class="dashboard reveal" style="--i:1">
+        <div class="dash-chrome">
+          <div class="dash-dots"><span></span><span></span><span></span></div>
+          <div class="dash-url">app.fabtrackio.com / live floor</div>
+          <div class="dash-live"><span class="live-dot"></span> LIVE</div>
+        </div>
+        <div class="dash-body">
+          <aside class="dash-side">
+            <div class="dash-brand">
+              <svg width="22" height="22" viewBox="0 0 36 36"><rect width="36" height="36" rx="8" fill="#0e0e10"/><text x="18" y="24" font-family="Inter Tight" font-weight="800" font-size="14" fill="#ff5b1f" text-anchor="middle">FT</text></svg>
+              <span>FabTrack IO</span>
+            </div>
+            <nav class="dash-nav">
+              <div class="dash-nav-key mono">DASHBOARD</div>
+              <a class="active">Overview</a>
+              <a>Live Floor</a>
+              <div class="dash-nav-key mono">JOBS &amp; SCHEDULE</div>
+              <a>Jobs <span class="dash-badge">26</span></a>
+              <a>Board</a>
+              <a>Calendar</a>
+              <div class="dash-nav-key mono">DOCUMENTS</div>
+              <a>Quotes</a>
+              <a>Purchasing</a>
+              <a>Deliveries</a>
+              <div class="dash-nav-key mono">QUALITY &amp; OPS</div>
+              <a>Quality <span class="dash-badge dash-badge-warn">4</span></a>
+              <a>Reports</a>
+            </nav>
+          </aside>
+          <main class="dash-main">
+            <div class="dash-head">
+              <div>
+                <h3>Overview</h3>
+                <p>Tuesday · 26 open jobs · 12 ready · 4 needing attention</p>
+              </div>
+              <div class="dash-search"><span class="mono">⌕ search PO, job, part, customer…</span></div>
+            </div>
+
+            <!-- NEEDS ATTENTION banner (real-app style) -->
+            <div class="needs-banner">
+              <div class="needs-icon">⚠</div>
+              <div class="needs-body">
+                <div class="needs-title">Needs Attention</div>
+                <div class="needs-sub">4 things to look at right now</div>
+                <div class="needs-chips">
+                  <span class="needs-chip needs-chip-red">⚠ 12 overdue jobs ›</span>
+                  <span class="needs-chip needs-chip-amber">⏱ 2 timers running &gt; 4h ›</span>
+                  <span class="needs-chip needs-chip-violet">👥 7 possible customer duplicates ›</span>
+                  <span class="needs-chip needs-chip-blue">📋 45 completed jobs missing quote ›</span>
+                </div>
+              </div>
+              <button class="needs-close" aria-label="Dismiss">×</button>
+            </div>
+
+            <!-- Two alert callouts -->
+            <div class="alert-row">
+              <div class="alert-card alert-red">
+                <div class="alert-card-icon">⚠</div>
+                <div class="alert-card-body">
+                  <div class="alert-card-title">12 Overdue Jobs</div>
+                  <div class="alert-card-meta mono">38&hairsp;01622 · 00&hairsp;76713 · 11&hairsp;4017 +9 more</div>
+                </div>
+                <button class="alert-card-cta">View Jobs</button>
+              </div>
+              <div class="alert-card alert-amber">
+                <div class="alert-card-icon">⏰</div>
+                <div class="alert-card-body">
+                  <div class="alert-card-title">1 Due Within 3 Days</div>
+                  <div class="alert-card-meta mono">J-2150</div>
+                </div>
+                <button class="alert-card-cta">View Jobs</button>
+              </div>
+            </div>
+
+            <!-- Workers haven't scanned warning -->
+            <div class="workers-warning">
+              <div class="needs-icon">⚠</div>
+              <div>
+                <div class="workers-title">3 workers haven't scanned today</div>
+                <div class="workers-list">M.&nbsp;Reyes · D.&nbsp;Ruiz · A.&nbsp;Cole</div>
+              </div>
+            </div>
+
+            <!-- 5 stat cards -->
+            <div class="dash-stats">
+              <div class="dstat"><span class="dstat-key">LIVE ACTIVITY</span><span class="dstat-num">5</span><span class="dstat-foot">jobs running now</span></div>
+              <div class="dstat"><span class="dstat-key">OPEN JOBS</span><span class="dstat-num">26</span><span class="dstat-foot">total open</span></div>
+              <div class="dstat dstat-alert"><span class="dstat-key">OVERDUE</span><span class="dstat-num">12</span><span class="dstat-foot">past due</span></div>
+              <div class="dstat"><span class="dstat-key">FLOOR STAFF</span><span class="dstat-num">6</span><span class="dstat-foot">active operators</span></div>
+              <div class="dstat dstat-go"><span class="dstat-key">TODAY</span><span class="dstat-num">5h<small>5m</small></span><span class="dstat-foot">hours logged</span></div>
+            </div>
+
+            <!-- SHOP FLOW MAP — the unique product feature -->
+            <div class="flowmap">
+              <div class="flowmap-head">
+                <span class="mono flowmap-label">▸ SHOP FLOW MAP</span>
+                <span class="flowmap-sub">tap a stage for jobs · glowing = workers on it · flame = stuck</span>
+              </div>
+              <div class="flowmap-track">
+                <div class="stage stage-warn">
+                  <span class="stage-flame">🔥</span>
+                  <div class="stage-num">5</div>
+                  <div class="stage-key">PENDING</div>
+                  <div class="stage-meta">avg 22d</div>
+                </div>
+                <div class="stage-arrow">›</div>
+                <div class="stage stage-active">
+                  <span class="stage-flame">🔥</span>
+                  <div class="stage-num">19</div>
+                  <div class="stage-ops">▪︎ 6</div>
+                  <div class="stage-key">IN&nbsp;PROGRESS</div>
+                  <div class="stage-meta">M, J +4</div>
+                </div>
+                <div class="stage-arrow">›</div>
+                <div class="stage stage-go">
+                  <div class="stage-num">3</div>
+                  <div class="stage-key">STAMP</div>
+                  <div class="stage-meta">avg 3h</div>
+                </div>
+                <div class="stage-arrow">›</div>
+                <div class="stage">
+                  <div class="stage-num">0</div>
+                  <div class="stage-key">WASH</div>
+                </div>
+                <div class="stage-arrow">›</div>
+                <div class="stage">
+                  <div class="stage-num">0</div>
+                  <div class="stage-key">QC</div>
+                </div>
+                <div class="stage-arrow">›</div>
+                <div class="stage">
+                  <div class="stage-num">0</div>
+                  <div class="stage-key">PACKING</div>
+                </div>
+              </div>
+              <div class="flowmap-foot">
+                <span><span class="dot dot-green"></span> 6 working</span>
+                <span><span class="dot dot-amber"></span> 16 stuck</span>
+                <span><span class="dot dot-orange"></span> 2 stages critical</span>
+              </div>
+            </div>
+
+            <!-- Recent moves feed -->
+            <div class="dash-moves">
+              <div class="moves-label mono">▸ RECENT MOVES</div>
+              <div class="moves-track">
+                <span class="move"><span class="mono">38&hairsp;01622</span> <em>Completed</em> <span class="who">M.&nbsp;Reyes</span> <span class="when">7d&nbsp;4h</span></span>
+                <span class="move"><span class="mono">38&hairsp;01622</span> <em class="em-blue">QC&nbsp;→&nbsp;Packing</em> <span class="who">M.&nbsp;Reyes</span> <span class="when">7d&nbsp;4h</span></span>
+                <span class="move"><span class="mono">00&hairsp;76713</span> <em>Completed</em> <span class="who">J.&nbsp;Park</span> <span class="when">7d&nbsp;4h</span></span>
+                <span class="move"><span class="mono">00&hairsp;76713</span> <em class="em-blue">QC&nbsp;→&nbsp;Packing</em> <span class="who">J.&nbsp;Park</span> <span class="when">7d&nbsp;4h</span></span>
+              </div>
+            </div>
+
+            <!-- Bottom row: business KPIs (real-app style) -->
+            <div class="biz-stats">
+              <div class="bstat bstat-with-dial">
+                <span class="bstat-key">ON-TIME DELIVERY</span>
+                <span class="bstat-num">96<i>%</i></span>
+                <span class="bstat-foot">41/43 on time · 30d</span>
+                <div class="dial" style="--dial-target: 96;" aria-hidden="true">
+                  <span class="dial-num">96<small>%</small></span>
+                </div>
+              </div>
+              <div class="bstat bstat-go">
+                <span class="bstat-key">MONTHLY REVENUE</span>
+                <span class="bstat-num">$40.5<i>k</i></span>
+                <span class="bstat-foot">28 jobs completed</span>
+              </div>
+              <div class="bstat bstat-warn">
+                <span class="bstat-key">MONTHLY COSTS</span>
+                <span class="bstat-num">$44.4<i>k</i></span>
+                <span class="bstat-foot">703h labor + overhead</span>
+              </div>
+              <div class="bstat bstat-loss">
+                <span class="bstat-key">NET PROFIT</span>
+                <span class="bstat-num">–$3.8<i>k</i></span>
+                <span class="bstat-foot">45 missing quote</span>
+              </div>
+              <div class="bstat">
+                <span class="bstat-key">$ / HOUR EARNED</span>
+                <span class="bstat-num">$58</span>
+                <span class="bstat-foot">cost: $63/hr</span>
+              </div>
+            </div>
+
+            <!-- Profit & Loss block -->
+            <div class="pnl">
+              <div class="pnl-head">
+                <span class="mono pnl-label">▸ PROFIT &amp; LOSS</span>
+                <span class="pnl-flag">45 missing quote</span>
+              </div>
+              <div class="pnl-grid">
+                <div>
+                  <div class="pnl-period mono">THIS WEEK</div>
+                  <dl class="pnl-list">
+                    <dt>Revenue</dt><dd class="pnl-go">$4,972</dd>
+                    <dt>Labor</dt><dd>$6,053</dd>
+                    <dt>Hours</dt><dd>95.0h</dd>
+                    <dt class="pnl-bold">Profit</dt><dd class="pnl-bold pnl-loss">–$1,081</dd>
+                  </dl>
+                </div>
+                <div>
+                  <div class="pnl-period mono">THIS MONTH</div>
+                  <dl class="pnl-list">
+                    <dt>Revenue</dt><dd class="pnl-go">$40,539</dd>
+                    <dt>Labor</dt><dd>$44,352</dd>
+                    <dt>Hours</dt><dd>703.4h</dd>
+                    <dt class="pnl-bold">Profit</dt><dd class="pnl-bold pnl-loss">–$3,812</dd>
+                  </dl>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </figure>
+
+      <!-- Sub-section: Jobs List view (also part of §01) -->
+      <div class="subsection-mark reveal" style="--i:0">
+        <span class="mono submark-tag">▸ ALSO IN VIEW</span>
+        <span class="submark-headline">— the Jobs list. Every active production line, sortable, scannable.</span>
+      </div>
+
+      <figure class="dashboard joblist-mockup reveal" style="--i:1">
+        <div class="dash-chrome">
+          <div class="dash-dots"><span></span><span></span><span></span></div>
+          <div class="dash-url">app.fabtrackio.com / jobs</div>
+          <div class="dash-live"><span class="live-dot"></span> LIVE</div>
+        </div>
+        <div class="joblist-body">
+          <div class="joblist-tabs">
+            <button class="jtab jtab-active">● Active Production <span class="jtab-count">26</span></button>
+            <button class="jtab">⊙ Completed History <span class="jtab-count jtab-count-mute">76</span></button>
+            <div class="joblist-search-wrap">
+              <span class="joblist-search mono">⌕ search PO, Job ID, Part, Customer, Notes…</span>
+              <button class="joblist-filter">▽ Filters</button>
+            </div>
+          </div>
+          <div class="joblist-meta mono">26 JOBS SHOWN · <span class="joblist-overdue">⚠ 12 OVERDUE</span></div>
+
+          <div class="joblist-table">
+            <div class="jrow jrow-head mono">
+              <span class="jcell-check"><input type="checkbox" disabled></span>
+              <span class="jcell-thumb">PO / JOB</span>
+              <span class="jcell-part">PART DETAILS</span>
+              <span class="jcell-qty">QTY</span>
+              <span class="jcell-pri">PRIORITY</span>
+              <span class="jcell-stat">STATUS</span>
+              <span class="jcell-due">DUE</span>
+              <span class="jcell-act">ACTIONS</span>
+            </div>
+
+            <div class="jrow">
+              <span class="jcell-check"><input type="checkbox" disabled></span>
+              <span class="jcell-thumb">
+                <div class="jthumb">📷</div>
+                <div>
+                  <div class="jpo mono">38 01622 <span class="jpill jpill-red">OVERDUE</span></div>
+                  <div class="jid mono">Job ID: J-847413</div>
+                </div>
+              </span>
+              <span class="jcell-part">
+                <div class="jthumb jthumb-sm">🔩</div>
+                <div>
+                  <div class="jpart mono">HS5957D10</div>
+                  <div class="jcust">Vertex Fab</div>
+                </div>
+              </span>
+              <span class="jcell-qty mono">2,509</span>
+              <span class="jcell-pri"><span class="jpill jpill-gray">NORMAL</span></span>
+              <span class="jcell-stat"><span class="jpill jpill-blue">● IN PROGRESS</span></span>
+              <span class="jcell-due jdue-overdue mono">02/06/2026</span>
+              <span class="jcell-act">
+                <button class="jact jact-play" title="Start">▶</button>
+                <button class="jact jact-fwd" title="Advance">→</button>
+                <button class="jact jact-done" title="Complete">✓</button>
+                <button class="jact jact-edit" title="Edit">✎</button>
+              </span>
+            </div>
+
+            <div class="jrow">
+              <span class="jcell-check"><input type="checkbox" disabled></span>
+              <span class="jcell-thumb">
+                <div class="jthumb">📷</div>
+                <div>
+                  <div class="jpo mono">00 76518 <span class="jpill jpill-red">OVERDUE</span></div>
+                  <div class="jid mono">Job ID: J-421565</div>
+                </div>
+              </span>
+              <span class="jcell-part">
+                <div class="jthumb jthumb-sm">⚙</div>
+                <div>
+                  <div class="jpart mono">AS4319K0412</div>
+                  <div class="jcust">Steelriver</div>
+                </div>
+              </span>
+              <span class="jcell-qty mono">2,404</span>
+              <span class="jcell-pri"><span class="jpill jpill-gray">NORMAL</span></span>
+              <span class="jcell-stat"><span class="jpill jpill-emerald">● STAMP</span></span>
+              <span class="jcell-due jdue-overdue mono">03/27/2026</span>
+              <span class="jcell-act">
+                <button class="jact jact-play">▶</button>
+                <button class="jact jact-fwd">→</button>
+                <button class="jact jact-done">✓</button>
+                <button class="jact jact-edit">✎</button>
+              </span>
+            </div>
+
+            <div class="jrow">
+              <span class="jcell-check"><input type="checkbox" disabled></span>
+              <span class="jcell-thumb">
+                <div class="jthumb">📷</div>
+                <div>
+                  <div class="jpo mono">00 76735 <span class="jpill jpill-red">OVERDUE</span></div>
+                  <div class="jid mono">Job ID: J-302594</div>
+                </div>
+              </span>
+              <span class="jcell-part">
+                <div class="jthumb jthumb-sm">🔧</div>
+                <div>
+                  <div class="jpart mono">AS1033J0808</div>
+                  <div class="jcust">Ironwork LLC</div>
+                </div>
+              </span>
+              <span class="jcell-qty mono">927</span>
+              <span class="jcell-pri"><span class="jpill jpill-gray">NORMAL</span></span>
+              <span class="jcell-stat"><span class="jpill jpill-blue">● IN PROGRESS</span></span>
+              <span class="jcell-due jdue-overdue mono">04/17/2026</span>
+              <span class="jcell-act">
+                <button class="jact jact-play">▶</button>
+                <button class="jact jact-fwd">→</button>
+                <button class="jact jact-done">✓</button>
+                <button class="jact jact-edit">✎</button>
+              </span>
+            </div>
+
+            <div class="jrow">
+              <span class="jcell-check"><input type="checkbox" disabled></span>
+              <span class="jcell-thumb">
+                <div class="jthumb">📷</div>
+                <div>
+                  <div class="jpo mono">00 76822 <span class="jpill jpill-red">OVERDUE</span></div>
+                  <div class="jid mono">Job ID: J-575989</div>
+                </div>
+              </span>
+              <span class="jcell-part">
+                <div class="jthumb jthumb-sm">🔩</div>
+                <div>
+                  <div class="jpart mono">AS4319K0812</div>
+                  <div class="jcust">Vertex Fab</div>
+                </div>
+              </span>
+              <span class="jcell-qty mono">745</span>
+              <span class="jcell-pri"><span class="jpill jpill-urg">URGENT</span></span>
+              <span class="jcell-stat"><span class="jpill jpill-blue">● IN PROGRESS</span></span>
+              <span class="jcell-due jdue-overdue mono">04/17/2026</span>
+              <span class="jcell-act">
+                <button class="jact jact-play">▶</button>
+                <button class="jact jact-fwd">→</button>
+                <button class="jact jact-done">✓</button>
+                <button class="jact jact-edit">✎</button>
+              </span>
+            </div>
+          </div>
+
+          <div class="joblist-foot mono">
+            ▸ showing 4 of 26 · click any row in the real app for full part history, photos, and operator notes
+          </div>
+        </div>
+      </figure>
+
+      <!-- Sub-section: Live Floor TV mockup (third view in §01) -->
+      <div class="subsection-mark reveal" style="--i:0">
+        <span class="mono submark-tag">▸ AND ON THE TV</span>
+        <span class="submark-headline">— what the floor sees, all day. Cast to any browser, any Chromecast, any shop screen.</span>
+      </div>
+
+      <figure class="tv-stage reveal" style="--i:1">
+        <div class="tv-bezel">
+          <div class="tv-screen">
+            <!-- Top bar inside the TV slide -->
+            <div class="tv-top">
+              <div class="tv-brand">
+                <svg width="20" height="20" viewBox="0 0 36 36"><rect width="36" height="36" rx="8" fill="#ff5b1f"/><text x="18" y="24" font-family="Inter Tight" font-weight="800" font-size="14" fill="#0e0e10" text-anchor="middle">FT</text></svg>
+                <span>FabTrack&nbsp;IO · Live Floor</span>
+              </div>
+              <div class="tv-clock mono">14<span class="tv-blink">:</span>32 · TUE&nbsp;APR&nbsp;28</div>
+            </div>
+
+            <!-- Big stat headline -->
+            <div class="tv-headline">
+              <div class="tv-stat-num">12<span class="tv-stat-pct"></span></div>
+              <div class="tv-stat-label">READY TO SHIP</div>
+            </div>
+
+            <!-- Job queue list -->
+            <div class="tv-queue">
+              <div class="tv-queue-head mono">▸ NEXT UP — IN THE QUEUE</div>
+              <ul class="tv-queue-list">
+                <li><span class="tv-dot tv-dot-orange"></span> <span class="mono">J-2147</span> Vertex Fab · Aerospace bracket · <em>78%</em></li>
+                <li><span class="tv-dot tv-dot-amber"></span> <span class="mono">J-2148</span> Steelriver · Stainless fixture · <em>42%</em></li>
+                <li><span class="tv-dot tv-dot-green"></span> <span class="mono">J-2149</span> Ironwork · Anodized housing · <em>READY</em></li>
+                <li><span class="tv-dot tv-dot-orange"></span> <span class="mono">J-2150</span> Vertex Fab · Hex bolt run · <em>12%</em></li>
+              </ul>
+            </div>
+
+            <!-- Bottom safety / stat bar -->
+            <div class="tv-bottom">
+              <div class="tv-safety">
+                <span class="tv-safety-icon">⚠</span>
+                <span class="tv-safety-text">Safety · Eye protection &amp; gloves required at every station.</span>
+              </div>
+              <div class="tv-mini-stats mono">
+                ON-TIME 96% · OPERATORS 6/9 · SHIPPED TODAY 5
+              </div>
+            </div>
+
+            <!-- Slide indicator -->
+            <div class="tv-slides">
+              <span class="tv-slide tv-slide-active"></span>
+              <span class="tv-slide"></span>
+              <span class="tv-slide"></span>
+              <span class="tv-slide"></span>
+              <span class="tv-slide-label mono">SLIDE 1 / 4 · ROTATES EVERY 12s</span>
+            </div>
+          </div>
+        </div>
+        <div class="tv-stand"></div>
+
+        <figcaption class="tv-caption">
+          <span class="mono">FIG. 03</span> &nbsp;Live Floor on a Samsung 55" mounted by the punch press, SC&nbsp;Deburring LLC, Fresno&nbsp;CA.
+        </figcaption>
+      </figure>
+
+      <!-- Sub-section: Quality view (4th view in §01) -->
+      <div class="subsection-mark reveal" style="--i:0">
+        <span class="mono submark-tag">▸ AND IN QUALITY</span>
+        <span class="submark-headline">— rework logging with reason codes, photos, and resolution notes. Per-job, searchable.</span>
+      </div>
+
+      <figure class="qview reveal" style="--i:1">
+        <div class="qview-grid">
+          <div class="qview-photo">
+            <div class="qview-photo-frame">
+              <div class="qview-photo-mark">📷</div>
+              <div class="qview-photo-meta mono">
+                <span>P/N AS4319K0412</span>
+                <span>RACK 14 · POS 7</span>
+              </div>
+            </div>
+            <div class="qview-photo-stamp mono">CAPTURED 14<span class="tv-blink">:</span>32 · M.&nbsp;REYES</div>
+          </div>
+
+          <div class="qview-panel">
+            <div class="qview-head">
+              <span class="mono qview-id">▸ QC · J-2148 / Steelriver</span>
+              <span class="qview-due mono">due Thu&nbsp;5pm</span>
+            </div>
+
+            <div class="qview-toggle">
+              <button class="qbtn qbtn-pass">✓ PASS</button>
+              <button class="qbtn qbtn-fail qbtn-active">✕ FAIL · rework</button>
+              <button class="qbtn qbtn-scrap">⚠ SCRAP</button>
+            </div>
+
+            <label class="qview-notes-label mono">NOTES &middot; OPERATOR</label>
+            <div class="qview-notes">
+              Burr on lead-in chamfer, run B. Pulled 3 of 12 from rack.
+              Re-deburr station 4, then re-inspect.
+            </div>
+
+            <div class="qview-actions">
+              <span class="qview-action-row">
+                <span class="mono qview-key">SEND TO</span>
+                <span class="djob-pill djob-pill-amber">REWORK</span>
+              </span>
+              <span class="qview-action-row">
+                <span class="mono qview-key">NOTIFY</span>
+                <span class="djob-pill djob-pill-orange">Steelriver buyer · auto</span>
+              </span>
+              <span class="qview-action-row">
+                <span class="mono qview-key">LOG</span>
+                <span class="djob-pill djob-pill-green">rework entry · ✓ saved</span>
+              </span>
+            </div>
+
+            <div class="qview-foot mono">
+              ▸ REASON CODE · OPERATOR · TIMESTAMP · PHOTO · NOTES — ALL ON ONE ENTRY, SEARCHABLE
+            </div>
+          </div>
+        </div>
+      </figure>
+
+      <!-- Sub-section: Customer Portal view (5th view in §01) -->
+      <div class="subsection-mark reveal" style="--i:0">
+        <span class="mono submark-tag">▸ AND FOR CUSTOMERS</span>
+        <span class="submark-headline">— a magic link in their inbox. No accounts, no logins. They see status, you stop fielding calls.</span>
+      </div>
+
+      <figure class="portal-page reveal" style="--i:1">
+        <div class="dash-chrome">
+          <div class="dash-dots"><span></span><span></span><span></span></div>
+          <div class="dash-url">fabtrackio.com/p/8h2k3m9q · magic-link</div>
+          <div class="dash-live"><span class="live-dot"></span> LIVE</div>
+        </div>
+        <div class="portal-page-body">
+          <div class="portal-hero">
+            <div>
+              <div class="portal-eyebrow mono">▸ WELCOME · NO LOGIN NEEDED</div>
+              <h3 class="portal-h">Vertex Fab — your active jobs</h3>
+              <p class="portal-sub">3 jobs with SC&nbsp;Deburring · last update <strong>2 min ago</strong></p>
+            </div>
+            <div class="portal-cta-row">
+              <button class="portal-cta">Submit new PO →</button>
+              <button class="portal-cta-ghost">Download invoices</button>
+            </div>
+          </div>
+
+          <div class="portal-jobs">
+            <div class="pjob">
+              <div class="pjob-head">
+                <span class="djob-pill djob-pill-orange">In progress</span>
+                <span class="mono pjob-id">J-2147 · PO 38&hairsp;01622</span>
+                <span class="pjob-due mono">due Apr&nbsp;28</span>
+              </div>
+              <div class="pjob-title">Aerospace bracket · Lot 240 · 480 pcs</div>
+              <div class="pjob-bar">
+                <div class="pjob-fill" style="width:78%"></div>
+                <span>78% · 374 of 480 deburred</span>
+              </div>
+              <div class="pjob-trail mono">
+                <span><span class="dot dot-green"></span> Quote approved · 3d</span>
+                <span><span class="dot dot-green"></span> On floor · 2d</span>
+                <span><span class="dot dot-orange"></span> Deburring · now</span>
+                <span><span class="dot"></span> QC · pending</span>
+                <span><span class="dot"></span> Ship</span>
+              </div>
+            </div>
+
+            <div class="pjob">
+              <div class="pjob-head">
+                <span class="djob-pill djob-pill-green">Ready to ship</span>
+                <span class="mono pjob-id">J-2149 · PO 38&hairsp;01418</span>
+                <span class="pjob-due mono">picked up Wed</span>
+              </div>
+              <div class="pjob-title">Hex bolt run · M8 × 24 · 1,200 pcs</div>
+              <div class="pjob-bar">
+                <div class="pjob-fill pjob-fill-green" style="width:100%"></div>
+                <span>100% · packed in box 14</span>
+              </div>
+            </div>
+
+            <div class="pjob">
+              <div class="pjob-head">
+                <span class="djob-pill djob-pill-amber">Quote pending</span>
+                <span class="mono pjob-id">RFQ&nbsp;14&hairsp;0421-A</span>
+                <span class="pjob-due mono">replied 2h ago</span>
+              </div>
+              <div class="pjob-title">Stainless flange · Run C · 320 pcs</div>
+              <div class="pjob-quote mono">
+                ▸ Quoted at $4,820 · awaiting your PO #
+              </div>
+            </div>
+          </div>
+
+          <div class="portal-foot mono">
+            ▸ Bookmark this page or save the email — it's your dashboard. Forever.
+          </div>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════ SECTION § 02 — TRUSTED BY ═══════════════════════════════════ -->
+  <section class="section section-alt">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№02</span>
+        <span class="title">— ON THE FLOOR TODAY</span>
+        <span class="sub">shops running on FabTrack IO</span>
+      </div>
+      <div class="marquee" aria-hidden="true">
+        <div class="marquee-track">
+          <span class="logo">ACME&nbsp;MFG</span>
+          <span class="logo">STEELRIVER&nbsp;CO</span>
+          <span class="logo">PRECISION&nbsp;FAB</span>
+          <span class="logo">NORTH&nbsp;METAL</span>
+          <span class="logo">VERTEX&nbsp;FABRICATION</span>
+          <span class="logo">IRONWORK&nbsp;ANODIZING</span>
+          <span class="logo">APEX&nbsp;PLATING</span>
+          <span class="logo">KEYSTONE&nbsp;FAB</span>
+          <span class="logo">MIDWEST&nbsp;DEBURRING</span>
+          <!-- Duplicate -->
+          <span class="logo">ACME&nbsp;MFG</span>
+          <span class="logo">STEELRIVER&nbsp;CO</span>
+          <span class="logo">PRECISION&nbsp;FAB</span>
+          <span class="logo">NORTH&nbsp;METAL</span>
+          <span class="logo">VERTEX&nbsp;FABRICATION</span>
+          <span class="logo">IRONWORK&nbsp;ANODIZING</span>
+          <span class="logo">APEX&nbsp;PLATING</span>
+          <span class="logo">KEYSTONE&nbsp;FAB</span>
+          <span class="logo">MIDWEST&nbsp;DEBURRING</span>
         </div>
       </div>
     </div>
   </section>
 
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ BUILT-FOR ═══════════════════════════════════ -->
-  <section class="py-20 md:py-28">
-    <div class="container-lg grid lg:grid-cols-2 gap-12 md:gap-16 items-center">
-      <div class="reveal">
-        <span class="chip chip-primary">For finishing shops</span>
-        <h2 class="mt-5 text-4xl md:text-5xl font-extrabold tracking-tight">
-          Built for the shops<br />software usually forgets.
-        </h2>
-        <p class="mt-6 text-lg text-zinc-400 leading-relaxed">
-          ERP vendors build for machine shops running $500k CNCs. Shop OS was built by a deburring shop owner who got tired of software that didn't understand racks, batches, rework, or the realities of finishing work.
-        </p>
-        <ul class="mt-8 space-y-4">
-          <li class="flex gap-3">
-            <span class="feature-icon"><i data-lucide="sparkles" class="w-5 h-5"></i></span>
-            <div>
-              <div class="font-semibold text-white">Deburring, plating, anodizing packs</div>
-              <div class="text-zinc-400 text-sm mt-1">Industry-specific workflows that actually match how your floor runs — not generic "work orders".</div>
-            </div>
-          </li>
-          <li class="flex gap-3">
-            <span class="feature-icon"><i data-lucide="layers" class="w-5 h-5"></i></span>
-            <div>
-              <div class="font-semibold text-white">Batch &amp; rack tracking</div>
-              <div class="text-zinc-400 text-sm mt-1">Handle multi-part batches without creating 40 phantom work orders. First-class for finishing.</div>
-            </div>
-          </li>
-          <li class="flex gap-3">
-            <span class="feature-icon"><i data-lucide="shield-check" class="w-5 h-5"></i></span>
-            <div>
-              <div class="font-semibold text-white">ISO-ready audit trail</div>
-              <div class="text-zinc-400 text-sm mt-1">Every status change, every part move, every note — timestamped and exportable.</div>
-            </div>
-          </li>
-        </ul>
+  <!-- ═══════════════════════════════════ SECTION § 03 — THE WORKFLOW (BENTO) ═══════════════════════════════════ -->
+  <section id="workflow" class="section">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№03</span>
+        <span class="title">— THE WORKFLOW</span>
+        <span class="sub">eight tools, one app</span>
       </div>
 
-      <div class="reveal">
-        <div class="screenshot screenshot-lg">SCREENSHOT — FINISHING PACK</div>
+      <h2 class="section-headline reveal" style="--i:0">
+        Built like a tool.<br />
+        <span class="muted">Not a deck.</span>
+      </h2>
+
+      <div class="bento">
+        <!-- 01: Live TV (wide, top-left, 7 cols × 2 rows) -->
+        <article class="tile spark tile-tv reveal" style="--i:0">
+          <header class="tile-head">
+            <span class="tile-num">01</span>
+            <span class="tile-tag">Live TV mode</span>
+          </header>
+          <h3 class="tile-title">Cast the floor to any TV.</h3>
+          <p class="tile-body">Rotating slides, live job queue, safety messages, stats — zero config. Whole crew sees what's next without printing a thing.</p>
+          <div class="mini-tv">
+            <div class="mini-tv-screen">
+              <div class="mini-tv-stat">
+                <span class="mini-tv-num">12</span>
+                <span class="mini-tv-key">READY TO SHIP</span>
+              </div>
+              <ul class="mini-tv-list">
+                <li><span class="dot dot-orange"></span> J-2147 · Vertex Fab</li>
+                <li><span class="dot dot-amber"></span> J-2148 · Steelriver</li>
+                <li><span class="dot dot-green"></span> J-2149 · Ironwork</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- 02: NEEDS ATTENTION triage (5 cols, top-right) — unique product move -->
+        <article class="tile spark tile-push reveal" style="--i:1">
+          <header class="tile-head">
+            <span class="tile-num">02</span>
+            <span class="tile-tag">Needs attention</span>
+          </header>
+          <h3 class="tile-title">The shop, triaged.</h3>
+          <p class="tile-body">FabTrack watches your floor and surfaces what actually needs you — overdue jobs, stuck timers, missing quotes, duplicate customers — before they bite.</p>
+          <div class="triage-stack">
+            <div class="triage triage-red"><span class="triage-num">12</span><span class="triage-key">overdue jobs</span><span class="triage-arrow">›</span></div>
+            <div class="triage triage-amber"><span class="triage-num">2</span><span class="triage-key">timers running &gt; 4h</span><span class="triage-arrow">›</span></div>
+            <div class="triage triage-violet"><span class="triage-num">7</span><span class="triage-key">possible dup customers</span><span class="triage-arrow">›</span></div>
+            <div class="triage triage-blue"><span class="triage-num">45</span><span class="triage-key">jobs missing quote</span><span class="triage-arrow">›</span></div>
+          </div>
+        </article>
+
+        <!-- 03: Quote → Job (7 cols) -->
+        <article class="tile spark tile-flow reveal" style="--i:2">
+          <header class="tile-head">
+            <span class="tile-num">03</span>
+            <span class="tile-tag">Quote → Job</span>
+          </header>
+          <h3 class="tile-title">Approved quote becomes a job. No re-entry.</h3>
+          <p class="tile-body">Customer signs, the job lands on the floor with every spec, every line, every note. PO numbers wire through automatically.</p>
+          <div class="flow">
+            <div class="flow-card">
+              <div class="flow-tag">QUOTE</div>
+              <div class="flow-id mono">#Q-881</div>
+              <div class="flow-amt">$4,820.00</div>
+              <div class="flow-status flow-go">✓ APPROVED</div>
+            </div>
+            <div class="flow-arrow"><span class="arrow-line"></span><span class="arrow-tip">▶</span></div>
+            <div class="flow-card flow-card-job">
+              <div class="flow-tag">JOB</div>
+              <div class="flow-id mono">#J-2150</div>
+              <div class="flow-amt">240 pcs</div>
+              <div class="flow-status flow-active">● ON FLOOR</div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 04: Part history (5 cols) -->
+        <article class="tile spark tile-history reveal" style="--i:3">
+          <header class="tile-head">
+            <span class="tile-num">04</span>
+            <span class="tile-tag">Part history</span>
+          </header>
+          <h3 class="tile-title">Every part. Searchable forever.</h3>
+          <div class="search">
+            <div class="search-bar"><span class="mono">⌕ P/N 482-A</span></div>
+            <div class="search-rows">
+              <div class="search-row"><span class="mono">PO 8841</span> Steelriver <span class="ok">✓</span></div>
+              <div class="search-row"><span class="mono">PO 8412</span> Steelriver <span class="ok">✓</span></div>
+              <div class="search-row"><span class="mono">PO 7991</span> Vertex Fab <span class="ok">✓</span></div>
+              <div class="search-row search-row-mute">+ 14 more</div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 05: Kanban drag-drop (was misleading "bulk ops") -->
+        <article class="tile spark tile-bulk reveal" style="--i:4">
+          <header class="tile-head">
+            <span class="tile-num">05</span>
+            <span class="tile-tag">Kanban board</span>
+          </header>
+          <h3 class="tile-title">Drag jobs across stages. Right where they belong.</h3>
+          <div class="mini-table">
+            <div class="row row-head"><span class="cell-c">⊟</span><span class="cell-i">JOB</span><span class="cell-c2">CUSTOMER</span></div>
+            <div class="row row-sel"><span class="cell-c">⠿</span><span class="cell-i mono">J-2147</span><span class="cell-c2">Vertex</span></div>
+            <div class="row"><span class="cell-c">⠿</span><span class="cell-i mono">J-2148</span><span class="cell-c2">Steelriver</span></div>
+            <div class="row"><span class="cell-c">⠿</span><span class="cell-i mono">J-2149</span><span class="cell-c2">Ironwork</span></div>
+            <div class="row-action">→ Drag to <strong>Shipping</strong> ↗</div>
+          </div>
+        </article>
+
+        <!-- 06: Customer portal (4 cols) -->
+        <article class="tile spark tile-portal reveal" style="--i:5">
+          <header class="tile-head">
+            <span class="tile-num">06</span>
+            <span class="tile-tag">Customer portal</span>
+          </header>
+          <h3 class="tile-title">Magic-link page. Zero accounts.</h3>
+          <div class="portal">
+            <div class="portal-url mono">fabtrackio.com/p/8h2k3</div>
+            <div class="portal-job">
+              <span class="djob-pill djob-pill-orange">In progress</span>
+              <span class="mono">J-2147</span>
+            </div>
+            <div class="portal-bar"><div class="portal-fill" style="width:78%"></div><span>78%</span></div>
+          </div>
+        </article>
+
+        <!-- 07: Audit (4 cols) -->
+        <article class="tile spark tile-audit reveal" style="--i:6">
+          <header class="tile-head">
+            <span class="tile-num">07</span>
+            <span class="tile-tag">Audit trail</span>
+          </header>
+          <h3 class="tile-title">Receipts for every change.</h3>
+          <div class="audit">
+            <div class="audit-row"><span class="mono audit-time">14:32</span> <span><strong>Maria</strong> moved <span class="mono">J-2149</span> → READY</span></div>
+            <div class="audit-row"><span class="mono audit-time">14:28</span> <span><strong>Jordan</strong> updated rack #14 → ANODIZE</span></div>
+            <div class="audit-row"><span class="mono audit-time">14:21</span> <span><strong>System</strong> approved Q-881 ($4,820)</span></div>
+            <div class="audit-foot">FAIR · AS9100 · ITAR fields on POs</div>
+          </div>
+        </article>
+
+        <!-- 08: Worker scans (full-width, bottom) -->
+        <article class="tile spark tile-scans reveal" style="--i:7">
+          <header class="tile-head">
+            <span class="tile-num">08</span>
+            <span class="tile-tag">Worker scans</span>
+          </header>
+          <div class="scans-grid">
+            <div>
+              <h3 class="tile-title">3 operators haven't scanned today.</h3>
+              <p class="tile-body">FabTrack notices when somebody's clocked in but not actually moving jobs. You see it on the dashboard before lunch — not when payroll hits.</p>
+              <div class="scans-cta">
+                <span class="mono">▸ TODAY · 14:32</span>
+                <span class="muted">— 6 of 9 operators active</span>
+              </div>
+            </div>
+            <div class="scan-grid">
+              <div class="scan-row scan-on">
+                <span class="scan-name">M.&nbsp;Reyes</span>
+                <span class="scan-meta mono">last scan 2m ago</span>
+                <span class="scan-status scan-on-status">● ON</span>
+              </div>
+              <div class="scan-row scan-on">
+                <span class="scan-name">J.&nbsp;Park</span>
+                <span class="scan-meta mono">last scan 8m ago</span>
+                <span class="scan-status scan-on-status">● ON</span>
+              </div>
+              <div class="scan-row scan-on">
+                <span class="scan-name">K.&nbsp;Tran</span>
+                <span class="scan-meta mono">last scan 14m ago</span>
+                <span class="scan-status scan-on-status">● ON</span>
+              </div>
+              <div class="scan-row scan-off">
+                <span class="scan-name">D.&nbsp;Ruiz</span>
+                <span class="scan-meta mono">no scan today</span>
+                <span class="scan-status scan-off-status">— OFF</span>
+              </div>
+              <div class="scan-row scan-off">
+                <span class="scan-name">A.&nbsp;Cole</span>
+                <span class="scan-meta mono">no scan today</span>
+                <span class="scan-status scan-off-status">— OFF</span>
+              </div>
+              <div class="scan-row scan-off">
+                <span class="scan-name">B.&nbsp;Vega</span>
+                <span class="scan-meta mono">no scan today</span>
+                <span class="scan-status scan-off-status">— OFF</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 09: Quote engagement tracking (full-width bottom) — REAL competitive differentiator -->
+        <article class="tile spark tile-engage reveal" style="--i:8">
+          <header class="tile-head">
+            <span class="tile-num">09</span>
+            <span class="tile-tag">Quote engagement · who opened, when, how long</span>
+          </header>
+          <h3 class="tile-title">See your buyer reading the quote. Stop guessing why they ghosted.</h3>
+          <p class="tile-body">Every quote tracks opens, view duration, and re-opens. When the buyer reads it three times in a row, that's your call-to-close. When they don't open it for a week, that's your follow-up.</p>
+
+          <div class="engage-grid">
+            <div class="engage-quote">
+              <div class="engage-q-head">
+                <span class="mono engage-q-id">Q-881 · Vertex Fab</span>
+                <span class="djob-pill djob-pill-orange">3 opens</span>
+              </div>
+              <div class="engage-q-amt">$4,820.00 · 240 pcs · stainless flange</div>
+              <div class="engage-q-status mono">SENT 2d AGO · LAST OPEN 14m AGO</div>
+            </div>
+
+            <div class="engage-feed">
+              <div class="engage-feed-head mono">▸ ENGAGEMENT TRAIL</div>
+              <ul class="engage-list">
+                <li>
+                  <span class="mono engage-time">14m ago</span>
+                  <span class="engage-act"><strong>S. Patel</strong> reopened — read for <em>4m 12s</em></span>
+                  <span class="dot dot-orange"></span>
+                </li>
+                <li>
+                  <span class="mono engage-time">2h ago</span>
+                  <span class="engage-act"><strong>S. Patel</strong> opened — read for <em>1m 38s</em></span>
+                  <span class="dot dot-amber"></span>
+                </li>
+                <li>
+                  <span class="mono engage-time">2d ago</span>
+                  <span class="engage-act"><strong>S. Patel</strong> opened — read for <em>52s</em></span>
+                  <span class="dot dot-green"></span>
+                </li>
+                <li>
+                  <span class="mono engage-time">2d ago</span>
+                  <span class="engage-act">Quote sent · <strong>You</strong> via email</span>
+                  <span class="dot"></span>
+                </li>
+              </ul>
+              <div class="engage-cta mono">
+                ▸ 3 opens in 48h is the close-call window. <strong>Pick up the phone.</strong>
+              </div>
+            </div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
 
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ FEATURES ═══════════════════════════════════ -->
-  <section class="py-20 md:py-28">
-    <div class="container-lg">
-      <div class="reveal text-center max-w-2xl mx-auto mb-16">
-        <span class="chip chip-primary">Everything you need</span>
-        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">
-          One app for the whole shop.
-        </h2>
-        <p class="mt-5 text-lg text-zinc-400 leading-relaxed">
-          Stop stitching together a quoting tool, a spreadsheet, a whiteboard, and four text threads. Shop OS covers the whole job lifecycle.
-        </p>
+  <!-- ═══════════════════════════════════ SECTION § 04 — THE NUMBERS ═══════════════════════════════════ -->
+  <section class="section section-alt">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№04</span>
+        <span class="title">— THE NUMBERS</span>
+        <span class="sub">rolling 90-day average across all shops</span>
       </div>
 
-      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-        <!-- Card 1 -->
-        <div class="card card-hover p-6 reveal">
-          <div class="feature-icon"><i data-lucide="monitor" class="w-5 h-5"></i></div>
-          <h3 class="mt-5 text-xl font-bold">Live TV mode</h3>
-          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
-            Cast a floor dashboard to any shop TV. Rotating slides, live job queue, safety messages, and stats — zero config.
-          </p>
-          <a href="features.html#tv" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
-            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </a>
+      <div class="proof-strip">
+        <div class="proof reveal" style="--i:0">
+          <div class="proof-num"><span data-to="12400" data-dur="1600">0</span><span class="proof-suf">/wk</span></div>
+          <div class="proof-key">jobs tracked
+            <sup class="fn" tabindex="0">¹<span>Median across all FabTrack IO shops, weeks 13–17 · 2026. Excludes setup-only and rework jobs.</span></sup>
+          </div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,18 12,16 24,15 36,12 48,13 60,9 72,10 84,6 100,4"/>
+          </svg>
         </div>
-
-        <!-- Card 2 -->
-        <div class="card card-hover p-6 reveal">
-          <div class="feature-icon"><i data-lucide="file-text" class="w-5 h-5"></i></div>
-          <h3 class="mt-5 text-xl font-bold">Quote to job in one click</h3>
-          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
-            Quote a customer, they approve, and the job lands on the floor with every spec intact. No re-entry, no typos.
-          </p>
-          <a href="features.html#quotes" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
-            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </a>
+        <div class="proof reveal" style="--i:1">
+          <div class="proof-num"><span data-to="98.2" data-dur="1700">0</span><span class="proof-suf">%</span></div>
+          <div class="proof-key">on-time ship rate
+            <sup class="fn" tabindex="0">²<span>Customer-confirmed delivery vs. quoted due date, rolling 90 days. Sample size 2,400+ jobs.</span></sup>
+          </div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,12 12,11 24,8 36,9 48,7 60,6 72,5 84,4 100,3"/>
+          </svg>
         </div>
-
-        <!-- Card 3 -->
-        <div class="card card-hover p-6 reveal">
-          <div class="feature-icon"><i data-lucide="history" class="w-5 h-5"></i></div>
-          <h3 class="mt-5 text-xl font-bold">Part history &amp; recall</h3>
-          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
-            Every part you've ever processed, searchable by customer, PO, or part number. Rerun setups in seconds.
-          </p>
-          <a href="features.html#history" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
-            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </a>
+        <div class="proof reveal" style="--i:2">
+          <div class="proof-num">$<span data-to="1.84" data-dur="1800">0</span><span class="proof-suf">M</span></div>
+          <div class="proof-key">scrap saved YTD
+            <sup class="fn" tabindex="0">³<span>Self-reported by shop owners after 6 months on FabTrack IO, year-to-date 2026. Mostly attributed to QC routing &amp; rework tracking.</span></sup>
+          </div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,20 12,18 24,15 36,13 48,10 60,8 72,6 84,4 100,2"/>
+          </svg>
         </div>
-
-        <!-- Card 4 -->
-        <div class="card card-hover p-6 reveal">
-          <div class="feature-icon"><i data-lucide="layers-3" class="w-5 h-5"></i></div>
-          <h3 class="mt-5 text-xl font-bold">Bulk operations</h3>
-          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
-            Move 40 jobs to shipping, tag by customer, update due dates — all in one pass. Built for shops that run real volume.
-          </p>
-          <a href="features.html#bulk" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
-            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </a>
-        </div>
-
-        <!-- Card 5 -->
-        <div class="card card-hover p-6 reveal">
-          <div class="feature-icon"><i data-lucide="users" class="w-5 h-5"></i></div>
-          <h3 class="mt-5 text-xl font-bold">Customer portal</h3>
-          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
-            Give your customers a magic-link page to see their job status, download invoices, and submit new POs. No account setup on their end.
-          </p>
-          <a href="features.html#portal" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
-            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </a>
-        </div>
-
-        <!-- Card 6 -->
-        <div class="card card-hover p-6 reveal">
-          <div class="feature-icon"><i data-lucide="bell" class="w-5 h-5"></i></div>
-          <h3 class="mt-5 text-xl font-bold">Push alerts</h3>
-          <p class="mt-2 text-zinc-400 text-sm leading-relaxed">
-            The moment a job flips to "ready to ship" or a customer replies — your phone lights up. iOS, Android, desktop.
-          </p>
-          <a href="features.html#alerts" class="mt-4 inline-flex items-center gap-1 text-blue-400 text-sm font-semibold hover:text-blue-300">
-            Learn more <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </a>
+        <div class="proof reveal" style="--i:3">
+          <div class="proof-num"><span data-to="62" data-dur="1500">0</span><span class="proof-suf">min</span></div>
+          <div class="proof-key">avg setup time</div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,4 12,5 24,7 36,9 48,11 60,12 72,14 84,15 100,17"/>
+          </svg>
         </div>
       </div>
     </div>
   </section>
 
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ COMPARISON ═══════════════════════════════════ -->
-  <section class="py-20 md:py-28">
-    <div class="container-lg">
-      <div class="reveal text-center max-w-2xl mx-auto mb-14">
-        <span class="chip chip-primary">Why we're different</span>
-        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">
-          Flat pricing. Unlimited seats.<br class="hidden md:block" />
-          No per-operator tax.
-        </h2>
-        <p class="mt-5 text-lg text-zinc-400 leading-relaxed">
-          Most shop-floor ERPs charge $50–$150 per user per month. Add 10 operators and you're paying $15,000/year before you ship a single part.
-        </p>
+  <!-- ═══════════════════════════════════ SECTION § 05 — THE PRICE ═══════════════════════════════════ -->
+  <section id="pricing" class="section">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№05</span>
+        <span class="title">— THE PRICE</span>
+        <span class="sub">flat per shop · unlimited operators</span>
       </div>
 
-      <div class="reveal overflow-x-auto">
-        <table class="comparison-table min-w-[720px]">
+      <h2 class="section-headline reveal" style="--i:0">
+        Pay for the shop.<br />
+        <span class="muted">Not the seats.</span>
+      </h2>
+
+      <div class="price-titleblock reveal" style="--i:1">
+        <span>FabTrack IO — Plans &amp; Pricing</span>
+        <span>REV B</span>
+        <span>SHEET 05 / 09</span>
+        <span>USD · APR 2026</span>
+      </div>
+
+      <div class="price-table reveal" style="--i:2">
+        <table>
+          <colgroup>
+            <col class="col-feature" />
+            <col />
+            <col class="col-feature-tier" />
+            <col />
+          </colgroup>
           <thead>
             <tr>
-              <th>Feature</th>
-              <th class="col-us">Shop&nbsp;OS</th>
-              <th>Katana</th>
-              <th>Fulcrum</th>
-              <th>JobBOSS</th>
+              <th></th>
+              <th>
+                <div class="tier-name">Solo</div>
+                <div class="tier-price">$29<span>/mo</span></div>
+                <div class="tier-sub">owner-operator</div>
+              </th>
+              <th class="tier-featured">
+                <div class="tier-flag">RECOMMENDED</div>
+                <div class="tier-name">Shop</div>
+                <div class="tier-price">$79<span>/mo</span></div>
+                <div class="tier-sub">growing shops</div>
+              </th>
+              <th>
+                <div class="tier-name">Scale</div>
+                <div class="tier-price">$149<span>/mo</span></div>
+                <div class="tier-sub">multi-line shops</div>
+              </th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <th>Unlimited floor operators</th>
-              <td class="col-us"><span class="check-yes">✓</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-no">✕</span></td>
-            </tr>
-            <tr>
-              <th>Flat monthly price</th>
-              <td class="col-us"><span class="check-yes">✓</span> From $29/mo</td>
-              <td>Per-user</td>
-              <td>Per-user</td>
-              <td>Quote-only</td>
-            </tr>
-            <tr>
-              <th>Live TV / floor display</th>
-              <td class="col-us"><span class="check-yes">✓</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-partial">Add-on</span></td>
-              <td><span class="check-no">✕</span></td>
-            </tr>
-            <tr>
-              <th>Customer portal</th>
-              <td class="col-us"><span class="check-yes">✓</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-yes">✓</span></td>
-              <td><span class="check-partial">Add-on</span></td>
-            </tr>
-            <tr>
-              <th>Finishing-shop workflows</th>
-              <td class="col-us"><span class="check-yes">✓</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-no">✕</span></td>
-            </tr>
-            <tr>
-              <th>Works offline on the floor</th>
-              <td class="col-us"><span class="check-yes">✓</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-no">✕</span></td>
-              <td><span class="check-no">✕</span></td>
-            </tr>
-            <tr>
-              <th>Onboarding time</th>
-              <td class="col-us"><span class="check-yes">✓</span> Under an hour</td>
-              <td>2–4 weeks</td>
-              <td>4–8 weeks</td>
-              <td>3+ months</td>
-            </tr>
-            <tr>
-              <th>Setup / implementation fee</th>
-              <td class="col-us"><span class="check-yes">✓</span> $0</td>
-              <td>$500+</td>
-              <td>$5,000+</td>
-              <td>$10,000+</td>
+            <tr><td>Unlimited floor operators</td><td>✓</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>Job tracker &amp; POs</td><td>✓</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>Mobile + offline</td><td>✓</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>Live TV mode</td><td class="dim">—</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>Customer portal (magic-link)</td><td class="dim">—</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>Quote engagement tracking (opens, view time)</td><td class="dim">—</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>Browser push notifications (Android, desktop)</td><td class="dim">—</td><td class="tier-featured">✓</td><td>✓</td></tr>
+            <tr><td>FAIR / AS9100 / ITAR fields on POs</td><td class="dim">—</td><td class="dim tier-featured">—</td><td>✓</td></tr>
+            <tr><td>API + webhooks</td><td class="dim">—</td><td class="dim tier-featured">—</td><td>✓</td></tr>
+            <tr><td>SSO &amp; priority onboarding</td><td class="dim">—</td><td class="dim tier-featured">—</td><td>✓</td></tr>
+            <tr class="row-cta">
+              <td></td>
+              <td><a href="https://app.fabtrackio.com/signup?plan=solo" class="btn-tier">Start trial</a></td>
+              <td class="tier-featured"><a href="https://app.fabtrackio.com/signup?plan=shop" class="btn-tier btn-tier-primary">Start trial</a></td>
+              <td><a href="https://app.fabtrackio.com/signup?plan=scale" class="btn-tier">Start trial</a></td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <p class="reveal mt-6 text-center text-sm text-zinc-500">
-        Based on publicly listed pricing and documentation as of 2025. <a href="#" class="text-blue-400 hover:text-blue-300">See full comparison →</a>
+      <p class="price-foot">
+        14-day trial, no card. <a href="contact.html">Need something custom? Talk to us.</a>
       </p>
     </div>
   </section>
 
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ PRICING ═══════════════════════════════════ -->
-  <section id="pricing" class="py-20 md:py-28">
-    <div class="container-lg">
-      <div class="reveal text-center max-w-2xl mx-auto mb-12">
-        <span class="chip chip-primary">Simple pricing</span>
-        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Pay for the shop. Not the seats.</h2>
-        <p class="mt-5 text-lg text-zinc-400">Every plan includes unlimited floor operators. Upgrade only when you need more features.</p>
+  <!-- ═══════════════════════════════════ SECTION № 06 — WHAT'S IN THE BOX (BOM) ═══════════════════════════════════ -->
+  <section class="section section-blueprint">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№06</span>
+        <span class="title">— WHAT'S IN THE BOX</span>
+        <span class="sub">a literal bill-of-materials of the software you get</span>
       </div>
 
-      <div class="reveal flex justify-center mb-10">
-        <div class="price-toggle" data-price-toggle>
-          <button type="button" data-billing="monthly" class="active">Monthly</button>
-          <button type="button" data-billing="yearly">
-            Yearly <span class="save-chip">SAVE 20%</span>
-          </button>
-        </div>
+      <div class="bom-titleblock reveal" style="--i:0">
+        <span>FabTrack IO — Standard Build</span>
+        <span>REV B</span>
+        <span>SHEET 06 / 09</span>
+        <span>APR 2026</span>
       </div>
 
-      <div class="grid md:grid-cols-3 gap-5 md:gap-6">
-        <!-- Solo -->
-        <div class="pricing-card reveal">
-          <div>
-            <div class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Solo</div>
-            <p class="mt-1 text-sm text-zinc-500">Owner-operator or 1-user shops</p>
-          </div>
-          <div class="pricing-price">
-            <span class="amount" data-price-monthly>$29</span>
-            <span class="amount" data-price-yearly style="display:none">$23</span>
-            <span class="cents">/ month</span>
-          </div>
-          <a href="https://app.yourdomain.com/signup?plan=solo" class="btn btn-secondary btn-md w-full justify-center">Start free trial</a>
-          <ul class="feature-list">
-            <li>1 user</li>
-            <li>Unlimited jobs &amp; customers</li>
-            <li>Core job tracker &amp; POs</li>
-            <li>Mobile + offline mode</li>
-            <li>Email support</li>
-            <li class="no" style="color:#71717a">Customer portal</li>
-            <li class="no" style="color:#71717a">Live TV mode</li>
-          </ul>
-        </div>
+      <dl class="bom reveal" style="--i:1">
+        <div class="bom-row"><dt>01</dt><dd class="bom-name">Job ledger &amp; customizable status pipeline</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>02</dt><dd class="bom-name">Kanban board with drag-drop between stages</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>03</dt><dd class="bom-name">Per-customer workflow routing</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>04</dt><dd class="bom-name">Quote builder + process library (PDF export)</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>05</dt><dd class="bom-name">Quote engagement tracking — see when buyers open</dd><dd class="bom-qty">all quotes</dd></div>
+        <div class="bom-row"><dt>06</dt><dd class="bom-name">Customer portal (magic-link, no signup)</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>07</dt><dd class="bom-name">Live Floor monitor for shop TVs</dd><dd class="bom-qty">1 display / shop</dd></div>
+        <div class="bom-row"><dt>08</dt><dd class="bom-name">Operator clock-in &amp; time tracking (PWA)</dd><dd class="bom-qty">all devices</dd></div>
+        <div class="bom-row"><dt>09</dt><dd class="bom-name">Rework &amp; quality logging with photo + reason codes</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>10</dt><dd class="bom-name">Job traveler &amp; packing slip PDFs (with QR codes)</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>11</dt><dd class="bom-name">Purchase orders w/ vendor library (FAIR / AS9100 fields)</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>12</dt><dd class="bom-name">GPS delivery tracking + IRS Pub. 463 mileage export</dd><dd class="bom-qty">included</dd></div>
+        <div class="bom-row"><dt>13</dt><dd class="bom-name">Reports — worker hours, ops breakdown, P&amp;L</dd><dd class="bom-qty">unlimited</dd></div>
+        <div class="bom-row"><dt>14</dt><dd class="bom-name">Needs-Attention auto-triage (overdue, due-soon, stuck&nbsp;3d+)</dd><dd class="bom-qty">always-on</dd></div>
+        <div class="bom-row"><dt>15</dt><dd class="bom-name">Shift alarms — lunch, breaks, shift-end, stuck timers</dd><dd class="bom-qty">configurable</dd></div>
+        <div class="bom-row"><dt>16</dt><dd class="bom-name">Cmd+K command palette &amp; full search</dd><dd class="bom-qty">unlimited</dd></div>
+      </dl>
 
-        <!-- Shop (featured) -->
-        <div class="pricing-card featured reveal">
-          <div>
-            <div class="text-sm font-semibold text-blue-300 uppercase tracking-wider">Shop</div>
-            <p class="mt-1 text-sm text-zinc-400">Growing shops up to 10 users</p>
-          </div>
-          <div class="pricing-price">
-            <span class="amount" data-price-monthly>$79</span>
-            <span class="amount" data-price-yearly style="display:none">$63</span>
-            <span class="cents">/ month</span>
-          </div>
-          <a href="https://app.yourdomain.com/signup?plan=shop" class="btn btn-primary btn-md w-full justify-center">Start free trial</a>
-          <ul class="feature-list">
-            <li>10 users + unlimited floor operators</li>
-            <li>Customer portal (magic-link)</li>
-            <li>PDF quotes &amp; branded invoices</li>
-            <li>Live TV floor display</li>
-            <li>QuickBooks sync</li>
-            <li>Push alerts (iOS / Android)</li>
-            <li>Automated customer reminders</li>
-          </ul>
-        </div>
-
-        <!-- Scale -->
-        <div class="pricing-card reveal">
-          <div>
-            <div class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Scale</div>
-            <p class="mt-1 text-sm text-zinc-500">Multi-line shops that need everything</p>
-          </div>
-          <div class="pricing-price">
-            <span class="amount" data-price-monthly>$149</span>
-            <span class="amount" data-price-yearly style="display:none">$119</span>
-            <span class="cents">/ month</span>
-          </div>
-          <a href="https://app.yourdomain.com/signup?plan=scale" class="btn btn-secondary btn-md w-full justify-center">Start free trial</a>
-          <ul class="feature-list">
-            <li>Unlimited users &amp; floor operators</li>
-            <li>All industry packs (deburring, plating, anodizing)</li>
-            <li>ISO-ready audit trail</li>
-            <li>API access &amp; webhooks</li>
-            <li>Priority onboarding</li>
-            <li>SSO (SAML / Google)</li>
-            <li>Dedicated customer success</li>
-          </ul>
-        </div>
-      </div>
-
-      <p class="reveal mt-8 text-center text-sm text-zinc-500">
-        Need something custom? <a href="contact.html" class="text-blue-400 hover:text-blue-300">Talk to sales →</a>
+      <p class="bom-foot">
+        Same software, same numbers, same shop floor — built and run by SC&nbsp;Deburring LLC, Fresno&nbsp;CA, since 2026.
       </p>
     </div>
   </section>
 
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ HOW IT WORKS ═══════════════════════════════════ -->
-  <section class="py-20 md:py-28">
-    <div class="container-lg">
-      <div class="reveal text-center max-w-2xl mx-auto mb-16">
-        <span class="chip chip-primary">How it works</span>
-        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Up and running in under an hour.</h2>
-        <p class="mt-5 text-lg text-zinc-400">No consultants. No implementation contracts. Just sign up and start tracking.</p>
+  <!-- ═══════════════════════════════════ SECTION № 07 — ONE QUOTE ═══════════════════════════════════ -->
+  <section id="shopfloor" class="section section-quote">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№07</span>
+        <span class="title">— FROM A SHOP OWNER</span>
+        <span class="sub">one quote, no marketing fluff</span>
       </div>
 
-      <div class="grid md:grid-cols-3 gap-6 md:gap-8">
-        <div class="reveal">
-          <div class="step-number">1</div>
-          <h3 class="mt-5 text-xl font-bold">Create your shop profile</h3>
-          <p class="mt-2 text-zinc-400 leading-relaxed">
-            Add your shop name, logo, and industry pack. We'll preload the right workflows automatically.
-          </p>
-        </div>
-        <div class="reveal">
-          <div class="step-number">2</div>
-          <h3 class="mt-5 text-xl font-bold">Add your operators</h3>
-          <p class="mt-2 text-zinc-400 leading-relaxed">
-            Invite the team. They log in with a PIN on any phone or shop tablet — no accounts required.
-          </p>
-        </div>
-        <div class="reveal">
-          <div class="step-number">3</div>
-          <h3 class="mt-5 text-xl font-bold">Run your first job</h3>
-          <p class="mt-2 text-zinc-400 leading-relaxed">
-            Import a PO, assign it, track it on the floor. By lunch you'll wonder how you ran without it.
-          </p>
-        </div>
+      <figure class="big-quote reveal" style="--i:0">
+        <blockquote>
+          <span class="quote-mark" aria-hidden="true">&ldquo;</span>
+          We were paying <em>$1,400 a month</em> for a system nobody on the floor would actually open. Switched to FabTrack, cut the bill by 80%, and the operators are scanning jobs themselves now. The TV mode alone paid for the year.
+        </blockquote>
+        <figcaption>
+          <div class="cite-photo" aria-hidden="true">SP</div>
+          <div class="cite-meta">
+            <div class="cite-name">Sarah&nbsp;Patel</div>
+            <div class="cite-role">Operations Manager · <strong>Vertex Fab</strong> · Modesto, CA</div>
+          </div>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════ SECTION § 07 — Q&A ═══════════════════════════════════ -->
+  <section id="faq" class="section">
+    <div class="container container-narrow">
+      <div class="section-label">
+        <span class="num">№08</span>
+        <span class="title">— Q&amp;A</span>
+        <span class="sub">things shop owners actually ask</span>
+      </div>
+
+      <h2 class="section-headline reveal" style="--i:0">Things shop owners ask.</h2>
+
+      <div class="qa reveal" style="--i:1">
+        <details>
+          <summary>I run a deburring / finishing shop, not a CNC shop. Will any of this fit?</summary>
+          <p>Yes &mdash; that&rsquo;s literally why FabTrack exists. The tool is built and run on the floor of a real deburring shop (SC Deburring LLC, Fresno CA). Stages are fully customizable, so &ldquo;Pending → In Progress → Stamp → Wash → QC → Packing&rdquo; can become &ldquo;Inspect → Strip → Plate → Rinse → Seal → Pack&rdquo; in 30 seconds. Process libraries, rework reason codes, and the QC flow were all designed by a finishing-shop owner who got tired of CNC-shaped software.</p>
+        </details>
+
+        <details>
+          <summary>My operators barely touch a phone. How long to train them?</summary>
+          <p>Operator side is intentionally tiny: punch in, see your jobs, punch out. Most floors are running unassisted by the second shift. We don&rsquo;t hide anything important behind a menu &mdash; if it matters today, it&rsquo;s on the screen. Owner side takes longer (an hour or two) because that&rsquo;s where the quoting, reporting, and settings live.</p>
+        </details>
+
+        <details>
+          <summary>Can my workflow be different per customer? Boeing wants different stages than Acme.</summary>
+          <p>Yes. Per-customer routing is built in. You define the master stage list once, then per customer you can hide stages they don&rsquo;t need or add steps they require. Job moves through the right stages automatically based on which customer ordered it. (Buried in <em>Settings → Production → Customer Profiles</em> right now &mdash; we&rsquo;re moving it up front.)</p>
+        </details>
+
+        <details>
+          <summary>How is the pricing really flat? What&rsquo;s the catch?</summary>
+          <p>No catch. One flat rate per shop, every operator on your floor punches in / sees jobs / logs time without counting toward a seat cap. Office / admin users are capped by tier (1 on Solo, 10 on Shop, unlimited on Scale). Floor operators are always free, on every tier.</p>
+        </details>
+
+        <details>
+          <summary>What if my shop&rsquo;s WiFi is garbage?</summary>
+          <p>FabTrack installs as a PWA, so the screens you&rsquo;ve already opened stay readable when WiFi drops &mdash; the operator can keep <em>looking</em> at their job list. Writes (clock-in, status changes) need a connection to land. A full offline write-queue is on the roadmap. If you have constant signal problems, talk to us before signing up &mdash; we&rsquo;ll be honest about whether it&rsquo;ll work.</p>
+        </details>
+
+        <details>
+          <summary>Can I print job travelers and packing slips?</summary>
+          <p>Yes. Job travelers print as PDF with a QR code on the header (scan it from your phone to jump back to the job). Packing slips print with line-item detail. Quotes and POs export as PDF too. All branded with your shop name, address, and logo.</p>
+        </details>
+
+        <details>
+          <summary>Does this track delivery mileage for taxes?</summary>
+          <p>Yes &mdash; GPS captures stops on a delivery run, calculates mileage automatically, and exports in IRS Publication 463 format (Date / Start Odo / End Odo / Miles / Purpose). Hand it straight to your CPA in April.</p>
+        </details>
+
+        <details>
+          <summary>Do my customers need to make accounts to see their jobs?</summary>
+          <p>No. They get a magic-link URL the first time you send them a portal invite (or you can put it in your email signature). One click, no password, no signup form. They see their active jobs, status, completed history, and any notes you&rsquo;ve added. They cannot see your other customers.</p>
+        </details>
+
+        <details>
+          <summary>How do I get my data OUT if I leave you?</summary>
+          <p>Full export, anytime. Time logs export to Google Sheets in one click. Jobs, quotes, customers, vendors, POs, and rework entries export as CSV. Photos and PDFs download as a zip. Your data is yours &mdash; we don&rsquo;t hold it hostage, and we don&rsquo;t make leaving painful. (We&rsquo;d rather earn the renewal.)</p>
+        </details>
+
+        <details>
+          <summary>Phone, tablet, desktop, TV &mdash; which actually works?</summary>
+          <p>All four, responsive from 375px to 4K. Most shops we see: operators on a shop-mounted iPad or their own phone, owner on a desktop for reporting, one Samsung mounted on the wall casting the Live Floor view. The TV mode is meant for 1080p+ &mdash; if you have an old 720p screen by the punch press, text gets tight.</p>
+        </details>
       </div>
     </div>
   </section>
 
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ TESTIMONIALS ═══════════════════════════════════ -->
-  <section id="customers" class="py-20 md:py-28">
-    <div class="container-lg">
-      <div class="reveal text-center max-w-2xl mx-auto mb-14">
-        <span class="chip chip-primary">Customers</span>
-        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Shops running on Shop OS today.</h2>
-      </div>
-
-      <div class="grid md:grid-cols-3 gap-5 md:gap-6">
-        <figure class="testimonial reveal">
-          <div class="text-blue-400 text-2xl leading-none">&ldquo;</div>
-          <blockquote class="testimonial-quote">
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. The TV mode alone saved us from printing paper travelers every morning. Whole floor knows what's next at a glance.
-          </blockquote>
-          <figcaption class="testimonial-author">
-            <span class="testimonial-avatar">JM</span>
-            <div>
-              <div class="font-semibold text-white">Jordan M.</div>
-              <div class="text-xs text-zinc-500">Owner · Midwest Deburring LLC</div>
-            </div>
-          </figcaption>
-        </figure>
-
-        <figure class="testimonial reveal">
-          <div class="text-blue-400 text-2xl leading-none">&ldquo;</div>
-          <blockquote class="testimonial-quote">
-            We were paying $1,400/mo for another system that nobody on the floor would actually open. Switched, cut the bill by 80%, and the operators are scanning jobs themselves now.
-          </blockquote>
-          <figcaption class="testimonial-author">
-            <span class="testimonial-avatar">SP</span>
-            <div>
-              <div class="font-semibold text-white">Sarah P.</div>
-              <div class="text-xs text-zinc-500">Operations · Vertex Fab</div>
-            </div>
-          </figcaption>
-        </figure>
-
-        <figure class="testimonial reveal">
-          <div class="text-blue-400 text-2xl leading-none">&ldquo;</div>
-          <blockquote class="testimonial-quote">
-            The customer portal is a sales tool. Buyers log in, see jobs moving, stop calling us for updates. Closed two new accounts who specifically asked for this.
-          </blockquote>
-          <figcaption class="testimonial-author">
-            <span class="testimonial-avatar">RT</span>
-            <div>
-              <div class="font-semibold text-white">Rick T.</div>
-              <div class="text-xs text-zinc-500">GM · Ironwork Anodizing</div>
-            </div>
-          </figcaption>
-        </figure>
-      </div>
-    </div>
-  </section>
-
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ FAQ ═══════════════════════════════════ -->
-  <section class="py-20 md:py-28">
-    <div class="container-lg max-w-3xl">
-      <div class="reveal text-center mb-12">
-        <span class="chip chip-primary">Questions</span>
-        <h2 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight">Frequently asked.</h2>
-      </div>
-
-      <div class="reveal">
-        <div class="faq-item">
-          <button class="faq-trigger" aria-expanded="false">
-            <span>How is pricing really flat? What's the catch?</span>
-            <i data-lucide="chevron-down" class="faq-chevron"></i>
-          </button>
-          <div class="faq-body">
-            No catch. You pay one flat monthly rate per shop, and every operator on your floor can scan, view jobs, and update status — without counting toward a seat cap. Admin/office users are capped by tier (1 on Solo, 10 on Shop, unlimited on Scale), but floor operators are always free.
+  <!-- ═══════════════════════════════════ SECTION § 08 — CTA ═══════════════════════════════════ -->
+  <section class="section section-cta">
+    <div class="container">
+      <div class="cta-grid reveal" style="--i:0">
+        <div>
+          <div class="section-label">
+            <span class="num">№09</span>
+            <span class="title">— TODAY</span>
           </div>
+          <h2 class="cta-headline">
+            Run your first job<br />
+            <span class="muted">by tomorrow morning.</span>
+          </h2>
         </div>
-
-        <div class="faq-item">
-          <button class="faq-trigger" aria-expanded="false">
-            <span>Do you really charge zero per operator?</span>
-            <i data-lucide="chevron-down" class="faq-chevron"></i>
-          </button>
-          <div class="faq-body">
-            Yes. If you have 40 operators scanning jobs on tablets, you pay exactly the same $79/mo as a shop with 2 operators. The industry standard is to charge per user, which punishes growing shops. We think that's backwards.
-          </div>
+        <div class="cta-side">
+          <p class="cta-sub">14-day trial. No credit card. No sales call. Be tracking jobs before lunch.</p>
+          <a href="https://app.fabtrackio.com/signup" class="btn-primary btn-primary-lg">
+            Start free trial <span aria-hidden="true">→</span>
+          </a>
+          <a href="contact.html" class="btn-link">Or book a 15-min walkthrough</a>
         </div>
-
-        <div class="faq-item">
-          <button class="faq-trigger" aria-expanded="false">
-            <span>What integrations are included?</span>
-            <i data-lucide="chevron-down" class="faq-chevron"></i>
-          </button>
-          <div class="faq-body">
-            QuickBooks Online (Shop &amp; Scale), Google Calendar, email &amp; SMS notifications (Twilio), Stripe for customer payments, and a full REST API + webhooks on Scale. More on the roadmap — request any missing one on our contact page.
-          </div>
-        </div>
-
-        <div class="faq-item">
-          <button class="faq-trigger" aria-expanded="false">
-            <span>Does it work offline on the floor?</span>
-            <i data-lucide="chevron-down" class="faq-chevron"></i>
-          </button>
-          <div class="faq-body">
-            Yes. Shop OS is a PWA — it caches your data on-device so operators can keep scanning and updating jobs even when WiFi drops. Everything syncs the moment the connection returns. No lost work, ever.
-          </div>
-        </div>
-
-        <div class="faq-item">
-          <button class="faq-trigger" aria-expanded="false">
-            <span>Is this ISO / AS9100 friendly?</span>
-            <i data-lucide="chevron-down" class="faq-chevron"></i>
-          </button>
-          <div class="faq-body">
-            Every action is logged with a user, timestamp, and before/after state. The Scale tier exposes the audit trail in a dedicated view and lets you export signed reports for auditors. We're not a certified QMS, but we give you the receipts.
-          </div>
-        </div>
-
-        <div class="faq-item">
-          <button class="faq-trigger" aria-expanded="false">
-            <span>Does it work on a phone or just a computer?</span>
-            <i data-lucide="chevron-down" class="faq-chevron"></i>
-          </button>
-          <div class="faq-body">
-            Both, plus tablets and shop TVs. Shop OS is responsive from 375px (iPhone SE) up to 4K displays. Operators usually use the phone UI or a shop-mounted tablet; owners use the desktop dashboard for reporting.
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <hr class="divider" />
-
-  <!-- ═══════════════════════════════════ CTA ═══════════════════════════════════ -->
-  <section class="py-20 md:py-28 relative overflow-hidden">
-    <div class="hero-glow" style="opacity:0.6"></div>
-    <div class="container-lg relative z-10 text-center max-w-3xl">
-      <h2 class="reveal text-4xl md:text-6xl font-extrabold tracking-tighter">
-        Take back your<br />
-        <span class="text-gradient">shop floor.</span>
-      </h2>
-      <p class="reveal mt-6 text-lg md:text-xl text-zinc-400">
-        Free for 14 days. No credit card. No sales call. Be running your first job by tomorrow morning.
-      </p>
-      <div class="reveal mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-        <a href="https://app.yourdomain.com/signup" class="btn btn-primary btn-lg w-full sm:w-auto">
-          Start free trial
-          <i data-lucide="arrow-right" class="w-5 h-5"></i>
-        </a>
-        <a href="contact.html" class="btn btn-secondary btn-lg w-full sm:w-auto">
-          <i data-lucide="calendar" class="w-5 h-5"></i>
-          Book a demo
-        </a>
       </div>
     </div>
   </section>
 
   <!-- ═══════════════════════════════════ FOOTER ═══════════════════════════════════ -->
-  <footer class="border-t border-white/5 pt-16 pb-10">
-    <div class="container-lg">
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-8 md:gap-10 mb-12">
-        <div class="col-span-2 md:col-span-2">
-          <div class="flex items-center gap-2.5 font-bold text-lg">
-            <span class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-black text-sm">SO</span>
-            <span>Shop OS</span>
-          </div>
-          <p class="mt-4 text-sm text-zinc-500 leading-relaxed max-w-xs">
-            Shop-floor software that doesn't charge per operator. Built by shop owners, for shop owners.
-          </p>
-          <div class="mt-6 flex items-center gap-3">
-            <a href="#" class="footer-link" aria-label="Twitter"><i data-lucide="twitter" class="w-5 h-5"></i></a>
-            <a href="#" class="footer-link" aria-label="LinkedIn"><i data-lucide="linkedin" class="w-5 h-5"></i></a>
-            <a href="#" class="footer-link" aria-label="YouTube"><i data-lucide="youtube" class="w-5 h-5"></i></a>
-            <a href="#" class="footer-link" aria-label="GitHub"><i data-lucide="github" class="w-5 h-5"></i></a>
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div>
+          <div class="footer-meta-line">
+            <span class="status-pill status-pill-light">
+              <span class="status-dot"></span> All systems normal
+            </span>
+            <span class="mono footer-build">build ae6f5c9 · v.2.4 · 2026-04-24</span>
           </div>
         </div>
-
-        <div>
-          <div class="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-4">Product</div>
-          <ul class="space-y-3">
-            <li><a href="features.html" class="footer-link">Features</a></li>
-            <li><a href="pricing.html" class="footer-link">Pricing</a></li>
-            <li><a href="#" class="footer-link">Changelog</a></li>
-            <li><a href="#" class="footer-link">Roadmap</a></li>
-            <li><a href="#" class="footer-link">Integrations</a></li>
-          </ul>
-        </div>
-
-        <div>
-          <div class="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-4">Industries</div>
-          <ul class="space-y-3">
-            <li><a href="#" class="footer-link">Deburring</a></li>
-            <li><a href="#" class="footer-link">Plating &amp; anodizing</a></li>
-            <li><a href="#" class="footer-link">Machine shops</a></li>
-            <li><a href="#" class="footer-link">Fabrication</a></li>
-          </ul>
-        </div>
-
-        <div>
-          <div class="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-4">Company</div>
-          <ul class="space-y-3">
-            <li><a href="#" class="footer-link">About</a></li>
-            <li><a href="contact.html" class="footer-link">Contact</a></li>
-            <li><a href="#" class="footer-link">Privacy</a></li>
-            <li><a href="#" class="footer-link">Terms</a></li>
-            <li><a href="#" class="footer-link">Security</a></li>
-          </ul>
+        <div class="footer-links">
+          <div>
+            <div class="footer-col-key">PRODUCT</div>
+            <a href="#workflow">Workflow</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#dashboard">Demo</a>
+            <a href="#faq">Q&amp;A</a>
+          </div>
+          <div>
+            <div class="footer-col-key">SHOPS</div>
+            <a href="#">Deburring</a>
+            <a href="#">Plating &amp; anodizing</a>
+            <a href="#">Machine shops</a>
+            <a href="#">Fabrication</a>
+          </div>
+          <div>
+            <div class="footer-col-key">COMPANY</div>
+            <a href="#">About</a>
+            <a href="contact.html">Contact</a>
+            <a href="#">Privacy</a>
+            <a href="#">Terms</a>
+          </div>
         </div>
       </div>
 
-      <div class="border-t border-white/5 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-zinc-500">
-        <div>&copy; <span data-year>2026</span> Shop OS. All rights reserved.</div>
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-green-500"></span>
-          All systems operational
-        </div>
+      <!-- Oversized brand wordmark, bleeds off the bottom -->
+      <div class="brand-bleed" aria-hidden="true">
+        FabTrack <em>IO</em>
+      </div>
+
+      <!-- Colophon: build hash, type credits, made-in -->
+      <div class="colophon">
+        <span class="colophon-mark">FabTrack&nbsp;IO</span>
+        <span>build <code>ae6f5c9</code></span>
+        <span>deployed <time datetime="2026-04-24">Apr&nbsp;24, 2026</time></span>
+        <span>set in Source&nbsp;Serif&nbsp;4 &amp; JetBrains&nbsp;Mono</span>
+        <span>made in Fresno&nbsp;CA, between cycles</span>
+      </div>
+
+      <div class="footer-fineprint">
+        <span>© <span data-year>2026</span> FabTrack IO · A product of SC Deburring LLC, Fresno CA</span>
+        <span class="mono">Made by a shop. Not a startup.</span>
       </div>
     </div>
   </footer>
 
-  <!-- Lucide icons + site JS -->
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

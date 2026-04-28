@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contact — FabTrack IO · talk to a real shop owner</title>
+  <meta name="description" content="Book a 15-min walkthrough or send a question. Replies usually within 4 working hours. From a real shop owner, in a real machine shop." />
+  <meta name="theme-color" content="#f6f4ef" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+  <!-- Floating pill nav (same as index) -->
+  <nav class="pill-nav" data-pill-nav>
+    <a href="/" class="pill-brand" aria-label="FabTrack IO home">
+      <svg width="26" height="26" viewBox="0 0 36 36" fill="none" class="shrink-0">
+        <rect width="36" height="36" rx="8" fill="#0e0e10"/>
+        <text x="18" y="24" font-family="Inter Tight, sans-serif" font-weight="800" font-size="14" fill="#ff5b1f" text-anchor="middle" letter-spacing="-0.5">FT</text>
+      </svg>
+      <span>FabTrack <em>IO</em></span>
+    </a>
+    <div class="pill-links">
+      <a href="/#workflow">Workflow</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#shopfloor">Shops</a>
+      <a href="/#faq">Q&amp;A</a>
+    </div>
+    <a href="https://app.fabtrackio.com/signup" class="pill-cta">
+      Start trial <span aria-hidden="true">→</span>
+    </a>
+    <button class="pill-toggle" data-pill-toggle aria-label="Menu" aria-expanded="false">
+      <span class="bar"></span><span class="bar"></span>
+    </button>
+  </nav>
+  <div class="pill-drawer" data-pill-drawer>
+    <a href="/#workflow">Workflow</a>
+    <a href="/#pricing">Pricing</a>
+    <a href="/#shopfloor">Shops</a>
+    <a href="/#faq">Q&amp;A</a>
+    <a href="https://app.fabtrackio.com/signup" class="drawer-cta">Start trial →</a>
+  </div>
+
+  <!-- HERO — editorial -->
+  <header class="hero hero-contact">
+    <div class="hero-grid">
+      <div class="hero-left reveal" style="--i:0">
+        <a href="/" class="status-pill">
+          <span class="status-dot"></span>
+          Replies usually within 4 working hours · Mon–Fri
+          <span class="arrow">↗</span>
+        </a>
+        <h1 class="hero-headline">
+          <span class="line line-1">Talk to a shop owner.</span>
+          <span class="line line-2">Not a sales bot.</span>
+        </h1>
+        <p class="hero-sub">
+          FabTrack IO is built and answered by the same people who run SC&nbsp;Deburring LLC. Book a 15-min walkthrough or send a question — either way, you'll hear back from someone with grease under the nails.
+        </p>
+        <div class="hero-fineprint" style="margin-top:1.5rem">
+          <span class="mono">FRESNO CA</span> · UTC−8 · book any 15-min slot below
+        </div>
+      </div>
+
+      <aside class="hero-right reveal" style="--i:1">
+        <div class="hero-side-card">
+          <div class="side-label">
+            <span>Today on the floor</span>
+            <span class="mono side-time" data-clock>14:32</span>
+          </div>
+          <div class="side-num-block">
+            <div class="side-num">26<span class="side-num-suf"></span></div>
+            <div class="side-num-key">jobs running right now</div>
+          </div>
+          <div class="side-num-block">
+            <div class="side-num">6<span class="side-num-suf"></span></div>
+            <div class="side-num-key">operators on shift</div>
+          </div>
+          <div class="side-num-block">
+            <div class="side-num">5<span class="side-num-suf">h&nbsp;5m</span></div>
+            <div class="side-num-key">logged today</div>
+          </div>
+          <div class="side-foot">
+            <span class="mono">— from the same FabTrack IO that runs your shop</span>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </header>
+
+  <!-- §01 — THE FORM -->
+  <section class="section">
+    <div class="container">
+      <div class="section-label">
+        <span class="num">№01</span>
+        <span class="title">— SEND A NOTE</span>
+        <span class="sub">we read every one ourselves</span>
+      </div>
+
+      <div class="contact-grid">
+        <form class="contact-form reveal" style="--i:0" data-contact-form>
+          <label class="cfield">
+            <span class="cfield-key">YOUR NAME <span class="req">*</span></span>
+            <input name="name" required placeholder="Jordan Park" />
+          </label>
+          <label class="cfield">
+            <span class="cfield-key">EMAIL <span class="req">*</span></span>
+            <input name="email" type="email" required placeholder="jordan@steelriver.com" />
+          </label>
+          <label class="cfield">
+            <span class="cfield-key">SHOP NAME</span>
+            <input name="shop" placeholder="Steelriver Co · Modesto, CA" />
+          </label>
+          <label class="cfield">
+            <span class="cfield-key">WHAT KIND OF SHOP?</span>
+            <select name="kind">
+              <option>— select —</option>
+              <option>Deburring</option>
+              <option>Plating &amp; anodizing</option>
+              <option>Machine shop</option>
+              <option>Fabrication</option>
+              <option>Mixed / other finishing</option>
+            </select>
+          </label>
+          <label class="cfield cfield-full">
+            <span class="cfield-key">WHAT'S ON YOUR MIND?</span>
+            <textarea name="message" rows="6" placeholder="Asking about a feature, want a walkthrough, hit a wall — whatever it is, write it like you'd say it on the phone."></textarea>
+          </label>
+          <div class="cfield-foot">
+            <button type="submit" class="btn-primary">Send →</button>
+            <span class="cfield-meta mono">
+              <span class="cfield-dot"></span> ENCRYPTED IN TRANSIT · NEVER SOLD · NEVER ANY DRIP&nbsp;EMAILS
+            </span>
+            <div data-success class="contact-success">
+              ✓ Got it. We'll be in touch from <strong>anthony@fabtrackio.com</strong> usually inside 4 working hours.
+            </div>
+          </div>
+        </form>
+
+        <aside class="contact-side reveal" style="--i:1">
+          <div class="cside-block">
+            <div class="cside-key mono">▸ FAST PATHS</div>
+            <a class="cside-link" href="mailto:hello@fabtrackio.com">
+              <span class="cside-link-key">EMAIL</span>
+              <span class="cside-link-val">hello@fabtrackio.com</span>
+            </a>
+            <a class="cside-link" href="tel:+15592223333">
+              <span class="cside-link-key">PHONE</span>
+              <span class="cside-link-val">+1 559 222 3333</span>
+            </a>
+            <a class="cside-link" href="#">
+              <span class="cside-link-key">15-MIN DEMO</span>
+              <span class="cside-link-val">book a slot ↗</span>
+            </a>
+          </div>
+
+          <div class="cside-block">
+            <div class="cside-key mono">▸ WHAT TO EXPECT</div>
+            <ul class="cside-list">
+              <li>You write what's on your mind.</li>
+              <li>A real human reads it (often Anthony).</li>
+              <li>Reply usually inside 4 working hours.</li>
+              <li>If you book a demo: we screen-share the floor live, no slides.</li>
+            </ul>
+          </div>
+
+          <div class="cside-block cside-block-stamp">
+            <div class="cside-stamp">SHOP-OWNER ANSWERED · NO SDR</div>
+            <div class="cside-stamp-meta mono">
+              SC&nbsp;DEBURRING LLC · FRESNO CA · EST 2026
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer (mini, reuses .site-footer) -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div>
+          <div class="footer-meta-line">
+            <span class="status-pill status-pill-light">
+              <span class="status-dot"></span> All systems normal
+            </span>
+            <span class="mono footer-build">build ae6f5c9 · v.2.4 · 2026-04-24</span>
+          </div>
+        </div>
+        <div class="footer-links">
+          <div>
+            <div class="footer-col-key">PRODUCT</div>
+            <a href="/#workflow">Workflow</a>
+            <a href="/#pricing">Pricing</a>
+            <a href="/#dashboard">Demo</a>
+            <a href="/#faq">Q&amp;A</a>
+          </div>
+          <div>
+            <div class="footer-col-key">SHOPS</div>
+            <a href="#">Deburring</a>
+            <a href="#">Plating &amp; anodizing</a>
+            <a href="#">Machine shops</a>
+            <a href="#">Fabrication</a>
+          </div>
+          <div>
+            <div class="footer-col-key">COMPANY</div>
+            <a href="#">About</a>
+            <a href="contact.html">Contact</a>
+            <a href="#">Privacy</a>
+            <a href="#">Terms</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="brand-bleed" aria-hidden="true">
+        FabTrack <em>IO</em>
+      </div>
+
+      <div class="colophon">
+        <span class="colophon-mark">FabTrack&nbsp;IO</span>
+        <span>build <code>ae6f5c9</code></span>
+        <span>deployed <time datetime="2026-04-24">Apr&nbsp;24, 2026</time></span>
+        <span>set in Source&nbsp;Serif&nbsp;4 &amp; JetBrains&nbsp;Mono</span>
+        <span>made in Fresno&nbsp;CA, between cycles</span>
+      </div>
+
+      <div class="footer-fineprint">
+        <span>© <span data-year>2026</span> FabTrack IO · A product of SC Deburring LLC, Fresno CA</span>
+        <span class="mono">Made by a shop. Not a startup.</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
