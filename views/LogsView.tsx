@@ -10,10 +10,12 @@ import {
   CheckCircle, Briefcase, Edit2, X, Trash2, Clock,
 } from 'lucide-react';
 
-import { Job, User, TimeLog } from '../types';
+import { Job, User, TimeLog, SystemSettings } from '../types';
 import * as DB from '../services/mockDb';
 import { fmt, toDateTimeLocal, formatDuration, getLogDurationMins } from '../utils/date';
 import { Overlay } from '../components/Overlay';
+import { resolveJobStage } from '../utils/stageRouting';
+import { getStages } from '../App';
 
 export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) => void }) => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -45,35 +47,61 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'completed'>('active');
   const [filterSearch, setFilterSearch] = useState('');
 
+  // Default to "Last 90 days" so logs don't disappear on month rollover or
+  // when the shop has a slow week. Previously defaulted to current month only,
+  // which made it look like jobs/logs were missing if the user opened the
+  // page on day 1 of a new month.
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
     const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const ninetyDaysAgo = new Date(now);
+    ninetyDaysAgo.setDate(now.getDate() - 90);
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return { start: fmt(firstDay), end: fmt(lastDay) };
+    return { start: fmt(ninetyDaysAgo), end: fmt(now) };
   });
+
+  // Settings drive the workflow stages — needed for proper "is this job
+  // complete?" check (a job at any stage flagged isComplete:true counts as
+  // done, not just legacy status==='completed').
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
 
   useEffect(() => {
     const unsub1 = DB.subscribeLogs(setLogs);
     const unsub2 = DB.subscribeUsers(setUsers);
     const unsub3 = DB.subscribeJobs(setJobs);
-    const unsub4 = DB.subscribeSettings((s) => setOps(s.customOperations || []));
+    const unsub4 = DB.subscribeSettings((s) => { setOps(s.customOperations || []); setSettings(s); });
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, [refreshKey]);
 
-  // Build quick lookups: jobId → job.status and jobId → full job
-  const jobStatusMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    jobs.forEach(j => { map[j.id] = j.status; });
-    return map;
-  }, [jobs]);
+  const stages = useMemo(() => settings ? getStages(settings) : [], [settings]);
 
+  // jobId → job lookup
   const jobMap = useMemo(() => {
     const map: Record<string, Job> = {};
     jobs.forEach(j => { map[j.id] = j; });
     return map;
   }, [jobs]);
+
+  // jobId → "is this job done?" — single source of truth used by the tab
+  // filter, the per-row badge, and the active/completed counts. A job is
+  // considered done if EITHER:
+  //   • its legacy `status` is 'completed' (admin clicked "Mark Complete"), or
+  //   • its `currentStage` resolves to a stage flagged `isComplete: true`
+  //     (job advanced through the workflow into a Done/Delivered/Invoiced
+  //     stage — even if `status` was never updated, which can happen when
+  //     stages are dragged around in Settings)
+  // Orphan logs (parent job deleted) get `null` so we can park them in their
+  // own "All Jobs" view rather than letting them flood the Active tab.
+  const jobDoneMap = useMemo(() => {
+    const map: Record<string, boolean | null> = {};
+    jobs.forEach(j => {
+      if (j.status === 'completed') { map[j.id] = true; return; }
+      if (stages.length === 0) { map[j.id] = false; return; }
+      const stage = resolveJobStage(j, stages);
+      map[j.id] = stage?.isComplete === true;
+    });
+    return map;
+  }, [jobs, stages]);
 
   const handleEditLog = (log: TimeLog) => {
     savedScrollRef.current = document.querySelector('main')?.scrollTop ?? 0;
@@ -141,7 +169,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     }
   };
 
-  const setPreset = (type: 'today' | 'week' | 'month') => {
+  const setPreset = (type: 'today' | 'week' | 'month' | '90d' | 'all') => {
     const now = new Date();
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -153,10 +181,19 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
       const mon = new Date(now); mon.setDate(now.getDate() + diff);
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
       setDateRange({ start: fmt(mon), end: fmt(sun) });
-    } else {
+    } else if (type === 'month') {
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
       const last  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
       setDateRange({ start: fmt(first), end: fmt(last) });
+    } else if (type === '90d') {
+      const ago = new Date(now); ago.setDate(now.getDate() - 90);
+      setDateRange({ start: fmt(ago), end: fmt(now) });
+    } else {
+      // 'all' — wide net, picks up logs from earliest-realistic shop start.
+      // Use 5-year lookback rather than epoch so the date pickers don't show
+      // 1970 placeholders.
+      const ago = new Date(now); ago.setFullYear(now.getFullYear() - 5);
+      setDateRange({ start: fmt(ago), end: fmt(now) });
     }
   };
 
@@ -170,15 +207,20 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
 
     const filtered = logs.filter(log => {
       //  KEY LOGIC
-      // A log belongs to "completed" tab if its parent JOB is marked complete.
+      // A log belongs to "completed" tab if its parent JOB is marked complete
+      // (either status==='completed' OR resolved into a stage with isComplete).
       // A log belongs to "active" tab if its parent JOB is NOT yet complete.
-      // Individual timer start/stop (log.endTime) is shown INSIDE the group
-      // as a detail row  it does NOT drive the tab grouping.
-      //
-      const jobIsCompleted = jobStatusMap[log.jobId] === 'completed';
+      // Logs whose parent job has been deleted are ORPHANS — they only
+      // appear under "All Jobs", never in Active or Completed, so the user
+      // can find + clean them up without polluting the day-to-day tabs.
+      const doneState = jobDoneMap[log.jobId]; // true | false | undefined (orphan)
 
-      if (activeTab === 'completed' && !jobIsCompleted) return false;
-      if (activeTab === 'active'    &&  jobIsCompleted) return false;
+      if (activeTab === 'completed') {
+        if (doneState !== true) return false;
+      } else if (activeTab === 'active') {
+        if (doneState !== false) return false; // excludes done AND orphans
+      }
+      // 'all' tab includes everything (including orphans)
 
       // Date range: use startTime for the check (covers both active & completed logs)
       if (log.startTime < startTs || log.startTime > endTs) return false;
@@ -217,23 +259,28 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     }> = {};
 
     filtered.forEach(log => {
-      // Key by the actual jobId — previously we keyed by `jobIdsDisplay`
-      // which is human-readable and can collide across jobs (two jobs sharing
-      // "J-1234" would merge their logs). That caused the "I clicked Edit on
-      // Job A and got Job B's log" bug.
-      const groupKey = log.jobId || log.jobIdsDisplay || 'unknown';
+      // Key by the actual jobId (unique Firestore doc id). DO NOT fall back
+      // to `jobIdsDisplay` — that's the human-readable label and DEFAULTS TO
+      // `poNumber` when a job is created. Two jobs from the same customer
+      // referencing the same PO# (re-orders, multi-part POs) would collide
+      // and render under one row, with logs visibly leaking between them.
+      // If a log somehow has no jobId, it goes to a single "unknown" bucket.
+      const groupKey = log.jobId || '__unknown__';
       if (!groups[groupKey]) {
         // Pull extra info from the jobs list
         const job = jobs.find(j => j.id === log.jobId);
         groups[groupKey] = {
           jobId: log.jobIdsDisplay || log.jobId || 'Unknown Job',
-          internalJobId: log.jobId,
+          internalJobId: log.jobId || '__unknown__',
           partNumber: log.partNumber || job?.partNumber || 'N/A',
           customer:   log.customer  || job?.customer  || '',
           dueDate:    job?.dueDate  || '',
           poNumber:   job?.poNumber || '',
           quantity:   job?.quantity || 0,
-          jobIsCompleted: jobStatusMap[log.jobId] === 'completed',
+          // Stage-aware completion: matches what the tab filter uses, so the
+          // green "Job Complete" badge and the tab classification can never
+          // disagree with each other.
+          jobIsCompleted: jobDoneMap[log.jobId] === true,
           completedAt:    job?.completedAt || null,
           logs: [],
           totalDurationMinutes: 0,
@@ -266,20 +313,25 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         g.logs.sort((a, b) => b.startTime - a.startTime);
         return g;
       });
-  }, [logs, jobs, jobStatusMap, jobMap, activeTab, dateRange, filterSearch]);
+  }, [logs, jobs, jobDoneMap, jobMap, activeTab, dateRange, filterSearch]);
 
   const totalHours    = groupedLogs.reduce((acc, g) => acc + g.totalDurationMinutes / 60, 0);
   const totalEntries  = groupedLogs.reduce((acc, g) => acc + g.logs.length, 0);
 
-  // Counts for the tab badges (based on JOB status, not log status)
-  const jobsWithLogs     = useMemo(() => new Set(logs.map(l => l.jobId)), [logs]);
-  const activeJobCount   = useMemo(() => [...jobsWithLogs].filter(id => jobStatusMap[id] !== 'completed').length, [jobsWithLogs, jobStatusMap]);
-  const completedJobCount= useMemo(() => [...jobsWithLogs].filter(id => jobStatusMap[id] === 'completed').length, [jobsWithLogs, jobStatusMap]);
+  // Counts for the tab badges (based on JOB status, not log status). Matches
+  // the same true/false/orphan rules the tab filter uses — so the count next
+  // to "Active Jobs" can never disagree with the rows the tab shows.
+  const jobsWithLogs     = useMemo(() => new Set(logs.map(l => l.jobId).filter(Boolean)), [logs]);
+  const activeJobCount   = useMemo(() => [...jobsWithLogs].filter(id => jobDoneMap[id] === false).length, [jobsWithLogs, jobDoneMap]);
+  const completedJobCount= useMemo(() => [...jobsWithLogs].filter(id => jobDoneMap[id] === true).length, [jobsWithLogs, jobDoneMap]);
 
   // ── CSV Export ───────────────────────────────────────────────────────────────
+  // IMPORTANT: selectedExportJobs is keyed by `internalJobId` (unique Firestore
+  // doc id), never by the display id. Two jobs from the same customer with
+  // matching PO numbers would otherwise toggle as one entry.
   const openExportModal = () => {
     // Pre-select all jobs by default
-    setSelectedExportJobs(new Set(groupedLogs.map(g => g.jobId)));
+    setSelectedExportJobs(new Set(groupedLogs.map(g => g.internalJobId)));
     setShowExportModal(true);
   };
 
@@ -310,7 +362,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   };
 
   const exportToGoogleSheets = () => {
-    const exportGroups = groupedLogs.filter(g => selectedExportJobs.has(g.jobId));
+    const exportGroups = groupedLogs.filter(g => selectedExportJobs.has(g.internalJobId));
     if (exportGroups.length === 0) { addToast('error', 'Select at least one PO to export'); return; }
     if (typeof (window as any).__requestSheetsAccess !== 'function') {
       addToast('error', 'Google Sheets not available'); return;
@@ -410,7 +462,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           }),
         });
         if (!createRes.ok) throw new Error(`Create failed: ${await createRes.text()}`);
-        const createData = await createRes.json();
+        const createData = await createRes.json() as {
+          spreadsheetId: string;
+          spreadsheetUrl: string;
+          sheets: Array<{ properties: { sheetId: number } }>;
+        };
         const spreadsheetId = createData.spreadsheetId;
         const spreadsheetUrl = createData.spreadsheetUrl;
         const sheetId = createData.sheets[0].properties.sheetId;
@@ -556,9 +612,15 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             <label className="text-[10px] uppercase font-bold text-zinc-500">End Date</label>
             <input aria-label="End date" type="date" value={dateRange.end} onChange={e => setDateRange({ ...dateRange, end: e.target.value })} className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white w-full sm:min-w-[130px]" />
           </div>
-          <div className="flex gap-1 col-span-2 sm:col-span-1">
-            {(['today', 'week', 'month'] as const).map(p => (
-              <button key={p} onClick={() => setPreset(p)} className="flex-1 sm:flex-initial px-3 py-2 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors capitalize">{p}</button>
+          <div className="flex gap-1 col-span-2 sm:col-span-1 flex-wrap">
+            {([
+              { key: 'today', label: 'Today' },
+              { key: 'week',  label: 'Week' },
+              { key: 'month', label: 'Month' },
+              { key: '90d',   label: '90 Days' },
+              { key: 'all',   label: 'All Time' },
+            ] as const).map(p => (
+              <button key={p.key} onClick={() => setPreset(p.key)} className="flex-1 sm:flex-initial px-3 py-2 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors">{p.label}</button>
             ))}
           </div>
         </div>
@@ -599,13 +661,23 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         {groupedLogs.length === 0 && (
           <div className="p-12 text-center text-zinc-500 bg-zinc-900/50 rounded-2xl border border-white/5">
             <div className="inline-block p-4 rounded-full bg-zinc-800 mb-4"><Filter className="w-8 h-8 text-zinc-600" /></div>
-            <p className="font-medium">No logs found matching your filters.</p>
-            <p className="text-sm mt-2 text-zinc-600">Try adjusting the date range or switching tabs.</p>
+            <p className="font-medium">No logs found in this view.</p>
+            <p className="text-sm mt-2 text-zinc-600">
+              {logs.length === 0
+                ? 'No time has been logged yet — clock into a job to start.'
+                : `${logs.length} log${logs.length !== 1 ? 's' : ''} exist outside this filter. Try widening the range or switching tabs.`}
+            </p>
+            {logs.length > 0 && (
+              <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
+                <button onClick={() => { setActiveTab('all'); setPreset('all'); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">Show All Logs</button>
+                <button onClick={() => setPreset('90d')} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors">Last 90 Days</button>
+              </div>
+            )}
           </div>
         )}
 
         {groupedLogs.map(group => (
-          <div key={group.jobId}
+          <div key={group.internalJobId}
             className={`border rounded-2xl overflow-hidden shadow-sm transition-all ${
               group.jobIsCompleted
                 ? 'bg-emerald-950/20 border-emerald-500/20 hover:border-emerald-500/40'
@@ -938,7 +1010,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Select POs to Export</p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setSelectedExportJobs(new Set(groupedLogs.map(g => g.jobId)))}
+                    onClick={() => setSelectedExportJobs(new Set(groupedLogs.map(g => g.internalJobId)))}
                     className="text-[11px] text-blue-400 hover:text-blue-300 font-bold"
                   >Select All</button>
                   <span className="text-zinc-700">·</span>
@@ -953,10 +1025,10 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 <p className="text-zinc-500 text-sm text-center py-8">No logs in current date range.</p>
               ) : (
                 groupedLogs.map(group => {
-                  const checked = selectedExportJobs.has(group.jobId);
+                  const checked = selectedExportJobs.has(group.internalJobId);
                   return (
                     <label
-                      key={group.jobId}
+                      key={group.internalJobId}
                       className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
                         checked
                           ? 'bg-emerald-500/10 border-emerald-500/30'
@@ -966,7 +1038,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleExportJob(group.jobId)}
+                        onChange={() => toggleExportJob(group.internalJobId)}
                         className="w-4 h-4 accent-emerald-500 shrink-0"
                       />
                       <div className="flex-1 min-w-0">
@@ -996,7 +1068,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             <div className="p-5 border-t border-white/10 bg-zinc-800/30 space-y-3">
               {/* Summary of selection */}
               {selectedExportJobs.size > 0 && (() => {
-                const sel = groupedLogs.filter(g => selectedExportJobs.has(g.jobId));
+                const sel = groupedLogs.filter(g => selectedExportJobs.has(g.internalJobId));
                 const selMins = sel.reduce((a, g) => a + g.totalDurationMinutes, 0);
                 const selEntries = sel.reduce((a, g) => a + g.logs.length, 0);
                 return (

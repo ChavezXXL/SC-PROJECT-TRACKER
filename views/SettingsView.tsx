@@ -30,13 +30,15 @@ import { ShopFlowMap } from '../components/ShopFlowMap';
 import { OperationsStageMapper } from '../components/OperationsStageMapper';
 import { VendorsManager } from '../components/VendorsManager';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/useConfirm';
 import { CustomerPortal } from '../CustomerPortal';
 import { makeClientSlug, buildPortalUrl } from '../utils/url';
 import { VAPID_KEY, vapidKeyToUint8 } from '../utils/vapid';
 import { customerKey } from '../utils/customers';
 import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from '../utils/goals';
-import { getActiveAlarms } from '../services/shiftAlarms';
+import { getActiveAlarms, playAlarmSound } from '../services/shiftAlarms';
 import { isDeveloper } from '../utils/devMode';
+import { getStages, DEFAULT_STAGES } from '../App';
 
 const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
@@ -207,99 +209,8 @@ const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: s
 };
 
 // ── AI HEALTH PANEL — REMOVED ──
-// AI PO scanner was removed 2026-04-27. The component below is kept as
-// a no-op so any stray imports don't break the build; it renders nothing.
-// Delete this stub once we're confident no other view references it.
-const AIHealthPanel_DEPRECATED = ({ addToast }: { addToast: any }) => {
-  const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
-  const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
-  const [lastModel, setLastModel] = useState<string | null>(null);
-  const [lastMsg, setLastMsg] = useState('');
-
-  // Passive check on mount — doesn't actually hit Gemini, just verifies the
-  // endpoint exists and the env var is set.
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/.netlify/functions/gemini', { method: 'GET' });
-        if (res.ok) {
-          const d = await res.json().catch(() => ({}));
-          setKeyConfigured(!!d.keyConfigured);
-        } else {
-          setKeyConfigured(false);
-        }
-      } catch { setKeyConfigured(false); }
-    })();
-  }, []);
-
-  const runTest = async () => {
-    setStatus('checking');
-    setLastMsg('Sending round-trip test to Gemini…');
-    try {
-      const res = await fetch('/.netlify/functions/gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: 'Reply with exactly: AI_OK' }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error || `HTTP ${res.status}`);
-      }
-      const d = await res.json();
-      if (!d.text) throw new Error('Empty response from Gemini');
-      setLastModel(d.model || null);
-      setStatus('ok');
-      setLastMsg(`Working — reply: "${String(d.text).slice(0, 60)}"`);
-      addToast('success', '✅ AI is working');
-    } catch (e: any) {
-      setStatus('error');
-      const msg = e?.message || 'Unknown error';
-      setLastMsg(msg);
-      addToast('error', msg);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <h3 className="font-bold text-white flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> AI Status</h3>
-      <p className="text-[10px] text-zinc-500 leading-relaxed">
-        The PO scanner uses Gemini to extract purchase-order details from photos. If you get "Scan failed" errors, check here first.
-      </p>
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${keyConfigured === null ? 'bg-zinc-800/50 text-zinc-500' : keyConfigured ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-          <span>{keyConfigured === null ? '⏳' : keyConfigured ? '✅' : '❌'}</span>
-          <span>API Key</span>
-        </div>
-        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${status === 'ok' ? 'bg-emerald-500/10 text-emerald-400' : status === 'error' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-800/50 text-zinc-500'}`}>
-          <span>{status === 'ok' ? '✅' : status === 'error' ? '❌' : '⏸'}</span>
-          <span>Round-trip{lastModel ? ` · ${lastModel.replace('gemini-', '')}` : ''}</span>
-        </div>
-      </div>
-      {keyConfigured === false && (
-        <div className="bg-red-500/10 border border-red-500/25 rounded-xl p-3 text-xs text-red-300 space-y-1">
-          <p className="font-bold">GEMINI_API_KEY not set</p>
-          <p className="text-red-300/80 leading-relaxed">
-            In Netlify → Site settings → Environment variables, add <code className="bg-black/40 px-1 rounded">GEMINI_API_KEY</code>. Get a free key at <a href="https://ai.google.dev/" target="_blank" rel="noreferrer" className="underline">ai.google.dev</a>.
-          </p>
-        </div>
-      )}
-      {lastMsg && (
-        <div className={`text-xs px-3 py-2 rounded-lg break-words ${status === 'error' ? 'bg-red-500/10 text-red-300' : status === 'ok' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-blue-500/10 text-blue-300'}`}>
-          {status === 'checking' && <span className="animate-pulse">⏳ </span>}{lastMsg}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={runTest}
-        disabled={status === 'checking'}
-        className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2"
-      >
-        <Zap className="w-4 h-4" />
-        {status === 'checking' ? 'Testing…' : 'Test AI Connection'}
-      </button>
-    </div>
-  );
-};
+// AI PO scanner removed 2026-04-27. The Gemini round-trip checker that lived
+// here is gone; if AI features return on a higher tier later, rebuild fresh.
 
 // ── FINANCIAL SETTINGS ──
 // Precise computation pulls actual jobs + logs data to show real shop economics,
@@ -347,6 +258,7 @@ const DEFAULT_ALARMS: ShiftAlarm[] = [
 ];
 
 const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void; addToast: any }) => {
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const alarms: ShiftAlarm[] = settings.shiftAlarms && settings.shiftAlarms.length > 0
     ? settings.shiftAlarms
     : getActiveAlarms(settings); // fall back to legacy fields on first load
@@ -373,8 +285,16 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
     setSettings({ ...settings, shiftAlarms: [...alarms, newAlarm] });
   };
 
-  const loadDefaults = () => {
-    if (alarms.length > 0 && !confirm('Replace current alarms with the default set (Morning Break · Lunch · Afternoon Break · Shift End)?')) return;
+  const loadDefaults = async () => {
+    if (alarms.length > 0) {
+      const ok = await askConfirm({
+        title: 'Replace alarms with defaults?',
+        message: 'This swaps your current alarms for Morning Break, Lunch, Afternoon Break, and Shift End. Custom alarms will be removed.',
+        tone: 'warning',
+        confirmLabel: 'Replace',
+      });
+      if (!ok) return;
+    }
     setSettings({ ...settings, shiftAlarms: DEFAULT_ALARMS });
   };
 
@@ -596,6 +516,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
           </button>
         </div>
       </div>
+      {ConfirmHost}
     </div>
   );
 };
@@ -2505,7 +2426,7 @@ const WeatherLocationCard = ({ addToast, settings, setSettings }: { addToast: an
         const lat = pos.coords.latitude, lon = pos.coords.longitude;
         setCoords({ lat, lon });
         fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=fahrenheit`)
-          .then(r => r.json()).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
+          .then(r => r.json() as Promise<{ current?: { temperature_2m?: number } }>).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
       },
       err => { if (err.code === err.PERMISSION_DENIED) setStatus('denied'); },
       { timeout: 8000 }
@@ -2521,7 +2442,7 @@ const WeatherLocationCard = ({ addToast, settings, setSettings }: { addToast: an
         setCoords({ lat, lon });
         addToast('success', 'Location access granted — weather will appear on TV');
         fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=fahrenheit`)
-          .then(r => r.json()).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
+          .then(r => r.json() as Promise<{ current?: { temperature_2m?: number } }>).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
       },
       err => {
         if (err.code === err.PERMISSION_DENIED) {
@@ -2626,7 +2547,7 @@ const ManualWeatherEditor: React.FC<{ settings: SystemSettings; setSettings: (s:
     setLooking(true);
     try {
       const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
-      const d = await res.json();
+      const d = await res.json() as { results?: Array<{ latitude: number; longitude: number; name: string; admin1?: string; country?: string; country_code?: string }> };
       const hit = d?.results?.[0];
       if (!hit || typeof hit.latitude !== 'number') {
         addToast('error', `Couldn't find "${q}" — try "City, State" or a 5-digit ZIP`);
@@ -2827,6 +2748,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
   const slides = settings.tvSlides || [];
   const [addOpen, setAddOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
 
   const update = (idx: number, patch: Partial<TvSlide>) => {
     const next = [...slides];
@@ -2900,8 +2822,16 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
                   <button
                     key={t}
                     type="button"
-                    onClick={() => {
-                      if (alreadyExists && !confirm(`You already have a "${meta.label}" slide. Adding another will show the same content twice. Continue?`)) return;
+                    onClick={async () => {
+                      if (alreadyExists) {
+                        const ok = await askConfirm({
+                          title: `Add another "${meta.label}" slide?`,
+                          message: 'You already have one of these. Adding another will show the same content twice in the rotation.',
+                          tone: 'warning',
+                          confirmLabel: 'Add anyway',
+                        });
+                        if (!ok) return;
+                      }
                       add(t as TvSlide['type']);
                     }}
                     className={`text-left px-3 py-2 rounded-lg border ${meta.color} hover:brightness-125 transition-all flex items-center gap-2.5`}
@@ -3016,9 +2946,15 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
           <div className="pt-2 border-t border-white/5 space-y-1">
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 // Load the default lineup so user can customize from a clean state
-                if (!confirm('Replace current slides with defaults (Workers · Jobs · Leaderboard · Goals · Week Stats · Weather)?')) return;
+                const ok = await askConfirm({
+                  title: 'Replace slides with defaults?',
+                  message: 'Sets up Workers · Jobs · Leaderboards · Goals · Week Stats · Weather. Your current customizations will be removed.',
+                  tone: 'warning',
+                  confirmLabel: 'Replace',
+                });
+                if (!ok) return;
                 const ts = Date.now();
                 setSettings({ ...settings, tvSlides: [
                   { id: `slide_${ts}_1`, type: 'workers', enabled: true },
@@ -3036,7 +2972,15 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
             </button>
             <button
               type="button"
-              onClick={() => { if (confirm('Clear all slides? (Defaults will run instead.)')) setSettings({ ...settings, tvSlides: [] }); }}
+              onClick={async () => {
+                const ok = await askConfirm({
+                  title: 'Clear all slides?',
+                  message: 'The TV will fall back to the default rotation (Workers + Jobs + Leaderboard + Weather + Stats).',
+                  tone: 'danger',
+                  confirmLabel: 'Clear all',
+                });
+                if (ok) setSettings({ ...settings, tvSlides: [] });
+              }}
               className="w-full text-[10px] text-zinc-600 hover:text-red-400 py-1 transition-colors"
             >
               Clear all (use built-in defaults)
@@ -3044,6 +2988,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
           </div>
         )}
       </div>
+      {ConfirmHost}
     </details>
   );
 };
@@ -3393,6 +3338,7 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
 };
 
 export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) => {
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
@@ -4379,7 +4325,15 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                         </div>
                         <div className="flex gap-2">
                           <button onClick={() => window.open(tvUrl, '_blank')} className="flex-1 px-3 py-2 bg-white/5 hover:bg-white/10 text-white text-xs font-bold rounded-lg transition-colors">Open in New Tab</button>
-                          <button onClick={() => { if (confirm('Generate a new TV link? The old one will stop working.')) { setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) }); } }} className="px-3 py-2 bg-white/5 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 text-xs font-bold rounded-lg transition-colors">Reset</button>
+                          <button onClick={async () => {
+                            const ok = await askConfirm({
+                              title: 'Generate a new TV link?',
+                              message: 'The current link will stop working. Anyone using it on a TV will need the new URL.',
+                              tone: 'warning',
+                              confirmLabel: 'Reset link',
+                            });
+                            if (ok) setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) });
+                          }} className="px-3 py-2 bg-white/5 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 text-xs font-bold rounded-lg transition-colors">Reset</button>
                         </div>
                       </div>
                     ) : (
@@ -4526,9 +4480,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
           )}
 
-          {/* AI Status panel removed 2026-04-27 along with the AI PO scanner.
-              If we re-introduce AI features later (FabTrack IO tier), restore
-              the AIHealthPanel definition above. */}
+          {/* AI Status panel removed 2026-04-27 along with the AI PO scanner. */}
 
           {/* System Info — always shown, but with end-user-friendly labels.
               Raw Firebase connection status is gated behind dev mode. */}
@@ -4568,15 +4520,21 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
         <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-sm flex items-center gap-2"><Save className="w-4 h-4" /> Save</button>
       </div>
       </div>
+      {ConfirmHost}
     </div>
   );
 };
 
 // --- APP ROOT ---
 // PROGRESS VIEW - Worker stats
-function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; userName: string; recentLogs?: TimeLog[] }) {
+export function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; userName: string; recentLogs?: TimeLog[] }) {
   const [progress, setProgress] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
+  // Shop-wide leaderboard data — every active employee + completed log this
+  // month. Subscribed once here (not lifted into the parent) because no other
+  // panel on the worker dashboard needs it.
+  const [allLogs, setAllLogs] = React.useState<TimeLog[]>([]);
+  const [allUsers, setAllUsers] = React.useState<User[]>([]);
 
   React.useEffect(() => {
     if (!userId) return;
@@ -4586,6 +4544,12 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
     });
     return () => unsub();
   }, [userId]);
+
+  React.useEffect(() => {
+    const unsubLogs = DB.subscribeLogs(setAllLogs);
+    const unsubUsers = DB.subscribeUsers(setAllUsers);
+    return () => { unsubLogs(); unsubUsers(); };
+  }, []);
 
   const fmtHours = (h: number) => {
     const hrs = Math.floor(h);
@@ -4662,6 +4626,50 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
   const totalOpMins = opBreakdown.reduce((a, [, m]) => a + m, 0) || 1;
   const opColors = ['bg-blue-500', 'bg-purple-500', 'bg-emerald-500', 'bg-orange-500', 'bg-pink-500', 'bg-cyan-500', 'bg-yellow-500'];
 
+  // ── THIS-MONTH stats + SHOP LEADERBOARD ───────────────────────────────
+  // Calendar month, not rolling 30 days — workers think of their hours per
+  // pay-period, and most shops still bill monthly. We anchor to the 1st of
+  // the current month at midnight local time.
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const monthLabel = monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  // Per-employee minute totals from completed logs only (running timers
+  // would unfairly inflate the active worker's number until they stop).
+  const monthMinsByUser = new Map<string, number>();
+  for (const l of allLogs) {
+    if (!l.endTime) continue;
+    if (l.startTime < monthStart.getTime()) continue;
+    monthMinsByUser.set(l.userId, (monthMinsByUser.get(l.userId) || 0) + (l.durationMinutes || 0));
+  }
+
+  // Build leaderboard from the active employee roster. Skip admins (managers
+  // shouldn't be in a worker race) and inactive accounts. Always include
+  // *this* worker even if their account is admin or inactive — they still
+  // get to see their rank.
+  type LeaderRow = { id: string; name: string; mins: number; isMe: boolean };
+  const leaderRows: LeaderRow[] = [];
+  for (const u of allUsers) {
+    const isMe = u.id === userId;
+    if (!isMe) {
+      if (u.role !== 'employee') continue;
+      if (u.isActive === false) continue;
+    }
+    leaderRows.push({ id: u.id, name: u.name, mins: monthMinsByUser.get(u.id) || 0, isMe });
+  }
+  // If "me" still isn't in there (e.g. ProgressView opened with empty userId),
+  // show roster anyway. Sort high→low so the top of the list is the leader.
+  leaderRows.sort((a, b) => b.mins - a.mins);
+  const myRow = leaderRows.find(r => r.isMe);
+  const myRank = myRow ? leaderRows.indexOf(myRow) + 1 : null;
+  const topMins = leaderRows[0]?.mins || 0;
+  const myMonthMins = myRow?.mins || 0;
+  // Gap to next person up — "you're 1h 12m behind Sarah" feels like a race.
+  const gapToNext = (() => {
+    if (!myRow || !myRank || myRank <= 1) return null;
+    const above = leaderRows[myRank - 2];
+    return { name: above.name, mins: Math.max(0, above.mins - myRow.mins) };
+  })();
+
   return (
     <div className="space-y-4 animate-fade-in">
 
@@ -4704,18 +4712,8 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
         </div>
       </div>
 
-      {/* Summary cards — wide */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
-          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">This Week</p>
-          <p className="text-2xl sm:text-3xl font-black text-blue-400 tabular mt-1 leading-none">{fmtHours(weekHrsCalc)}</p>
-          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-blue-500/50 to-transparent mt-2" aria-hidden="true" />
-        </div>
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
-          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Operations</p>
-          <p className="text-2xl sm:text-3xl font-black text-purple-400 tabular mt-1 leading-none">{weekOps}</p>
-          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-purple-500/50 to-transparent mt-2" aria-hidden="true" />
-        </div>
+      {/* Summary cards — Today / Week / Month */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
           <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Today</p>
           <p className="text-2xl sm:text-3xl font-black text-emerald-400 tabular mt-1 leading-none">
@@ -4723,7 +4721,78 @@ function ProgressView({ userId, userName, recentLogs = [] }: { userId: string; u
           </p>
           <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent mt-2" aria-hidden="true" />
         </div>
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
+          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">This Week</p>
+          <p className="text-2xl sm:text-3xl font-black text-blue-400 tabular mt-1 leading-none">{fmtHours(weekHrsCalc)}</p>
+          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-blue-500/50 to-transparent mt-2" aria-hidden="true" />
+        </div>
+        <div className="card-shine hover-lift-glow bg-gradient-to-br from-amber-500/10 via-zinc-900/50 to-zinc-900/50 border border-amber-500/20 rounded-2xl p-4 text-center overflow-hidden relative">
+          <div aria-hidden="true" className="absolute -top-6 -right-6 w-24 h-24 bg-amber-500/10 blur-2xl rounded-full" />
+          <p className="text-[9px] font-black text-amber-400/80 uppercase tracking-[0.2em] relative">This Month</p>
+          <p className="text-2xl sm:text-3xl font-black text-amber-400 tabular mt-1 leading-none relative">{fmtHours(myMonthMins / 60)}</p>
+          <p className="text-[10px] text-zinc-500 mt-1 relative">{monthLabel}</p>
+        </div>
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
+          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Operations</p>
+          <p className="text-2xl sm:text-3xl font-black text-purple-400 tabular mt-1 leading-none">{weekOps}</p>
+          <p className="text-[10px] text-zinc-500 mt-1">this week</p>
+        </div>
       </div>
+
+      {/* ── SHOP RACE — monthly leaderboard ─────────────────────────────
+          Workers see where they rank against the rest of the floor. Hours
+          come from completed time logs only (running timers don't count
+          until stopped, otherwise the working person always "wins"). */}
+      {leaderRows.length > 1 && (
+        <div className="card-shine bg-gradient-to-br from-zinc-900/80 via-zinc-900/50 to-zinc-900/30 border border-white/10 rounded-3xl overflow-hidden">
+          <div className="px-4 py-3 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent border-b border-white/5 flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <span className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">🏁 Shop Race</span>
+              <p className="text-[10px] text-zinc-500 mt-0.5">Hours logged this month · {monthLabel}</p>
+            </div>
+            {myRank && (
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-zinc-500">You're</span>
+                <span className={`font-black px-2 py-1 rounded-lg ${myRank === 1 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : myRank <= 3 ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30' : 'bg-zinc-800 text-zinc-300 border border-white/10'}`}>
+                  #{myRank} of {leaderRows.length}
+                </span>
+                {gapToNext && gapToNext.mins > 0 && (
+                  <span className="text-zinc-500">· {fmtHours(gapToNext.mins / 60)} behind {gapToNext.name.split(' ')[0]}</span>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="divide-y divide-white/5">
+            {leaderRows.map((row, i) => {
+              const pct = topMins > 0 ? (row.mins / topMins) * 100 : 0;
+              const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : null;
+              return (
+                <div
+                  key={row.id}
+                  className={`relative px-4 py-3 flex items-center gap-3 transition-colors ${row.isMe ? 'bg-amber-500/[0.06] hover:bg-amber-500/10' : 'hover:bg-white/[0.03]'}`}
+                >
+                  {/* Progress fill — sits behind the row content like a race-track lane */}
+                  <div
+                    aria-hidden="true"
+                    className={`absolute inset-y-0 left-0 transition-all duration-700 ${i === 0 ? 'bg-gradient-to-r from-amber-500/15 to-transparent' : row.isMe ? 'bg-gradient-to-r from-blue-500/10 to-transparent' : 'bg-gradient-to-r from-zinc-700/15 to-transparent'}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                  <span className={`relative shrink-0 w-7 text-center text-xs font-black tabular ${i === 0 ? 'text-amber-400' : i <= 2 ? 'text-blue-400' : 'text-zinc-500'}`}>
+                    {medal || `#${i + 1}`}
+                  </span>
+                  <span className={`relative flex-1 truncate text-sm font-bold ${row.isMe ? 'text-white' : 'text-zinc-300'}`}>
+                    {row.name}
+                    {row.isMe && <span className="ml-2 text-[10px] font-black text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded uppercase tracking-wider">You</span>}
+                  </span>
+                  <span className={`relative text-sm font-mono tabular shrink-0 ${row.mins === 0 ? 'text-zinc-600' : i === 0 ? 'text-amber-300 font-black' : 'text-zinc-300 font-bold'}`}>
+                    {fmtHours(row.mins / 60)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Daily bar chart — last 7 days */}
       <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden">

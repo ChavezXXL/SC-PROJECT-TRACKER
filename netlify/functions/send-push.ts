@@ -31,7 +31,6 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import type { Handler } from '@netlify/functions';
-// @ts-expect-error — web-push has no first-party types; shape matches upstream docs.
 import webpush from 'web-push';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };

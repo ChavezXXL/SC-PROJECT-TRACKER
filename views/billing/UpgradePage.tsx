@@ -52,14 +52,14 @@ export const UpgradePage: React.FC = () => {
           cancelUrl: `${origin}/billing/upgrade`,
         }),
       });
-      const data = await res.json();
+      const data = await res.json() as { url?: string; error?: string };
       if (!res.ok) {
         setError(data?.error || 'Could not start checkout. Try again.');
         setBusy(null);
         return;
       }
       // Redirect to Stripe-hosted checkout
-      window.location.href = data.url;
+      if (data.url) window.location.href = data.url;
     } catch (e: any) {
       setError(e?.message || 'Could not reach checkout. Check your connection.');
       setBusy(null);

@@ -44,10 +44,18 @@ export const SuccessPage: React.FC = () => {
         // 1. Verify session server-side (uses Stripe secret key)
         const res = await fetch(`/api/stripe-session-verify?session_id=${encodeURIComponent(sessionId)}`);
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
+          const err = await res.json().catch(() => ({})) as { error?: string };
           throw new Error(err?.error || 'Could not verify your payment. Please contact support.');
         }
-        const data = await res.json();
+        const data = await res.json() as {
+          planId: string;
+          interval: 'month' | 'year';
+          status: string;
+          stripeCustomerId: string;
+          stripeSubscriptionId: string;
+          stripePriceId: string;
+          currentPeriodEnd: number;
+        };
         const { planId, interval, status, stripeCustomerId, stripeSubscriptionId, stripePriceId, currentPeriodEnd } = data;
 
         setPlanLabel(planId);

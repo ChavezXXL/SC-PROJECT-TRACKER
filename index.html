@@ -288,6 +288,38 @@
                 body.tv-mode .tv-chrome:hover { opacity: 1; }
                 body.tv-mode .tv-chrome { opacity: 0; transition: opacity 0.3s; }
 
+                /* ── TV Mode hardening: prevent content getting cut off ──
+                   The wall TV is unforgiving — anything that overflows the
+                   viewport just disappears off the bottom edge. These rules
+                   are defensive belt-and-suspenders so individual slides
+                   can't blow the layout no matter what content is loaded. */
+                body.tv-mode {
+                  /* dvh handles dynamic viewport (browser chrome, address bar) so
+                     the bottom of the slide never drops behind a phone-style URL bar
+                     when a TV's embedded browser shows it momentarily. Falls back
+                     to vh on TVs that pre-date dvh. */
+                  height: 100vh;
+                  height: 100dvh;
+                  overflow: hidden !important;
+                  /* iOS Safari can rubber-band the viewport — lock it. */
+                  position: fixed;
+                  inset: 0;
+                  /* Prevent text-size auto-bumping on TVs that try to be helpful */
+                  -webkit-text-size-adjust: 100%;
+                  text-size-adjust: 100%;
+                }
+                /* Critical: every flex/grid child gets min-width:0 + min-height:0
+                   so long content (worker names, PO numbers, multiline messages)
+                   shrinks instead of forcing the parent past its bounds. Without
+                   this, a 30-char shop name pushes the clock + stats off-screen. */
+                body.tv-mode * { min-width: 0; min-height: 0; }
+                /* Headings always clip rather than wrap to a 4th line that gets cut.
+                   ellipsis is fine — the autoscroll cycles new content soon anyway. */
+                body.tv-mode h1, body.tv-mode h2 {
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                }
+
                 /* TV auto-scroll — jobs belt slowly moves up then restarts */
                 @keyframes tv-belt {
                   0% { transform: translateY(0); }

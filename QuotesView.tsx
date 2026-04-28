@@ -6,6 +6,7 @@ import { printQuotePDF } from './services/pdfService';
 import { fmtMoneyK } from './utils/format';
 import { Overlay } from './components/Overlay';
 import { useConfirm } from './components/useConfirm';
+import { usePrompt } from './components/usePrompt';
 
 interface QuotesViewProps {
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
@@ -192,6 +193,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [filter, setFilter] = useState<QuoteStatus | 'all'>('all');
   const { confirm: confirmDialog, ConfirmHost } = useConfirm();
+  const { prompt: askName, PromptHost } = usePrompt();
   // View mode — list or kanban pipeline (Round 2 #9)
   const [viewMode, setViewMode] = useState<'list' | 'pipeline'>(() => {
     try { return (localStorage.getItem('quotes_view_mode') as 'list' | 'pipeline') || 'list'; } catch { return 'list'; }
@@ -356,12 +358,18 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   // ── Quote Templates (Round 1 #15) ──
   // Save current quote editor state as a reusable template. Keyed by customer for
   // per-client starter setups ("Boeing standard", "walk-in cash", etc.)
-  const saveAsTemplate = () => {
-    const label = prompt('Name this template:', billTo.name ? `${billTo.name} standard` : 'New template');
-    if (!label?.trim()) return;
+  const saveAsTemplate = async () => {
+    const label = await askName({
+      title: 'Save as template',
+      message: 'Reuse this quote’s line items, terms, and pricing as a starter for future quotes.',
+      placeholder: 'e.g. Boeing standard',
+      defaultValue: billTo.name ? `${billTo.name} standard` : '',
+      confirmLabel: 'Save template',
+    });
+    if (!label) return;
     const template: QuoteTemplate = {
       id: `qt_${Date.now()}`,
-      label: label.trim(),
+      label,
       customer: billTo.name || undefined,
       items: items.filter(i => i.description.trim()).map(i => ({ ...i })),
       markupPct: form.markupPct,
@@ -670,6 +678,7 @@ ${settings.companyPhone || ''}`.trim()
     // Full-width so large monitors don't show a dead column on the right
     <div className="w-full space-y-6">
       {ConfirmHost}
+      {PromptHost}
       {/* ── Page Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

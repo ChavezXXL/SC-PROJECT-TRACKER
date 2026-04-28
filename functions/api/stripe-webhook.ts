@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 // ═════════════════════════════════════════════════════════════════════
 // /api/stripe-webhook — Receive Stripe events + update Firestore
 //

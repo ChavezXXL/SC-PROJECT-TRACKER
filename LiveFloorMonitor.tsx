@@ -434,7 +434,7 @@ async function resolveCoords(override?: { lat?: number; lon?: number }): Promise
   try {
     const res = await fetch('https://ipapi.co/json/');
     if (res.ok) {
-      const d = await res.json();
+      const d = await res.json() as { latitude?: number; longitude?: number };
       if (typeof d.latitude === 'number' && typeof d.longitude === 'number') {
         return { lat: d.latitude, lon: d.longitude, source: 'ip' };
       }
@@ -459,7 +459,10 @@ function fetchWeather(override?: { lat?: number; lon?: number }): Promise<void> 
         `&daily=weather_code,temperature_2m_max,temperature_2m_min` +
         `&temperature_unit=fahrenheit&timezone=auto&forecast_days=5`
       );
-      const d = await res.json();
+      const d = await res.json() as {
+        current?: { temperature_2m: number; weather_code: number };
+        daily?: { time: string[]; weather_code: number[]; temperature_2m_max: number[]; temperature_2m_min: number[] };
+      };
       const current = d.current ? { temp: Math.round(d.current.temperature_2m), code: d.current.weather_code } : null;
       const forecast: WeatherDay[] = [];
       if (d.daily?.time) {
@@ -936,12 +939,12 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
   };
 
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 sm:p-12 overflow-y-auto">
+    <div className="h-full flex flex-col items-center justify-center overflow-y-auto" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)' }}>
       <div className="w-full max-w-6xl">
         <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
           <Zap className="w-4 h-4" aria-hidden="true" /> Shop Goals
         </p>
-        <h2 className="text-5xl sm:text-6xl font-black text-white tracking-tight text-center mt-2">How we're tracking</h2>
+        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 4rem)' }}>How we're tracking</h2>
         <div className={`mt-8 grid gap-5 ${visible.length === 1 ? 'grid-cols-1' : visible.length <= 3 ? 'md:grid-cols-' + visible.length : 'md:grid-cols-3'}`}>
           {visible.map(g => {
             const { current, pct } = computeGoalProgress(g, jobs, logs, reworkCount);
@@ -1048,24 +1051,24 @@ const TvWorkersColumn: React.FC<{
                   const stage = job ? getJobStage(job, stages) : null;
                   const isPaused = !!log.pausedAt;
                   return (
-                    <div key={`${copy}-${log.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-gradient-to-br rounded-3xl p-5 border transition-all ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`}>
-                      <div className="flex items-center gap-4">
-                        <div className={`shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>
+                    <div key={`${copy}-${log.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-gradient-to-br rounded-3xl border transition-all ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
+                      <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
+                        <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.75rem, 4.5vw, 4rem)', height: 'clamp(2.75rem, 4.5vw, 4rem)', fontSize: 'clamp(1rem, 1.75vw, 1.5rem)' }}>
                           {log.userName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-2xl font-black text-white tracking-tight truncate">{log.userName}</p>
-                          <p className="text-sm text-blue-300 font-semibold truncate">{log.operation}</p>
+                          <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 1.9vw, 1.5rem)' }}>{log.userName}</p>
+                          <p className="text-blue-300 font-semibold truncate" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.875rem)' }}>{log.operation}</p>
                           {job && (
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <p className="text-xs text-white/40 truncate">PO {job.poNumber} · {job.partNumber}</p>
+                              <p className="text-white/40 truncate" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>PO {job.poNumber} · {job.partNumber}</p>
                               {job.quantity && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded tabular shrink-0">Qty {job.quantity.toLocaleString()}</span>}
                               {log.sessionQty && <span className="text-[10px] font-black text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded tabular shrink-0">Session {log.sessionQty}</span>}
                             </div>
                           )}
                         </div>
                         <div className="shrink-0 text-right">
-                          <div className="text-4xl font-black text-white tabular tracking-tight"><LiveTicker log={log} size="lg" /></div>
+                          <div className="font-black text-white tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}><LiveTicker log={log} size="lg" /></div>
                           {stage && <div className="mt-1 inline-block text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border" style={{ background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</div>}
                         </div>
                       </div>

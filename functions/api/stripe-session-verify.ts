@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 // ═════════════════════════════════════════════════════════════════════
 // /api/stripe-session-verify — Fetch a completed Checkout Session
 //

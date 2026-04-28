@@ -31,7 +31,7 @@ import { ReportsView } from './views/ReportsView';
 import { JobBoardView } from './views/JobBoardView';
 import { DeliveriesView } from './views/DeliveriesView';
 import { PurchaseOrdersView } from './views/PurchaseOrdersView';
-import { SettingsView } from './views/SettingsView';
+import { SettingsView, ProgressView } from './views/SettingsView';
 import { VendorsManager } from './components/VendorsManager';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
@@ -49,9 +49,11 @@ import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getL
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
-import { findStageForOperation, shouldAutoRoute } from './utils/stageRouting';
+import { findStageForOperation, shouldAutoRoute, resolveJobStage } from './utils/stageRouting';
+import { computeStageMetrics, FLOW_CONSTANTS } from './utils/flowMetrics';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { RecentStageMoves } from './components/RecentStageMoves';
+import { usePrompt } from './components/usePrompt';
 import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
@@ -579,7 +581,7 @@ const PrintStyles = () => (
 );
 
 // --- DEFAULT WORKFLOW STAGES ---
-const DEFAULT_STAGES: JobStage[] = [
+export const DEFAULT_STAGES: JobStage[] = [
   { id: 'pending', label: 'Pending', color: '#71717a', order: 0 },
   { id: 'in-progress', label: 'In Progress', color: '#3b82f6', order: 1 },
   { id: 'qc', label: 'QC', color: '#f59e0b', order: 2 },
@@ -2113,31 +2115,27 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         {(() => {
           const stages = getStages(shopSettings);
           const openJobs = jobs.filter(j => j.status !== 'completed');
-          // Quick health stats for the right-side summary panel
-          const stuckCount = openJobs.filter(j => {
-            const arrival = (j.stageHistory && j.stageHistory.length > 0)
-              ? j.stageHistory[j.stageHistory.length - 1].timestamp
-              : j.createdAt;
-            return Date.now() - arrival > 3 * 86_400_000;
-          }).length;
-          const workersByStage = new Map<string, Set<string>>();
+          // ── Single source of truth — same metrics the Flow Map renders.
+          //    Previously this block had its own stuck-job math + simplistic
+          //    label-string matching for "live stages", which gave numbers
+          //    that disagreed with the Flow Map below it. Now identical. ──
+          const metrics = computeStageMetrics(jobs, stages);
+          const stuckCount = [...metrics.values()].reduce((a, m) => a + m.stuckCount, 0);
+          // Live stages = unique stages where a worker is currently clocked in,
+          // matched via the same smart routing (acronyms, stems, token overlap).
+          const liveStageSet = new Set<string>();
           for (const log of activeLogs) {
-            // Use same stage-label-match used elsewhere for the dashboard
-            const match = stages.find(s => {
-              const label = s.label.toLowerCase();
-              const op = log.operation.toLowerCase();
-              return label === op || op.includes(label) || label.includes(op);
-            });
-            const id = match?.id || 'unknown';
-            if (!workersByStage.has(id)) workersByStage.set(id, new Set());
-            workersByStage.get(id)!.add(log.userId);
+            const match = findStageForOperation(log.operation, stages);
+            if (match && !match.isComplete) liveStageSet.add(match.id);
           }
-          const liveStages = workersByStage.size;
-          // Bottleneck — the stage with the MOST open jobs
+          const liveStages = liveStageSet.size;
+          // Bottleneck — stage with the most open jobs, using resolveJobStage
+          // so legacy jobs (no currentStage field) land in the right column.
           const byStageCount = new Map<string, number>();
           for (const j of openJobs) {
-            const sid = j.currentStage || stages[0]?.id || '';
-            byStageCount.set(sid, (byStageCount.get(sid) || 0) + 1);
+            const resolved = resolveJobStage(j, stages);
+            if (!resolved || resolved.isComplete) continue;
+            byStageCount.set(resolved.id, (byStageCount.get(resolved.id) || 0) + 1);
           }
           let topStage: { label: string; count: number; color: string } | null = null;
           byStageCount.forEach((count, sid) => {
@@ -3070,6 +3068,7 @@ const PartImageLightbox = ({ src, onClose }: { src: string, onClose: () => void 
 
 // --- ADMIN: JOBS ---
 const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, initialTab, calendarOnly }: any) => {
+  const { prompt: askName, PromptHost } = usePrompt();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [reworkEntries, setReworkEntries] = useState<ReworkEntry[]>([]);
   const [reworkModal, setReworkModal] = useState<Partial<ReworkEntry> | null>(null);
@@ -3554,10 +3553,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             })}
             {(activeFilterCount > 0 || search) && (
               <button
-                onClick={() => {
-                  const name = prompt('Name this view:', search ? `"${search}" ${filterStatus !== 'all' ? filterStatus : ''}`.trim() : `${filterStatus !== 'all' ? filterStatus : 'custom'} ${filterPriority !== 'all' ? filterPriority : ''}`.trim());
-                  if (!name?.trim()) return;
-                  const v: SavedView = { id: `v_${Date.now()}`, name: name.trim(), search, priority: filterPriority, status: filterStatus, sortBy, tab: activeTab === 'calendar' ? 'active' : activeTab };
+                onClick={async () => {
+                  const suggested = search
+                    ? `"${search}" ${filterStatus !== 'all' ? filterStatus : ''}`.trim()
+                    : `${filterStatus !== 'all' ? filterStatus : 'custom'} ${filterPriority !== 'all' ? filterPriority : ''}`.trim();
+                  const name = await askName({
+                    title: 'Save this view',
+                    message: 'Name this filter so you can jump back to it from the Saved Views row.',
+                    placeholder: 'e.g. Urgent overdue',
+                    defaultValue: suggested,
+                    confirmLabel: 'Save view',
+                  });
+                  if (!name) return;
+                  const v: SavedView = { id: `v_${Date.now()}`, name, search, priority: filterPriority, status: filterStatus, sortBy, tab: activeTab === 'calendar' ? 'active' : activeTab };
                   setSavedViews([...savedViews, v]);
                 }}
                 className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1"
@@ -4608,6 +4616,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
 
       {/* Rework modal — opened from the row's AlertTriangle button */}
       {reworkModal && <ReworkModal entry={reworkModal} jobs={jobs} user={user} onClose={() => setReworkModal(null)} addToast={addToast} />}
+      {PromptHost}
     </div>
   );
 };

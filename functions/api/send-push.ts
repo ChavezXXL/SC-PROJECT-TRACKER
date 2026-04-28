@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 // ═════════════════════════════════════════════════════════════════════
 // /api/send-push — Cloudflare Pages Function
 //
@@ -13,7 +14,6 @@
 //   VAPID_SUBJECT      — "mailto:you@example.com" or your site URL
 // ═════════════════════════════════════════════════════════════════════
 
-// @ts-expect-error — web-push has no first-party types; runs via nodejs_compat.
 import webpush from 'web-push';
 
 interface Env {
