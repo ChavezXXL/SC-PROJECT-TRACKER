@@ -41,6 +41,9 @@ import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService'
 // SC Deburring (legacy tenant) bypasses all gates; new tenants on Pro trial
 // see everything for 14 days; post-trial Starter sees nudges instead of UIs.
 import { FeatureGate } from './backend/FeatureGate';
+// ── Trial countdown banner ──
+// Shows X days left when on a trialing subscription. Hidden for SC Deburring.
+import { TrialBanner } from './components/TrialBanner';
 // Pure helpers — extracted to utils/ so each file has a single responsibility
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
@@ -5336,8 +5339,10 @@ export default function App() {
   // pulled out. New jobs come in via the New Job modal in JobsView.)
 
   return (
-    <div className="h-screen bg-zinc-950 text-zinc-100 flex font-sans">
+    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
       <a href="#main-content" className="skip-link">Skip to main content</a>
+      <TrialBanner />
+      <div className="flex-1 flex min-h-0">
       <PrintStyles />
       <PWAInstallBanner />
       <PrintableJobSheet job={printable} onClose={() => setPrintable(null)} onPrinted={(id) => { const list = JSON.parse(localStorage.getItem('printed_jobs') || '[]'); if (!list.includes(id)) { list.push(id); localStorage.setItem('printed_jobs', JSON.stringify(list)); } window.dispatchEvent(new Event('printed-update')); }} />
@@ -5582,6 +5587,7 @@ export default function App() {
           }}
         />
       )}
+      </div>{/* /flex-1 inner row that holds sidebar + main + overlays */}
     </div>
   );
 }

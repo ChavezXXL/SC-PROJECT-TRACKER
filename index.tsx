@@ -4,6 +4,8 @@ import App from './App';
 import { AuthProvider } from './backend/AuthContext';
 import { SignupPage } from './views/auth/SignupPage';
 import { LoginPage } from './views/auth/LoginPage';
+import { UpgradePage } from './views/billing/UpgradePage';
+import { SuccessPage } from './views/billing/SuccessPage';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -24,6 +26,8 @@ function Root() {
   const path = window.location.pathname;
   if (path === '/signup' || path.startsWith('/signup/')) return <SignupPage />;
   if (path === '/login' || path.startsWith('/login/')) return <LoginPage />;
+  if (path === '/billing/upgrade') return <UpgradePage />;
+  if (path === '/billing/success') return <SuccessPage />;
   return <App />;
 }
 
