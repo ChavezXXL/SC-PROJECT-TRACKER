@@ -1959,16 +1959,22 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const missingQuotes = jobs.filter(j => j.status === 'completed' && !(j.quoteAmount && j.quoteAmount > 0)).length;
         const longRunning = activeLogs.filter(l => l.startTime < Date.now() - 4 * 3600000).length;
 
-        // Customer duplicate detection (same logic as Settings)
-        const custMap = new Map<string, number>();
+        // Customer duplicate detection — same normalizer as SettingsView.
+        // Track UNIQUE original names per key (not job counts). After a
+        // merge all jobs share one canonical name so the set size drops to 1
+        // and the warning correctly disappears.
+        const DUP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|llc|ltd|limited|lp|llp|pllc|gmbh|plc|sa|ag|nv|bv|pty|oy|aero|aerospace|industries|industry|group|holdings|services|solutions|machining|manufacturing|mfg|products|intl|international)\b/gi;
+        const normCust = (s: string) => s.toLowerCase().replace(/&/g, 'and').replace(/\([^)]*\)/g, '').replace(DUP_SUFFIXES, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(t => t.length > 1).slice(0, 2).join('');
+        const custMap = new Map<string, Set<string>>();
         jobs.forEach(j => {
           const c = (j.customer || '').trim();
           if (!c) return;
-          const key = c.toLowerCase().replace(/&/g, 'and').replace(/\([^)]*\)/g, '').replace(/\b(inc|corp|co|llc|ltd|aero|industries|group|machining|mfg)\b/gi, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(t => t.length > 1).slice(0, 2).join('');
+          const key = normCust(c);
           if (!key) return;
-          custMap.set(key, (custMap.get(key) || 0) + 1);
+          if (!custMap.has(key)) custMap.set(key, new Set());
+          custMap.get(key)!.add(c);
         });
-        const dupGroupCount = [...custMap.values()].filter(v => v > 1).length;
+        const dupGroupCount = [...custMap.values()].filter(v => v.size > 1).length;
 
         const items: { label: string; count: number; color: string; icon: any; onClick: () => void }[] = [];
         if (overdueJobs.length > 0) items.push({ label: `${overdueJobs.length} overdue job${overdueJobs.length > 1 ? 's' : ''}`, count: overdueJobs.length, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
