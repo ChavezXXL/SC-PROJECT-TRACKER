@@ -545,22 +545,32 @@ const TvLeaderboardSlide: React.FC<{
   period: 'today' | 'week' | 'month';
   count: number;
   metric: 'hours' | 'jobs' | 'mixed';
-}> = ({ data, period, count, metric }) => {
+  speed?: 'slow' | 'normal' | 'fast' | 'off';
+}> = ({ data, period, count, metric, speed }) => {
+  const scrollSpeed: 'slow' | 'normal' | 'fast' | 'off' = speed ?? 'normal';
   const rows = data.slice(0, count);
   const maxH = Math.max(1, ...rows.map(r => r.hours));
   const maxJ = Math.max(1, ...rows.map(r => r.jobs));
   const periodLabel = period === 'today' ? 'Today' : period === 'month' ? 'This Month' : 'This Week';
   const totalHrs = rows.reduce((a, r) => a + r.hours, 0);
   const totalJobs = rows.reduce((a, r) => a + r.jobs, 0);
+
+  // Same auto-scroll engine the Workers + Jobs columns use. The list sits in
+  // a flex-1 scroll container; long lineups (10+ workers on a 720p TV) cycle
+  // top→bottom→top so every name gets a turn on screen.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const handlers = useTvAutoScroll(scrollRef, scrollSpeed, rows.length);
+
   return (
-    <div className="h-full flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)] overflow-hidden">
-      <div className="w-full max-w-5xl">
-        <div className="flex items-center justify-between mb-[clamp(1rem,2vw,2rem)] gap-3 flex-wrap">
+    <div className="h-full flex flex-col items-center p-[clamp(1rem,2.5vw,3rem)] overflow-hidden">
+      <div className="w-full max-w-5xl flex flex-col h-full min-h-0">
+        {/* Header — pinned, doesn't scroll */}
+        <div className="shrink-0 flex items-center justify-between mb-[clamp(0.75rem,1.5vw,1.5rem)] gap-3 flex-wrap">
           <div className="min-w-0">
             <p className="font-black text-amber-400/80 uppercase tracking-[0.3em] flex items-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
               <Trophy className="w-4 h-4" aria-hidden="true" /> Shop Leaderboard
             </p>
-            <h2 className="font-black text-white tracking-tight mt-2 truncate" style={{ fontSize: 'clamp(1.75rem, 4.5vw, 3.75rem)' }}>{periodLabel}'s Top Workers</h2>
+            <h2 className="font-black text-white tracking-tight mt-2 truncate" style={{ fontSize: 'clamp(1.5rem, 4vw, 3.25rem)' }}>{periodLabel}'s Top Workers</h2>
           </div>
           <div className="text-right hidden sm:block">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Total Logged</p>
@@ -568,8 +578,9 @@ const TvLeaderboardSlide: React.FC<{
             <p className="text-[11px] text-white/50">{totalJobs} jobs</p>
           </div>
         </div>
+
         {rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center py-24">
+          <div className="flex-1 flex flex-col items-center justify-center text-center">
             <div className="w-24 h-24 rounded-3xl bg-zinc-800/60 flex items-center justify-center mb-4">
               <Award className="w-12 h-12 text-zinc-600" aria-hidden="true" />
             </div>
@@ -577,46 +588,62 @@ const TvLeaderboardSlide: React.FC<{
             <p className="text-zinc-600 text-sm mt-1">{periodLabel.toLowerCase()}'s leaderboard will fill as workers clock time.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {rows.map((r, idx) => {
-              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
-              const medalColor = idx === 0 ? 'from-amber-400 to-yellow-600' : idx === 1 ? 'from-zinc-300 to-zinc-500' : idx === 2 ? 'from-orange-500 to-amber-700' : 'from-zinc-600 to-zinc-800';
-              const pctH = (r.hours / maxH) * 100;
-              const pctJ = (r.jobs / maxJ) * 100;
-              return (
-                <div key={r.userId} className={`rounded-2xl p-4 sm:p-5 border ${idx === 0 ? 'bg-gradient-to-r from-amber-500/10 to-transparent border-amber-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
-                  <div className="flex items-center gap-4">
-                    {/* Rank */}
-                    <div className={`shrink-0 w-14 h-14 rounded-xl flex items-center justify-center font-black text-2xl text-white shadow-xl bg-gradient-to-br ${medalColor}`}>
-                      {medal || `#${idx + 1}`}
-                    </div>
-                    {/* Avatar + Name */}
-                    <div className={`shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-xl ${idx === 0 ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>
-                      {r.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-2xl sm:text-3xl font-black text-white tracking-tight truncate">{r.name}</p>
-                      {r.topOp && <p className="text-[11px] text-white/40 uppercase tracking-widest font-bold mt-0.5">most: {r.topOp}</p>}
-                    </div>
-                    {/* Stats */}
-                    <div className="shrink-0 text-right flex items-center gap-6">
-                      {(metric === 'hours' || metric === 'mixed') && (
-                        <div>
-                          <div className="text-4xl font-black text-white tabular tracking-tight">{r.hours.toFixed(1)}<span className="text-xl text-white/50">h</span></div>
-                          <div className="h-1 bg-white/10 rounded-full mt-1 w-24 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" style={{ width: `${pctH}%` }} /></div>
+          <div className="flex-1 min-h-0 relative">
+            <div
+              ref={scrollRef}
+              {...handlers}
+              className="absolute inset-0 overflow-y-auto pr-1"
+              style={{ scrollBehavior: 'auto' }}
+            >
+              {/* Duplicate content for seamless top→bottom→top loop. The 2nd
+                  copy is aria-hidden so screen readers don't double-announce. */}
+              {[0, 1].map(copy => (
+                <div key={copy} className="space-y-3 pb-3" aria-hidden={copy === 1 ? 'true' : undefined}>
+                  {rows.map((r, idx) => {
+                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
+                    const medalColor = idx === 0 ? 'from-amber-400 to-yellow-600' : idx === 1 ? 'from-zinc-300 to-zinc-500' : idx === 2 ? 'from-orange-500 to-amber-700' : 'from-zinc-600 to-zinc-800';
+                    const pctH = (r.hours / maxH) * 100;
+                    const pctJ = (r.jobs / maxJ) * 100;
+                    return (
+                      <div key={`${copy}-${r.userId}`} className={`rounded-2xl border ${idx === 0 ? 'bg-gradient-to-r from-amber-500/10 to-transparent border-amber-500/30' : 'bg-zinc-900/50 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
+                        <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
+                          {/* Rank */}
+                          <div className={`shrink-0 rounded-xl flex items-center justify-center font-black text-white shadow-xl bg-gradient-to-br ${medalColor}`} style={{ width: 'clamp(2.5rem, 3.5vw, 3.5rem)', height: 'clamp(2.5rem, 3.5vw, 3.5rem)', fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>
+                            {medal || `#${idx + 1}`}
+                          </div>
+                          {/* Avatar */}
+                          <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${idx === 0 ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.75rem, 4vw, 4rem)', height: 'clamp(2.75rem, 4vw, 4rem)', fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>
+                            {r.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 2.2vw, 1.875rem)' }}>{r.name}</p>
+                            {r.topOp && <p className="text-[11px] text-white/40 uppercase tracking-widest font-bold mt-0.5 truncate">most: {r.topOp}</p>}
+                          </div>
+                          {/* Stats */}
+                          <div className="shrink-0 text-right flex items-center" style={{ gap: 'clamp(0.75rem, 2vw, 1.5rem)' }}>
+                            {(metric === 'hours' || metric === 'mixed') && (
+                              <div>
+                                <div className="font-black text-white tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}>{r.hours.toFixed(1)}<span className="text-white/50" style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>h</span></div>
+                                <div className="h-1 bg-white/10 rounded-full mt-1 overflow-hidden" style={{ width: 'clamp(3rem, 8vw, 6rem)' }}><div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" style={{ width: `${pctH}%` }} /></div>
+                              </div>
+                            )}
+                            {(metric === 'jobs' || metric === 'mixed') && (
+                              <div>
+                                <div className="font-black text-emerald-400 tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}>{r.jobs}<span className="text-emerald-400/60 ml-1" style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>jobs</span></div>
+                                <div className="h-1 bg-white/10 rounded-full mt-1 overflow-hidden" style={{ width: 'clamp(3rem, 8vw, 6rem)' }}><div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${pctJ}%` }} /></div>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      )}
-                      {(metric === 'jobs' || metric === 'mixed') && (
-                        <div>
-                          <div className="text-4xl font-black text-emerald-400 tabular tracking-tight">{r.jobs}<span className="text-xl text-emerald-400/60 ml-1">jobs</span></div>
-                          <div className="h-1 bg-white/10 rounded-full mt-1 w-24 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${pctJ}%` }} /></div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              ))}
+            </div>
+            {/* Top + bottom fade gradients hint there's more content above/below */}
+            <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
+            <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
           </div>
         )}
       </div>
@@ -1411,20 +1438,46 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [tvSlideIdx, setTvSlideIdx] = useState(0);
   const [tvFade, setTvFade] = useState(true);
 
-  // Auto-rotate through TV slides (only while in TV mode, and not paused via Spacebar)
+  // Auto-rotate through TV slides (only while in TV mode, and not paused via Spacebar).
+  //
+  // CONTENT-AWARE DURATION: slides like Jobs / Workers / Leaderboard auto-scroll
+  // through long lists — if the slide rotates away after the default 15s, viewers
+  // never get to see jobs / workers past the first ~5 visible. We extend the
+  // default duration on those slides based on item count so the auto-scroll has
+  // a fair chance to cycle once. An explicitly-set per-slide duration always wins.
   useEffect(() => {
     if (!tvMode || tvPaused || configuredTvSlides.length <= 1) return;
     const thisSlide = configuredTvSlides[tvSlideIdx];
-    const dur = (thisSlide?.duration || settings.tvSlideDuration || 15) * 1000;
+    const baseDur = thisSlide?.duration ?? settings.tvSlideDuration ?? 15;
+
+    let effectiveDur = baseDur;
+    if (!thisSlide?.duration) {
+      // No per-slide override → upscale auto-scroll-heavy slides when content is long.
+      // Rough rule of thumb: 1.5s per item past the ~6 that fit on screen, capped
+      // at 90s so we don't park forever on one slide.
+      // (We recompute the open-jobs count inline to dodge a TDZ — the canonical
+      // `openJobs` const is declared further down in the function body.)
+      const openJobsCount = jobs.filter(j => j.status !== 'completed').length;
+      const itemCount =
+        thisSlide?.type === 'jobs' ? openJobsCount :
+        thisSlide?.type === 'workers' ? sorted.length :
+        thisSlide?.type === 'leaderboard' ? (thisSlide.leaderboardCount || 5) :
+        0;
+      if (itemCount > 6) {
+        effectiveDur = Math.min(90, Math.max(baseDur, Math.round(baseDur + (itemCount - 6) * 1.5)));
+      }
+    }
+
     const t = setTimeout(() => {
       setTvFade(false);
       setTimeout(() => {
         setTvSlideIdx(prev => (prev + 1) % configuredTvSlides.length);
         setTvFade(true);
       }, 400);
-    }, dur);
+    }, effectiveDur * 1000);
     return () => clearTimeout(t);
-  }, [tvMode, tvPaused, tvSlideIdx, configuredTvSlides.length, settings.tvSlideDuration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tvMode, tvPaused, tvSlideIdx, configuredTvSlides.length, settings.tvSlideDuration, jobs.length, sorted.length]);
 
   // Reset slide index when entering TV mode
   useEffect(() => { if (tvMode) { setTvSlideIdx(0); setTvFade(true); } }, [tvMode]);
@@ -1496,7 +1549,11 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
   // ── TV MODE VIEW — full-screen immersive, auto-scroll, always-on clock + weather ──
   if (tvMode) {
-    const jobsForBelt = openJobs.length > 0 ? openJobs : jobs.filter(j => j.status !== 'completed').slice(0, 30);
+    // Show every open job — auto-scroll cycles through them, no count cap.
+    // Previously had a `.slice(0, 30)` fallback that hid jobs past 30 when
+    // the openJobs array happened to be empty, which was misleading; now
+    // we just use the canonical openJobs list whatever its length.
+    const jobsForBelt = openJobs;
     const currentSlide = configuredTvSlides[tvSlideIdx] || configuredTvSlides[0];
 
     // Compute leaderboard based on slide period
@@ -1521,7 +1578,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'jobs':
           return <div className="h-full flex flex-col"><TvJobsBelt jobs={jobsForBelt} stages={stages} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} /></div>;
         case 'leaderboard':
-          return <TvLeaderboardSlide data={leaderboardForSlide(slide)} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} />;
+          return <TvLeaderboardSlide data={leaderboardForSlide(slide)} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} speed={settings.tvScrollSpeed || 'normal'} />;
         case 'weather':
           return <TvWeatherSlide lat={settings.weatherLat} lon={settings.weatherLon} />;
         case 'stats-week':
