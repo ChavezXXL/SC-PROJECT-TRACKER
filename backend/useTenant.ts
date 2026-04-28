@@ -1,19 +1,23 @@
 // ═════════════════════════════════════════════════════════════════════
 // FabTrack IO — useTenant() React hook
 //
-// Lightweight subscription to "which tenant am I in + what's my plan?".
-// Handles the legacy fallback (SC Deburring) transparently — callers never
-// need to know whether they're on flat or scoped Firestore paths.
+// Returns the current tenant + subscription + account based on auth
+// state. Feature gates and tenant-aware UI consume this.
 //
-// Wiring in Phase 1 → plumb through React context instead of this stub.
-// Right now it just synthesizes a legacy tenant so gates resolve correctly
-// in preview / dev.
+// Resolution order:
+//   1. AuthContext provides a signed-in account → load that account's
+//      current tenant from `tenants[]`. Synthesize an optimistic Pro
+//      trial subscription until Phase 3 wires real Firestore reads.
+//   2. No signed-in account → fall back to the legacy SC Deburring
+//      synthetic super-account so the existing app keeps working
+//      identically.
 // ═════════════════════════════════════════════════════════════════════
 
 import { useMemo } from 'react';
-import type { Account, Subscription, Tenant } from './types';
+import type { Account, PlanId, Subscription, Tenant } from './types';
 import { LEGACY_TENANT_ID, buildLegacyTenant } from './tenantContext';
 import { buildLegacySuperAccount } from './authService';
+import { useAuth } from './AuthContext';
 
 export interface TenantHookResult {
   tenant: Tenant | null;
@@ -24,26 +28,51 @@ export interface TenantHookResult {
   isLegacy: boolean;
 }
 
-/**
- * Returns the current tenant + subscription + account.
- *
- * Phase 0 behavior: synthesizes the legacy SC Deburring tenant unconditionally
- * so feature gates in dev resolve to "allow everything" via the legacy bypass.
- *
- * Phase 1+ behavior: subscribes to `tenants/{id}` + `subscription/current` +
- * `accounts/{uid}` from Firestore.
- */
+/** Default plan applied to fresh signups before Phase 3 (Stripe) loads
+ *  the real subscription doc. Lets new tenants see Pro-tier features
+ *  during their trial. */
+const FALLBACK_TRIAL_PLAN: PlanId = 'pro';
+const TRIAL_DAYS = 14;
+
 export function useTenant(): TenantHookResult {
+  const { account, tenants, currentTenantId, isLoading } = useAuth();
+
   return useMemo<TenantHookResult>(() => {
-    const account = buildLegacySuperAccount();
-    const tenant = buildLegacyTenant(account.uid);
-    // Legacy tenant has no subscription; the gate's legacy bypass makes this fine.
+    // ── Signed in: real tenant from auth context ───────────────────
+    if (account && currentTenantId) {
+      const tenant = tenants.find((t) => t.id === currentTenantId) || null;
+      // Optimistic Pro-tier trial subscription. Replaced by real Firestore
+      // subscription doc when Phase 3 ships.
+      const subscription: Subscription | null = tenant
+        ? {
+            tenantId: tenant.id,
+            planId: FALLBACK_TRIAL_PLAN,
+            status: 'trialing',
+            interval: 'month',
+            seats: 1,
+            trialStartedAt: tenant.createdAt,
+            trialEndsAt: tenant.createdAt + TRIAL_DAYS * 24 * 60 * 60 * 1000,
+            updatedAt: Date.now(),
+          }
+        : null;
+      return {
+        tenant,
+        subscription,
+        account,
+        isLoading,
+        isLegacy: tenant?.isLegacy === true,
+      };
+    }
+
+    // ── Not signed in: legacy SC Deburring fallback ────────────────
+    const legacyAccount = buildLegacySuperAccount();
+    const legacyTenant = buildLegacyTenant(legacyAccount.uid);
     return {
-      tenant,
+      tenant: legacyTenant,
       subscription: null,
-      account,
-      isLoading: false,
-      isLegacy: tenant.id === LEGACY_TENANT_ID,
+      account: legacyAccount,
+      isLoading,
+      isLegacy: legacyTenant.id === LEGACY_TENANT_ID,
     };
-  }, []);
+  }, [account, tenants, currentTenantId, isLoading]);
 }

@@ -231,17 +231,14 @@ export function isInGrace(sub: Subscription | null, now: number = Date.now()): b
 /** Has the tenant hit a specific usage limit? */
 export function hasHitLimit(
   plan: PlanId,
-  usage: { jobsThisPeriod?: number; activeUsers?: number; aiScansThisPeriod?: number },
-): { overLimit: boolean; which?: 'jobs' | 'users' | 'ai' } {
+  usage: { jobsThisPeriod?: number; activeUsers?: number },
+): { overLimit: boolean; which?: 'jobs' | 'users' } {
   const p = TIER_CATALOG[plan];
   if (p.maxJobsPerMonth != null && (usage.jobsThisPeriod ?? 0) >= p.maxJobsPerMonth) {
     return { overLimit: true, which: 'jobs' };
   }
   if (p.maxUsers != null && (usage.activeUsers ?? 0) >= p.maxUsers) {
     return { overLimit: true, which: 'users' };
-  }
-  if (p.maxAiScansPerMonth != null && (usage.aiScansThisPeriod ?? 0) >= p.maxAiScansPerMonth) {
-    return { overLimit: true, which: 'ai' };
   }
   return { overLimit: false };
 }

@@ -151,7 +151,6 @@ export interface PlanDefinition {
   maxUsers: number | null;
   maxJobsPerMonth: number | null;
   maxWorkflowStages: number | null;
-  maxAiScansPerMonth?: number | null;
   trialDays: number;
   /** Which tier-gated features are unlocked. Drives the feature-gate check. */
   features: TierFeatureKey[];
@@ -188,7 +187,6 @@ export type TierFeatureKey =
   // FabTrack IO tier unlocks
   | 'quality'                    // rework log, NCR module
   | 'financialReports'           // profit/loss, job cost reports
-  | 'aiScanning'                 // AI PO scanner (Gemini)
   | 'advancedReporting'
   | 'apiAccess'
   | 'sso'
@@ -219,7 +217,6 @@ export interface TenantUsage {
   periodEnd: number;
   jobsCreated: number;
   activeUsers: number;
-  aiScansUsed: number;
   /** Set when any counter exceeds plan limit; drives UI warnings. */
   overLimit: boolean;
   updatedAt: number;

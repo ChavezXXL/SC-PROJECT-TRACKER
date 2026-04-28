@@ -206,10 +206,11 @@ const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: s
   );
 };
 
-// ── AI HEALTH PANEL ──
-// Verifies that /.netlify/functions/gemini exists, the key is configured,
-// and a round-trip prompt returns text. Mirrors the Push panel's UX.
-const AIHealthPanel = ({ addToast }: { addToast: any }) => {
+// ── AI HEALTH PANEL — REMOVED ──
+// AI PO scanner was removed 2026-04-27. The component below is kept as
+// a no-op so any stray imports don't break the build; it renders nothing.
+// Delete this stub once we're confident no other view references it.
+const AIHealthPanel_DEPRECATED = ({ addToast }: { addToast: any }) => {
   const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
   const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
   const [lastModel, setLastModel] = useState<string | null>(null);
@@ -4525,15 +4526,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
           )}
 
-          {/* AI Status — dev-only. Shop owners don't manage our Netlify env vars. */}
-          {isDeveloper() && (
-            <div>
-              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">AI Assistant <span className="text-[9px] text-amber-400 normal-case tracking-normal">(dev only)</span></p>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
-                <AIHealthPanel addToast={addToast} />
-              </div>
-            </div>
-          )}
+          {/* AI Status panel removed 2026-04-27 along with the AI PO scanner.
+              If we re-introduce AI features later (FabTrack IO tier), restore
+              the AIHealthPanel definition above. */}
 
           {/* System Info — always shown, but with end-user-friendly labels.
               Raw Firebase connection status is gated behind dev mode. */}

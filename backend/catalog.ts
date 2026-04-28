@@ -86,7 +86,6 @@ export const TIER_CATALOG: Record<PlanId, PlanDefinition> = {
     maxUsers: null,
     maxJobsPerMonth: null,
     maxWorkflowStages: null,
-    maxAiScansPerMonth: 500,
     trialDays: 14,
     support: 'Phone + Slack · 4h reply',
     features: [
@@ -112,7 +111,6 @@ export const TIER_CATALOG: Record<PlanId, PlanDefinition> = {
       // FabTrack IO unlocks
       'quality',
       'financialReports',
-      'aiScanning',
       'advancedReporting',
       'apiAccess',
       'sso',
@@ -283,14 +281,6 @@ export const FEATURE_CATALOG: Record<TierFeatureKey, FeatureDefinition> = {
     category: 'advanced',
     description: 'Revenue, cost-per-job, profit-margin, overhead allocation.',
     upgradeBlurb: 'Financial reporting is on the FabTrack IO plan.',
-  },
-  aiScanning: {
-    key: 'aiScanning',
-    label: 'AI PO scanner',
-    minTier: 'fabtrack_io',
-    category: 'advanced',
-    description: 'Drop a PO PDF → AI pulls fields. 500 scans/month included.',
-    upgradeBlurb: 'AI scanning unlocks on FabTrack IO.',
   },
   advancedReporting: {
     key: 'advancedReporting',

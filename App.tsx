@@ -36,6 +36,11 @@ import { VendorsManager } from './components/VendorsManager';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
+// ── Tier-gated feature wrapper ──
+// Wraps locked views with upgrade nudges based on the active tenant's plan.
+// SC Deburring (legacy tenant) bypasses all gates; new tenants on Pro trial
+// see everything for 14 days; post-trial Starter sees nudges instead of UIs.
+import { FeatureGate } from './backend/FeatureGate';
 // Pure helpers — extracted to utils/ so each file has a single responsibility
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
@@ -5477,17 +5482,37 @@ export default function App() {
         <div className="p-4 md:p-8">
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} />}
-          {view === 'admin-board' && <JobBoardView user={user} addToast={addToast} confirm={setConfirm} onEditStages={() => setView('admin-settings')} />}
-          {view === 'admin-quality' && <QualityView user={user} addToast={addToast} confirm={setConfirm} />}
-          {view === 'admin-deliveries' && user && <DeliveriesView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />}
-          {view === 'admin-purchase-orders' && user && <PurchaseOrdersView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />}
+          {view === 'admin-board' && (
+            <FeatureGate feature="kanbanBoard">
+              <JobBoardView user={user} addToast={addToast} confirm={setConfirm} onEditStages={() => setView('admin-settings')} />
+            </FeatureGate>
+          )}
+          {view === 'admin-quality' && (
+            <FeatureGate feature="quality">
+              <QualityView user={user} addToast={addToast} confirm={setConfirm} />
+            </FeatureGate>
+          )}
+          {view === 'admin-deliveries' && user && (
+            <FeatureGate feature="deliveries">
+              <DeliveriesView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />
+            </FeatureGate>
+          )}
+          {view === 'admin-purchase-orders' && user && (
+            <FeatureGate feature="purchaseOrders">
+              <PurchaseOrdersView user={{ id: user.id, name: user.name, role: user.role }} addToast={addToast} />
+            </FeatureGate>
+          )}
           {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} userId={user?.id} />}
           {view === 'admin-reports' && <ReportsView />}
           {view === 'admin-live' && <LiveFloorMonitor user={user} onBack={() => setView('admin-dashboard')} addToast={addToast} />}
-          {view === 'admin-samples' && <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />}
+          {view === 'admin-samples' && (
+            <FeatureGate feature="samples">
+              <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />
+            </FeatureGate>
+          )}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
             const jobId = `JOB-${Date.now()}`;
             await DB.saveJob({
