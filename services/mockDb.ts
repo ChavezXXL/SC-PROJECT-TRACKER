@@ -1029,22 +1029,9 @@ export async function sweepStaleLogs(): Promise<number> {
   sweepInFlight = true;
   try {
     const settings = getSettings();
-    if (!settings.autoClockOutEnabled) return 0;
-
-    const timeStr = settings.autoClockOutTime || '17:30';
-    const m = timeStr.match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return 0;
-    const cutoffHour = parseInt(m[1], 10);
-    const cutoffMin = parseInt(m[2], 10);
-
-    const now = new Date();
     const nowMs = Date.now();
-    const cutoffToday = new Date(
-      now.getFullYear(), now.getMonth(), now.getDate(),
-      cutoffHour, cutoffMin, 0, 0
-    ).getTime();
 
-    // Gather active logs
+    // ── Always gather active logs — needed for both sweeps below ──────
     let activeLogs: TimeLog[] = [];
     if (dbInstance) {
       try {
@@ -1060,30 +1047,47 @@ export async function sweepStaleLogs(): Promise<number> {
       activeLogs = readLS<TimeLog[]>(LS.logs, []).filter((l) => !l.endTime);
     }
 
+    if (activeLogs.length === 0) return 0;
+
+    // ── Parse configured cutoff time (only used when auto-clock-out is on) ──
+    let cutoffHour = 17, cutoffMin = 30; // sensible default, only used if enabled
+    if (settings.autoClockOutEnabled) {
+      const timeStr = settings.autoClockOutTime || '17:30';
+      const m = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+      if (m) {
+        cutoffHour = parseInt(m[1], 10);
+        cutoffMin  = parseInt(m[2], 10);
+      }
+    }
+
     let stopped = 0;
     for (const log of activeLogs) {
-      // Calculate the cutoff for the DAY the log started (not just today)
-      const logStart = new Date(log.startTime);
-      const logDayCutoff = new Date(
-        logStart.getFullYear(), logStart.getMonth(), logStart.getDate(),
-        cutoffHour, cutoffMin, 0, 0
-      ).getTime();
-
-      // Stop if: the log started before its day's cutoff AND that cutoff has passed
-      // This catches logs from previous days that were never swept
-      const shouldStop = log.startTime < logDayCutoff && nowMs > logDayCutoff;
-
-      // Also stop any log running for more than 14 hours as a safety net
-      // (handles edge cases like clock-in at 4pm, cutoff at 3:30pm — the log
-      // started AFTER that day's cutoff but has been running way too long)
+      // ── 14-hour safety net — ALWAYS runs, regardless of autoClockOutEnabled.
+      // Clears orphaned logs from crashed sessions / closed browsers / forgotten
+      // clock-ins. Without this, workers are permanently blocked from clocking in.
       const runningHours = (nowMs - log.startTime) / 3600000;
       const forcedStop = runningHours > 14;
 
+      // ── Configured cutoff — only when the setting is enabled.
+      // Calculates cutoff for the day the log STARTED so previous-day logs are
+      // caught even if the sweep missed them at the time.
+      let shouldStop = false;
+      if (settings.autoClockOutEnabled) {
+        const logStart = new Date(log.startTime);
+        const logDayCutoff = new Date(
+          logStart.getFullYear(), logStart.getMonth(), logStart.getDate(),
+          cutoffHour, cutoffMin, 0, 0
+        ).getTime();
+        shouldStop = log.startTime < logDayCutoff && nowMs > logDayCutoff;
+      }
+
       if (shouldStop || forcedStop) {
         try {
-          // Stop at the day's cutoff time (not Now) so we don't over-credit
-          // hours for logs that were missed by the sweep and ran past cutoff.
-          // For forcedStop (14h safety net), cap at startTime + 14h.
+          const logStart = new Date(log.startTime);
+          const logDayCutoff = new Date(
+            logStart.getFullYear(), logStart.getMonth(), logStart.getDate(),
+            cutoffHour, cutoffMin, 0, 0
+          ).getTime();
           const autoEndTime = shouldStop
             ? logDayCutoff
             : log.startTime + 14 * 3600000;

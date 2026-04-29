@@ -1204,6 +1204,15 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     scheduleUpcomingAlarms(shopSettingsForReminders).catch(() => {});
   }, [shopSettingsForReminders]);
 
+  // ── Stable ref for activeLog so the alarm watcher never needs to remount ──
+  // BUG FIX: previously `activeLog?.id` was in the dependency array, causing
+  // watchShiftAlarms to tear down + recreate on every clock-in/out. The new
+  // watcher immediately runs a 30-minute lookback catch-up, which could fire
+  // the clock-out alarm and instantly log the worker back out. Using a ref
+  // gives the callback live access without adding it as a dep.
+  const activeLogRef = useRef<TimeLog | null>(null);
+  useEffect(() => { activeLogRef.current = activeLog; }, [activeLog]);
+
   useEffect(() => {
     const stop = watchShiftAlarms(
       () => shopSettingsForReminders,
@@ -1225,16 +1234,20 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           } catch {}
         }
         // Side effects: pause running work or clock out when flagged.
-        if (alarm.pauseTimers && activeLog && !activeLog.pausedAt) {
-          try { await DB.pauseTimeLog(activeLog.id, `Auto-pause: ${alarm.label}`); } catch {}
+        // Read from ref so we always have the current log without re-mounting.
+        const currentLog = activeLogRef.current;
+        if (alarm.pauseTimers && currentLog && !currentLog.pausedAt) {
+          try { await DB.pauseTimeLog(currentLog.id, `Auto-pause: ${alarm.label}`); } catch {}
         }
-        if (alarm.clockOut && activeLog) {
-          try { await DB.stopTimeLog(activeLog.id); } catch {}
+        if (alarm.clockOut && currentLog) {
+          try { await DB.stopTimeLog(currentLog.id); } catch {}
         }
       }
     );
     return stop;
-  }, [shopSettingsForReminders, activeLog?.id]);
+  // Intentionally omit activeLog?.id — use activeLogRef above instead.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopSettingsForReminders]);
 
   // ── Listen for TIMER_ACTION messages from SW notification buttons ──
   useEffect(() => {
@@ -1528,11 +1541,28 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-500" />
             <input type="text" placeholder="Search by Job #, PO, or Part..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-sm" />
           </div>
-          {activeLog && (
-            <div className="mb-4 p-3 rounded-xl bg-blue-900/20 border border-blue-500/30 text-blue-300 text-sm text-center flex items-center justify-center gap-2">
-              <Info className="w-4 h-4" /> You have a job running. Please stop it before starting a new one.
-            </div>
-          )}
+          {activeLog && (() => {
+            const staleMinutes = Math.floor((Date.now() - activeLog.startTime) / 60000);
+            const isStale = staleMinutes > 60; // running > 1 hour with no interaction
+            return (
+              <div className={`mb-4 p-3 rounded-xl border text-sm flex items-center justify-between gap-2 ${isStale ? 'bg-amber-900/20 border-amber-500/30 text-amber-300' : 'bg-blue-900/20 border-blue-500/30 text-blue-300'}`}>
+                <span className="flex items-center gap-2">
+                  <Info className="w-4 h-4 shrink-0" />
+                  {isStale
+                    ? `Timer has been running ${staleMinutes >= 60 ? Math.floor(staleMinutes / 60) + 'h ' : ''}${staleMinutes % 60}m — is it stuck?`
+                    : 'Timer running — stop it above before starting a new job.'}
+                </span>
+                {isStale && (
+                  <button
+                    onClick={() => handleStopJob(activeLog.id)}
+                    className="shrink-0 text-xs font-bold text-red-400 hover:text-white bg-red-500/15 hover:bg-red-500 px-3 py-1.5 rounded-lg border border-red-500/20 transition-all"
+                  >
+                    Clear Stuck Timer
+                  </button>
+                )}
+              </div>
+            );
+          })()}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredJobs.map(job => (
               <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} />
