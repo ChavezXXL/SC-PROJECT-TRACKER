@@ -14,12 +14,52 @@
 //   • Vendor contact clickable (mailto / tel)
 // ═════════════════════════════════════════════════════════════════════
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Package, Plus, Search, Trash2, Edit2, FileText, Paperclip, AlertCircle,
   CheckCircle2, Clock, XCircle, Truck, Printer, Copy, ChevronRight, Store,
   Upload, X, AlertTriangle, Mail, Phone, BarChart2, Send, ArrowRight, Link2,
+  Zap,
 } from 'lucide-react';
+
+// ── Preset line-item descriptions ──
+// Grouped by category so the picker stays scannable.
+// Edit this list to match whatever your shop orders regularly.
+const PRESET_DESCRIPTIONS: { label: string; items: string[] }[] = [
+  { label: 'Services', items: [
+    'Deburring — per print',
+    'Deburring — tumble/vibratory',
+    'Deburring — hand finish',
+    'Edge break per drawing',
+    'Part marking / engraving',
+    'Inspection / FAI',
+  ]},
+  { label: 'Finishing', items: [
+    'Heat treat to Rockwell spec',
+    'Anodize — Type II clear',
+    'Anodize — Type III hard coat',
+    'Zinc plate per spec',
+    'Black oxide coating',
+    'Powder coat',
+    'Passivation per AMS 2700',
+    'Shot peen / blast',
+  ]},
+  { label: 'Material', items: [
+    'Raw material — aluminum bar stock',
+    'Raw material — steel bar stock',
+    'Raw material — stainless sheet',
+    'Raw material — titanium',
+    'Raw material — plastic / nylon',
+    'Hardware / fasteners',
+    'Tooling / consumables',
+  ]},
+  { label: 'Logistics', items: [
+    'Outside processing — subcontract',
+    'Shipping / freight',
+    'Rush / expedite fee',
+    'Certification / cert of conformance',
+  ]},
+];
 import type {
   PurchaseOrder, POLineItem, POStatus, POAttachment, Vendor, SystemSettings, Job,
 } from '../types';
@@ -1063,18 +1103,64 @@ const LineItemEditor: React.FC<{
   onRemoveAttachment: (id: string) => void;
 }> = ({ item, index, onChange, onRemove, onAttach, onRemoveAttachment }) => {
   const [expanded, setExpanded] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+  const presetsRef = useRef<HTMLDivElement>(null);
   const toggleQa = (req: string) => {
     const cur = item.qualityReqs || [];
     onChange({ qualityReqs: cur.includes(req) ? cur.filter(q => q !== req) : [...cur, req] });
   };
+  // Close preset picker when clicking outside
+  React.useEffect(() => {
+    if (!showPresets) return;
+    const handler = (e: MouseEvent) => {
+      if (presetsRef.current && !presetsRef.current.contains(e.target as Node)) setShowPresets(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showPresets]);
+
   return (
     <div className="bg-zinc-950/40 border border-white/10 rounded-lg p-3 space-y-2">
+      {/* Quick-pick preset descriptions */}
+      {showPresets && (
+        <div ref={presetsRef} className="mb-1 bg-zinc-900 border border-amber-500/30 rounded-lg p-3 shadow-xl z-10 relative">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
+              <Zap className="w-3 h-3" /> Quick Pick Description
+            </span>
+            <button type="button" onClick={() => setShowPresets(false)} className="text-zinc-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {PRESET_DESCRIPTIONS.map(group => (
+              <div key={group.label}>
+                <div className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">{group.label}</div>
+                <div className="flex flex-col gap-0.5">
+                  {group.items.map(desc => (
+                    <button key={desc} type="button"
+                      onClick={() => { onChange({ description: desc }); setShowPresets(false); }}
+                      className="text-left text-xs text-zinc-300 hover:text-white hover:bg-white/5 px-2 py-1 rounded transition-colors">
+                      {desc}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <span className="shrink-0 w-6 h-6 rounded-md bg-zinc-800 border border-white/10 text-zinc-400 flex items-center justify-center text-[10px] font-black mt-1">{index + 1}</span>
         <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_100px_90px_110px] gap-2">
-          <input type="text" value={item.description} onChange={e => onChange({ description: e.target.value })}
-            placeholder="Description (e.g. heat treat part #ABC to 62 HRC)"
-            className="bg-zinc-950 border border-white/10 rounded px-2 py-1.5 text-sm text-white" />
+          <div className="relative">
+            <input type="text" value={item.description} onChange={e => onChange({ description: e.target.value })}
+              placeholder="Description — or click ⚡ for presets"
+              className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1.5 pr-8 text-sm text-white" />
+            <button type="button" onClick={() => setShowPresets(p => !p)}
+              title="Quick-pick preset description"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-amber-400 transition-colors">
+              <Zap className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <input type="text" value={item.partNumber || ''} onChange={e => onChange({ partNumber: e.target.value })}
             placeholder="Part #" className="bg-zinc-950 border border-white/10 rounded px-2 py-1.5 text-xs text-white" />
           <div className="flex gap-1">

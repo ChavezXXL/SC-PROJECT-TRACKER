@@ -7,92 +7,92 @@ function openPrintWindow(html: string, title: string) {
   if (!win) return;
   win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
     <style>
-      @page { margin: 0.5in; size: letter; }
+      @page { margin: 0.45in; size: letter portrait; }
       * { margin:0; padding:0; box-sizing:border-box; }
-      body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; color:#1a1a2e; background:#fff; font-size:12px; line-height:1.4; }
-      /* No padding here — @page already reserves the margin. Doubling it caused content to
-         run off the page on half-inch printers. min-height:auto so short pages don't force
-         a second blank sheet. */
-      .page { width:100%; min-height:auto; padding:0; display:flex; flex-direction:column; }
-      /* Guard every labelled block against splitting across pages — keeps a "Bill To" box,
-         a QR code, or a table row from breaking in half at the fold. */
+      html, body { height:auto !important; }
+      body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; color:#1a1a2e; background:#fff; font-size:11.5px; line-height:1.35; }
+      /* Block layout — NOT flex. Flex+margin-top:auto stretches the container to page
+         height in Chrome print mode, forcing a 2nd/3rd/4th blank page. */
+      .page { width:100%; padding:0; display:block; }
+      /* Guard labelled blocks against splitting across pages */
       .info-grid, .client-block, .fields-grid, .special-block, .notes-block, .scope-block, .comments-block, .totals, .sig-section, tr { page-break-inside: avoid; break-inside: avoid; }
       img { max-width:100%; height:auto; }
       /* Header */
-      .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
+      .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
       .company-left { display:flex; flex-direction:column; }
-      .company-logo { max-height:60px; max-width:200px; object-fit:contain; margin-bottom:6px; }
-      .company-logo-center { display:block; margin:0 auto 10px auto; max-height:70px; max-width:220px; object-fit:contain; }
+      .company-logo { max-height:50px; max-width:180px; object-fit:contain; margin-bottom:4px; }
+      .company-logo-center { display:block; margin:0 auto 8px auto; max-height:55px; max-width:200px; object-fit:contain; }
       .company-name { font-size:22px; font-weight:900; letter-spacing:0.5px; color:#1a1a2e; }
       .doc-type { font-size:20px; font-style:italic; font-weight:600; color:#374151; }
       /* Info rows */
-      .info-grid { display:grid; grid-template-columns:1fr 1fr; border:1px solid #d1d5db; border-radius:4px; margin-bottom:16px; }
-      .info-left, .info-right { padding:10px 14px; }
+      .info-grid { display:grid; grid-template-columns:1fr 1fr; border:1px solid #d1d5db; border-radius:4px; margin-bottom:10px; }
+      .info-left, .info-right { padding:8px 12px; }
       .info-left { border-right:1px solid #d1d5db; }
       .info-row { display:flex; margin-bottom:3px; }
       .info-label { font-weight:700; color:#2563eb; min-width:100px; font-size:11px; }
       .info-value { font-size:11px; color:#1a1a2e; }
       .info-right-text { font-size:11px; color:#374151; line-height:1.5; text-align:right; }
       /* Client block */
-      .client-block { border:1px solid #d1d5db; border-radius:4px; padding:10px 14px; margin-bottom:16px; }
-      .client-label { font-weight:700; color:#2563eb; font-size:11px; margin-bottom:4px; }
-      .client-name { font-size:14px; font-weight:700; color:#1a1a2e; }
-      .client-detail { font-size:11px; color:#374151; line-height:1.5; }
+      .client-block { border:1px solid #d1d5db; border-radius:4px; padding:7px 12px; margin-bottom:10px; }
+      .client-label { font-weight:700; color:#2563eb; font-size:10px; margin-bottom:3px; }
+      .client-name { font-size:13px; font-weight:700; color:#1a1a2e; }
+      .client-detail { font-size:10px; color:#374151; line-height:1.4; }
       /* Project fields */
-      .fields-grid { border:1px solid #d1d5db; border-radius:4px; margin-bottom:16px; }
+      .fields-grid { border:1px solid #d1d5db; border-radius:4px; margin-bottom:10px; }
       .field-row { display:flex; border-bottom:1px solid #e5e7eb; }
       .field-row:last-child { border-bottom:none; }
-      .field-label { font-weight:700; color:#2563eb; font-size:11px; padding:6px 14px; min-width:140px; background:#f9fafb; border-right:1px solid #e5e7eb; }
-      .field-value { font-size:11px; padding:6px 14px; flex:1; }
+      .field-label { font-weight:700; color:#2563eb; font-size:10px; padding:5px 12px; min-width:130px; background:#f9fafb; border-right:1px solid #e5e7eb; }
+      .field-value { font-size:10px; padding:5px 12px; flex:1; }
       /* Table */
-      table { width:100%; border-collapse:collapse; margin-bottom:16px; }
-      thead th { text-align:left; padding:8px 10px; font-size:11px; font-weight:700; color:#2563eb; border-bottom:2px solid #2563eb; border-top:1px solid #d1d5db; }
+      table { width:100%; border-collapse:collapse; margin-bottom:10px; }
+      thead th { text-align:left; padding:6px 8px; font-size:10px; font-weight:700; color:#2563eb; border-bottom:2px solid #2563eb; border-top:1px solid #d1d5db; }
       thead th.right { text-align:right; }
       thead th.center { text-align:center; }
-      tbody td { padding:8px 10px; border-bottom:1px solid #e5e7eb; font-size:11px; }
+      tbody td { padding:5px 8px; border-bottom:1px solid #e5e7eb; font-size:10px; }
       tbody td.right { text-align:right; }
       tbody td.center { text-align:center; }
       tbody td.bold { font-weight:700; }
       tbody tr:last-child td { border-bottom:2px solid #d1d5db; }
       /* Totals */
-      .totals-wrap { display:flex; justify-content:flex-end; margin-bottom:16px; }
-      .totals { width:280px; }
-      .total-row { display:flex; justify-content:space-between; padding:5px 0; font-size:12px; }
-      .total-row.grand { border-top:2px solid #1a1a2e; margin-top:4px; padding-top:10px; font-size:16px; font-weight:900; }
+      .totals-wrap { display:flex; justify-content:flex-end; margin-bottom:10px; }
+      .totals { width:260px; }
+      .total-row { display:flex; justify-content:space-between; padding:4px 0; font-size:11px; }
+      .total-row.grand { border-top:2px solid #1a1a2e; margin-top:3px; padding-top:7px; font-size:14px; font-weight:900; }
       .total-label { color:#6b7280; }
       .total-value { font-weight:600; }
       .total-row.discount .total-value { color:#dc2626; }
       .total-row.deposit { color:#0891b2; font-weight:700; }
       /* Comments */
-      .comments-block { border:1px solid #d1d5db; border-radius:4px; padding:10px 14px; margin-bottom:20px; }
-      .comments-label { font-weight:700; color:#2563eb; font-size:11px; margin-bottom:4px; }
-      .comments-text { font-size:11px; color:#374151; line-height:1.6; white-space:pre-wrap; }
+      .comments-block { border:1px solid #d1d5db; border-radius:4px; padding:7px 12px; margin-bottom:10px; }
+      .comments-label { font-weight:700; color:#2563eb; font-size:10px; margin-bottom:3px; }
+      .comments-text { font-size:10px; color:#374151; line-height:1.5; white-space:pre-wrap; }
       /* Scope */
-      .scope-block { border:1px solid #bae6fd; border-radius:4px; padding:10px 14px; margin-bottom:16px; background:#f0f9ff; }
-      .scope-label { font-weight:700; color:#0369a1; font-size:11px; margin-bottom:4px; }
-      .scope-text { font-size:11px; color:#0c4a6e; line-height:1.6; }
-      /* Signature */
-      .sig-section { margin-top:auto; padding-top:30px; display:flex; gap:60px; }
+      .scope-block { border:1px solid #bae6fd; border-radius:4px; padding:7px 12px; margin-bottom:10px; background:#f0f9ff; }
+      .scope-label { font-weight:700; color:#0369a1; font-size:10px; margin-bottom:3px; }
+      .scope-text { font-size:10px; color:#0c4a6e; line-height:1.5; }
+      /* Signature — NEVER use margin-top:auto (causes flex stretching in print) */
+      .sig-section { margin-top:18px; padding-top:0; display:flex; gap:50px; }
       .sig-block { flex:1; }
-      .sig-line { border-top:1px solid #1a1a2e; padding-top:6px; font-size:10px; color:#6b7280; }
-      .sig-company { font-size:11px; color:#2563eb; font-weight:600; margin-bottom:24px; }
+      .sig-line { border-top:1px solid #1a1a2e; padding-top:5px; font-size:9px; color:#6b7280; }
+      .sig-company { font-size:10px; color:#2563eb; font-weight:600; margin-bottom:20px; }
       /* Footer */
-      .doc-footer { margin-top:20px; padding-top:8px; border-top:1px solid #e5e7eb; text-align:center; font-size:9px; color:#9ca3af; }
-      .page-num { text-align:center; font-size:10px; color:#2563eb; margin-top:8px; }
+      .doc-footer { margin-top:12px; padding-top:6px; border-top:1px solid #e5e7eb; text-align:center; font-size:9px; color:#9ca3af; }
+      .page-num { text-align:center; font-size:9px; color:#2563eb; margin-top:6px; }
       /* Special instructions */
-      .special-block { border:1px solid #fde68a; border-radius:4px; padding:10px 14px; margin-bottom:16px; background:#fffbeb; }
-      .special-label { font-weight:700; color:#92400e; font-size:11px; margin-bottom:4px; }
-      .special-text { font-size:11px; color:#451a03; line-height:1.6; }
+      .special-block { border:1px solid #fde68a; border-radius:4px; padding:7px 12px; margin-bottom:10px; background:#fffbeb; }
+      .special-label { font-weight:700; color:#92400e; font-size:10px; margin-bottom:3px; }
+      .special-text { font-size:10px; color:#451a03; line-height:1.5; }
       /* Notes */
-      .notes-block { border:1px solid #e5e7eb; border-radius:4px; padding:10px 14px; margin-bottom:16px; background:#f9fafb; }
-      .notes-label { font-weight:700; color:#6b7280; font-size:11px; margin-bottom:4px; }
-      .notes-text { font-size:11px; color:#374151; line-height:1.6; }
+      .notes-block { border:1px solid #e5e7eb; border-radius:4px; padding:7px 12px; margin-bottom:10px; background:#f9fafb; }
+      .notes-label { font-weight:700; color:#6b7280; font-size:10px; margin-bottom:3px; }
+      .notes-text { font-size:10px; color:#374151; line-height:1.5; }
       /* Badge */
-      .status-badge { display:inline-block; padding:2px 10px; border-radius:4px; font-size:10px; font-weight:700; text-transform:uppercase; }
-      /* Print */
+      .status-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:9px; font-weight:700; text-transform:uppercase; }
+      /* Print — enforce block layout so no flex auto-margin page stretching */
       @media print {
-        body { padding:0; }
-        .page { padding:0; min-height:auto; }
+        html, body { height:auto !important; padding:0; margin:0; }
+        .page { display:block !important; padding:0; }
+        .sig-section { margin-top:16px !important; }
       }
     </style>
   </head><body>${html}</body></html>`);
@@ -302,34 +302,35 @@ export function printJobTravelerPDF(job: Job, settings: SystemSettings) {
         <div class="info-row"><span class="info-label">Date Received:</span><span class="info-value">${job.dateReceived || 'N/A'}</span></div>
         <div class="info-row"><span class="info-label">Due Date:</span><span class="info-value" style="color:#dc2626;font-weight:700">${job.dueDate || 'N/A'}</span></div>
       </div>
-      <div class="info-right" style="text-align:center">
-        ${job.partImage ? `<img src="${job.partImage}" style="width:120px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #e5e7eb;margin-bottom:6px" />` : ''}
-        <img src="${qrUrl}" style="width:80px;height:80px" />
-        <div style="font-size:9px;color:#9ca3af;margin-top:2px">${job.jobIdsDisplay || ''}</div>
+      <div class="info-right" style="text-align:center;padding:6px 12px">
+        ${job.partImage ? `<img src="${job.partImage}" style="width:90px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb;margin-bottom:4px;display:block;margin-left:auto;margin-right:auto" />` : ''}
+        <img src="${qrUrl}" style="width:64px;height:64px" />
+        <div style="font-size:8px;color:#9ca3af;margin-top:2px">${job.jobIdsDisplay || ''}</div>
       </div>
     </div>
 
-    <div class="client-block">
-      <div class="client-label">Customer</div>
-      <div class="client-name">${job.customer || 'N/A'}</div>
-    </div>
-
-    <div class="fields-grid">
-      <div class="field-row"><div class="field-label">Purchase Order</div><div class="field-value" style="font-weight:700;font-size:14px">${job.poNumber}</div></div>
-      <div class="field-row"><div class="field-label">Part Number</div><div class="field-value" style="font-weight:700">${job.partNumber}</div></div>
-      <div class="field-row"><div class="field-label">Quantity</div><div class="field-value" style="font-weight:700;font-size:14px">${job.quantity}</div></div>
-      ${job.priority ? `<div class="field-row"><div class="field-label">Priority</div><div class="field-value" style="font-weight:700;text-transform:uppercase;color:${job.priority === 'urgent' ? '#dc2626' : job.priority === 'high' ? '#ea580c' : '#374151'}">${job.priority}</div></div>` : ''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div class="client-block" style="margin-bottom:0">
+        <div class="client-label">Customer</div>
+        <div class="client-name">${job.customer || 'N/A'}</div>
+      </div>
+      <div class="fields-grid" style="margin-bottom:0">
+        <div class="field-row"><div class="field-label">PO #</div><div class="field-value" style="font-weight:700;font-size:12px">${job.poNumber}</div></div>
+        <div class="field-row"><div class="field-label">Part #</div><div class="field-value" style="font-weight:700">${job.partNumber}</div></div>
+        <div class="field-row"><div class="field-label">Qty</div><div class="field-value" style="font-weight:900;font-size:14px;color:#2563eb">${job.quantity}</div></div>
+        ${job.priority ? `<div class="field-row"><div class="field-label">Priority</div><div class="field-value" style="font-weight:700;text-transform:uppercase;color:${job.priority === 'urgent' ? '#dc2626' : job.priority === 'high' ? '#ea580c' : '#374151'}">${job.priority}</div></div>` : ''}
+      </div>
     </div>
 
     ${job.specialInstructions ? `<div class="special-block"><div class="special-label">Special Instructions</div><div class="special-text">${job.specialInstructions}</div></div>` : ''}
     ${job.info ? `<div class="notes-block"><div class="notes-label">Notes</div><div class="notes-text">${job.info}</div></div>` : ''}
 
-    <div style="margin-top:16px">
-      <div style="font-size:11px;font-weight:700;color:#2563eb;margin-bottom:8px">OPERATION LOG</div>
+    <div style="margin-top:10px">
+      <div style="font-size:10px;font-weight:700;color:#2563eb;margin-bottom:6px;letter-spacing:0.05em">OPERATION LOG</div>
       <table>
-        <thead><tr><th>Operation</th><th>Operator</th><th>Start</th><th>End</th><th>Duration</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Operation</th><th>Operator</th><th>Start</th><th>End</th><th>Duration</th><th>Notes / Qty</th></tr></thead>
         <tbody>
-          ${[1,2,3,4,5,6,7,8].map(() => '<tr><td style="height:26px"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
+          ${[1,2,3,4,5,6].map(() => '<tr><td style="height:22px"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
         </tbody>
       </table>
     </div>
