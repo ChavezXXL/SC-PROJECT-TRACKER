@@ -528,8 +528,8 @@ export async function startTimeLog(
   }
 }
 
-export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string) {
-  const endTime = Date.now();
+export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string, forcedEndTime?: number) {
+  const endTime = forcedEndTime ?? Date.now();
 
   if (dbInstance) {
       try {
@@ -548,7 +548,8 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         const wallMs = endTime - existing.startTime;
         const workingMs = Math.max(0, wallMs - totalPausedMs);
         const durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-        const durationMinutes = Math.ceil(durationSeconds / 60);
+        // Math.round prevents systematic over-counting: a 61s log = 1 min, not 2
+        const durationMinutes = Math.round(durationSeconds / 60);
 
         const updates: any = {
             endTime,
@@ -583,7 +584,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
     const wallMs = endTime - l.startTime;
     const workingMs = Math.max(0, wallMs - totalPausedMs);
     const durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-    const durationMinutes = Math.ceil(durationSeconds / 60);
+    const durationMinutes = Math.round(durationSeconds / 60);
     logs[idx] = {
         ...l,
         endTime,
@@ -608,7 +609,7 @@ export async function updateTimeLog(log: TimeLog) {
      const pausedMs = log.totalPausedMs || 0;
      const workingMs = Math.max(0, wallMs - pausedMs);
      log.durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-     log.durationMinutes = Math.ceil(log.durationSeconds / 60);
+     log.durationMinutes = Math.round(log.durationSeconds / 60);
      log.status = 'completed';
   } else {
      log.endTime = null;
@@ -1080,7 +1081,13 @@ export async function sweepStaleLogs(): Promise<number> {
 
       if (shouldStop || forcedStop) {
         try {
-          await stopTimeLog(log.id);
+          // Stop at the day's cutoff time (not Now) so we don't over-credit
+          // hours for logs that were missed by the sweep and ran past cutoff.
+          // For forcedStop (14h safety net), cap at startTime + 14h.
+          const autoEndTime = shouldStop
+            ? logDayCutoff
+            : log.startTime + 14 * 3600000;
+          await stopTimeLog(log.id, undefined, undefined, autoEndTime);
           stopped++;
         } catch (e) {
           console.warn('sweepStaleLogs: failed to stop log', log.id, e);

@@ -1927,8 +1927,11 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const workersNoScansToday = activeWorkers.filter((w: User) => !workersWithLogsToday.has(w.id) && !activeLogs.some(l => l.userId === w.id));
   // Completed logs today (fixed: use allLogs not the trimmed top-5 `logs`)
   const completedTodayMins = allLogs.filter(l => l.endTime && l.startTime >= todayMs).reduce((a, l) => a + (l.durationMinutes || 0), 0);
-  // Add time from still-running active logs that started today
-  const runningTodayMins = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => a + (Date.now() - l.startTime) / 60000, 0);
+  // Add time from still-running active logs that started today (subtract any paused time)
+  const runningTodayMins = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => {
+    const pausedMs = (l.totalPausedMs || 0) + (l.pausedAt ? Date.now() - l.pausedAt : 0);
+    return a + Math.max(0, Date.now() - l.startTime - pausedMs) / 60000;
+  }, 0);
   const todayHoursMins = Math.round(completedTodayMins + runningTodayMins);
   const todayHrsDisplay = todayHoursMins >= 60 ? `${Math.floor(todayHoursMins/60)}h ${Math.round(todayHoursMins%60)}m` : `${todayHoursMins}m`;
 
