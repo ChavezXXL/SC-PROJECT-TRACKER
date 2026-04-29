@@ -1925,8 +1925,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const activeWorkers = (dashWorkers || []).filter((w: User) => w.isActive !== false && w.role !== 'admin');
   const workersWithLogsToday = new Set(allLogs.filter(l => l.startTime >= todayMs).map(l => l.userId));
   const workersNoScansToday = activeWorkers.filter((w: User) => !workersWithLogsToday.has(w.id) && !activeLogs.some(l => l.userId === w.id));
-  const todayHoursMins = logs.filter(l => l.endTime && l.endTime >= todayMs).reduce((a, l) => a + (l.durationMinutes || 0), 0);
-  const todayHrsDisplay = todayHoursMins >= 60 ? `${Math.floor(todayHoursMins/60)}h ${todayHoursMins%60}m` : `${todayHoursMins}m`;
+  // Completed logs today (fixed: use allLogs not the trimmed top-5 `logs`)
+  const completedTodayMins = allLogs.filter(l => l.endTime && l.startTime >= todayMs).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  // Add time from still-running active logs that started today
+  const runningTodayMins = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => a + (Date.now() - l.startTime) / 60000, 0);
+  const todayHoursMins = Math.round(completedTodayMins + runningTodayMins);
+  const todayHrsDisplay = todayHoursMins >= 60 ? `${Math.floor(todayHoursMins/60)}h ${Math.round(todayHoursMins%60)}m` : `${todayHoursMins}m`;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -1978,8 +1982,10 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
         const items: { label: string; count: number; color: string; icon: any; onClick: () => void }[] = [];
         if (overdueJobs.length > 0) items.push({ label: `${overdueJobs.length} overdue job${overdueJobs.length > 1 ? 's' : ''}`, count: overdueJobs.length, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
+        if (dueSoonJobs.length > 0) items.push({ label: `${dueSoonJobs.length} due in 3 days`, count: dueSoonJobs.length, color: '#f97316', icon: Clock, onClick: () => setView('admin-jobs') });
         if (openRework > 0) items.push({ label: `${openRework} open rework issue${openRework > 1 ? 's' : ''}`, count: openRework, color: '#f59e0b', icon: AlertTriangle, onClick: () => setView('admin-quality') });
         if (longRunning > 0) items.push({ label: `${longRunning} timer${longRunning > 1 ? 's' : ''} running > 4h`, count: longRunning, color: '#eab308', icon: Clock, onClick: () => setView('admin-live') });
+        if (workersNoScansToday.length > 0 && new Date().getHours() >= 8) items.push({ label: `${workersNoScansToday.length} worker${workersNoScansToday.length > 1 ? 's' : ''} no scan today`, count: workersNoScansToday.length, color: '#facc15', icon: Users, onClick: () => setView('admin-live') });
         if (dupGroupCount > 0) items.push({ label: `${dupGroupCount} possible customer duplicate${dupGroupCount > 1 ? 's' : ''}`, count: dupGroupCount, color: '#a855f7', icon: Users, onClick: () => setView('admin-settings') });
         if (missingQuotes > 0 && missingQuotes >= 5) items.push({ label: `${missingQuotes} completed jobs missing quote`, count: missingQuotes, color: '#3b82f6', icon: FileText, onClick: () => setView('admin-jobs') });
 
@@ -2026,60 +2032,6 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         );
       })()}
-
-      {/* Overdue / Due Soon Alert Banner */}
-      {(overdueJobs.length > 0 || dueSoonJobs.length > 0) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {overdueJobs.length > 0 && (
-            <div className="min-w-0 bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-red-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-red-400 font-bold text-sm">{overdueJobs.length} Overdue Job{overdueJobs.length > 1 ? 's' : ''}</p>
-                <p className="text-red-400/70 text-xs truncate">
-                  {overdueJobs.slice(0, 3).map(j => j.poNumber).join(' · ')}
-                  {overdueJobs.length > 3 && <span className="text-red-400/90 font-semibold"> +{overdueJobs.length - 3} more</span>}
-                </p>
-              </div>
-              <button onClick={() => setView('admin-jobs')} className="text-xs font-medium text-red-400 hover:text-white border border-red-500/30 px-3 py-2 rounded-lg hover:bg-red-500/20 transition-colors shrink-0 min-h-[36px]">View Jobs</button>
-            </div>
-          )}
-          {dueSoonJobs.length > 0 && (
-            <div className="min-w-0 bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center shrink-0">
-                <Clock className="w-5 h-5 text-orange-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-orange-400 font-bold text-sm">{dueSoonJobs.length} Due Within 3 Days</p>
-                <p className="text-orange-400/70 text-xs truncate">
-                  {dueSoonJobs.slice(0, 3).map(j => j.poNumber).join(' · ')}
-                  {dueSoonJobs.length > 3 && <span className="text-orange-400/90 font-semibold"> +{dueSoonJobs.length - 3} more</span>}
-                </p>
-              </div>
-              <button onClick={() => setView('admin-jobs')} className="text-xs font-medium text-orange-400 hover:text-white border border-orange-500/30 px-3 py-2 rounded-lg hover:bg-orange-500/20 transition-colors shrink-0 min-h-[36px]">View Jobs</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Missing Scans Alert */}
-      {workersNoScansToday.length > 0 && new Date().getHours() >= 8 && (
-        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4 flex items-center gap-3 sm:gap-4 min-w-0">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5 text-yellow-400" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-yellow-400 font-bold text-sm truncate">
-              {workersNoScansToday.length} worker{workersNoScansToday.length > 1 ? 's' : ''} haven't scanned today
-            </p>
-            <p className="text-yellow-400/70 text-xs truncate">
-              {workersNoScansToday.slice(0, 4).map((w: User) => w.name.split(' ')[0]).join(' · ')}
-              {workersNoScansToday.length > 4 && <span className="text-yellow-400/90 font-semibold"> +{workersNoScansToday.length - 4} more</span>}
-            </p>
-          </div>
-        </div>
-      )}
 
       <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
