@@ -283,61 +283,166 @@ export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
 }
 
 // ── Job Traveler PDF ──
+// Uses its OWN print window with standalone CSS — does NOT use openPrintWindow.
+// Key guarantees:
+//   • @page margin:0.5in (matches Chrome default so we never fight the browser)
+//   • zoom:0.82 in @media print — Chrome scales layout for print, guaranteeing
+//     single-page even on worst-case printer driver margin settings
+//   • No external image requests (QR removed, replaced with large job number)
+//   • No page-break-inside:avoid on <tr> — that rule was cascading the entire
+//     table to page 2 if there wasn't enough room for ALL rows at once
 
 export function printJobTravelerPDF(job: Job, settings: SystemSettings) {
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(job.id)}`;
-  const html = `<div class="page">
-    ${settings.companyLogo ? `<img src="${settings.companyLogo}" class="company-logo-center" />` : ''}
+  const priorityColor = job.priority === 'urgent' ? '#dc2626' : job.priority === 'high' ? '#ea580c' : '#374151';
+  const win = window.open('', '_blank', 'width=860,height=1050');
+  if (!win) return;
 
-    <div class="doc-header">
-      <div class="company-left">
-        <div class="company-name">${settings.companyName || 'Company Name'}</div>
+  win.document.write(`<!DOCTYPE html><html><head><title>Traveler - ${job.poNumber || ''}</title>
+  <style>
+    /* ─── PAGE SETUP ─── */
+    @page { size: letter portrait; margin: 0.5in; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { background:#fff; font-family:'Segoe UI',-apple-system,sans-serif; font-size:10px; color:#111; height:auto; }
+
+    /* ─── PRINT: zoom scales the layout itself in Chrome/Edge ─── */
+    @media print {
+      html { zoom: 0.82; }
+      body { height: auto !important; }
+    }
+
+    /* ─── LAYOUT HELPERS ─── */
+    .wrap   { padding:0; }
+    .row    { display:flex; align-items:stretch; }
+    .grid4  { display:grid; grid-template-columns:repeat(4,1fr); }
+    .grid3  { display:grid; grid-template-columns:repeat(3,1fr); }
+    .cell   { border:1px solid #d1d5db; padding:5px 8px; }
+    .cell + .cell { border-left:none; }
+    .lbl    { font-size:8px; font-weight:700; color:#2563eb; text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+    .val    { font-size:11px; font-weight:700; color:#111; }
+    .val.big{ font-size:16px; font-weight:900; color:#1d4ed8; }
+    .val.red{ color:#dc2626; }
+
+    /* ─── HEADER STRIP ─── */
+    .hdr { display:flex; align-items:center; justify-content:space-between;
+           border:2px solid #111; border-radius:3px; padding:6px 10px; margin-bottom:6px; }
+    .hdr-left { display:flex; align-items:center; gap:10px; }
+    .hdr-logo { max-height:38px; max-width:120px; object-fit:contain; }
+    .hdr-co   { font-size:14px; font-weight:900; color:#111; letter-spacing:-.2px; }
+    .hdr-title{ font-size:11px; font-weight:700; color:#6b7280; }
+    .hdr-jobno{ text-align:right; }
+    .hdr-jobno .lbl { font-size:8px; color:#2563eb; }
+    .hdr-jobno .num { font-size:20px; font-weight:900; color:#111; letter-spacing:-.5px; }
+
+    /* ─── INFO BAND ─── */
+    .info-band { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr; border:1px solid #d1d5db; border-radius:3px; margin-bottom:6px; overflow:hidden; }
+    .info-band .cell { border:none; border-right:1px solid #d1d5db; padding:5px 8px; }
+    .info-band .cell:last-child { border-right:none; }
+
+    /* ─── SPECIAL / NOTES ─── */
+    .special { border:1.5px solid #fbbf24; border-radius:3px; padding:5px 8px; margin-bottom:6px; background:#fffbeb; }
+    .special .lbl { color:#92400e; }
+    .special .txt { font-size:10px; color:#451a03; line-height:1.4; }
+    .notes   { border:1px solid #d1d5db; border-radius:3px; padding:5px 8px; margin-bottom:6px; background:#f9fafb; }
+    .notes .txt  { font-size:10px; color:#374151; line-height:1.4; }
+
+    /* ─── OPERATION LOG TABLE ─── */
+    .op-title { font-size:9px; font-weight:700; color:#2563eb; text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px; border-bottom:2px solid #2563eb; padding-bottom:2px; }
+    table { width:100%; border-collapse:collapse; }
+    thead th { font-size:8.5px; font-weight:700; color:#2563eb; text-align:left; padding:4px 6px; border-bottom:1.5px solid #2563eb; border-top:1px solid #d1d5db; background:#f8faff; white-space:nowrap; }
+    tbody td { padding:0 6px; border-bottom:1px solid #e5e7eb; font-size:10px; height:24px; }
+    tbody tr:last-child td { border-bottom:2px solid #d1d5db; }
+
+    /* ─── FOOTER ─── */
+    .footer { display:flex; justify-content:space-between; align-items:flex-end; margin-top:8px; padding-top:6px; border-top:1px solid #d1d5db; }
+    .sig-line { flex:1; margin-right:40px; }
+    .sig-name { font-size:9px; color:#2563eb; font-weight:700; margin-bottom:16px; }
+    .sig-rule { border-top:1px solid #111; padding-top:3px; font-size:8px; color:#6b7280; }
+    .coc { font-size:7.5px; color:#6b7280; max-width:320px; line-height:1.4; text-align:right; }
+  </style>
+  </head><body><div class="wrap">
+
+  <!-- ── HEADER ── -->
+  <div class="hdr">
+    <div class="hdr-left">
+      ${settings.companyLogo ? `<img class="hdr-logo" src="${settings.companyLogo}" />` : ''}
+      <div>
+        <div class="hdr-co">${settings.companyName || 'Company'}</div>
+        <div class="hdr-title">Production Traveler</div>
       </div>
-      <div class="doc-type">Production Traveler</div>
     </div>
-
-    <div class="info-grid">
-      <div class="info-left">
-        <div class="info-row"><span class="info-label">Job No:</span><span class="info-value">${job.jobIdsDisplay || ''}</span></div>
-        <div class="info-row"><span class="info-label">Date Received:</span><span class="info-value">${job.dateReceived || 'N/A'}</span></div>
-        <div class="info-row"><span class="info-label">Due Date:</span><span class="info-value" style="color:#dc2626;font-weight:700">${job.dueDate || 'N/A'}</span></div>
-      </div>
-      <div class="info-right" style="text-align:center;padding:6px 12px">
-        ${job.partImage ? `<img src="${job.partImage}" style="width:90px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb;margin-bottom:4px;display:block;margin-left:auto;margin-right:auto" />` : ''}
-        <img src="${qrUrl}" style="width:64px;height:64px" />
-        <div style="font-size:8px;color:#9ca3af;margin-top:2px">${job.jobIdsDisplay || ''}</div>
-      </div>
+    <div class="hdr-jobno">
+      <div class="lbl">Job No.</div>
+      <div class="num">${job.jobIdsDisplay || job.id.slice(-6)}</div>
     </div>
+  </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-      <div class="client-block" style="margin-bottom:0">
-        <div class="client-label">Customer</div>
-        <div class="client-name">${job.customer || 'N/A'}</div>
-      </div>
-      <div class="fields-grid" style="margin-bottom:0">
-        <div class="field-row"><div class="field-label">PO #</div><div class="field-value" style="font-weight:700;font-size:12px">${job.poNumber}</div></div>
-        <div class="field-row"><div class="field-label">Part #</div><div class="field-value" style="font-weight:700">${job.partNumber}</div></div>
-        <div class="field-row"><div class="field-label">Qty</div><div class="field-value" style="font-weight:900;font-size:14px;color:#2563eb">${job.quantity}</div></div>
-        ${job.priority ? `<div class="field-row"><div class="field-label">Priority</div><div class="field-value" style="font-weight:700;text-transform:uppercase;color:${job.priority === 'urgent' ? '#dc2626' : job.priority === 'high' ? '#ea580c' : '#374151'}">${job.priority}</div></div>` : ''}
-      </div>
+  <!-- ── INFO BAND ── -->
+  <div class="info-band">
+    <div class="cell">
+      <div class="lbl">Customer</div>
+      <div class="val">${job.customer || '—'}</div>
     </div>
-
-    ${job.specialInstructions ? `<div class="special-block"><div class="special-label">Special Instructions</div><div class="special-text">${job.specialInstructions}</div></div>` : ''}
-    ${job.info ? `<div class="notes-block"><div class="notes-label">Notes</div><div class="notes-text">${job.info}</div></div>` : ''}
-
-    <div style="margin-top:10px">
-      <div style="font-size:10px;font-weight:700;color:#2563eb;margin-bottom:6px;letter-spacing:0.05em">OPERATION LOG</div>
-      <table>
-        <thead><tr><th>Operation</th><th>Operator</th><th>Start</th><th>End</th><th>Duration</th><th>Notes / Qty</th></tr></thead>
-        <tbody>
-          ${[1,2,3,4,5,6].map(() => '<tr><td style="height:22px"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
-        </tbody>
-      </table>
+    <div class="cell">
+      <div class="lbl">Purchase Order</div>
+      <div class="val">${job.poNumber || '—'}</div>
     </div>
+    <div class="cell">
+      <div class="lbl">Part Number</div>
+      <div class="val">${job.partNumber || '—'}</div>
+    </div>
+    <div class="cell">
+      <div class="lbl">Quantity</div>
+      <div class="val big">${job.quantity ?? '—'}</div>
+    </div>
+    <div class="cell">
+      <div class="lbl">Due Date</div>
+      <div class="val red">${job.dueDate || '—'}</div>
+      ${job.dateReceived ? `<div style="font-size:8px;color:#6b7280;margin-top:2px">Recv: ${job.dateReceived}</div>` : ''}
+      ${job.priority ? `<div style="font-size:8px;font-weight:700;text-transform:uppercase;color:${priorityColor};margin-top:2px">${job.priority}</div>` : ''}
+    </div>
+  </div>
 
-    <div class="page-num">1 / 1</div>
-  </div>`;
-  openPrintWindow(html, `Traveler - ${job.poNumber}`);
+  ${job.partImage ? `<div style="margin-bottom:6px"><img src="${job.partImage}" style="max-height:60px;max-width:120px;object-fit:contain;border:1px solid #e5e7eb;border-radius:3px" /></div>` : ''}
+
+  <!-- ── SPECIAL INSTRUCTIONS ── -->
+  ${job.specialInstructions ? `<div class="special"><div class="lbl">⚠ Special Instructions</div><div class="txt">${job.specialInstructions}</div></div>` : ''}
+
+  <!-- ── NOTES ── -->
+  ${job.info ? `<div class="notes"><div class="lbl">Notes</div><div class="txt">${job.info}</div></div>` : ''}
+
+  <!-- ── OPERATION LOG ── -->
+  <div class="op-title">Operation Log</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22%">Operation</th>
+        <th style="width:14%">Machine / Station</th>
+        <th style="width:16%">Operator</th>
+        <th style="width:10%">Date</th>
+        <th style="width:9%">Start</th>
+        <th style="width:9%">End</th>
+        <th style="width:9%">Duration</th>
+        <th style="width:11%">Qty Out / Init</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${Array(8).fill('<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
+    </tbody>
+  </table>
+
+  <!-- ── FOOTER ── -->
+  <div class="footer">
+    <div class="sig-line">
+      <div class="sig-name">${settings.companyName || 'Company'}</div>
+      <div class="sig-rule">Authorized Signature &amp; Date</div>
+    </div>
+    <div class="coc">CERTIFICATE OF CONFORMANCE: All processes conform to applicable specifications, drawings, contracts and/or order requirements unless otherwise noted. Job #${job.jobIdsDisplay || ''} · PO ${job.poNumber || ''}</div>
+  </div>
+
+  </div></body></html>`);
+
+  win.document.close();
+  setTimeout(() => { win.print(); }, 600);
 }
 
 // ── Invoice PDF ──
