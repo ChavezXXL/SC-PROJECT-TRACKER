@@ -3064,6 +3064,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const modalBodyRef = useRef<HTMLDivElement>(null);
   const [calAdded, setCalAdded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cal_added_jobs') || '[]'); } catch { return []; } });
   const [printed, setPrinted] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('printed_jobs') || '[]'); } catch { return []; } });
   useEffect(() => {
@@ -3223,11 +3224,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     try {
       const isNew = !editingJob.id;
       await DB.saveJob(job);
-      setShowModal(false);
-      setEditingJob({});
-      addToast('success', 'Job Saved');
-      if (isNew && job.dueDate) {
-        addToast('info', '📅 Tap the calendar icon on the job to add to Google Calendar');
+      if (isNew) {
+        // Keep modal open in edit mode — this unlocks Stage Pipeline, Shipping,
+        // Checklist, and Attachments sections immediately after creating.
+        setEditingJob(job);
+        setTimeout(() => modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' }), 80);
+        addToast('success', '✅ Job created! Stage pipeline, shipping & checklist are now unlocked.');
+        if (job.dueDate) {
+          addToast('info', '📅 Tap the calendar icon on the job to add to Google Calendar');
+        }
+      } else {
+        setShowModal(false);
+        setEditingJob({});
+        addToast('success', 'Job Saved');
       }
     }
     catch (e) { addToast('error', 'Save Failed'); }
@@ -4042,7 +4051,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               <h3 className="font-bold text-white text-base sm:text-lg">{editingJob.id ? 'Edit Job' : 'Create New Job'}</h3>
               <button type="button" aria-label="Close" onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
             </div>
-            <div className="p-4 sm:p-8 overflow-y-auto space-y-5 sm:space-y-8">
+            <div ref={modalBodyRef} className="p-4 sm:p-8 overflow-y-auto space-y-5 sm:space-y-8">
               {/* ── Stage Pipeline (for existing jobs) ── */}
               {editingJob.id && (() => {
                 const stages = getStages(shopSettings);
@@ -4370,6 +4379,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 </div>
               </div>
 
+              {/* ── "What's next" hint for new jobs ── */}
+              {!editingJob.id && (
+                <div className="bg-zinc-800/30 border border-white/5 rounded-xl p-4">
+                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-3">Unlocks after you hit Create Job →</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { icon: '⚡', label: 'Stage Pipeline' },
+                      { icon: '🚚', label: 'Shipping' },
+                      { icon: '✅', label: 'Operation Checklist' },
+                      { icon: '📎', label: 'Attachments' },
+                    ].map(s => (
+                      <span key={s.label} className="text-[11px] bg-zinc-900/80 text-zinc-500 px-3 py-1.5 rounded-lg border border-white/5 flex items-center gap-1.5">
+                        <span>{s.icon}</span>{s.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Shipping */}
               {editingJob.id && (
               <div className="space-y-5">
@@ -4459,7 +4487,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             </div>
             <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3 sticky bottom-0 z-10">
               <button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
-              <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2"><Save className="w-4 h-4" /> Save Job</button>
+              <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2">
+                {editingJob.id ? <><Save className="w-4 h-4" /> Save Changes</> : <>Create Job <ArrowRight className="w-4 h-4" /></>}
+              </button>
             </div>
             </div>
           </div>
