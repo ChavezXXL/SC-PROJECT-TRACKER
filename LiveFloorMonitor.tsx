@@ -154,7 +154,9 @@ const LiveClock = ({ size = 'xl' }: { size?: 'md' | 'lg' | 'xl' | 'huge' }) => {
   useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
   const sz = { md: 'text-2xl', lg: 'text-4xl', xl: 'text-6xl', huge: 'text-8xl' }[size];
   const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
-  const [clockTime, ampm] = time.split(' ');
+  const timeParts = time.split(' ');
+  const clockTime = timeParts[0] || time;
+  const ampm = timeParts[1] || '';
   return (
     <div className="flex items-baseline gap-3">
       <span className={`${sz} font-black text-white tabular tracking-tight leading-none`} style={{ textShadow: '0 0 40px rgba(59,130,246,0.3)' }}>{clockTime}</span>
@@ -237,7 +239,7 @@ const WorkerCard: React.FC<{
   isAdmin: boolean;
   tvSettings?: SystemSettings;
 }> = ({ log, job, compact, onForceStop, onPause, onResume, isAdmin, tvSettings }) => {
-  const initials = log.userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+  const initials = (log.userName || '??').split(' ').map(w => w[0] || '').join('').toUpperCase().slice(0, 2) || '??';
   const isPaused = !!log.pausedAt;
   const minsElapsed = Math.floor(DB.getWorkingElapsedMs(log) / 60000);
   const isLong = minsElapsed > 240;
@@ -614,7 +616,7 @@ const TvLeaderboardSlide: React.FC<{
                           </div>
                           {/* Avatar */}
                           <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${idx === 0 ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.75rem, 4vw, 4rem)', height: 'clamp(2.75rem, 4vw, 4rem)', fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>
-                            {r.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                            {(r.name || '?').split(' ').map(n => n[0] || '').slice(0, 2).join('').toUpperCase() || '?'}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 2.2vw, 1.875rem)' }}>{r.name}</p>
@@ -1082,7 +1084,7 @@ const TvWorkersColumn: React.FC<{
                     <div key={`${copy}-${log.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-gradient-to-br rounded-3xl border transition-all ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
                       <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
                         <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.75rem, 4.5vw, 4rem)', height: 'clamp(2.75rem, 4.5vw, 4rem)', fontSize: 'clamp(1rem, 1.75vw, 1.5rem)' }}>
-                          {log.userName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                          {(log.userName || '??').split(' ').map(n => n[0] || '').slice(0, 2).join('').toUpperCase() || '??'}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 1.9vw, 1.5rem)' }}>{log.userName}</p>
