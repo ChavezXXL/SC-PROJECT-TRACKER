@@ -29,6 +29,7 @@ import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
 import { useConfirm } from './components/useConfirm';
+import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds } from './services/shiftAlarms';
 
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [
@@ -1339,6 +1340,53 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     return () => { document.removeEventListener('fullscreenchange', fsChange); };
   }, [tvMode]);
 
+  // ── TV URL persistence — when admin enters TV mode, append ?tv=1 to the URL.
+  // If the browser refreshes/crashes, the ?tv=1 param is detected on reload and
+  // renders LiveFloorMonitor standalone immediately (no login, no navigation).
+  // Exiting TV mode (Esc) removes the param so the next reload goes to normal.
+  useEffect(() => {
+    if (standalone) return; // standalone URL already has ?tv=1, don't double-add
+    const params = new URLSearchParams(window.location.search);
+    if (tvMode) {
+      if (!params.get('tv')) {
+        params.set('tv', '1');
+        history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+      }
+    } else {
+      if (params.get('tv')) {
+        params.delete('tv');
+        const qs = params.toString();
+        history.replaceState({}, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+      }
+    }
+  }, [tvMode, standalone]);
+
+  // ── Shift Alarms on TV — play bell sounds + show a brief visual flash.
+  // The TV doesn't stop individual worker timers (that's each worker's device's
+  // job + the global sweep). It just rings the bell so the shop floor hears it.
+  const [tvAlarmBanner, setTvAlarmBanner] = useState<string | null>(null);
+  useEffect(() => { preloadAlarmSounds(); }, []);
+  useEffect(() => {
+    const stop = watchShiftAlarms(
+      () => settings,
+      async (alarm) => {
+        playAlarmSound(alarm.sound || 'bell', alarm.customSoundUrl, alarm.durationSec);
+        // Show a brief banner on the TV screen
+        setTvAlarmBanner(alarm.label);
+        setTimeout(() => setTvAlarmBanner(null), 8000);
+      },
+    );
+    return stop;
+  }, [settings]);
+
+  // ── Stale-log sweep — TV is always on, so it doubles as a sweep node.
+  // This means even if no admin tab is open, orphaned logs get cleaned up.
+  useEffect(() => {
+    DB.sweepStaleLogs().catch(() => {});
+    const id = setInterval(() => DB.sweepStaleLogs().catch(() => {}), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
@@ -1652,6 +1700,16 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
     return (
       <div className="fixed inset-0 z-[9999] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 text-white overflow-hidden">
+        {/* ── Shift Alarm Banner ── pops up when an alarm fires, auto-dismisses */}
+        {tvAlarmBanner && (
+          <div className="absolute top-0 left-0 right-0 z-[10002] flex items-center justify-center pointer-events-none animate-fade-in">
+            <div className="mt-6 flex items-center gap-3 bg-amber-500/90 text-black text-xl font-black px-8 py-4 rounded-2xl shadow-2xl shadow-amber-900/60 backdrop-blur-xl border border-amber-400/50">
+              <span className="text-3xl">🔔</span>
+              {tvAlarmBanner}
+            </div>
+          </div>
+        )}
+
         {/* Ambient glow */}
         <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[120px]" />

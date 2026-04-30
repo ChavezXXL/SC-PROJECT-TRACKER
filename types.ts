@@ -185,6 +185,7 @@ export interface Job {
   expectedHours?: number;
   jobNotes?: JobNote[];
   quoteAmount?: number;        // What the customer pays for this job ($)
+  pricePerPart?: number;       // Per-unit rate — quoteAmount is auto-set to pricePerPart × quantity
   partImage?: string;           // Base64 data URL of the part photo (compressed JPEG)
   // ── Routing / Workflow ──
   currentStage?: string;       // stage id from settings.jobStages

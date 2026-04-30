@@ -4389,23 +4389,50 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   <span className="bg-emerald-500/10 text-emerald-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">4</span>
                   Job Costing <span className="text-zinc-600 normal-case font-normal text-[10px]">(optional)</span>
                 </h4>
+                {/* ── Price Per Part → auto-calculates Quote Total ── */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Quote / Revenue Amount ($)</label>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Price Per Part <span className="text-zinc-600 normal-case font-normal">(auto-calc)</span></label>
                     <div className="relative">
                       <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">$</span>
-                      <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quoteAmount || ''} onChange={e => setEditingJob({ ...editingJob, quoteAmount: Number(e.target.value) || 0 })} placeholder="0.00" />
+                      <input
+                        type="number" step="0.01" min="0"
+                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50"
+                        value={editingJob.pricePerPart || ''}
+                        placeholder="0.00"
+                        onChange={e => {
+                          const ppp = Number(e.target.value) || 0;
+                          const qty = editingJob.quantity || 0;
+                          const newQuote = ppp > 0 && qty > 0 ? parseFloat((ppp * qty).toFixed(2)) : (editingJob.quoteAmount || 0);
+                          setEditingJob({ ...editingJob, pricePerPart: ppp, quoteAmount: newQuote });
+                        }}
+                      />
                     </div>
-                    <p className="text-[10px] text-zinc-600 mt-1">What the customer is paying. Profit calculated when complete.</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">Enter rate/part — Quote Total auto-fills from Qty × this.</p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Expected Hours <span className="text-zinc-600 normal-case">(budget)</span></label>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">
+                      Quote Total ($)
+                      {editingJob.pricePerPart && editingJob.quantity ? (
+                        <span className="ml-2 normal-case font-normal text-emerald-400">
+                          = ${editingJob.pricePerPart.toFixed(2)} × {editingJob.quantity}
+                        </span>
+                      ) : null}
+                    </label>
                     <div className="relative">
-                      <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">⏱</span>
-                      <input type="number" step="0.5" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.expectedHours || ''} onChange={e => setEditingJob({ ...editingJob, expectedHours: Number(e.target.value) || 0 })} placeholder="0" />
+                      <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">$</span>
+                      <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quoteAmount || ''} onChange={e => setEditingJob({ ...editingJob, quoteAmount: Number(e.target.value) || 0, pricePerPart: undefined })} placeholder="0.00" />
                     </div>
-                    <p className="text-[10px] text-zinc-600 mt-1">Time budget. Job row shows red badge if actual exceeds this.</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">What the customer pays. Profit calculated when complete.</p>
                   </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Expected Hours <span className="text-zinc-600 normal-case">(budget)</span></label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">⏱</span>
+                    <input type="number" step="0.5" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.expectedHours || ''} onChange={e => setEditingJob({ ...editingJob, expectedHours: Number(e.target.value) || 0 })} placeholder="0" />
+                  </div>
+                  <p className="text-[10px] text-zinc-600 mt-1">Time budget. Job row shows red badge if actual exceeds this.</p>
                 </div>
               </div>
 
