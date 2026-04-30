@@ -4442,22 +4442,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 </div>
               </div>
 
-              {/* ── "What's next" hint for new jobs ── */}
+              {/* ── "What's next" hint for new jobs ── only Shipping needs an existing job ── */}
               {!editingJob.id && (
-                <div className="bg-zinc-800/30 border border-white/5 rounded-xl p-4">
-                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-3">Unlocks after you hit Create Job →</p>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { icon: '⚡', label: 'Stage Pipeline' },
-                      { icon: '🚚', label: 'Shipping' },
-                      { icon: '✅', label: 'Operation Checklist' },
-                      { icon: '📎', label: 'Attachments' },
-                    ].map(s => (
-                      <span key={s.label} className="text-[11px] bg-zinc-900/80 text-zinc-500 px-3 py-1.5 rounded-lg border border-white/5 flex items-center gap-1.5">
-                        <span>{s.icon}</span>{s.label}
-                      </span>
-                    ))}
-                  </div>
+                <div className="bg-zinc-800/20 border border-white/5 rounded-xl p-3 flex items-center gap-3">
+                  <span className="text-lg">🚚</span>
+                  <p className="text-[11px] text-zinc-500">
+                    <span className="font-bold text-zinc-400">Shipping details + print packing slip</span> unlock after you hit <span className="font-bold text-blue-400">Create Job →</span>
+                  </p>
                 </div>
               )}
 
@@ -4500,24 +4491,20 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               </div>
               )}
 
-              {/* ── Operation Checklist (Jobs R1 #1) ── */}
-              {editingJob.id && (
-                <JobChecklistSection
-                  job={editingJob as Job}
-                  onUpdate={(items) => setEditingJob({ ...editingJob, checklist: items })}
-                  user={user}
-                />
-              )}
+              {/* ── Operation Checklist — always visible, saved with job ── */}
+              <JobChecklistSection
+                job={editingJob as Job}
+                onUpdate={(items) => setEditingJob({ ...editingJob, checklist: items })}
+                user={user}
+              />
 
-              {/* ── Attachments (Jobs R1 #2) ── */}
-              {editingJob.id && (
-                <JobAttachmentsSection
-                  job={editingJob as Job}
-                  onUpdate={(atts) => setEditingJob({ ...editingJob, attachments: atts })}
-                  user={user}
-                  addToast={addToast}
-                />
-              )}
+              {/* ── Attachments / Blueprints — always visible, saved with job ── */}
+              <JobAttachmentsSection
+                job={editingJob as Job}
+                onUpdate={(atts) => setEditingJob({ ...editingJob, attachments: atts })}
+                user={user}
+                addToast={addToast}
+              />
 
               {/* Part Photo */}
               <div className="space-y-5">

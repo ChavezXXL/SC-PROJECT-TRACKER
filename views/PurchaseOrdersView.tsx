@@ -796,11 +796,19 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
     ? `mailto:${po.vendorContact.email}?subject=${encodeURIComponent(po.poNumber)}&body=${encodeURIComponent(`Hi,\n\nPlease find Purchase Order ${po.poNumber} attached.\n\nTotal: $${po.total.toFixed(2)}\nRequired by: ${po.requiredDate || 'TBD'}\n\nThank you.`)}`
     : null;
 
-  const handleSave = () => {
+  // statusOverride: pass a new status synchronously from "Save & Mark Sent"
+  // so the save captures the correct status without waiting for a React state flush.
+  const handleSave = (statusOverride?: { status: POStatus; historyNote: string }) => {
     if (!po.vendorId) { addToast('error', 'Pick a vendor before saving'); return; }
     if (po.items.length === 0) { addToast('error', 'Add at least one line item'); return; }
     if (po.items.some(i => !i.description.trim())) { addToast('error', 'Every line item needs a description'); return; }
-    onSave({ ...po, updatedAt: Date.now() });
+    const saved = { ...po, updatedAt: Date.now() };
+    if (statusOverride) {
+      const entry = { status: statusOverride.status, timestamp: Date.now(), userId: currentUser.id, userName: currentUser.name, note: statusOverride.historyNote };
+      saved.status = statusOverride.status;
+      saved.statusHistory = [...(po.statusHistory || []), entry];
+    }
+    onSave(saved);
   };
 
   const overdueWarning = isOverdue(po);
@@ -873,7 +881,7 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
             </a>
           )}
           {po.status === 'draft' && (
-            <button type="button" onClick={() => { advanceStatus('sent', 'Marked as sent'); handleSave(); }} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5">
+            <button type="button" onClick={() => handleSave({ status: 'sent', historyNote: 'Marked as sent' })} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5">
               <Send className="w-3.5 h-3.5" aria-hidden="true" /> Save & Mark Sent
             </button>
           )}

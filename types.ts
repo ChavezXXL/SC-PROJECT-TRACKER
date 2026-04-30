@@ -439,6 +439,12 @@ export interface PurchaseOrder {
 
   createdAt: number;
   updatedAt: number;
+
+  /** Rework tracking — set when this PO was cloned from another PO for rework. */
+  isRework?: boolean;
+  reworkOf?: string;          // id of the original PO
+  reworkOfNumber?: string;    // poNumber of the original PO (for display without a lookup)
+  reworkReason?: string;      // free text — "dimension out of spec", "wrong finish", etc.
 }
 
 /** Standard quality callouts shops put on POs. Extensible in settings. */
@@ -630,6 +636,7 @@ export interface SystemSettings {
   customProjectFields?: string[]; // field names shown on quotes/invoices
   // ── Job Workflow Stages ──
   jobStages?: JobStage[];      // Configurable pipeline stages
+  customerPipelines?: Record<string, string[]>; // Per-customer stage ID sequences
   // ── Machines / Stations ── (physical work locations)
   machines?: string[];          // e.g. ["Bench 1", "Belt Sander", "Vibratory Tumbler 2"]
   // Slideshow

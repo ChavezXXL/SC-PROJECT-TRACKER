@@ -795,16 +795,18 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
 }
 
 export async function saveSettings(settings: SystemSettings) {
-  writeLS(LS.settings, settings);
-
   if (dbInstance) {
-      try {
-        await setDoc(doc(dbInstance, COL.settings, "system"), sanitize(settings), { merge: true });
-        firebaseStatus = { connected: true };
-      } catch (e) {
-        throw handleError(e);
-      }
+    try {
+      await setDoc(doc(dbInstance, COL.settings, "system"), sanitize(settings), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) {
+      // Firestore failed — still persist locally so the app keeps working offline
+      writeLS(LS.settings, settings);
+      throw handleError(e);
+    }
   }
+  // Write localStorage AFTER Firestore succeeds (or when offline-only mode)
+  writeLS(LS.settings, settings);
 }
 
 

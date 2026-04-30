@@ -15,8 +15,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   Activity, AlertCircle, AlertTriangle, Bell, Briefcase, Calculator,
   Calendar, Camera, CheckCircle, CheckCircle2, ChevronDown, ChevronRight,
-  ChevronUp, Clock, Cloud, Copy, Edit2, Eye, FileText, Image, Info, Mail, MapPin,
-  MessageSquare, Phone, Play, Plus, Printer, Radio, Save, Settings, Share2,
+  ChevronUp, Clock, Cloud, Copy, Edit2, Eye, FileText, Image, Info, Link2, Mail, MapPin, Maximize2,
+  MessageSquare, Phone, Play, Plus, Printer, Radio, RotateCcw, Save, Settings, Share2,
   Trash2, Users, X, Zap,
 } from 'lucide-react';
 
@@ -3337,6 +3337,127 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
   return null;
 };
 
+// ══════════════════════════════════════════════════════════════════════
+// Per-Customer Pipeline Assigner
+// Lets each customer/company have its own stage sequence so different
+// companies that require different processes (e.g., deburr-only vs
+// deburr + inspection + packaging) don't share the same pipeline.
+// ══════════════════════════════════════════════════════════════════════
+const CustomerPipelineAssigner: React.FC<{ settings: SystemSettings; setSettings: (s: SystemSettings) => void }> = ({ settings, setSettings }) => {
+  const customers = settings.clients || [];
+  const stages = (settings.jobStages || []).sort((a, b) => a.order - b.order);
+  const pipelines: Record<string, string[]> = settings.customerPipelines || {};
+  const [open, setOpen] = useState<string | null>(null);
+
+  if (customers.length === 0 || stages.length === 0) return null;
+
+  const setPipeline = (customer: string, stageIds: string[]) => {
+    const next = { ...pipelines, [customer]: stageIds };
+    setSettings({ ...settings, customerPipelines: next });
+  };
+
+  const getCustomerStages = (customer: string): string[] => pipelines[customer] || stages.map(s => s.id);
+
+  const toggleStage = (customer: string, stageId: string) => {
+    const current = getCustomerStages(customer);
+    const next = current.includes(stageId) ? current.filter(id => id !== stageId) : [...current, stageId].sort((a, b) => {
+      const ai = stages.findIndex(s => s.id === a);
+      const bi = stages.findIndex(s => s.id === b);
+      return ai - bi;
+    });
+    setPipeline(customer, next);
+  };
+
+  const isCustom = (customer: string) => {
+    const custom = pipelines[customer];
+    if (!custom) return false;
+    const defaults = stages.map(s => s.id);
+    return JSON.stringify([...custom].sort()) !== JSON.stringify([...defaults].sort());
+  };
+
+  return (
+    <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-white/5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-bold text-white">Per-Company Pipelines</h4>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Assign different stage sequences for each customer. Jobs auto-use their customer's pipeline.</p>
+          </div>
+          <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded px-2 py-0.5">
+            {Object.keys(pipelines).filter(c => isCustom(c)).length} custom
+          </span>
+        </div>
+      </div>
+      <div className="divide-y divide-white/[0.04]">
+        {customers.map(customer => {
+          const custom = isCustom(customer);
+          const active = getCustomerStages(customer);
+          const isOpen = open === customer;
+          return (
+            <div key={customer}>
+              <button
+                type="button"
+                onClick={() => setOpen(isOpen ? null : customer)}
+                className="w-full px-5 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors text-left"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-white">{customer}</span>
+                    {custom && <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">CUSTOM</span>}
+                  </div>
+                  <div className="flex items-center gap-1 mt-1 flex-wrap">
+                    {active.map(id => {
+                      const s = stages.find(st => st.id === id);
+                      if (!s) return null;
+                      return <span key={id} className="text-[9px] font-bold rounded px-1.5 py-0.5 border" style={{ color: s.color, backgroundColor: s.color + '18', borderColor: s.color + '40' }}>{s.label}</span>;
+                    })}
+                  </div>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-zinc-600 transition-transform shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isOpen && (
+                <div className="px-5 pb-4 space-y-2">
+                  <p className="text-[10px] text-zinc-600 mb-2">Toggle stages on/off for {customer}. Unchecked stages are skipped in their job pipeline.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {stages.map(s => {
+                      const on = active.includes(s.id);
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => toggleStage(customer, s.id)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${on ? 'text-white' : 'opacity-40 bg-zinc-900 border-white/10 text-zinc-500'}`}
+                          style={on ? { backgroundColor: s.color + '22', borderColor: s.color + '50', color: s.color } : {}}
+                        >
+                          {on ? <CheckCircle className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                          {s.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {custom && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = { ...pipelines };
+                        delete next[customer];
+                        setSettings({ ...settings, customerPipelines: next });
+                      }}
+                      className="text-[10px] text-zinc-500 hover:text-red-400 flex items-center gap-1 mt-1 transition-colors"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Reset to default pipeline
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
@@ -3390,16 +3511,34 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
   const trueCost = (settings.shopRate || 0) + ohRate;
 
-  const sideItems: { id: typeof settingsTab; label: string; icon: any }[] = [
-    { id: 'profile', label: 'Shop Profile', icon: Briefcase },
-    { id: 'schedule', label: 'Schedule', icon: Clock },
-    { id: 'production', label: 'Production', icon: Activity },
-    { id: 'financial', label: 'Financial', icon: Calculator },
-    { id: 'goals', label: 'Goals', icon: Zap },
-    { id: 'documents', label: 'Documents', icon: FileText },
-    { id: 'tv', label: 'TV Display', icon: Activity },
-    { id: 'system', label: 'System', icon: Settings },
+  // Sidebar grouped nav — Apple-like with section labels
+  const sideGroups: { label: string; items: { id: typeof settingsTab; label: string; icon: any; badge?: string }[] }[] = [
+    {
+      label: 'General',
+      items: [
+        { id: 'profile', label: 'Shop Profile', icon: Briefcase },
+        { id: 'schedule', label: 'Schedule & Time', icon: Clock },
+        { id: 'system', label: 'Defaults', icon: Settings },
+      ],
+    },
+    {
+      label: 'Operations',
+      items: [
+        { id: 'production', label: 'Production', icon: Activity },
+        { id: 'financial', label: 'Financial', icon: Calculator },
+        { id: 'goals', label: 'Goals', icon: Zap },
+      ],
+    },
+    {
+      label: 'Output',
+      items: [
+        { id: 'documents', label: 'Documents', icon: FileText },
+        { id: 'tv', label: 'Live Display', icon: Activity },
+      ],
+    },
   ];
+  // Flat list for mobile pills
+  const sideItems = sideGroups.flatMap(g => g.items);
 
   // Autosave indicator — pulses briefly after each change
   const [savedFlash, setSavedFlash] = useState(false);
@@ -3415,27 +3554,67 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
   return (
     <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0">
-      {/* Left sidebar nav — desktop only (sticks on scroll) */}
-      <aside className="w-48 xl:w-56 flex-shrink-0 hidden md:block">
-        <div className="sticky top-4 space-y-1">
-          <div className="flex items-center justify-between px-3 mb-3">
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Settings</p>
+      {/* ── LEFT SIDEBAR — Apple Settings style, grouped nav ── */}
+      <aside className="w-52 xl:w-60 flex-shrink-0 hidden md:block">
+        <div className="sticky top-4">
+          {/* Header */}
+          <div className="flex items-center justify-between px-2 mb-4">
+            <p className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.12em]">Settings</p>
             {savedFlash && (
               <span className="text-[10px] font-black text-emerald-400 flex items-center gap-1 animate-fade-in">
                 <CheckCircle className="w-3 h-3" aria-hidden="true" /> Saved
               </span>
             )}
           </div>
-          {sideItems.map(item => (
-            <button key={item.id} onClick={() => setSettingsTab(item.id)}
-              aria-current={settingsTab === item.id ? 'page' : undefined}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all text-left ${settingsTab === item.id ? 'bg-blue-500/10 border border-blue-500/20 text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'}`}>
-              <item.icon className={`w-4 h-4 flex-shrink-0 ${settingsTab === item.id ? 'text-blue-400' : ''}`} aria-hidden="true" />{item.label}
+
+          {/* Grouped nav sections */}
+          <div className="space-y-5">
+            {sideGroups.map(group => (
+              <div key={group.label}>
+                <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.15em] px-3 mb-1">{group.label}</p>
+                <div className="bg-zinc-900/60 border border-white/[0.06] rounded-xl overflow-hidden">
+                  {group.items.map((item, idx) => {
+                    const active = settingsTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setSettingsTab(item.id)}
+                        aria-current={active ? 'page' : undefined}
+                        className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm transition-all text-left relative
+                          ${idx > 0 ? 'border-t border-white/[0.04]' : ''}
+                          ${active
+                            ? 'bg-amber-500/12 text-white font-semibold'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
+                          }`}
+                      >
+                        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-amber-500 rounded-r-full" aria-hidden="true" />}
+                        <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-amber-500 text-white' : 'bg-zinc-800 text-zinc-500'}`}>
+                          <item.icon className="w-3.5 h-3.5" aria-hidden="true" />
+                        </span>
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {item.badge && (
+                          <span className="text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded px-1 py-0.5">{item.badge}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Autosave note + manual save */}
+          <div className="mt-5 space-y-2 px-1">
+            <div className="flex items-center gap-2 px-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <p className="text-[10px] text-zinc-600">Autosaves as you type</p>
+            </div>
+            <button
+              onClick={handleSave}
+              className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-3 py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-900/30 transition-all active:scale-[0.98]"
+            >
+              <Save className="w-4 h-4" aria-hidden="true" /> Save Now
             </button>
-          ))}
-          <div className="border-t border-white/5 mt-4 pt-4 space-y-2">
-            <p className="text-[10px] text-zinc-600 px-3">Changes save automatically as you edit.</p>
-            <button onClick={handleSave} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"><Save className="w-4 h-4" aria-hidden="true" /> Save Now</button>
           </div>
         </div>
       </aside>
@@ -3448,7 +3627,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             {sideItems.map(item => (
               <button key={item.id} onClick={() => setSettingsTab(item.id)}
                 aria-current={settingsTab === item.id ? 'page' : undefined}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shrink-0 ${settingsTab === item.id ? 'bg-blue-600 text-white shadow-md shadow-blue-900/40' : 'text-zinc-400 hover:text-white bg-zinc-900/50 border border-white/5'}`}>
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shrink-0 ${settingsTab === item.id ? 'bg-amber-600 text-white shadow-md shadow-amber-900/40' : 'text-zinc-400 hover:text-white bg-zinc-900/50 border border-white/5'}`}>
                 <item.icon className="w-3.5 h-3.5" aria-hidden="true" /> {item.label}
               </button>
             ))}
@@ -3689,7 +3868,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               ═══════════════════════════════════════════════════════════ */}
           <section className="space-y-4">
             <div className="flex items-center gap-2">
-              <div className="w-1 h-5 bg-blue-500 rounded-full" />
+              <div className="w-1 h-5 bg-amber-500 rounded-full" />
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest">1 · Workflow</h4>
               <div className="h-px bg-white/5 flex-1" />
               <span className="text-[10px] text-zinc-600">How jobs move through your shop</span>
@@ -3828,6 +4007,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           {/* Operations → Stages mapper — drag operations into their stages
               so clock-ins auto-route jobs. */}
           <OperationsStageMapper settings={settings} setSettings={setSettings} />
+
+          {/* Per-Customer Pipelines ─ each company can have a unique stage sequence */}
+          <CustomerPipelineAssigner settings={settings} setSettings={setSettings} />
           </section>
 
           {/* ═══════════════════════════════════════════════════════════
@@ -4437,78 +4619,111 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
       {settingsTab === 'system' && (
         <div className="space-y-6">
           <div>
-            <h3 className="text-lg font-bold text-white mb-1">System</h3>
-            <p className="text-sm text-zinc-500">Defaults, notifications, and system information.</p>
+            <h3 className="text-lg font-black text-white mb-1">Defaults</h3>
+            <p className="text-sm text-zinc-500">Job and worker defaults applied across the system.</p>
           </div>
-          {/* Worker Defaults */}
+
+          {/* Job Defaults */}
           <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Worker Defaults</p>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
-              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Job Defaults</p>
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
                 <div>
-                  <p className="text-sm text-white">Weekly Goal Hours</p>
-                  <p className="text-xs text-zinc-500">Target shown on worker stats page</p>
+                  <p className="text-sm font-semibold text-white">Default Priority</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Applied when creating new jobs</p>
                 </div>
-                <input type="number" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm w-20 text-center" value={settings.weeklyGoalHours || 40} onChange={e => setSettings({ ...settings, weeklyGoalHours: Number(e.target.value) || 40 })} />
-              </div>
-              <div className="px-4 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-white">Default Job Priority</p>
-                  <p className="text-xs text-zinc-500">Used when creating new jobs</p>
-                </div>
-                <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-sm" value={settings.defaultPriority || 'normal'} onChange={e => setSettings({ ...settings, defaultPriority: e.target.value })}>
+                <select className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-amber-500/40" value={settings.defaultPriority || 'normal'} onChange={e => setSettings({ ...settings, defaultPriority: e.target.value })}>
                   <option value="low">Low</option>
                   <option value="normal">Normal</option>
                   <option value="high">High</option>
                   <option value="urgent">Urgent</option>
                 </select>
               </div>
+              <div className="px-4 py-3.5 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">Default Payment Terms</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Pre-filled on new quotes and POs</p>
+                </div>
+                <select className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-amber-500/40" value={settings.defaultPaymentTerms || 'Net 30'} onChange={e => setSettings({ ...settings, defaultPaymentTerms: e.target.value })}>
+                  <option>Due on Receipt</option>
+                  <option>Net 15</option>
+                  <option>Net 30</option>
+                  <option>Net 45</option>
+                  <option>Net 60</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          {/* Notifications */}
-          {/* Notifications — dev-only diagnostic panel.
-              End users get push via the bell icon in the header; this card
-              exists to troubleshoot subscription + service-worker issues, which
-              means VAPID env vars and jargon that would confuse a shop owner. */}
+          {/* Worker Defaults */}
+          <div>
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Worker Defaults</p>
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+              <div className="px-4 py-3.5 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">Weekly Goal Hours</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Target shown on each worker's stats page</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-20 text-center focus:outline-none focus:border-amber-500/40"
+                    value={settings.weeklyGoalHours || 40}
+                    onChange={e => setSettings({ ...settings, weeklyGoalHours: Number(e.target.value) || 40 })}
+                  />
+                  <span className="text-xs text-zinc-500">hrs</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Notifications — dev-only */}
           {isDeveloper() && (
             <div>
-              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Notifications <span className="text-[9px] text-amber-400 normal-case tracking-normal">(dev only)</span></p>
-              <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4">
+              <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">
+                Notifications <span className="text-amber-400 normal-case tracking-normal text-[9px]">dev only</span>
+              </p>
+              <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl p-4">
                 <PushRegistrationPanel addToast={addToast} userId={userId} />
               </div>
             </div>
           )}
 
-          {/* AI Status panel removed 2026-04-27 along with the AI PO scanner. */}
-
-          {/* System Info — always shown, but with end-user-friendly labels.
-              Raw Firebase connection status is gated behind dev mode. */}
+          {/* About */}
           <div>
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">System</p>
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">About</p>
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
               {isDeveloper() && (
-                <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+                <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
                   <div>
-                    <p className="text-sm text-white">Firebase Status <span className="text-[9px] text-amber-400">(dev)</span></p>
-                    <p className="text-xs text-zinc-500">Database connection</p>
+                    <p className="text-sm font-semibold text-white">Database</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Firebase connection status</p>
                   </div>
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${DB.isFirebaseConnected().connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{DB.isFirebaseConnected().connected ? 'Connected' : 'Offline'}</span>
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${DB.isFirebaseConnected().connected ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25' : 'bg-red-500/15 text-red-400 border border-red-500/25'}`}>
+                    {DB.isFirebaseConnected().connected ? '● Connected' : '○ Offline'}
+                  </span>
                 </div>
               )}
-              <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
                 <div>
-                  <p className="text-sm text-white">Operations</p>
-                  <p className="text-xs text-zinc-500">How many operation types are set up</p>
+                  <p className="text-sm font-semibold text-white">Operations Configured</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Custom operation types set up</p>
                 </div>
-                <span className="text-sm text-zinc-300 font-mono">{(settings.customOperations || []).length} configured</span>
+                <span className="text-sm font-bold text-amber-400">{(settings.customOperations || []).length}</span>
               </div>
-              <div className="px-4 py-3 flex items-center justify-between">
+              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
                 <div>
-                  <p className="text-sm text-white">Version</p>
-                  <p className="text-xs text-zinc-500">SC Project Tracker</p>
+                  <p className="text-sm font-semibold text-white">Workflow Stages</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Stages in your production pipeline</p>
                 </div>
-                <span className="text-xs text-zinc-500 font-mono">v2.0</span>
+                <span className="text-sm font-bold text-amber-400">{(settings.jobStages || []).length}</span>
+              </div>
+              <div className="px-4 py-3.5 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">FabTrack IO</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Shop management platform</p>
+                </div>
+                <span className="text-xs text-zinc-600 font-mono">v2.1</span>
               </div>
             </div>
           </div>
@@ -4517,7 +4732,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
       {/* Mobile save */}
       <div className="flex justify-end mt-6 pb-8 md:hidden">
-        <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-sm flex items-center gap-2"><Save className="w-4 h-4" /> Save</button>
+        <button onClick={handleSave} className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-5 py-2 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-amber-900/30"><Save className="w-4 h-4" /> Save</button>
       </div>
       </div>
       {ConfirmHost}

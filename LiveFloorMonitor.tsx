@@ -1727,19 +1727,30 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           )}
           <button
             aria-label="Exit TV Mode"
-            onClick={() => setTvMode(false)}
+            onClick={() => {
+              if (standalone) {
+                // Standalone tab: navigate away (removes ?tv=1) back to root
+                window.location.href = window.location.pathname;
+              } else {
+                setTvMode(false);
+              }
+            }}
             className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-500/80 to-red-600/80 hover:from-red-500 hover:to-red-600 text-white text-sm font-black border border-red-400/30 transition-all flex items-center gap-2 backdrop-blur-xl shadow-lg shadow-red-900/40 active:scale-95"
           >
-            <Minimize2 className="w-4 h-4" aria-hidden="true" /> Exit TV Mode
+            <Minimize2 className="w-4 h-4" aria-hidden="true" /> {standalone ? 'Exit TV' : 'Exit TV Mode'}
           </button>
         </div>
 
         {/* Bottom keyboard-shortcut hint bar */}
         <div className="tv-chrome absolute bottom-4 left-1/2 -translate-x-1/2 z-[10001] flex items-center gap-3 bg-black/50 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2 pointer-events-none">
-          <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
-            <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">Esc</kbd> exit
-          </span>
-          <span className="w-px h-3 bg-white/10" />
+          {!standalone && (
+            <>
+              <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
+                <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">Esc</kbd> exit
+              </span>
+              <span className="w-px h-3 bg-white/10" />
+            </>
+          )}
           <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
             <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">←</kbd>
             <kbd className="text-white bg-white/10 border border-white/15 px-1.5 py-0.5 rounded font-mono text-[10px]">→</kbd>
@@ -1875,11 +1886,11 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             </button>
             <button
               aria-label="Enter TV Mode"
-              onClick={() => setTvMode(true)}
-              className="ml-1 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-blue-900/40 min-h-[36px] transition-all"
-              title="Full-screen TV mode — hides sidebar, auto-scrolls"
+              onClick={() => window.open(window.location.pathname + '?tv=1', '_blank', 'noopener')}
+              className="ml-1 px-3 py-2 rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-amber-900/40 min-h-[36px] transition-all"
+              title="Open TV Mode in a new tab — persistent, fullscreen, no accidental exits"
             >
-              <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" /> TV Mode
+              <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" /> TV Mode ↗
             </button>
           </div>
         </div>
@@ -1915,20 +1926,20 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         {activeLogs.length > 0 && (
           <div className="px-4 pt-4 max-w-3xl mx-auto">
             <button
-              onClick={() => setTvMode(true)}
-              className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-500/20 hover:border-blue-500/40 hover:from-blue-500/15 hover:to-indigo-500/10 transition-all text-left group"
+              onClick={() => window.open(window.location.pathname + '?tv=1', '_blank', 'noopener')}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/5 border border-amber-500/20 hover:border-amber-500/40 hover:from-amber-500/15 hover:to-orange-500/10 transition-all text-left group"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0 group-hover:bg-blue-500/30 transition-colors">
-                  <Radio className="w-5 h-5 text-blue-400 animate-pulse" aria-hidden="true" />
+                <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0 group-hover:bg-amber-500/30 transition-colors">
+                  <Radio className="w-5 h-5 text-amber-400 animate-pulse" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-white">Put this on the shop TV</p>
-                  <p className="text-[11px] text-white/50 truncate">Full-screen slideshow: Workers · Jobs · Leaderboard · Goals · Weather · Weekly Stats</p>
+                  <p className="text-[11px] text-white/50 truncate">Opens in a new tab — fullscreen, persistent, won't accidentally close</p>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 text-blue-400 text-xs font-bold shrink-0 group-hover:text-blue-300">
-                <Maximize2 className="w-4 h-4" aria-hidden="true" /> TV Mode
+              <div className="flex items-center gap-1.5 text-amber-400 text-xs font-bold shrink-0 group-hover:text-amber-300">
+                <Maximize2 className="w-4 h-4" aria-hidden="true" /> TV Mode ↗
               </div>
             </button>
           </div>
@@ -1944,10 +1955,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
               <h2 className="text-white/60 font-bold text-xl mb-2">Floor is quiet</h2>
               <p className="text-white/20 text-sm max-w-xs mb-6">When workers start timers, their live activity will appear here.</p>
               <button
-                onClick={() => setTvMode(true)}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-900/40 transition-all"
+                onClick={() => window.open(window.location.pathname + '?tv=1', '_blank', 'noopener')}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-sm font-bold flex items-center gap-2 shadow-lg shadow-amber-900/40 transition-all"
               >
-                <Maximize2 className="w-4 h-4" aria-hidden="true" /> Preview TV Slideshow
+                <Maximize2 className="w-4 h-4" aria-hidden="true" /> TV Slideshow ↗
               </button>
               <p className="text-[10px] text-white/20 mt-3">Shows leaderboard, goals, weather, and weekly stats even without active workers.</p>
             </div>
