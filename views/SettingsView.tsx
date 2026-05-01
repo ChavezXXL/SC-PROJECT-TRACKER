@@ -3553,7 +3553,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   }, [settingsJson]);
 
   return (
-    <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0">
+    <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0 pb-6 md:pb-0">
       {/* ── LEFT SIDEBAR — Apple Settings style, grouped nav ── */}
       <aside className="w-52 xl:w-60 flex-shrink-0 hidden md:block">
         <div className="sticky top-4">

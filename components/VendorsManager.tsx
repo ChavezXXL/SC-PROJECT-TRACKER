@@ -168,6 +168,27 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
 };
 
 // ── Editor modal ──
+// ── ZIP auto-fill via api.zippopotam.us (free, no key) ───────────────────
+interface ZipResult { city: string; state: string; stateAbbr: string }
+async function lookupZip(zip: string): Promise<ZipResult | null> {
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${zip}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { places?: Array<{ 'place name': string; state: string; 'state abbreviation': string }> };
+    const place = data.places?.[0];
+    if (!place) return null;
+    return {
+      city: place['place name'] || '',
+      state: place['state'] || '',
+      stateAbbr: place['state abbreviation'] || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 const VendorEditor: React.FC<{
   existing: Vendor | null;
   onClose: () => void;
@@ -180,12 +201,39 @@ const VendorEditor: React.FC<{
     categories: [],
     createdAt: Date.now(),
   });
+  const [zipInput, setZipInput] = useState('');
+  const [zipResult, setZipResult] = useState<ZipResult | null>(null);
+  const [zipLoading, setZipLoading] = useState(false);
 
   const update = (patch: Partial<Vendor>) => setV(p => ({ ...p, ...patch }));
 
   const toggleCategory = (cat: string) => {
     const cur = v.categories || [];
     update({ categories: cur.includes(cat) ? cur.filter(c => c !== cat) : [...cur, cat] });
+  };
+
+  // Auto-lookup when 5 digits typed
+  useEffect(() => {
+    if (!/^\d{5}$/.test(zipInput)) { setZipResult(null); return; }
+    let cancelled = false;
+    setZipLoading(true);
+    lookupZip(zipInput).then(res => {
+      if (!cancelled) { setZipResult(res); setZipLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [zipInput]);
+
+  const applyZip = () => {
+    if (!zipResult) return;
+    const cityStatePart = `${zipResult.city}, ${zipResult.stateAbbr} ${zipInput}`;
+    // Append to existing address if it doesn't already contain the city
+    const current = (v.address || '').trim();
+    if (!current.includes(zipResult.city)) {
+      update({ address: current ? `${current}, ${cityStatePart}` : cityStatePart });
+    }
+    addToast('success', `📍 Added ${zipResult.city}, ${zipResult.stateAbbr}`);
+    setZipInput('');
+    setZipResult(null);
   };
 
   const handleSave = () => {
@@ -268,6 +316,34 @@ const VendorEditor: React.FC<{
             className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
             placeholder="123 Industrial Blvd, City, ST 12345"
           />
+          {/* ZIP auto-fill — type 5-digit ZIP to look up city/state */}
+          <div className="flex items-center gap-2 mt-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={5}
+              value={zipInput}
+              onChange={e => setZipInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+              className="w-24 bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white font-mono placeholder-zinc-700"
+              placeholder="ZIP →"
+            />
+            {zipLoading && <span className="text-[10px] text-zinc-500 animate-pulse">Looking up…</span>}
+            {zipResult && !zipLoading && (
+              <button
+                type="button"
+                onClick={applyZip}
+                className="text-[10px] font-black bg-amber-600/80 hover:bg-amber-500 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 transition-all"
+              >
+                📍 {zipResult.city}, {zipResult.stateAbbr} — Apply
+              </button>
+            )}
+            {!zipResult && !zipLoading && zipInput.length < 5 && zipInput.length > 0 && (
+              <span className="text-[10px] text-zinc-600">{5 - zipInput.length} more digit{5 - zipInput.length !== 1 ? 's' : ''}</span>
+            )}
+            {zipInput.length === 5 && !zipLoading && !zipResult && (
+              <span className="text-[10px] text-red-400">ZIP not found</span>
+            )}
+          </div>
         </Field>
 
         <Field label="Categories — what they do" icon={<Tag className="w-3 h-3" />}>

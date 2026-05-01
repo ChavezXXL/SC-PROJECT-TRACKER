@@ -468,21 +468,37 @@ export const DEFAULT_QUALITY_REQUIREMENTS = [
 // purposes and tell customers "your parts are on the way."
 export type DeliveryStatus = 'scheduled' | 'in-progress' | 'delivered' | 'cancelled';
 
+/** Discriminates what kind of stop this is so the driver UI shows the
+ *  right context (parts to deliver, material to drop off, etc.). */
+export type StopType =
+  | 'customer-dropoff'   // Finished parts → customer
+  | 'vendor-dropoff'     // Raw/WIP material → vendor (heat treat, plating…)
+  | 'vendor-pickup'      // Picking up from vendor after processing
+  | 'other';             // Gas, shop supplies, custom
+
 export interface DeliveryStop {
   id: string;
+  /** What kind of stop — drives entity picker and color coding. */
+  stopType?: StopType;
   address: string;
+  /** For customer-dropoff stops. */
   customerName?: string;
-  /** Linked job ids being delivered to this stop (so "what's in the truck"
-   *  is a click away from either the Jobs list or the Delivery detail). */
+  /** For vendor-dropoff / vendor-pickup stops. */
+  vendorName?: string;
+  /** Linked job ids being delivered / transported at this stop. */
   jobIds: string[];
   /** Set when the driver taps "Arrived at this stop". */
   arrivedAt?: number;
+  /** Set when driver marks the stop fully done (signed, photo taken, etc.). */
+  completedAt?: number;
   /** Optional signed-for-by / recipient name captured at delivery. */
   signedBy?: string;
   notes?: string;
   /** Captured lat/lon at arrival for accurate mileage proof. */
   arrivalLat?: number;
   arrivalLon?: number;
+  /** Proof-of-delivery photo captured at arrival (base64 data URL). */
+  photoUrl?: string;
 }
 
 export interface Delivery {
@@ -500,6 +516,8 @@ export interface Delivery {
   /** Computed from the track — final miles driven. Cached here so reports
    *  don't re-walk the polyline every render. */
   milesDriven?: number;
+  /** Pre-run estimated miles from OSRM route API (free, no key). */
+  estimatedMiles?: number;
   /** Wall-clock drive time in minutes. */
   durationMinutes?: number;
   /** Cost basis — IRS mileage rate at time of trip × miles. Saved so

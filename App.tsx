@@ -36,6 +36,7 @@ import { VendorsManager } from './components/VendorsManager';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
+import { businessDaysUntilSync, isHolidaySync, getHolidays } from './services/holidays';
 // ── Tier-gated feature wrapper ──
 // Wraps locked views with upgrade nudges based on the active tenant's plan.
 // SC Deburring (legacy tenant) bypasses all gates; new tenants on Pro trial
@@ -3116,6 +3117,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const [calAdded, setCalAdded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cal_added_jobs') || '[]'); } catch { return []; } });
   const [printed, setPrinted] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('printed_jobs') || '[]'); } catch { return []; } });
+  // Force-re-render once holiday cache is warm so bizDays cells show numbers.
+  const [, setHolidayTick] = useState(0);
+  useEffect(() => {
+    const year = new Date().getFullYear();
+    getHolidays(year).then(() => setHolidayTick(t => t + 1));
+  }, []);
   useEffect(() => {
     const refresh = () => { try { setPrinted(JSON.parse(localStorage.getItem('printed_jobs') || '[]')); } catch {} };
     window.addEventListener('printed-update', refresh);
@@ -4075,8 +4082,24 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   <td className="p-3 sm:p-4 font-mono text-zinc-300 hidden sm:table-cell">{j.quantity}</td>
                   <td className="p-3 sm:p-4 hidden lg:table-cell"><PriorityBadge priority={j.priority} /></td>
                   <td className="p-3 sm:p-4 hidden md:table-cell"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
-                  <td className={`p-2 sm:p-4 font-mono sm:whitespace-nowrap font-bold text-[11px] sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
-                    {fmt(j.dueDate)}
+                  <td className={`p-2 sm:p-4 sm:whitespace-nowrap text-[11px] sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
+                    <div className="font-mono font-bold">{fmt(j.dueDate)}</div>
+                    {j.dueDate && j.status !== 'completed' && (() => {
+                      const bizDays = businessDaysUntilSync(j.dueDate);
+                      const isHol = j.dueDate ? isHolidaySync(j.dueDate) : false;
+                      return (
+                        <div className="flex flex-col gap-0.5 mt-0.5">
+                          {bizDays !== null && (
+                            <span className={`text-[9px] font-bold ${bizDays < 0 ? 'text-red-500' : bizDays <= 2 ? 'text-orange-400' : 'text-zinc-600'}`}>
+                              {bizDays < 0 ? `${Math.abs(bizDays)}bd late` : bizDays === 0 ? 'due today' : `${bizDays} biz days`}
+                            </span>
+                          )}
+                          {isHol && (
+                            <span className="text-[9px] font-bold text-yellow-400" title="Due date falls on a US holiday">🏖 Holiday</span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="p-1.5 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-1 sm:gap-2 flex-wrap sm:flex-nowrap">
@@ -4733,6 +4756,47 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </button>
                 )}
               </div>
+
+              {/* ── Worker QR Code — only for saved jobs ─────────────────────
+                  Workers scan this on the shop floor to clock in instantly.
+                  No typing: scan → deep-link → Start Operation modal opens.
+                  ────────────────────────────────────────────────────────── */}
+              {editingJob.id && (() => {
+                const baseUrl = window.location.href.split('?')[0];
+                const deepLink = `${baseUrl}?jobId=${editingJob.id}`;
+                const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(deepLink)}`;
+                return (
+                  <div className="space-y-3 pt-1">
+                    <h4 className="text-xs font-black text-indigo-400 uppercase tracking-[0.2em] border-b border-indigo-500/20 pb-2 flex items-center gap-2">
+                      <span className="bg-indigo-500/10 text-indigo-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">7</span>
+                      Worker Clock-In QR
+                    </h4>
+                    <div className="flex items-start gap-4">
+                      <div className="bg-white p-2 rounded-xl shadow-lg shrink-0">
+                        <img
+                          src={qrSrc}
+                          alt={`Scan to open ${editingJob.poNumber}`}
+                          className="w-24 h-24 object-contain block"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        <p className="text-sm font-bold text-white">Scan to clock in</p>
+                        <p className="text-xs text-zinc-500 leading-relaxed">Workers scan this code on the shop floor to open this job instantly and start/stop time without typing anything.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(deepLink).then(() => addToast('success', '🔗 Deep-link copied to clipboard'));
+                          }}
+                          className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 mt-2 transition-colors"
+                        >
+                          <Copy className="w-3 h-3" /> Copy link
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
             <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3 sticky bottom-0 z-10">
               <button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
@@ -5733,7 +5797,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="p-4 md:p-8">
+        <div className="p-4 md:p-8 pb-24 md:pb-8">
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} />}
           {view === 'admin-board' && (
