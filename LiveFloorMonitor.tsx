@@ -1395,11 +1395,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const unsub2 = DB.subscribeJobs(setJobs);
     const unsub3 = DB.subscribeSettings(setSettings);
     const unsub4 = DB.subscribeLogs(setAllLogs);
-    // subscribeRework may not exist in all builds — optional
-    const maybeSub = (DB as any).subscribeRework;
-    const unsub5 = typeof maybeSub === 'function'
-      ? maybeSub((entries: any[]) => setOpenReworkCount((entries || []).filter((r: any) => r.status === 'open' || r.status === 'in-rework').length))
-      : () => {};
+    const unsub5 = DB.subscribeRework((entries) => setOpenReworkCount((entries || []).filter((r) => r.status === 'open' || r.status === 'in-rework').length));
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
   }, []);
 

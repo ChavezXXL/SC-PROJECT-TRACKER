@@ -3888,7 +3888,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 // Reorder
                 stages.forEach((s, i) => s.order = i);
                 setSettings({ ...settings, jobStages: stages });
-              }} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg font-bold">+ Add Stage</button>
+              }} className="text-[10px] bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-bold">+ Add Stage</button>
             </div>
             {/* Stage Pipeline Preview */}
             <div className="flex items-center gap-1 bg-zinc-950 rounded-xl p-3">
@@ -3981,8 +3981,8 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
               <button onClick={() => setOpsOpen(!opsOpen)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 rounded-xl transition-colors">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-white">Operations</p>
-                  <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded-full font-bold">{(settings.customOperations || []).length}</span>
+                  <p className="text-sm font-semibold text-white">Operations</p>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full font-bold">{(settings.customOperations || []).length}</span>
                 </div>
                 <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform ${opsOpen ? 'rotate-180' : ''}`} />
               </button>
@@ -3990,7 +3990,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 <div className="px-4 pb-4 space-y-3 border-t border-white/5">
                   <div className="flex gap-2 mt-3">
                     <input value={newOp} onChange={e => setNewOp(e.target.value)} placeholder="Add operation..." className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white" onKeyDown={e => e.key === 'Enter' && handleAddOp()} />
-                    <button onClick={handleAddOp} className="bg-blue-600 hover:bg-blue-500 px-3 rounded-lg text-white text-xs font-bold">Add</button>
+                    <button onClick={handleAddOp} className="bg-amber-600 hover:bg-amber-500 px-3 rounded-lg text-white text-xs font-bold">Add</button>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {[...(settings.customOperations || [])].sort((a, b) => a.localeCompare(b)).map(op => (

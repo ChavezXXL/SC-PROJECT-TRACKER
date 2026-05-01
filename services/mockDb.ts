@@ -612,9 +612,9 @@ export async function updateTimeLog(log: TimeLog) {
      log.durationMinutes = Math.round(log.durationSeconds / 60);
      log.status = 'completed';
   } else {
-     log.endTime = null;
-     log.durationMinutes = null;
-     log.durationSeconds = null;
+     log.endTime = undefined;
+     log.durationMinutes = undefined;
+     log.durationSeconds = undefined;
      log.status = 'in_progress';
   }
   log.updatedAt = Date.now();

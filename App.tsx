@@ -1996,6 +1996,23 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const missingQuotes = jobs.filter(j => j.status === 'completed' && !(j.quoteAmount && j.quoteAmount > 0)).length;
         const longRunning = activeLogs.filter(l => l.startTime < Date.now() - 4 * 3600000).length;
 
+        // Brain: stale jobs
+        const STALE_MS = 48 * 3600000;
+        const now = Date.now();
+        const lastLogMs = new Map<string, number>();
+        allLogs.forEach(l => { if (l.endTime && l.endTime > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, l.endTime); });
+        const staleCount = jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').filter(j => {
+          const last = lastLogMs.get(j.id) || 0;
+          return (now - j.createdAt) > STALE_MS && (now - last) > STALE_MS;
+        }).length;
+
+        // Brain: over-budget active jobs
+        const rate = shopSettings.shopRate || 0;
+        const overBudgetCount = rate > 0 ? jobs.filter(j => j.status !== 'completed' && j.quoteAmount && j.quoteAmount > 0).filter(j => {
+          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          return (mins / 60) * rate > j.quoteAmount!;
+        }).length : 0;
+
         // Customer duplicate detection — same normalizer as SettingsView.
         // Track UNIQUE original names per key (not job counts). After a
         // merge all jobs share one canonical name so the set size drops to 1
@@ -2021,6 +2038,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         if (workersNoScansToday.length > 0 && new Date().getHours() >= 8) items.push({ label: `${workersNoScansToday.length} worker${workersNoScansToday.length > 1 ? 's' : ''} no scan today`, count: workersNoScansToday.length, color: '#facc15', icon: Users, onClick: () => setView('admin-live') });
         if (dupGroupCount > 0) items.push({ label: `${dupGroupCount} possible customer duplicate${dupGroupCount > 1 ? 's' : ''}`, count: dupGroupCount, color: '#a855f7', icon: Users, onClick: () => setView('admin-settings') });
         if (missingQuotes > 0 && missingQuotes >= 5) items.push({ label: `${missingQuotes} completed jobs missing quote`, count: missingQuotes, color: '#3b82f6', icon: FileText, onClick: () => setView('admin-jobs') });
+        if (overBudgetCount > 0) items.push({ label: `${overBudgetCount} job${overBudgetCount > 1 ? 's' : ''} over budget`, count: overBudgetCount, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
+        if (staleCount > 0) items.push({ label: `${staleCount} stale job${staleCount > 1 ? 's' : ''} — no activity 48h+`, count: staleCount, color: '#71717a', icon: Clock, onClick: () => setView('admin-jobs') });
 
         if (items.length === 0) return null;
         return (
@@ -3197,6 +3216,89 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // Count active filters
   const activeFilterCount = [filterPriority !== 'all', filterStatus !== 'all', sortBy !== 'dueDate'].filter(Boolean).length;
 
+  // ── SHOP BRAIN — per-job intelligence ──────────────────────────────────────
+  // Stale: active job with no time log (or last log) older than 48h
+  const staleJobIds = useMemo(() => {
+    const STALE_MS = 48 * 3600000;
+    const now = Date.now();
+    const lastLogMs = new Map<string, number>();
+    allLogs.forEach(l => {
+      if (l.endTime && l.endTime > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, l.endTime);
+    });
+    const ids = new Set<string>();
+    jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').forEach(j => {
+      const last = lastLogMs.get(j.id) || 0;
+      const age = now - j.createdAt;
+      if (age > STALE_MS && (now - last) > STALE_MS) ids.add(j.id);
+    });
+    return ids;
+  }, [jobs, allLogs]);
+
+  // Budget map: per-job { usedPct, overBudget, atRisk }
+  const jobBudgetMap = useMemo(() => {
+    const rate = shopSettings.shopRate || 0;
+    const m = new Map<string, { usedPct: number; overBudget: boolean; atRisk: boolean; cost: number }>();
+    if (!rate) return m;
+    jobs.filter(j => j.quoteAmount && j.quoteAmount > 0).forEach(j => {
+      const totalMins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+      const cost = (totalMins / 60) * rate;
+      const usedPct = Math.min(999, (cost / j.quoteAmount!) * 100);
+      m.set(j.id, { usedPct, overBudget: cost > j.quoteAmount!, atRisk: usedPct >= 70 && cost <= j.quoteAmount!, cost });
+    });
+    return m;
+  }, [jobs, allLogs, shopSettings.shopRate]);
+
+  // Smart job memory: same customer + part number → full history
+  const priceSuggestion = useMemo(() => {
+    const cust = (editingJob.customer || '').trim().toLowerCase();
+    const part = (editingJob.partNumber || '').trim().toLowerCase();
+    if (!cust || !part) return null;
+    const matches = jobs.filter(j =>
+      j.id !== editingJob.id &&
+      (j.customer || '').trim().toLowerCase() === cust &&
+      (j.partNumber || '').trim().toLowerCase() === part
+    ).sort((a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt));
+    if (!matches.length) return null;
+    const last = matches[0];
+    // Total hours logged for the last completed run
+    const lastLogs = allLogs.filter(l => l.jobId === last.id);
+    const totalMins = lastLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    const totalHrs = totalMins / 60;
+    // Average hours across all completed runs
+    const completedRuns = matches.filter(j => j.status === 'completed');
+    const avgHrs = completedRuns.length > 0
+      ? completedRuns.reduce((sum, j) => {
+          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          return sum + mins;
+        }, 0) / completedRuns.length / 60
+      : null;
+    return {
+      quoteAmount: last.quoteAmount || null,
+      pricePerPart: last.pricePerPart || null,
+      quantity: last.quantity || null,
+      poNumber: last.poNumber,
+      runCount: matches.length,
+      completedCount: completedRuns.length,
+      lastTotalHrs: totalHrs > 0 ? totalHrs : null,
+      avgHrs,
+      lastStatus: last.status,
+      lastJob: last,
+    };
+  }, [jobs, allLogs, editingJob.customer, editingJob.partNumber, editingJob.id]);
+
+  // Customer pipeline hint: does this customer have a custom stage pipeline?
+  const customerPipelineHint = useMemo(() => {
+    const cust = (editingJob.customer || '').trim();
+    if (!cust) return null;
+    const pipeline = shopSettings.customerPipelines?.[cust];
+    if (!pipeline) return null;
+    const stages = getStages(shopSettings);
+    const customStages = pipeline.map(id => stages.find(s => s.id === id)).filter(Boolean) as typeof stages;
+    const allStages = getStages(shopSettings);
+    if (customStages.length === allStages.length) return null; // same as default, no hint needed
+    return { customer: cust, stages: customStages };
+  }, [editingJob.customer, shopSettings]);
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -3785,6 +3887,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               // Historical on-time / late for completed jobs
               const deliveredLate = j.status === 'completed' && j.dueDate && j.completedAt && j.completedAt > new Date(j.dueDate + 'T23:59:59').getTime();
               const deliveredOnTime = j.status === 'completed' && j.dueDate && j.completedAt && j.completedAt <= new Date(j.dueDate + 'T23:59:59').getTime();
+              // Brain signals
+              const isStale = staleJobIds.has(j.id);
+              const budget = jobBudgetMap.get(j.id);
               // Job costing — per-worker rates
               const jobLogs = allLogs.filter(l => l.jobId === j.id);
               const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
@@ -3856,6 +3961,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
                         {deliveredOnTime && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">ON TIME</span>}
                         {deliveredLate && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">LATE</span>}
+                        {budget?.overBudget && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>OVER BUDGET</span>}
+                        {budget?.atRisk && !budget.overBudget && <span className="text-[10px] font-black text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>AT RISK</span>}
+                        {isStale && j.status !== 'completed' && <span className="text-[10px] font-black text-zinc-500 bg-zinc-800/60 border border-zinc-700/60 px-1.5 py-0.5 rounded" title="No activity in 48+ hours">STALE</span>}
                       </div>
                       <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
                       {/* Below sm (< 640px): Qty + Customer + Part Details columns are
@@ -4389,6 +4497,97 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   )}
                 </div>
               </div>
+
+              {/* ── SHOP BRAIN: Job Memory Card ─────────────────────────────────
+                  Appears when customer + part number match a past job.
+                  Shows last price, time, and run count so the admin can
+                  fill in costing without guessing or opening another tab.
+                  ──────────────────────────────────────────────────────── */}
+              {priceSuggestion && (
+                <div className="bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/25 rounded-2xl p-4 space-y-3 relative overflow-hidden">
+                  <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-amber-500/50 to-transparent" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🧠</span>
+                    <div>
+                      <p className="text-sm font-black text-white">FabTrack Remembers This Job</p>
+                      <p className="text-[11px] text-amber-300/70">
+                        {priceSuggestion.runCount} run{priceSuggestion.runCount > 1 ? 's' : ''} found for <span className="font-bold">{editingJob.customer}</span> — <span className="font-mono">{editingJob.partNumber}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {priceSuggestion.pricePerPart && (
+                      <div className="bg-black/20 rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Last $/Part</p>
+                        <p className="text-base font-black text-amber-400">${priceSuggestion.pricePerPart.toFixed(2)}</p>
+                      </div>
+                    )}
+                    {priceSuggestion.quoteAmount && (
+                      <div className="bg-black/20 rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Last Total</p>
+                        <p className="text-base font-black text-emerald-400">${priceSuggestion.quoteAmount.toFixed(2)}</p>
+                      </div>
+                    )}
+                    {priceSuggestion.lastTotalHrs !== null && (
+                      <div className="bg-black/20 rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Last Run Time</p>
+                        <p className="text-base font-black text-blue-400">{priceSuggestion.lastTotalHrs.toFixed(1)}h</p>
+                      </div>
+                    )}
+                    {priceSuggestion.avgHrs !== null && priceSuggestion.completedCount > 1 && (
+                      <div className="bg-black/20 rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Avg Time</p>
+                        <p className="text-base font-black text-violet-400">{priceSuggestion.avgHrs.toFixed(1)}h</p>
+                      </div>
+                    )}
+                  </div>
+                  {/* One-tap apply buttons */}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {priceSuggestion.pricePerPart && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ppp = priceSuggestion.pricePerPart!;
+                          const qty = editingJob.quantity || priceSuggestion.quantity || 0;
+                          const newQuote = ppp > 0 && qty > 0 ? parseFloat((ppp * qty).toFixed(2)) : (priceSuggestion.quoteAmount || 0);
+                          setEditingJob({ ...editingJob, pricePerPart: ppp, quoteAmount: newQuote, quantity: qty || editingJob.quantity });
+                        }}
+                        className="text-xs font-black bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all active:scale-95"
+                      >
+                        ↙ Apply Last Price ${priceSuggestion.pricePerPart.toFixed(2)}/part
+                      </button>
+                    )}
+                    {priceSuggestion.lastTotalHrs !== null && !editingJob.expectedHours && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingJob({ ...editingJob, expectedHours: parseFloat(priceSuggestion.lastTotalHrs!.toFixed(1)) })}
+                        className="text-xs font-black bg-blue-600/80 hover:bg-blue-500/80 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all active:scale-95"
+                      >
+                        ↙ Set {priceSuggestion.lastTotalHrs.toFixed(1)}h budget
+                      </button>
+                    )}
+                    <span className="text-[10px] text-zinc-600 self-center ml-auto">from {priceSuggestion.poNumber}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Customer pipeline hint */}
+              {customerPipelineHint && (
+                <div className="bg-violet-500/10 border border-violet-500/25 rounded-xl px-3 py-2.5 flex items-center gap-3">
+                  <span className="text-base">🔀</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-violet-300">{customerPipelineHint.customer} uses a custom pipeline</p>
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      {customerPipelineHint.stages.map((s, i) => (
+                        <React.Fragment key={s.id}>
+                          <span className="text-[10px] font-bold rounded px-1.5 py-0.5 border" style={{ color: s.color, backgroundColor: s.color + '18', borderColor: s.color + '40' }}>{s.label}</span>
+                          {i < customerPipelineHint.stages.length - 1 && <span className="text-zinc-700 text-xs">→</span>}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-5">
                 <h4 className="text-xs font-black text-emerald-400 uppercase tracking-[0.2em] border-b border-emerald-500/20 pb-2 flex items-center gap-2">
