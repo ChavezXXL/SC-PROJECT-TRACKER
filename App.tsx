@@ -14,7 +14,7 @@ import {
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
   Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
-  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package
+  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
@@ -35,6 +35,7 @@ import { SettingsView, ProgressView } from './views/SettingsView';
 import { VendorsManager } from './components/VendorsManager';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
+import { POScanner } from './components/POScanner';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
 import { businessDaysUntilSync, isHolidaySync, getHolidays } from './services/holidays';
 // ── Tier-gated feature wrapper ──
@@ -506,77 +507,66 @@ const PWAInstallBanner = () => {
 const PrintStyles = () => (
   <style>{`
     @media print {
-      @page { size: letter; margin: 10mm; }
+      /* -------------------------------------------------------------------
+         SINGLE-PAGE TRAVELER PRINT
+         Strategy: visibility toggle (not display:none) so the modal stays
+         in the DOM. Then zoom:0.75 on #printable-area — unlike CSS transform,
+         zoom actually shrinks the layout box the print engine uses for
+         pagination, so the browser calculates page breaks at the REDUCED
+         size rather than the original. transform:scale does NOT do this.
+         ------------------------------------------------------------------- */
+      @page {
+        size: letter portrait;
+        margin: 0.45in;
+      }
+
       html, body, #root {
         background: white !important;
         margin: 0 !important;
         padding: 0 !important;
         overflow: visible !important;
-      }
-      /* Hide EVERYTHING with visibility — this preserves DOM structure so the
-         printable content's ancestors (which wrap the printable via position)
-         still render even though sidebar/overlays vanish. */
-      body * { visibility: hidden !important; }
-
-      /* Un-hide the printable area and every descendant */
-      #printable-area,
-      #printable-area * {
-        visibility: visible !important;
-      }
-
-      /* Force the printable area to the page origin so it fills the sheet
-         regardless of any transforms/positioning its ancestors had. */
-      #printable-area {
-        position: absolute !important;
-        left: 0 !important;
-        top: 0 !important;
-        width: 100% !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        background: white !important;
-        overflow: visible !important;
-        box-shadow: none !important;
-      }
-
-      /* Explicitly hide print-preview chrome (Cancel/Print buttons in the
-         in-app modal). They're marked with .no-print. */
-      .no-print, .no-print * { visibility: hidden !important; display: none !important; }
-
-      /* Readable font scaling for print output */
-      #printable-area h1 { font-size: 28pt !important; }
-      #printable-area .print-po { font-size: inherit !important; }
-      #printable-area .print-field-lg { font-size: inherit !important; }
-      #printable-area .print-field-md { font-size: inherit !important; }
-      #printable-area .print-qr-img { max-width: 240px !important; width: 240px !important; mix-blend-mode: normal !important; }
-      #printable-area .print-qr-label { font-size: 14pt !important; }
-      #printable-area .print-notes { font-size: 12pt !important; line-height: 1.5 !important; }
-      #printable-area .print-instr { font-size: 13pt !important; font-weight: 700 !important; line-height: 1.5 !important; }
-      #printable-area label { font-size: 10pt !important; }
-      #printable-area .print-part-photo { max-width: 180px !important; max-height: 140px !important; }
-
-      /* Never split field blocks, the QR card, or log rows across pages */
-      #printable-area .border-4,
-      #printable-area .border-2,
-      #printable-area table,
-      #printable-area tr {
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-      }
-
-      /* Images never overflow the page width (fallback — specific size rules below win) */
-      #printable-area img { max-width: 100% !important; height: auto !important; }
-      /* The company logo sits in the header — cap it so it doesn't explode
-         to half the page (happened when the generic img height:auto rule
-         overrode the h-12 Tailwind class at print time). */
-      #printable-area .traveler-logo {
-        max-height: 72px !important;
-        max-width: 240px !important;
-        width: auto !important;
         height: auto !important;
       }
 
-      /* Drop every box-shadow so nothing prints washed out */
+      /* Hide everything except printable-area content */
+      body * { visibility: hidden !important; }
+      #printable-area,
+      #printable-area * { visibility: visible !important; }
+
+      /* Anchor to page top-left, let zoom handle the sizing.
+         width:100% keeps the scaled content from overflowing horizontally. */
+      #printable-area {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        zoom: 0.75 !important;      /* shrinks layout size → 1 page */
+        background: white !important;
+        overflow: visible !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+
+      .no-print, .no-print * {
+        visibility: hidden !important;
+        display: none !important;
+      }
+
+      /* Images — must not overflow after zoom */
+      #printable-area img { max-width: 100% !important; height: auto !important; }
+      #printable-area .print-qr-img { max-width: 180px !important; width: 180px !important; mix-blend-mode: normal !important; }
+      #printable-area .print-qr-label { font-size: 12pt !important; }
+      #printable-area .traveler-logo { max-height: 44px !important; max-width: 180px !important; width: auto !important; height: auto !important; }
+      #printable-area .print-part-photo { max-width: 120px !important; max-height: 80px !important; }
       #printable-area [class*="shadow"] { box-shadow: none !important; }
+
+      /* No forced page breaks inside boxes */
+      #printable-area .border-4,
+      #printable-area .border-2 {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
     }
   `}</style>
 );
@@ -1726,6 +1716,18 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
                 <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Received</label><div className="print-field-md text-base font-bold">{job.dateReceived || '—'}</div></div>
                 {show.dueDate && (
                   <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label><div className="print-field-md text-base font-black text-red-600">{job.dueDate || '—'}</div></div>
+                )}
+                {(job.expectedHours || 0) > 0 && (
+                  <div className="border-2 border-blue-400 bg-blue-50 p-2">
+                    <label className="block text-xs uppercase font-bold text-blue-600 mb-1">Est. Time</label>
+                    <div className="text-base font-black text-blue-700">{job.expectedHours}h</div>
+                  </div>
+                )}
+                {(job.pricePerPart || 0) > 0 && (job.quantity || 0) > 0 && (
+                  <div className="border-2 border-gray-300 p-2">
+                    <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Job Value</label>
+                    <div className="text-base font-black text-gray-800">${((job.pricePerPart || 0) * (job.quantity || 0)).toLocaleString()}</div>
+                  </div>
                 )}
               </div>
               {show.customer && job.customer && (
@@ -3124,6 +3126,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [bulkActionOpen, setBulkActionOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
   const [showModal, setShowModal] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
   const [ops, setOps] = useState<string[]>([]);
@@ -3411,7 +3414,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Plus className="w-4 h-4" /> New Job</button>
-          {/* AI "Scan PO" button removed — was unreliable + costly + slow vs typing 5 fields manually. */}
+          <button onClick={() => setShowScanner(true)} title="Scan a PO document to auto-fill a new job" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Scan className="w-4 h-4 text-blue-400" /> Scan PO</button>
           <button
             onClick={() => setShowClientUpdate(true)}
             title="Generate a status message for a customer based on their open jobs"
@@ -4236,7 +4239,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             <div className="bg-zinc-900 border border-white/10 w-full max-w-2xl rounded-none sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col my-0 sm:my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             <div className="p-3 sm:p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
               <h3 className="font-bold text-white text-base sm:text-lg">{editingJob.id ? 'Edit Job' : 'Create New Job'}</h3>
-              <button type="button" aria-label="Close" onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+              <div className="flex items-center gap-2">
+                {!editingJob.id && (
+                  <button
+                    type="button"
+                    title="Scan a PO document to auto-fill fields"
+                    onClick={() => { setShowModal(false); setShowScanner(true); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-blue-400 hover:text-blue-300 text-xs font-bold transition-colors"
+                  >
+                    <Scan className="w-3.5 h-3.5" /> Scan PO
+                  </button>
+                )}
+                <button type="button" aria-label="Close" onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+              </div>
             </div>
             <div ref={modalBodyRef} className="p-4 sm:p-8 overflow-y-auto space-y-5 sm:space-y-8">
               {/* ── Stage Pipeline (for existing jobs) ── */}
@@ -4834,6 +4849,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           </div>
         </div>,
         document.body,
+      )}
+
+      {/* ── PO Scanner — free browser OCR, replaces Gemini API ── */}
+      {showScanner && (
+        <POScanner
+          onClose={() => setShowScanner(false)}
+          onFill={(scannedFields) => {
+            setEditingJob(prev => ({ ...prev, ...scannedFields }));
+            setShowScanner(false);
+            setShowModal(true);
+          }}
+        />
       )}
 
       {startJobModal && createPortal(

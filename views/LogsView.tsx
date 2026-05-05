@@ -38,6 +38,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [exporting, setExporting] = useState(false);
   const [showBackfill, setShowBackfill] = useState(false);
   const [bfJob, setBfJob] = useState('');
+  const [bfJobSearch, setBfJobSearch] = useState('');
   const [bfWorker, setBfWorker] = useState('');
   const [bfOp, setBfOp] = useState('');
   const [bfStart, setBfStart] = useState('');
@@ -571,7 +572,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           <p className="text-zinc-500 text-sm mt-1">Time entries grouped by job. Filter by date, status, or search.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors">
+          <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfJobSearch(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors">
             <Plus className="w-4 h-4" /> Backfill Entry
           </button>
           <button onClick={openExportModal} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors shadow-lg shadow-emerald-900/20">
@@ -923,10 +924,58 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             <div className="overflow-y-auto flex-1 px-5 pb-4 space-y-4">
               <div>
                 <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Job</label>
-                <select value={bfJob} onChange={e => setBfJob(e.target.value)} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white">
-                  <option value="">Select job...</option>
-                  {jobs.filter(j => j.status !== 'completed').map(j => <option key={j.id} value={j.id}>PO {j.poNumber} — {j.partNumber}</option>)}
-                </select>
+                {bfJob ? (() => {
+                  const sel = jobs.find(j => j.id === bfJob);
+                  return sel ? (
+                    <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3">
+                      <div>
+                        <p className="font-black text-white text-sm">PO {sel.poNumber}</p>
+                        <p className="text-xs text-zinc-400 mt-0.5">{sel.partNumber}{sel.customer ? ` · ${sel.customer}` : ''}{sel.quantity ? ` · Qty ${sel.quantity}` : ''}</p>
+                      </div>
+                      <button onClick={() => { setBfJob(''); setBfJobSearch(''); }} className="ml-3 shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-300 hover:text-white transition-colors" title="Change job">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : null;
+                })() : (
+                  <div className="relative">
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5 pointer-events-none" />
+                      <input
+                        autoFocus
+                        placeholder="Search PO#, part#, customer…"
+                        value={bfJobSearch}
+                        onChange={e => setBfJobSearch(e.target.value)}
+                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div className="mt-1.5 rounded-xl border border-white/10 overflow-hidden bg-zinc-950 max-h-44 overflow-y-auto">
+                      {(() => {
+                        const q = bfJobSearch.toLowerCase().trim();
+                        const filtered = jobs
+                          .filter(j => j.status !== 'completed')
+                          .filter(j => !q || (j.poNumber||'').toLowerCase().includes(q) || (j.partNumber||'').toLowerCase().includes(q) || (j.customer||'').toLowerCase().includes(q))
+                          .slice(0, 15);
+                        if (filtered.length === 0) return (
+                          <div className="px-4 py-3 text-zinc-500 text-sm text-center">No active jobs found{q ? ` matching "${q}"` : ''}</div>
+                        );
+                        return filtered.map((j, idx) => (
+                          <button
+                            key={j.id}
+                            onClick={() => { setBfJob(j.id); setBfJobSearch(''); }}
+                            className={`w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors flex items-center justify-between gap-2 ${idx > 0 ? 'border-t border-white/5' : ''}`}
+                          >
+                            <div className="min-w-0">
+                              <p className="font-bold text-white text-sm truncate">PO {j.poNumber}</p>
+                              <p className="text-xs text-zinc-500 truncate">{j.partNumber}{j.customer ? ` · ${j.customer}` : ''}</p>
+                            </div>
+                            {j.quantity ? <span className="shrink-0 text-[10px] font-bold text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">Qty {j.quantity}</span> : null}
+                          </button>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Worker</label>
