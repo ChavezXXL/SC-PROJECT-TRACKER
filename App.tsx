@@ -802,7 +802,7 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
 };
 
 // --- JOB SELECTION CARD ---
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast }) => {
+const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[] }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast, activeLogs = [] }) => {
   const [expanded, setExpanded] = useState(defaultExpanded || false);
   const [showNotes, setShowNotes] = useState(false);
   const [newNote, setNewNote] = useState('');
@@ -866,6 +866,17 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
               {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
             </p>
+          )}
+          {/* Who's clocked in on this job right now */}
+          {activeLogs.filter(l => l.jobId === job.id).length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+              {activeLogs.filter(l => l.jobId === job.id).map(l => (
+                <span key={l.id} className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-900/50 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  {l.userName.split(' ')[0]} · {l.operation}
+                </span>
+              ))}
+            </div>
           )}
           {/* Show progress indicators when present */}
           {((job.checklist?.length || 0) > 0 || (job.attachments?.length || 0) > 0) && (
@@ -1082,6 +1093,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const [jobs, setJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
+  const [shopActiveLogs, setShopActiveLogs] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
   const [scannedJobId, setScannedJobId] = useState<string | null>(null);
   const activePanelRef = useRef<HTMLDivElement>(null);
@@ -1130,7 +1142,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     const unsubJobs = DB.subscribeJobs((allJobs) => {
       setJobs(allJobs.filter(j => j.status !== 'completed').reverse());
     });
-    return () => { unsubSettings(); unsubLogs(); unsubJobs(); };
+    const unsubActiveLogs = DB.subscribeActiveLogs(setShopActiveLogs);
+    return () => { unsubSettings(); unsubLogs(); unsubJobs(); unsubActiveLogs(); };
   }, [user.id]);
 
   // ── Sync active timer state to Service Worker for lock-screen notification ──
@@ -1566,7 +1579,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           })()}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredJobs.map(job => (
-              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} />
+              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs} />
             ))}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
@@ -2649,14 +2662,23 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 <p className="text-zinc-600 text-xs mt-1">No active timers right now.</p>
               </div>
             )}
-            {activeLogs.map(l => (
+            {activeLogs.map(l => {
+              const liveJob = jobs.find(j => j.id === l.jobId);
+              return (
               <div key={l.id} className="p-3 sm:p-4 hover:bg-white/5 transition-colors group">
-                {/* Row 1: avatar + name/operation + stop button (always visible, never collides with timer) */}
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar name={l.userName} size="md" ring dot={l.pausedAt ? 'paused' : 'live'} />
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-white text-sm truncate">{l.userName}</p>
-                    <p className="text-xs text-zinc-500 truncate">{l.operation}</p>
+                    <p className="text-xs text-blue-400 font-semibold truncate">{l.operation}</p>
+                    {liveJob && (
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <span className="text-[10px] font-black text-white/60 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono">PO {liveJob.poNumber}</span>
+                        {liveJob.partNumber && <span className="text-[10px] text-zinc-500 truncate max-w-[120px]">{liveJob.partNumber}</span>}
+                        {liveJob.customer && <span className="text-[10px] font-bold text-zinc-400 truncate max-w-[100px]">{liveJob.customer}</span>}
+                        <span className="text-[10px] text-zinc-600">{liveJob.quantity} pc</span>
+                      </div>
+                    )}
                   </div>
                   <button
                     aria-label={`Force stop ${l.userName}'s timer`}
@@ -2667,12 +2689,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                     <Power className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
                   </button>
                 </div>
-                {/* Row 2: large timer on its own line so it never overlaps the avatar at any width */}
                 <div className="mt-2 text-white text-2xl sm:text-3xl font-black font-mono tabular-nums text-center sm:text-right tracking-tight">
                   <LiveTimer startTime={l.startTime} pausedAt={l.pausedAt} totalPausedMs={l.totalPausedMs} />
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col">
@@ -3109,6 +3131,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [partSuggestions, setPartSuggestions] = useState<Job[]>([]);
   const [shopSettings, setShopSettings] = useState<SystemSettings>(DB.getSettings());
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
+  const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
   const [workers, setWorkers] = useState<User[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<User | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
@@ -3136,7 +3159,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const u3 = DB.subscribeUsers((u) => setWorkers(u.filter((w: User) => w.isActive !== false)));
     const u4 = DB.subscribeLogs(l => setAllLogs(l.filter(x => x.endTime)));
     const u5 = DB.subscribeRework(setReworkEntries);
-    return () => { u1(); u2(); u3(); u4(); u5(); };
+    const u6 = DB.subscribeActiveLogs(setActiveLogs);
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
   }, []);
 
   // Open rework counts per job
@@ -3351,6 +3375,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       trackingNumber: editingJob.trackingNumber || undefined,
       shippingNotes: editingJob.shippingNotes || undefined,
       shippedAt: editingJob.shippedAt || undefined,
+      // Pricing
+      pricePerPart: editingJob.pricePerPart || undefined,
       // Stage
       currentStage: editingJob.currentStage || undefined,
       stageHistory: editingJob.stageHistory || undefined,
@@ -3363,19 +3389,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     try {
       const isNew = !editingJob.id;
       await DB.saveJob(job);
+      setShowModal(false);
+      setEditingJob({});
       if (isNew) {
-        // Keep modal open in edit mode — this unlocks Stage Pipeline, Shipping,
-        // Checklist, and Attachments sections immediately after creating.
-        setEditingJob(job);
-        setTimeout(() => modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' }), 80);
-        addToast('success', '✅ Job created! Stage pipeline, shipping & checklist are now unlocked.');
-        if (job.dueDate) {
-          addToast('info', '📅 Tap the calendar icon on the job to add to Google Calendar');
-        }
+        addToast('success', '✅ Job created — click it to add stages, shipping & checklist.');
       } else {
-        setShowModal(false);
-        setEditingJob({});
-        addToast('success', 'Job Saved');
+        addToast('success', 'Job saved');
       }
     }
     catch (e) { addToast('error', 'Save Failed'); }
@@ -3971,6 +3990,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {budget?.overBudget && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>OVER BUDGET</span>}
                         {budget?.atRisk && !budget.overBudget && <span className="text-[10px] font-black text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>AT RISK</span>}
                         {isStale && j.status !== 'completed' && <span className="text-[10px] font-black text-zinc-500 bg-zinc-800/60 border border-zinc-700/60 px-1.5 py-0.5 rounded" title="No activity in 48+ hours">STALE</span>}
+                        {/* Live worker indicators — who's clocked in right now */}
+                        {activeLogs.filter(l => l.jobId === j.id).map(l => (
+                          <span key={l.id} className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full" title={`${l.userName} — ${l.operation}`}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                            {l.userName.split(' ')[0]}
+                          </span>
+                        ))}
                       </div>
                       <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
                       {/* Below sm (< 640px): Qty + Customer + Part Details columns are
@@ -5457,6 +5483,38 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
 };
 
 
+// ── TV Error Boundary — catches React render crashes and auto-reloads in 5s.
+// Wall-mounted TVs can't have someone walk over and refresh. If a slide
+// throws (bad data, null ref, etc.), show a friendly "reconnecting" screen
+// and reload automatically so the TV recovers without human intervention.
+// ── TvAutoReload — hooks global error events and auto-reloads after 10s if
+// a JS error fires while the TV is in standalone mode. Simpler than a class
+// error boundary and handles async/network crashes class EBs miss.
+const TvAutoReload: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [crashed, setCrashed] = useState(false);
+  const [countdown, setCountdown] = useState(10);
+  useEffect(() => {
+    const onErr = () => setCrashed(true);
+    window.addEventListener('error', onErr);
+    window.addEventListener('unhandledrejection', onErr);
+    return () => { window.removeEventListener('error', onErr); window.removeEventListener('unhandledrejection', onErr); };
+  }, []);
+  useEffect(() => {
+    if (!crashed) return;
+    const id = setInterval(() => setCountdown(n => { if (n <= 1) { window.location.reload(); } return n - 1; }), 1000);
+    return () => clearInterval(id);
+  }, [crashed]);
+  if (crashed) return (
+    <div className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-center gap-6 text-white">
+      <div className="text-6xl animate-pulse">📡</div>
+      <h1 className="text-3xl font-black">Reconnecting…</h1>
+      <p className="text-zinc-400 text-lg">Display will refresh in <span className="text-white font-bold">{countdown}s</span></p>
+      <button onClick={() => window.location.reload()} className="mt-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-sm">Reload now</button>
+    </div>
+  );
+  return <>{children}</>;
+};
+
 export default function App() {
   // Check for TV mode (?tv=TOKEN — standalone fullscreen TV for any account)
   const [tvToken] = useState<string | null>(() => {
@@ -5591,7 +5649,7 @@ export default function App() {
   // ── Customer Portal Mode ──
   // Standalone TV mode — no login needed, loads account data via token
   if (tvToken) {
-    return <LiveFloorMonitor standalone />;
+    return <TvAutoReload><LiveFloorMonitor standalone /></TvAutoReload>;
   }
 
   if (portalCustomer) {
