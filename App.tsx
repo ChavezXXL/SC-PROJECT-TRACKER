@@ -4854,6 +4854,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       {/* ── PO Scanner — free browser OCR, replaces Gemini API ── */}
       {showScanner && (
         <POScanner
+          clients={clients}
           onClose={() => setShowScanner(false)}
           onFill={(scannedFields) => {
             setEditingJob(prev => ({ ...prev, ...scannedFields }));
