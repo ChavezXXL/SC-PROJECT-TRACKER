@@ -78,75 +78,99 @@ export function parseJobFields(rawText: string): ScanResult {
   const fields: Partial<Job> = {};
   const sources: Record<string, string> = {};
 
+  // Shared date fragment (no capture group — wrapped by callers)
+  const D = '\\d{1,2}[\/\\-]\\d{1,2}[\/\\-]\\d{2,4}|\\d{4}[\/\\-]\\d{2}[\/\\-]\\d{2}';
+
   // ── PO Number ────────────────────────────────────────────────────────────
-  // Many formats: "PO: 123", "P.O.# 123", "Purchase Order Number 123",
-  // "Order No 123" — colon is OPTIONAL, spaces flexible.
-  // RULE: PO numbers must contain at least one digit (words like "QUALITY"
-  // are common OCR false-positives from department headers / doc type labels).
+  // Real-world PO formats seen in the wild:
+  //   "P.O.# 114213"           — hash without colon (SH Machine)
+  //   "Our P.O.# 114213"       — prefixed with "Our"
+  //   "PO: 5042"               — colon, no hash
+  //   "Purchase Order: 9812"   — full words
+  //   "Order No 7734"          — order number label
+  // RULE: value MUST contain at least one digit + not be a blocklisted word.
   const po = tryPatterns(text, [
-    // "PO:", "P.O.#", "PO Number", "PO No" → value on same line
-    /\bP\.?O\.?[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
-    // "Purchase Order" / "Purchase Order Number"
+    // Hash as separator — colon NOT required (most common industrial format)
+    /\bP\.?O\.?[ \t]*#[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // "PO:" or "P.O.:" with colon
+    /\bP\.?O\.?[ \t]*:[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // "PO No", "PO Number" — colon optional but label is specific
+    /\bP\.?O\.?[ \t]*(?:No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // "Purchase Order" with any separator
     /\bPurchase[ \t]+Order[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
-    // "Order Number / Order No / Order #" — colon required to avoid matching "Order" in sentences
+    // "Order No / Order # / Order Number" — specific enough to not need colon
     /\bOrder[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
-    // "Job Number / Job No"
+    // "Job #" / "Job No"
     /\bJob[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
-    // Standalone "Order:" label — colon REQUIRED (stricter to avoid sentence matches)
+    // "Order:" standalone — colon REQUIRED to avoid matching "Order" mid-sentence
     /\bOrder[ \t]*:[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
   ]);
   if (po) {
-    const val = po.value.toUpperCase();
-    // Must contain at least one digit — pure-word values are header labels, not PO#s
-    if (/\d/.test(po.value) && !PO_BLOCKLIST.has(val)) {
+    const upper = po.value.toUpperCase();
+    if (/\d/.test(po.value) && !PO_BLOCKLIST.has(upper)) {
       fields.poNumber = po.value;
       sources.poNumber = po.snippet;
     }
   }
 
   // ── Part Number ──────────────────────────────────────────────────────────
-  // RULE: block short noise words like "Rev", "See", "Ref"; require content.
-  const part = tryPatterns(text, [
-    /\bPart[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
-    /\bDrawing[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
+  // Priority 1: explicit label
+  // Priority 2: line-item row — "XXXX-XXX  qty  description  $price" format
+  //   (common on POs where table headers appear at bottom of row in PDF extraction)
+  let rawPart = tryPatterns(text, [
+    /\bPart[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
+    /\bDrawing[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
     /\b(?:P\/N|PN)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
-    /\bItem[ \t]*(?:#|No\.?|Num(?:ber)?|ID)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
-    /\bMaterial[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
-    /\bProduct[ \t]*(?:#|No\.?|Code)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
+    /\bItem[ \t]*(?:#|No\.?|Num(?:ber)?|ID)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
+    /\bMaterial[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\.\/]{1,30})/i,
   ]);
-  if (part) {
-    const val = part.value;
-    if (!PART_BLOCKLIST.has(val.toLowerCase()) && val.length >= 2) {
-      fields.partNumber = val;
-      sources.partNumber = part.snippet;
+  // Filter noise words
+  if (rawPart && (PART_BLOCKLIST.has(rawPart.value.toLowerCase()) || rawPart.value.length < 2)) {
+    rawPart = null;
+  }
+  if (!rawPart) {
+    // Line-item heuristic: "PARTNO  QTY  Description  $X.XX  $Y.YY"
+    // Looks for an alphanumeric-dash token followed by a small number and a dollar amount
+    const liMatch = text.match(/\b([A-Z0-9]{2,10}-[A-Z0-9]{2,10})[ \t]+(\d{1,5})[ \t]+[A-Za-z][\w\s]{2,30}\$[\d]/i);
+    if (liMatch) {
+      rawPart = { value: liMatch[1], snippet: liMatch[0].slice(0, 60) };
+      // Also grab quantity from same line-item row if not yet found
+      if (!fields.quantity) {
+        const n = parseInt(liMatch[2], 10);
+        if (!isNaN(n) && n > 0 && n < 1_000_000) {
+          fields.quantity = n;
+          sources.quantity = liMatch[0].slice(0, 60);
+        }
+      }
     }
   }
+  if (rawPart) { fields.partNumber = rawPart.value; sources.partNumber = rawPart.snippet; }
 
   // ── Quantity ─────────────────────────────────────────────────────────────
-  const qty = tryPatterns(text, [
-    // "Quantity:", "Qty:", "QTY Ordered:", etc. — colon optional
-    /(?:Qty|Quantity|QTY)\.?[ \t]*(?:Ordered|Req(?:uired|uested)?|Shipped)?[ \t]*:?[ \t]*(\d[\d,]*)/i,
-    /(?:Pieces?|Pcs?|Count|Units?|Ordered)[ \t]*:?[ \t]*(\d[\d,]*)/i,
-    // Number immediately followed by unit: "500 EA", "250 PCS"
-    /(\d{1,6}[\d,]*)[ \t]*(?:EA|PCS?|PIECES?|UNITS?|EACH)\b/i,
-    // Bare "Order Qty 500" or "Qty 500"
-    /\bQty[ \t]+(\d[\d,]*)/i,
-  ]);
-  if (qty) {
-    const n = parseInt(qty.value.replace(/,/g, ''), 10);
-    if (!isNaN(n) && n > 0 && n < 1_000_000) {
-      fields.quantity = n;
-      sources.quantity = qty.snippet;
+  if (!fields.quantity) {
+    const qty = tryPatterns(text, [
+      /(?:Qty|Quantity|QTY)\.?[ \t]*(?:Ordered|Req(?:uired|uested)?|Shipped)?[ \t]*:?[ \t]*(\d[\d,]*)/i,
+      /(?:Pieces?|Pcs?|Count|Units?)[ \t]*:?[ \t]*(\d[\d,]*)/i,
+      /(\d{1,6}[\d,]*)[ \t]*(?:EA|PCS?|PIECES?|UNITS?|EACH)\b/i,
+      /\bQty[ \t]+(\d[\d,]*)/i,
+    ]);
+    if (qty) {
+      const n = parseInt(qty.value.replace(/,/g, ''), 10);
+      if (!isNaN(n) && n > 0 && n < 1_000_000) {
+        fields.quantity = n;
+        sources.quantity = qty.snippet;
+      }
     }
   }
 
   // ── Due Date ─────────────────────────────────────────────────────────────
-  // Capture any date-like value on the same line as common due-date labels.
-  // Date formats: MM/DD/YYYY, M/D/YY, YYYY-MM-DD, MM-DD-YYYY
-  const DATE_PAT = '(\\d{1,2}[\/\\-]\\d{1,2}[\/\\-]\\d{2,4}|\\d{4}[\/\\-]\\d{2}[\/\\-]\\d{2})';
   const due = tryPatterns(text, [
-    new RegExp(`(?:Due|Delivery|Required?|Need(?:ed)?|Ship|Must[ \\t]+Ship|Requested?|Promise)[ \\t]*(?:Date|By|On)?[ \\t]*:?[ \\t]*${DATE_PAT}`, 'i'),
-    new RegExp(`${DATE_PAT}[ \\t]*(?:Due|Delivery|Required?|Ship)`, 'i'),
+    // "Due Date", "Delivery Date", "Required Date", "Need Date", etc.
+    new RegExp(`(?:(?:First[ \\t]+)?Due|Delivery|Required?|Need(?:ed)?|Promise|Wanted)[ \\t]*(?:Date|By|On)?[ \\t]*:?[ \\t]*(${D})`, 'i'),
+    // "Ship Date", "Ship By", "Must Ship"
+    new RegExp(`(?:Ship(?:[ \\t]*(?:Date|By|On))?|Must[ \\t]+Ship)[ \\t]*:?[ \\t]*(${D})`, 'i'),
+    // Date followed by due label (reversed order)
+    new RegExp(`(${D})[ \\t]*(?:Due|Delivery|Required?)`, 'i'),
   ]);
   if (due) {
     const d = normaliseDate(due.value);
@@ -155,7 +179,9 @@ export function parseJobFields(rawText: string): ScanResult {
 
   // ── Date Received / PO Date ───────────────────────────────────────────────
   const recv = tryPatterns(text, [
-    new RegExp(`(?:Date[ \\t]*(?:Received?|Issued?|Created?)|(?:PO|Order|Issue)[ \\t]*Date|Received?[ \\t]*Date)[ \\t]*:?[ \\t]*${DATE_PAT}`, 'i'),
+    new RegExp(`(?:Date[ \\t]*(?:Received?|Issued?|Created?)|(?:PO|Order|Issue)[ \\t]*Date|Order[ \\t]*Date)[ \\t]*:?[ \\t]*(${D})`, 'i'),
+    // "ORDER DATE ... 4/28/26" where ORDER DATE is label in header row
+    new RegExp(`ORDER[ \\t]+DATE[ \\t]+(${D})`, 'i'),
   ]);
   if (recv) {
     const d = normaliseDate(recv.value);
@@ -163,53 +189,51 @@ export function parseJobFields(rawText: string): ScanResult {
   }
 
   // ── Customer / Company ────────────────────────────────────────────────────
-  // A PO is sent TO SC Deburring FROM a customer. The issuing company is our customer.
-  // Priority 1: explicit label patterns
-  // Priority 2: letterhead heuristic — first line that looks like a company name
+  // A PO is sent TO SC Deburring FROM a customer. Priority:
+  //   1. Explicit label ("Customer:", "Company:", "Buyer:")
+  //   2. "Our account # is: COMPANY NAME"  (SH Machine format)
+  //   3. Letterhead heuristic — scan first 12 lines for company-name pattern
+  const SC_SELF = /^(sc deburring|scdeburring|sc-deburring)/i;
+
   let rawCust = tryPatterns(text, [
-    // Explicit labels — capture to end of line
-    /(?:Customer|Client|Company|Issued[ \t]*By|Bill[ \t]*(?:To|From)|Sold[ \t]*(?:To|By)|Buyer)[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,60})$/im,
-    // "From:" label
-    /\bFrom[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,60})$/im,
-    // "Vendor:" — often the customer in sub-contractor PO formats
-    /\bVendor[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,60})$/im,
+    /(?:Customer|Client|Company|Issued[ \t]*By|Bill[ \t]*(?:To|From)|Sold[ \t]*(?:To|By)|Buyer)[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})$/im,
+    /\bFrom[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})$/im,
+    // "Our account # is: COMPANY NAME"  /  "Account: COMPANY"
+    /(?:Our[ \t]+)?[Aa]ccount[ \t]*(?:#[ \t]*)?(?:is|:)[ \t]*:?[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})/im,
+    // "Vendor:" — may refer to us or the sender depending on PO format; low priority
+    /\bVendor[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})$/im,
   ]);
 
   if (!rawCust) {
-    // Letterhead heuristic: scan the first 6 lines for a company-looking name.
-    // Company names typically:  start with a capital, contain business suffixes,
-    // or contain words like Machine, Manufacturing, Industries, Supply, etc.
-    const topLines = text.split('\n').slice(0, 6);
-    const bizWords = /\b(Inc\.?|LLC\.?|Ltd\.?|Corp\.?|Co\.?|Machine|Manufacturing|Industries|Engineering|Supply|Solutions|Systems|Technologies|Fabricat|Metal|Precision|Products|Services|Group)\b/i;
-    const notALabel = /^(purchase|order|invoice|delivery|packing|bill|from|to|date|page|ship|vendor|po |p\.o\.|quantity|part|item|ref|attn)/i;
-    for (const line of topLines) {
-      const t = line.trim();
-      if (t.length >= 4 && t.length <= 60 && /^[A-Z]/.test(t) && bizWords.test(t) && !notALabel.test(t)) {
-        rawCust = { value: t, snippet: t };
-        break;
+    // Letterhead scan: look in first 12 lines for anything resembling a company name
+    const bizWords = /\b(Inc\.?|LLC\.?|Ltd\.?|Corp\.?|Co\.?|Machine|Mfg|Manufacturing|Industries|Engineering|Supply|Solutions|Systems|Technologies|Fabricat|Metal|Precision|Products|Services|Group)\b/i;
+    const notALabel = /^(purchase|order|invoice|delivery|packing|bill|from|to|date|page|ship|vendor|po |p\.o\.|quantity|part|item|ref|attn|\d)/i;
+    for (const line of text.split('\n').slice(0, 12)) {
+      const t = line.trim().replace(/\s+/g, ' ');
+      if (t.length >= 4 && t.length <= 70 && /^[A-Z]/.test(t) && bizWords.test(t) && !notALabel.test(t) && !SC_SELF.test(t)) {
+        // Trim address details — stop at first digit (starts address) or bullet/dash
+        const nameOnly = t.replace(/\s+\d.+$/, '').replace(/\s+[•·].+$/, '').trim();
+        if (nameOnly.length >= 4) { rawCust = { value: nameOnly, snippet: t }; break; }
       }
     }
   }
 
   if (rawCust) {
     const cleaned = rawCust.value.replace(/[,\.]+$/, '').trim();
-    if (cleaned.length > 2 && !/^(sc deburring|scdeburring)/i.test(cleaned)) {
+    if (cleaned.length > 2 && !SC_SELF.test(cleaned)) {
       fields.customer = cleaned;
       sources.customer = rawCust.snippet;
     }
   }
 
   // ── Unit Price / Price Per Part ───────────────────────────────────────────
-  // Prefer explicitly-labelled unit price patterns; the bare "$X.XX" fallback
-  // is last resort and only fires if we have a quantity (otherwise "Total: $7.00"
-  // or a footer dollar amount would be grabbed as unit price).
   const price = tryPatterns(text, [
-    // Labelled unit price — highest confidence
+    // Labelled unit price
     /(?:Unit[ \t]*Price|Price[ \t]*(?:Ea(?:ch)?|\/[ \t]*(?:EA|PC|Each))|Per[ \t]*(?:Piece|Part|PC|EA)|Price\/EA|Price\/PC|\$\/(?:PC|EA|Part))[ \t]*:?[ \t]*\$?([\d,]+(?:\.\d{1,4})?)/i,
-    // "$X.XX / EA" or "$X.XX / PC" — includes unit denominator
+    // "$X.XX / EA" explicit per-unit denominator
     /\$[ \t]*([\d,]+\.\d{2})[ \t]*(?:\/[ \t]*(?:PC|EA|each|piece|part))\b/i,
-    // Bare "$X.XX" — only if we already have a quantity (confirms it's a line-item, not a total)
-    ...(qty ? [/\$\s*([\d,]+\.\d{2})\b/] as RegExp[] : []),
+    // Line-item "$X.XX" — only if quantity already found (proves it's a unit price row)
+    ...(fields.quantity ? [/\$\s*([\d,]+\.\d{2})\b/] as RegExp[] : []),
   ]);
   if (price) {
     const p = parseFloat(price.value.replace(/,/g, ''));
@@ -220,21 +244,19 @@ export function parseJobFields(rawText: string): ScanResult {
   }
 
   // ── Special Instructions / Notes ─────────────────────────────────────────
-  // NOTE: Do NOT match "Terms" or "Conditions" — those are legal footer boilerplate,
-  // not manufacturing instructions.  Also reject values containing URLs.
-  const instrPatterns = [
-    /\bSpecial[ \t]*Inst(?:ructions?)?[ \t]*:?[ \t]*([^\n]{8,400})/i,
+  // Do NOT match Terms/Conditions (legal boilerplate). Reject URL-containing values.
+  const instrREs = [
+    /\bSpecial[ \t]*(?:Inst(?:ructions?)?|Notes?)[ \t]*:?[ \t]*([^\n]{8,400})/i,
+    /\bINSTRUCTIONS[ \t]*:[ \t]*([^\n]{8,400})/,
     /\bInstr(?:uctions?)?[ \t]*:[ \t]*([^\n]{8,400})/i,
     /\bNotes?[ \t]*:[ \t]*([^\n]{8,400})/i,
     /\bRemarks?[ \t]*:[ \t]*([^\n]{8,400})/i,
     /\bComments?[ \t]*:[ \t]*([^\n]{8,400})/i,
-    /\bRequirements?[ \t]*:[ \t]*([^\n]{8,400})/i,
   ];
-  for (const re of instrPatterns) {
+  for (const re of instrREs) {
     const m = text.match(re);
-    if (m && m[1]?.trim()) {
+    if (m?.[1]?.trim()) {
       const val = m[1].trim();
-      // Skip if it looks like legal boilerplate or contains a URL
       if (!/https?:\/\//i.test(val) && !/visit:/i.test(val) && val.length >= 5) {
         fields.specialInstructions = val;
         sources.specialInstructions = m[0].trim();
@@ -298,24 +320,40 @@ function getPdfJs(): any {
   return lib;
 }
 
-/** Extract embedded text from a machine-generated PDF (no OCR needed).
- *  Returns empty string if the PDF has no usable text (e.g. scanned image). */
+/** Extract embedded text from a machine-generated PDF, preserving line structure.
+ *
+ *  Uses PDF.js transform[5] (Y-coordinate) to group text items into visual lines.
+ *  Items on the same Y position join with a space; different Y = new line.
+ *  This is critical — simply joining all items with spaces produces a single
+ *  wall of text where every line-anchored regex fails.
+ */
 async function extractPdfText(file: File): Promise<string> {
   const pdfjsLib = getPdfJs();
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const lines: string[] = [];
-  for (let p = 1; p <= Math.min(pdf.numPages, 3); p++) {
-    const page = await pdf.getPage(p);
+  const pageBlocks: string[] = [];
+
+  for (let p = 1; p <= Math.min(pdf.numPages, 2); p++) {
+    const page  = await pdf.getPage(p);
     const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item: any) => item.str || '')
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (pageText) lines.push(pageText);
+    const items  = content.items as any[];
+
+    // Group by Y coordinate (rounded to nearest 2 px to handle floating point)
+    const byY = new Map<number, string[]>();
+    for (const item of items) {
+      if (!item.str) continue;
+      const y = Math.round(item.transform[5] / 2) * 2; // bucket to 2px
+      if (!byY.has(y)) byY.set(y, []);
+      byY.get(y)!.push(item.str);
+    }
+
+    // Sort Y descending (PDF coords: 0 = bottom, so higher Y = visually higher)
+    const sorted = [...byY.entries()].sort((a, b) => b[0] - a[0]);
+    const pageLines = sorted.map(([, strs]) => strs.join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (pageLines.length) pageBlocks.push(pageLines.join('\n'));
   }
-  return lines.join('\n');
+
+  return pageBlocks.join('\n');
 }
 
 /** Render the first page of a PDF to a JPEG data URL for OCR.
