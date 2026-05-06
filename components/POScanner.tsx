@@ -23,36 +23,57 @@ type Phase = 'idle' | 'scanning' | 'done' | 'error';
 
 // Field order matches the Add New Job form exactly
 const FIELDS: Array<{ key: keyof Job; label: string; type: 'text' | 'number' | 'date' | 'textarea' | 'client' }> = [
-  { key: 'poNumber',            label: 'PO Number',           type: 'text'     },
-  { key: 'partNumber',          label: 'Part Number',         type: 'text'     },
-  { key: 'quantity',            label: 'Quantity',            type: 'number'   },
-  { key: 'dateReceived',        label: 'Date Received',       type: 'date'     },
-  { key: 'dueDate',             label: 'Due Date',            type: 'date'     },
-  { key: 'customer',            label: 'Customer',            type: 'client'   },
-  { key: 'pricePerPart',        label: 'Price / Part',        type: 'number'   },
-  { key: 'specialInstructions', label: 'Special Instructions',type: 'textarea' },
+  { key: 'poNumber',            label: 'PO Number',            type: 'text'     },
+  { key: 'partNumber',          label: 'Part Number',          type: 'text'     },
+  { key: 'quantity',            label: 'Quantity',             type: 'number'   },
+  { key: 'dateReceived',        label: 'Date Received',        type: 'date'     },
+  { key: 'dueDate',             label: 'Due Date',             type: 'date'     },
+  { key: 'customer',            label: 'Customer',             type: 'client'   },
+  { key: 'pricePerPart',        label: 'Price / Part ($)',     type: 'number'   },
+  { key: 'shippingMethod',      label: 'Ship Via',             type: 'text'     },
+  { key: 'specialInstructions', label: 'Special Instructions', type: 'textarea' },
 ];
 
-/** Fuzzy-match a scanned name to the closest client in the list.
- *  Returns the matching client name if score is good enough, else null. */
+/** Match a scanned company name to the closest client in the list.
+ *
+ *  Rules (in priority order):
+ *  1. Exact match (case-insensitive)
+ *  2. Stored client name is contained within the scanned name
+ *     e.g. stored "S&H" found inside scanned "S&H MACHINE BURBANK" → match
+ *  3. Scanned name is contained within stored name
+ *  4. Longest-common-substring ratio ≥ 0.45
+ */
 function bestClientMatch(scanned: string, clients: string[]): string | null {
   if (!scanned || !clients.length) return null;
-  const s = scanned.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const sRaw = scanned.toLowerCase();
+  const sClean = sRaw.replace(/[^a-z0-9]/g, '');
+
+  for (const c of clients) {
+    if (c.toLowerCase() === sRaw) return c; // exact
+  }
+  // Containment: stored name words all appear in scanned string
+  for (const c of clients) {
+    const cLow = c.toLowerCase();
+    if (sRaw.includes(cLow) || cLow.includes(sRaw)) return c;
+    // Token-level: every word in stored client appears in scanned
+    const cWords = cLow.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 1);
+    if (cWords.length >= 1 && cWords.every(w => sRaw.includes(w))) return c;
+  }
+  // LCS ratio fallback
   let best = { name: '', score: 0 };
   for (const c of clients) {
     const n = c.toLowerCase().replace(/[^a-z0-9]/g, '');
-    // Score = longest common substring length / max(len)
     let maxSub = 0;
-    for (let i = 0; i < s.length; i++) {
-      for (let j = i + 2; j <= s.length; j++) {
-        const sub = s.slice(i, j);
+    for (let i = 0; i < sClean.length; i++) {
+      for (let j = i + 2; j <= sClean.length; j++) {
+        const sub = sClean.slice(i, j);
         if (n.includes(sub) && sub.length > maxSub) maxSub = sub.length;
       }
     }
-    const score = maxSub / Math.max(s.length, n.length);
+    const score = maxSub / Math.max(sClean.length, n.length, 1);
     if (score > best.score) best = { name: c, score };
   }
-  return best.score >= 0.5 ? best.name : null;
+  return best.score >= 0.45 ? best.name : null;
 }
 
 export const POScanner: React.FC<Props> = ({ onFill, onClose, clients = [] }) => {
@@ -153,13 +174,13 @@ export const POScanner: React.FC<Props> = ({ onFill, onClose, clients = [] }) =>
           <label className={labelCls}>{f.label}</label>
           {clients.length > 0 ? (
             <select
-              className="w-full bg-transparent text-white text-sm font-bold outline-none cursor-pointer"
+              className="w-full bg-zinc-800 text-white text-sm font-bold outline-none cursor-pointer rounded-lg px-2 py-1 border border-white/10 focus:border-blue-500/50"
               value={String(val ?? '')}
               onChange={e => setVal(e.target.value || undefined)}
             >
               <option value="">— Pick a client —</option>
               {scannedNotInList && (
-                <option value={String(val)} className="text-amber-300">
+                <option value={String(val)}>
                   {String(val)} (scanned — not in list)
                 </option>
               )}

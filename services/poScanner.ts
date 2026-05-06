@@ -227,13 +227,14 @@ export function parseJobFields(rawText: string): ScanResult {
   }
 
   // ── Unit Price / Price Per Part ───────────────────────────────────────────
+  // On line-item POs: "PARTNO  QTY  Desc  $UNIT  $EXT"
+  // We want the UNIT price (smaller), not the extended total.
+  // Strategy: find all bare dollar amounts on the line-item row and pick the smallest.
   const price = tryPatterns(text, [
-    // Labelled unit price
+    // Labelled unit price — highest confidence
     /(?:Unit[ \t]*Price|Price[ \t]*(?:Ea(?:ch)?|\/[ \t]*(?:EA|PC|Each))|Per[ \t]*(?:Piece|Part|PC|EA)|Price\/EA|Price\/PC|\$\/(?:PC|EA|Part))[ \t]*:?[ \t]*\$?([\d,]+(?:\.\d{1,4})?)/i,
     // "$X.XX / EA" explicit per-unit denominator
     /\$[ \t]*([\d,]+\.\d{2})[ \t]*(?:\/[ \t]*(?:PC|EA|each|piece|part))\b/i,
-    // Line-item "$X.XX" — only if quantity already found (proves it's a unit price row)
-    ...(fields.quantity ? [/\$\s*([\d,]+\.\d{2})\b/] as RegExp[] : []),
   ]);
   if (price) {
     const p = parseFloat(price.value.replace(/,/g, ''));
@@ -241,27 +242,80 @@ export function parseJobFields(rawText: string): ScanResult {
       fields.pricePerPart = p;
       sources.pricePerPart = price.snippet;
     }
+  } else if (fields.quantity) {
+    // Line-item heuristic: find all dollar amounts, unit price × qty ≈ extended price
+    // Pick the amount that satisfies unit * qty ≈ another amount on the same line
+    const allAmounts = [...text.matchAll(/\$\s*([\d,]+\.\d{2})/g)]
+      .map(m => parseFloat(m[1].replace(/,/g, '')))
+      .filter(n => n > 0 && n < 100_000);
+    const qty = fields.quantity;
+    // Look for a pair (unit, ext) where unit * qty is close to ext (within 5%)
+    for (const unit of allAmounts) {
+      const ext = allAmounts.find(e => e !== unit && Math.abs(e - unit * qty) / e < 0.05);
+      if (ext) { fields.pricePerPart = unit; sources.pricePerPart = `$${unit}`; break; }
+    }
+    // Fallback: just the smallest dollar amount if only one found
+    if (!fields.pricePerPart && allAmounts.length === 1) {
+      fields.pricePerPart = allAmounts[0];
+      sources.pricePerPart = `$${allAmounts[0]}`;
+    }
+  }
+
+  // ── Shipping Method ───────────────────────────────────────────────────────
+  const ship = tryPatterns(text, [
+    /\bShip(?:ping)?[ \t]*(?:Via|Method|By|Mode)?[ \t]*:?[ \t]*([A-Za-z][A-Za-z0-9 &\-\.]{2,40})/i,
+    /\bShip[ \t]*Via[ \t]+([\w][A-Za-z0-9 &\-\.]{2,40})/i,
+  ]);
+  if (ship) {
+    const v = ship.value.trim().replace(/\s+/g, ' ');
+    // Exclude date-like values that sneak in
+    if (!/^\d/.test(v) && v.length >= 3) {
+      (fields as any).shippingMethod = v;
+      sources.shippingMethod = ship.snippet;
+    }
   }
 
   // ── Special Instructions / Notes ─────────────────────────────────────────
-  // Do NOT match Terms/Conditions (legal boilerplate). Reject URL-containing values.
-  const instrREs = [
-    /\bSpecial[ \t]*(?:Inst(?:ructions?)?|Notes?)[ \t]*:?[ \t]*([^\n]{8,400})/i,
-    /\bINSTRUCTIONS[ \t]*:[ \t]*([^\n]{8,400})/,
-    /\bInstr(?:uctions?)?[ \t]*:[ \t]*([^\n]{8,400})/i,
-    /\bNotes?[ \t]*:[ \t]*([^\n]{8,400})/i,
-    /\bRemarks?[ \t]*:[ \t]*([^\n]{8,400})/i,
-    /\bComments?[ \t]*:[ \t]*([^\n]{8,400})/i,
+  // Capture MULTI-LINE instruction blocks — stop only at clearly new section headers.
+  // Priority: "INSTRUCTIONS:" > "Special Instructions" > "Notes:" > fallbacks.
+  // Reject URL-containing blocks (legal boilerplate).
+  const SECTION_STOP = /\n(?:P\.?O\.?\s*QUALITY|CONFIRMATION|TERMS|OUR CUSTOMER|SUBTOTAL|ORDER TOTAL|ISSUED BY|Signature|Page \d)/i;
+
+  const instrREs: [RegExp, RegExp][] = [
+    // Pattern to find the label, then a stop pattern to end the block
+    [/\bINSTRUCTIONS\s*:\s*/i,           SECTION_STOP],
+    [/\bSpecial\s+Inst(?:ructions?)?\s*:\s*/i, SECTION_STOP],
+    [/\bSpecial\s+Notes?\s*:\s*/i,       SECTION_STOP],
+    [/\bInstr(?:uctions?)?\s*:\s*/i,     SECTION_STOP],
+    [/\bNotes?\s*:\s*/i,                 SECTION_STOP],
+    [/\bRemarks?\s*:\s*/i,               SECTION_STOP],
+    [/\bComments?\s*:\s*/i,              SECTION_STOP],
   ];
-  for (const re of instrREs) {
-    const m = text.match(re);
-    if (m?.[1]?.trim()) {
-      const val = m[1].trim();
-      if (!/https?:\/\//i.test(val) && !/visit:/i.test(val) && val.length >= 5) {
-        fields.specialInstructions = val;
-        sources.specialInstructions = m[0].trim();
-        break;
-      }
+
+  for (const [labelRe] of instrREs) {
+    const start = text.search(labelRe);
+    if (start === -1) continue;
+    // Find end of label
+    const labelMatch = text.slice(start).match(labelRe)!;
+    const contentStart = start + labelMatch[0].length;
+    // Find next section stop after the label
+    const rest = text.slice(contentStart);
+    const stopMatch = rest.search(SECTION_STOP);
+    const block = (stopMatch === -1 ? rest : rest.slice(0, stopMatch)).trim();
+    if (block.length < 5) continue;
+    // Reject if the WHOLE block is dominated by a URL
+    if (/https?:\/\//i.test(block) && block.split(' ').filter(w => w.startsWith('http')).length > 1) continue;
+    // Trim trailing URLs / "Please visit..." sentences
+    const cleaned = block
+      .replace(/\s*(Please\s+visit\s+https?:\/\/\S+\s*)/gi, ' ')
+      .replace(/\s*(For the latest.+?visit.+)/gi, '')
+      .replace(/https?:\/\/\S+/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (cleaned.length >= 5) {
+      fields.specialInstructions = cleaned;
+      sources.specialInstructions = cleaned.slice(0, 80);
+      break;
     }
   }
 
