@@ -269,6 +269,20 @@ export interface TimeLog {
   notes?: string;
   machineId?: string;
   sessionQty?: number;
+  /**
+   * Why this log was stopped. Set at clock-out time so admins can audit
+   * whether a stop was worker-initiated or forced by the system.
+   *
+   * Values:
+   *   'manual'             — worker clicked Clock Out themselves
+   *   'alarm:shift-end'    — shift alarm with clockOut=true fired at configured time
+   *   'alarm:auto-pause'   — lunch-pause alarm (pause only, not full clock-out)
+   *   'sweep:14h-safety'   — 14-hour safety net (log running > 14h, cleared automatically)
+   *   'sweep:auto-clockout'— configured end-of-day auto clock-out sweep
+   *   'admin:force-stop'   — admin or manager force-stopped from the UI
+   *   'sw:notification'    — stopped via service-worker notification action button
+   */
+  stopReason?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -791,6 +805,8 @@ export interface EnabledFeatures {
 }
 
 export type TvSlideType =
+  | 'today'          // Today's scorecard — jobs done, hours, pipeline $, overdue
+  | 'at-risk'        // Jobs predicted to miss their due date
   | 'workers'        // Currently running workers (default left column)
   | 'jobs'           // All open jobs belt (default right column)
   | 'leaderboard'    // Ranked workers by hours/jobs this week

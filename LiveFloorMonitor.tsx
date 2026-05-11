@@ -30,6 +30,9 @@ import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
 import { useConfirm } from './components/useConfirm';
 import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds } from './services/shiftAlarms';
+import { computeJobETA, RISK_COLORS } from './utils/jobETA';
+import type { JobETA, JobRiskLevel } from './utils/jobETA';
+import { getPartHistory } from './utils/partHistory';
 
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [
@@ -324,11 +327,23 @@ const WorkerCard: React.FC<{
 };
 
 // ── useAutoLunch HOOK ───────────────────────────────────────────
-export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', message: string) => void) {
-  const pausedTodayRef = useRef<string | null>(null);
-  const resumedTodayRef = useRef<string | null>(null);
-  const stoppedTodayRef = useRef<string | null>(null);
+// SAFETY: All "fired today" flags are persisted to sessionStorage so that
+// page refreshes do NOT re-fire the auto clock-out. Without this, refreshing
+// the page after the shift-end time would call stopAllActive() again, randomly
+// stopping workers who clocked back in for overtime.
+// sessionStorage clears when the browser tab closes (correct — new session = new day).
+const SS_STOPPED  = 'auto-clockout-stopped-';   // + YYYY-MM-DD
+const SS_PAUSED   = 'auto-lunch-paused-';        // + YYYY-MM-DD
+const SS_RESUMED  = 'auto-lunch-resumed-';       // + YYYY-MM-DD
 
+function ssGet(key: string): boolean {
+  try { return !!sessionStorage.getItem(key); } catch { return false; }
+}
+function ssSet(key: string) {
+  try { sessionStorage.setItem(key, '1'); } catch {}
+}
+
+export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', message: string) => void) {
   useEffect(() => {
     const check = () => {
       const settings = DB.getSettings();
@@ -336,10 +351,12 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
       const today = now.toISOString().split('T')[0];
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
+      // Auto clock-out: only when the setting is explicitly enabled, only once
+      // per day per browser session (sessionStorage key prevents page-refresh re-fires).
       if (settings.autoClockOutEnabled && settings.autoClockOutTime) {
-        if (hhmm >= settings.autoClockOutTime && stoppedTodayRef.current !== today) {
-          stoppedTodayRef.current = today;
-          DB.stopAllActive().then((count) => {
+        if (hhmm >= settings.autoClockOutTime && !ssGet(SS_STOPPED + today)) {
+          ssSet(SS_STOPPED + today);
+          DB.stopAllActive('sweep:auto-clockout').then((count) => {
             if (count > 0) addToast('info', `⏹ Auto clock-out: stopped ${count} timer${count > 1 ? 's' : ''}`);
           });
         }
@@ -350,15 +367,15 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
       const lunchEnd = settings.lunchEnd || '12:30';
       const inLunch = hhmm >= lunchStart && hhmm < lunchEnd;
 
-      if (inLunch && pausedTodayRef.current !== today) {
-        pausedTodayRef.current = today;
+      if (inLunch && !ssGet(SS_PAUSED + today)) {
+        ssSet(SS_PAUSED + today);
         DB.pauseAllActive('auto-lunch').then((count) => {
           if (count > 0) addToast('info', `Auto-paused ${count} timer${count > 1 ? 's' : ''} for lunch`);
         });
       }
 
-      if (!inLunch && hhmm >= lunchEnd && pausedTodayRef.current === today && resumedTodayRef.current !== today) {
-        resumedTodayRef.current = today;
+      if (!inLunch && hhmm >= lunchEnd && ssGet(SS_PAUSED + today) && !ssGet(SS_RESUMED + today)) {
+        ssSet(SS_RESUMED + today);
         DB.resumeAllPaused().then((count) => {
           if (count > 0) addToast('success', `Auto-resumed ${count} timer${count > 1 ? 's' : ''} after lunch`);
         });
@@ -765,7 +782,8 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
   const revenue = completedThisWeek.reduce((a, j) => a + (j.quoteAmount || 0), 0);
 
   return (
-    <div className="h-full w-full overflow-hidden flex items-center justify-center p-[clamp(1rem,2vw,2.5rem)]">
+    <div className="h-full w-full overflow-y-auto">
+      <div className="min-h-full flex items-center justify-center p-[clamp(1rem,2vw,2.5rem)]">
       <div className="w-full max-w-6xl mx-auto">
         <p className="font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <TrendingUp className="w-4 h-4" aria-hidden="true" /> Weekly Output
@@ -843,6 +861,7 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 };
@@ -850,7 +869,7 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
 // Full-screen Flow Map slide — live visual of jobs across every stage.
 const TvFlowMapSlide: React.FC<{ jobs: Job[]; stages: JobStage[]; activeLogs: TimeLog[] }> = ({ jobs, stages, activeLogs }) => {
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center overflow-hidden p-[clamp(1rem,2.5vw,3rem)]">
+    <div className="h-full w-full overflow-y-auto"><div className="min-h-full flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)]">
       <div className="w-full max-w-7xl mx-auto">
         <p className="font-black text-indigo-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <Activity className="w-4 h-4" aria-hidden="true" /> Shop Flow
@@ -862,7 +881,7 @@ const TvFlowMapSlide: React.FC<{ jobs: Job[]; stages: JobStage[]; activeLogs: Ti
           <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} />
         </div>
       </div>
-    </div>
+    </div></div>
   );
 };
 
@@ -920,6 +939,303 @@ const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; 
   );
 };
 
+// ── AT-RISK JOBS slide — jobs predicted to miss their due date ────────
+const TvAtRiskSlide: React.FC<{
+  jobs: Job[];
+  allLogs: TimeLog[];
+  activeLogs: TimeLog[];
+  speed?: 'slow' | 'normal' | 'fast' | 'off';
+}> = ({ jobs, allLogs, activeLogs, speed = 'normal' }) => {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Compute ETAs for all open jobs
+  const openJobs = jobs.filter(j => j.status !== 'completed');
+  const etas: Array<{ job: Job; eta: JobETA }> = openJobs
+    .map(job => {
+      const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+      const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
+      return { job, eta };
+    })
+    .filter(({ eta }) => eta.riskLevel === 'critical' || eta.riskLevel === 'at-risk' || eta.riskLevel === 'watch')
+    .sort((a, b) => {
+      const order: Record<JobRiskLevel, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
+      const diff = order[a.eta.riskLevel] - order[b.eta.riskLevel];
+      if (diff !== 0) return diff;
+      // Within same risk: soonest due first
+      return (a.eta.daysUntilDue ?? 999) - (b.eta.daysUntilDue ?? 999);
+    });
+
+  const handlers = useTvAutoScroll(scrollRef, (speed ?? 'normal') as 'slow' | 'normal' | 'fast' | 'off', etas.length);
+
+  if (etas.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center p-12">
+        <div className="w-24 h-24 mx-auto rounded-3xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center mb-6">
+          <span className="text-5xl">✅</span>
+        </div>
+        <h2 className="text-4xl font-black text-white">All Jobs On Track</h2>
+        <p className="text-zinc-400 text-xl mt-3">No jobs are at risk of missing their due date.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 px-[clamp(1rem,2.5vw,3rem)] pt-[clamp(0.75rem,1.5vw,1.5rem)] pb-3 border-b border-white/5">
+        <p className="font-black text-red-400/80 uppercase tracking-[0.3em] flex items-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
+          ⚠ Jobs Needing Attention
+        </p>
+        <div className="flex items-center justify-between mt-1 flex-wrap gap-2">
+          <h2 className="font-black text-white" style={{ fontSize: 'clamp(1.5rem, 3.5vw, 2.75rem)' }}>At-Risk Jobs</h2>
+          <div className="flex items-center gap-3">
+            {(['critical', 'at-risk', 'watch'] as JobRiskLevel[]).map(lvl => {
+              const count = etas.filter(e => e.eta.riskLevel === lvl).length;
+              if (!count) return null;
+              const c = RISK_COLORS[lvl];
+              return (
+                <div key={lvl} className={`flex items-center gap-1.5 px-3 py-1 rounded-full border ${c.bg} ${c.border}`}>
+                  <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+                  <span className={`font-black text-sm ${c.text}`}>{count} {c.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Scrollable list */}
+      <div className="flex-1 min-h-0 relative">
+        <div
+          ref={scrollRef}
+          {...handlers}
+          className="absolute inset-0 overflow-y-auto px-[clamp(1rem,2.5vw,3rem)] py-3 space-y-3"
+          style={{ scrollBehavior: 'auto' }}
+        >
+          {[0, 1].map(copy => (
+            <React.Fragment key={copy}>
+              {etas.map(({ job, eta }) => {
+                const c = RISK_COLORS[eta.riskLevel];
+                const dueStr = job.dueDate || '—';
+                const pctBar = eta.pctComplete;
+                return (
+                  <div
+                    key={`${copy}-${job.id}`}
+                    aria-hidden={copy === 1 ? 'true' : undefined}
+                    className={`rounded-2xl border-2 ${c.bg} ${c.border} flex items-center gap-4`}
+                    style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}
+                  >
+                    {/* Risk indicator */}
+                    <div className={`shrink-0 w-1.5 self-stretch rounded-full ${c.dot}`} />
+
+                    {/* Main info */}
+                    <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 items-center">
+                      <div className="min-w-0">
+                        <p className="font-black text-white truncate" style={{ fontSize: 'clamp(1rem, 2vw, 1.5rem)' }}>
+                          {job.poNumber} {job.partNumber ? `· ${job.partNumber}` : ''}
+                        </p>
+                        {job.customer && <p className="text-white/50 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' }}>{job.customer}</p>}
+                      </div>
+
+                      {/* ETA data */}
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <p className="text-white/40 font-bold uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.6rem)' }}>Due</p>
+                          <p className={`font-black tabular ${c.text}`} style={{ fontSize: 'clamp(0.85rem, 1.6vw, 1.25rem)' }}>{dueStr}</p>
+                        </div>
+                        {eta.expectedHours !== null && (
+                          <div>
+                            <p className="text-white/40 font-bold uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.6rem)' }}>Progress</p>
+                            <p className="font-black text-white tabular" style={{ fontSize: 'clamp(0.85rem, 1.6vw, 1.25rem)' }}>
+                              {eta.loggedHours.toFixed(1)}h <span className="text-white/40">/ {eta.expectedHours.toFixed(1)}h</span>
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Progress bar + badge */}
+                      <div className="flex items-center gap-3">
+                        {eta.expectedHours !== null && (
+                          <div className="flex-1 min-w-0">
+                            <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                              <div
+                                className={`h-full rounded-full bg-gradient-to-r ${
+                                  eta.riskLevel === 'critical' ? 'from-red-500 to-rose-500' :
+                                  eta.riskLevel === 'at-risk'  ? 'from-orange-500 to-amber-500' :
+                                  'from-amber-400 to-yellow-400'
+                                }`}
+                                style={{ width: `${Math.min(100, pctBar)}%` }}
+                              />
+                            </div>
+                            <p className="text-white/40 text-[10px] font-bold mt-0.5">{pctBar}% of est.</p>
+                          </div>
+                        )}
+                        <div className={`shrink-0 px-3 py-1 rounded-lg border ${c.bg} ${c.border}`}>
+                          <p className={`font-black text-sm ${c.text}`}>{eta.riskReason}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Qty badge */}
+                    {job.quantity > 0 && (
+                      <div className="shrink-0 text-right">
+                        <p className="font-black text-white/40 text-xs uppercase tracking-widest">Qty</p>
+                        <p className="font-black text-white tabular" style={{ fontSize: 'clamp(1rem, 2vw, 1.75rem)' }}>{job.quantity.toLocaleString()}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+        <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
+        <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
+      </div>
+    </div>
+  );
+};
+
+// ── TODAY'S SCORECARD slide — the heartbeat every shop needs ──────────
+// Big 4: jobs done today, hours on the clock, $ pipeline, overdue count.
+// Every metric updates live. Overdue tile flashes red when > 0.
+const TvTodaySlide: React.FC<{
+  jobs: Job[];
+  allLogs: TimeLog[];
+  openJobs: Job[];
+  activeLogs: TimeLog[];
+  showRevenue?: boolean;
+}> = ({ jobs, allLogs, openJobs, activeLogs, showRevenue = false }) => {
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayMs = todayStart.getTime();
+
+  const completedToday = jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= todayMs);
+  const completedCount = completedToday.length;
+
+  const finishedHours = allLogs.filter(l => l.startTime >= todayMs && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+  const activeHours   = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => a + DB.getWorkingElapsedMs(l) / 3_600_000, 0);
+  const totalHours    = finishedHours + activeHours;
+
+  const overdueCount = openJobs.filter(j => {
+    const d = parseDueDate(j.dueDate);
+    return d && d.getTime() < Date.now();
+  }).length;
+
+  const dueTodayCount = openJobs.filter(j => {
+    const d = parseDueDate(j.dueDate);
+    if (!d) return false;
+    return d.getTime() >= todayMs && d.getTime() < todayMs + 86_400_000;
+  }).length;
+
+  const pipelineValue = openJobs.reduce((a, j) =>
+    a + (j.quoteAmount || (j.pricePerPart || 0) * (j.quantity || 1)), 0);
+
+  const workersToday = new Set([
+    ...allLogs.filter(l => l.startTime >= todayMs).map(l => l.userId),
+    ...activeLogs.filter(l => l.startTime >= todayMs).map(l => l.userId),
+  ]).size;
+
+  const sessionsToday = allLogs.filter(l => l.startTime >= todayMs && l.endTime).length + activeLogs.filter(l => l.startTime >= todayMs).length;
+
+  const fmt$ = (n: number) => n >= 1_000_000
+    ? `$${(n / 1_000_000).toFixed(1)}M`
+    : n >= 1_000
+    ? `$${(n / 1_000).toFixed(0)}K`
+    : `$${Math.round(n)}`;
+
+  const hero = [
+    {
+      label: 'Jobs Done',
+      value: completedCount,
+      unit: '',
+      color: 'emerald',
+      note: completedCount === 1 ? '1 job shipped' : `${completedCount} jobs shipped`,
+      icon: '✅',
+    },
+    {
+      label: 'Hours Logged',
+      value: totalHours.toFixed(1),
+      unit: 'h',
+      color: 'blue',
+      note: `${workersToday} worker${workersToday === 1 ? '' : 's'} · ${sessionsToday} sessions`,
+      icon: '⏱️',
+    },
+    ...(showRevenue ? [{
+      label: 'Pipeline Value',
+      value: fmt$(pipelineValue),
+      unit: '',
+      color: 'amber',
+      note: `${openJobs.length} open job${openJobs.length === 1 ? '' : 's'}`,
+      icon: '💰',
+    }] : []),
+    {
+      label: overdueCount > 0 ? 'Overdue ⚠' : 'On Schedule',
+      value: overdueCount > 0 ? overdueCount : '✓',
+      unit: overdueCount > 0 ? ' jobs' : '',
+      color: overdueCount > 0 ? 'red' : 'emerald',
+      note: dueTodayCount > 0 ? `${dueTodayCount} due today` : 'All on track',
+      icon: overdueCount > 0 ? '🔴' : '🟢',
+    },
+  ];
+
+  const colorMap: Record<string, { bg: string; border: string; text: string; glow: string }> = {
+    emerald: { bg: 'from-emerald-500/15 to-emerald-500/0', border: 'border-emerald-500/25', text: 'text-emerald-400', glow: 'shadow-emerald-500/20' },
+    blue:    { bg: 'from-blue-500/15 to-blue-500/0',       border: 'border-blue-500/25',    text: 'text-blue-400',    glow: 'shadow-blue-500/20' },
+    amber:   { bg: 'from-amber-500/15 to-amber-500/0',     border: 'border-amber-500/25',   text: 'text-amber-400',   glow: 'shadow-amber-500/20' },
+    red:     { bg: 'from-red-500/20 to-red-500/0',         border: 'border-red-500/40',     text: 'text-red-400',     glow: 'shadow-red-500/30' },
+  };
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="min-h-full flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)' }}>
+        <div className="w-full max-w-6xl mx-auto">
+          {/* Header */}
+          <p className="font-black text-orange-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
+            <Zap className="w-4 h-4" aria-hidden="true" /> Today's Scorecard
+          </p>
+          <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(1.75rem, 4.5vw, 3.5rem)' }}>
+            How Are We Doing Today?
+          </h2>
+
+          {/* Hero tiles */}
+          <div className={`mt-[clamp(1rem,2vw,2rem)] grid gap-[clamp(0.5rem,1.2vw,1rem)] ${hero.length === 4 ? 'grid-cols-2 md:grid-cols-4' : hero.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+            {hero.map(tile => {
+              const c = colorMap[tile.color] || colorMap.blue;
+              return (
+                <div key={tile.label} className={`bg-gradient-to-br ${c.bg} border-2 ${c.border} rounded-3xl flex flex-col items-center justify-center text-center shadow-2xl ${c.glow}`} style={{ padding: 'clamp(1rem, 2vw, 2.5rem)' }}>
+                  <div style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}>{tile.icon}</div>
+                  <p className={`font-black uppercase tracking-widest mt-2 ${c.text}`} style={{ fontSize: 'clamp(0.5rem, 0.75vw, 0.7rem)' }}>{tile.label}</p>
+                  <div className="font-black text-white tabular leading-none mt-3 flex items-baseline justify-center gap-1" style={{ fontSize: 'clamp(2.5rem, 6vw, 5rem)' }}>
+                    {tile.value}
+                    {tile.unit && <span className={`${c.text} font-bold`} style={{ fontSize: 'clamp(1.25rem, 2.5vw, 2rem)' }}>{tile.unit}</span>}
+                  </div>
+                  <p className="text-white/40 font-semibold mt-2" style={{ fontSize: 'clamp(0.6rem, 0.8vw, 0.75rem)' }}>{tile.note}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Secondary strip — active right now */}
+          <div className="mt-[clamp(0.5rem,1.2vw,1rem)] grid grid-cols-3 gap-[clamp(0.4rem,0.8vw,0.75rem)]">
+            {[
+              { label: 'Active Right Now', value: activeLogs.length, unit: ' timers', color: 'text-emerald-400' },
+              { label: 'Due Today', value: dueTodayCount, unit: ' jobs', color: dueTodayCount > 0 ? 'text-amber-400' : 'text-white/40' },
+              { label: 'Open Jobs Total', value: openJobs.length, unit: '', color: 'text-white/60' },
+            ].map(stat => (
+              <div key={stat.label} className="bg-zinc-900/60 border border-white/5 rounded-2xl text-center" style={{ padding: 'clamp(0.5rem, 1vw, 1rem)' }}>
+                <p className="font-black text-white/30 uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>{stat.label}</p>
+                <p className={`font-black tabular ${stat.color}`} style={{ fontSize: 'clamp(1.25rem, 2.5vw, 2rem)' }}>
+                  {stat.value}<span className="text-white/30">{stat.unit}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Goal calculation helpers come from utils/goals.ts — same logic used by Settings editor
 import { computeGoalProgress, formatGoalValue, goalUnit } from './utils/goals';
 
@@ -969,13 +1285,14 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
   };
 
   return (
-    <div className="h-full flex flex-col items-center justify-center overflow-y-auto" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)' }}>
-      <div className="w-full max-w-6xl">
+    <div className="h-full overflow-y-auto">
+      <div className="min-h-full flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)' }}>
+      <div className="w-full max-w-6xl mx-auto">
         <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
           <Zap className="w-4 h-4" aria-hidden="true" /> Shop Goals
         </p>
         <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 4rem)' }}>How we're tracking</h2>
-        <div className={`mt-8 grid gap-5 ${visible.length === 1 ? 'grid-cols-1' : visible.length <= 3 ? 'md:grid-cols-' + visible.length : 'md:grid-cols-3'}`}>
+        <div className={`mt-[clamp(1rem,2vw,2rem)] grid gap-[clamp(0.5rem,1vw,1.25rem)] ${visible.length === 1 ? 'grid-cols-1' : visible.length <= 3 ? 'md:grid-cols-' + visible.length : 'md:grid-cols-3'}`}>
           {visible.map(g => {
             const { current, pct } = computeGoalProgress(g, jobs, logs, reworkCount);
             const p = palette[g.color || 'blue'];
@@ -1013,6 +1330,7 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
             );
           })}
         </div>
+      </div>
       </div>
     </div>
   );
@@ -1291,17 +1609,61 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   }, [tvMode]);
 
   const [tvPaused, setTvPaused] = useState(false);
+
+  // ── Auto-hide chrome (Exit button) after 5 s of inactivity ───────────
+  // Prevents accidental tap on touch TVs and remote back-button triggering.
+  // Any mouse move, touch, or keypress re-shows the chrome.
+  const [tvChromeVisible, setTvChromeVisible] = useState(true);
+  const tvChromeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showChrome = useCallback(() => {
+    setTvChromeVisible(true);
+    if (tvChromeTimer.current) clearTimeout(tvChromeTimer.current);
+    tvChromeTimer.current = setTimeout(() => setTvChromeVisible(false), 5000);
+  }, []);
+  useEffect(() => {
+    if (!tvMode) return;
+    showChrome();
+    window.addEventListener('mousemove', showChrome, { passive: true });
+    window.addEventListener('touchstart', showChrome, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', showChrome);
+      window.removeEventListener('touchstart', showChrome);
+      if (tvChromeTimer.current) clearTimeout(tvChromeTimer.current);
+    };
+  }, [tvMode, showChrome]);
+
+  // ── Double-Escape guard — prevents TV remote back-button from exiting ─
+  // First Escape shows a "Press Esc again to exit" toast for 2 s.
+  // Only the second Escape within that window actually exits TV mode.
+  const [escGuardActive, setEscGuardActive] = useState(false);
+  const escPressedRef = useRef(false);
+  const escTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Ref updated each render so keyboard handler always sees current slide count without re-binding
   const slideCountRef = useRef(1);
   useEffect(() => {
     if (!tvMode) return;
     const h = (e: KeyboardEvent) => {
-      // Standalone TV link locks itself in TV mode — Esc would otherwise
-      // drop a wall-mounted display into an unusable admin view nobody can
-      // recover without a keyboard. Admin-mode TV (no standalone) keeps the
-      // Esc-to-exit affordance because they have a "Back" button to return to.
+      showChrome(); // any key re-shows chrome
       if (e.key === 'Escape') {
-        if (!standalone) setTvMode(false);
+        // Standalone TVs never exit via keyboard — remote back would be fatal
+        if (standalone) return;
+        if (!escPressedRef.current) {
+          // First press: arm the guard, show a brief "press again" indicator
+          escPressedRef.current = true;
+          setEscGuardActive(true);
+          if (escTimerRef.current) clearTimeout(escTimerRef.current);
+          escTimerRef.current = setTimeout(() => {
+            escPressedRef.current = false;
+            setEscGuardActive(false);
+          }, 2000);
+        } else {
+          // Second press within 2 s: exit
+          escPressedRef.current = false;
+          setEscGuardActive(false);
+          if (escTimerRef.current) clearTimeout(escTimerRef.current);
+          setTvMode(false);
+        }
         return;
       }
       const n = Math.max(1, slideCountRef.current);
@@ -1389,6 +1751,41 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     return () => clearInterval(id);
   }, []);
 
+  // ── Wake Lock — keeps the TV screen and browser tab alive 24/7.
+  // Screen Wake Lock API prevents the OS/browser from sleeping the tab.
+  // Falls back gracefully on browsers that don't support it (Smart TVs, Safari).
+  useEffect(() => {
+    if (!standalone) return;
+    let lock: WakeLockSentinel | null = null;
+    const acquire = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          lock = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch { /* browser denied — non-fatal */ }
+    };
+    acquire();
+    // Re-acquire when tab becomes visible again (lock is released on hide)
+    const onVis = () => { if (document.visibilityState === 'visible') acquire(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      lock?.release().catch(() => {});
+    };
+  }, [standalone]);
+
+  // ── Heartbeat ping — some TV browsers kill tabs they think are idle.
+  // A tiny no-op every 30 s keeps the JS event loop "active" in the eyes
+  // of aggressive tab-culling heuristics (Samsung Tizen, LG webOS, etc.).
+  useEffect(() => {
+    if (!standalone) return;
+    const id = setInterval(() => {
+      // Harmless DOM read — just enough to register "activity"
+      void document.title;
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [standalone]);
+
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
@@ -1433,7 +1830,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       confirmLabel: 'Force stop',
     });
     if (!ok) return;
-    try { await DB.stopTimeLog(logId); addToast('success', 'Timer stopped'); }
+    try { await DB.stopTimeLog(logId, undefined, undefined, undefined, 'admin:force-stop'); addToast('success', 'Timer stopped'); }
     catch { addToast('error', 'Failed to stop timer'); }
   };
   const handlePause = async (logId: string) => {
@@ -1468,10 +1865,11 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // Default TV slides — each tab gets its own dedicated full-screen slide.
   // Users can customize in Settings → TV Display → Slides.
   const DEFAULT_TV_SLIDES: TvSlide[] = [
+    { id: 'default-today', type: 'today', enabled: true },                             // Today's scorecard — FIRST
     { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
+    { id: 'default-at-risk', type: 'at-risk', enabled: true },                         // Jobs predicted to be late
     { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
     { id: 'default-leaderboard-week', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
-    { id: 'default-leaderboard-month', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'month', leaderboardCount: 5 },
     { id: 'default-goals', type: 'goals', enabled: true },
     { id: 'default-stats-week', type: 'stats-week', enabled: true },
     { id: 'default-weather', type: 'weather', enabled: true },
@@ -1628,8 +2026,17 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       return buildLeaderboard(cutoff);
     };
 
+    const overdueCount = openJobs.filter(j => {
+      const d = parseDueDate(j.dueDate);
+      return d && d.getTime() < Date.now();
+    }).length;
+
     const renderSlide = (slide: TvSlide) => {
       switch (slide.type) {
+        case 'today':
+          return <TvTodaySlide jobs={jobs} allLogs={allLogs} openJobs={openJobs} activeLogs={activeLogs} showRevenue={settings.tvShowRevenue === true} />;
+        case 'at-risk':
+          return <TvAtRiskSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} />;
         case 'workers':
           // Full-screen live workers view — no jobs belt on this slide. Jobs get their own 'jobs' slide.
           return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={false} />;
@@ -1683,6 +2090,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
     const slideLabel = (slide: TvSlide): string => {
       switch (slide.type) {
+        case 'today': return "Today's Score";
+        case 'at-risk': return 'At-Risk Jobs';
         case 'workers': return 'Live Workers';
         case 'jobs': return 'Open Jobs';
         case 'leaderboard': return 'Leaderboard';
@@ -1714,8 +2123,15 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-600/10 blur-[120px]" />
         </div>
 
-        {/* Exit chrome — always visible, with keyboard-shortcut chips + FAB-style Exit */}
-        <div className="tv-chrome absolute top-4 right-4 z-[10001] flex items-center gap-2">
+        {/* Double-Escape guard indicator — shows briefly after first Esc press */}
+        {escGuardActive && (
+          <div className="absolute top-4 left-4 z-[10002] bg-zinc-900/90 border border-amber-500/50 text-amber-300 text-sm font-black px-4 py-2.5 rounded-xl backdrop-blur-xl animate-fade-in shadow-lg pointer-events-none">
+            Press <kbd className="bg-white/10 border border-white/20 px-1.5 py-0.5 rounded font-mono text-xs">Esc</kbd> again to exit TV mode
+          </div>
+        )}
+
+        {/* Exit chrome — auto-hides after 5 s; any mouse/touch/key brings it back */}
+        <div className={`tv-chrome absolute top-4 right-4 z-[10001] flex items-center gap-2 transition-opacity duration-700 ${tvChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
           {tvPaused && (
             <div className="flex items-center gap-1.5 text-[11px] text-yellow-400 uppercase tracking-widest font-black bg-yellow-500/15 border border-yellow-500/30 rounded-lg px-2.5 py-1.5 animate-pulse">
               <Pause className="w-3 h-3" aria-hidden="true" /> Paused
@@ -1725,7 +2141,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             aria-label="Exit TV Mode"
             onClick={() => {
               if (standalone) {
-                // Standalone tab: navigate away (removes ?tv=1) back to root
+                // Clear localStorage flag so the browser doesn't auto-re-enter TV mode
+                try { localStorage.removeItem('fabtrack_tv'); } catch {}
                 window.location.href = window.location.pathname;
               } else {
                 setTvMode(false);
@@ -1737,8 +2154,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           </button>
         </div>
 
-        {/* Bottom keyboard-shortcut hint bar */}
-        <div className="tv-chrome absolute bottom-4 left-1/2 -translate-x-1/2 z-[10001] flex items-center gap-3 bg-black/50 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2 pointer-events-none">
+        {/* Bottom keyboard-shortcut hint bar — hides with the rest of the chrome */}
+        <div className={`tv-chrome absolute bottom-4 left-1/2 -translate-x-1/2 z-[10001] flex items-center gap-3 bg-black/50 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2 pointer-events-none transition-opacity duration-700 ${tvChromeVisible ? 'opacity-100' : 'opacity-0'}`}>
           {!standalone && (
             <>
               <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
@@ -1812,6 +2229,18 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                   </div>
                   <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Open</p>
                 </div>
+                {overdueCount > 0 && (
+                  <>
+                    <div className="w-px h-8 bg-white/10" />
+                    <div className="text-center animate-pulse">
+                      <div className="flex items-center gap-1 justify-center">
+                        <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                        <span className="font-black text-red-400 tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{overdueCount}</span>
+                      </div>
+                      <p className="font-black text-red-400/70 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Overdue</p>
+                    </div>
+                  </>
+                )}
               </div>
               {/* Weather — compact inline */}
               {settings.tvShowWeather !== false && <TVWeather lat={settings.weatherLat} lon={settings.weatherLon} />}

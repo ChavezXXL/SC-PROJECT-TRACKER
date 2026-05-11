@@ -528,7 +528,7 @@ export async function startTimeLog(
   }
 }
 
-export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string, forcedEndTime?: number) {
+export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string, forcedEndTime?: number, stopReason?: string) {
   const endTime = forcedEndTime ?? Date.now();
 
   if (dbInstance) {
@@ -560,6 +560,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
             pausedAt: null,
             totalPausedMs,
             pauseReason: null,
+            stopReason: stopReason ?? 'manual',
         };
         if (sessionQty !== undefined) updates.sessionQty = sessionQty;
         if (notes !== undefined) updates.notes = notes;
@@ -595,6 +596,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         pausedAt: null,
         totalPausedMs,
         pauseReason: undefined,
+        stopReason: stopReason ?? 'manual',
         ...(sessionQty !== undefined ? { sessionQty } : {}),
         ...(notes !== undefined ? { notes } : {})
     } as TimeLog;
@@ -1010,13 +1012,13 @@ export async function createBackfillLog(
   writeLS(LS.logs, logs);
 }
 
-export async function stopAllActive(): Promise<number> {
+export async function stopAllActive(reason: string = 'admin:force-stop'): Promise<number> {
   return new Promise((resolve) => {
     const unsub = subscribeLogs(async (all) => {
       unsub();
       const active = all.filter(l => !l.endTime);
       for (const l of active) {
-        try { await stopTimeLog(l.id); } catch {}
+        try { await stopTimeLog(l.id, undefined, undefined, undefined, reason); } catch {}
       }
       resolve(active.length);
     });
@@ -1093,7 +1095,8 @@ export async function sweepStaleLogs(): Promise<number> {
           const autoEndTime = shouldStop
             ? logDayCutoff
             : log.startTime + 14 * 3600000;
-          await stopTimeLog(log.id, undefined, undefined, autoEndTime);
+          const sweepReason = forcedStop ? 'sweep:14h-safety' : 'sweep:auto-clockout';
+          await stopTimeLog(log.id, undefined, undefined, autoEndTime, sweepReason);
           stopped++;
         } catch (e) {
           console.warn('sweepStaleLogs: failed to stop log', log.id, e);

@@ -331,14 +331,16 @@ export function parseJobFields(rawText: string): ScanResult {
 
 /** Render an image file through canvas → JPEG data URL.
  *  Handles HEIC, WEBP, AVIF, PNG, JPEG — anything the browser can decode.
- *  Caps at 1800 px to prevent WASM heap exhaustion on phone photos.
+ *  For camera photos: upscales to 2400px and boosts contrast + sharpness
+ *  so Tesseract reads printed text on PO documents more reliably.
  */
 function imageFileToJpeg(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const blobUrl = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const MAX = 1800;
+      // Higher cap for camera photos — 2400px gives Tesseract better letter details
+      const MAX = 2400;
       let { width: w, height: h } = img;
       if (w > MAX || h > MAX) {
         const r = Math.min(MAX / w, MAX / h);
@@ -349,11 +351,46 @@ function imageFileToJpeg(file: File): Promise<string> {
       canvas.width  = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d')!;
+
+      // White background (handles transparent PNGs)
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
+
+      // ── Image preprocessing for OCR quality ──────────────────────────────
+      // Apply contrast + brightness boost so text pops on printed PO docs.
+      // CSS filter on canvas context: contrast(1.4) brightness(1.05) saturate(0)
+      // We do this by reading pixel data, converting to grayscale, then
+      // applying a simple contrast stretch — fast and works in all browsers.
+      try {
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const d = imageData.data;
+        // Find luminance range for adaptive stretch (sample every 4th pixel for speed)
+        let minL = 255, maxL = 0;
+        for (let i = 0; i < d.length; i += 16) {
+          const l = Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]);
+          if (l < minL) minL = l;
+          if (l > maxL) maxL = l;
+        }
+        // Contrast stretch: remap [minL..maxL] → [0..255], then apply mild gamma
+        const range = Math.max(1, maxL - minL);
+        for (let i = 0; i < d.length; i += 4) {
+          // Convert to greyscale (OCR performs better on greyscale)
+          const grey = Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]);
+          // Stretch contrast
+          const stretched = Math.min(255, Math.max(0, Math.round(((grey - minL) / range) * 255)));
+          // Apply slight gamma (0.85) to darken midtones → crisp text
+          const gamma = Math.round(Math.pow(stretched / 255, 0.85) * 255);
+          d[i] = d[i+1] = d[i+2] = gamma; // greyscale
+          // d[i+3] = alpha — leave as-is
+        }
+        ctx.putImageData(imageData, 0, 0);
+      } catch {
+        // If pixel manipulation fails (e.g. cross-origin), keep original render
+      }
+
       URL.revokeObjectURL(blobUrl);
-      resolve(canvas.toDataURL('image/jpeg', 0.92));
+      resolve(canvas.toDataURL('image/jpeg', 0.93));
     };
     img.onerror = () => {
       URL.revokeObjectURL(blobUrl);
@@ -494,6 +531,14 @@ async function runOcr(
   });
 
   try {
+    // PSM 1: auto page segmentation with OSD — best for real PO documents
+    // (mix of text blocks, tables, headers). PSM 6 (assume single block) is
+    // too aggressive for multi-column POs and misses header/table text.
+    await worker.setParameters({
+      tessedit_pageseg_mode: '1',       // auto with OSD
+      tessedit_char_whitelist: '',       // allow all chars (don't restrict)
+      preserve_interword_spaces: '1',   // keep spaces between words intact
+    });
     const { data } = await worker.recognize(jpegDataUrl);
     return parseJobFields(data.text);
   } finally {

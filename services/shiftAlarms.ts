@@ -454,12 +454,23 @@ function shouldFireNowOrRecently(alarm: ShiftAlarm, lookbackMs: number): boolean
   return diffMs >= 0 && diffMs < lookbackMs;
 }
 
-/** Starts a minute-resolution poller. Returns an unsubscribe function. */
+/** Starts a minute-resolution poller. Returns an unsubscribe function.
+ *
+ * `onFire` receives a second argument `isCatchup: boolean`.
+ *   • false → alarm fired in real-time (within the normal 60s window) — ALL
+ *             side-effects (audio, notification, pause, clockOut) should fire.
+ *   • true  → alarm fired during the catch-up look-back (page load / tab focus
+ *             after PWA was backgrounded) — audio + notification are fine, but
+ *             DESTRUCTIVE actions (clockOut, pauseTimers) must be skipped to
+ *             prevent workers being randomly clocked out when a tab is opened
+ *             or settings are updated.
+ */
 export function watchShiftAlarms(
   getSettings: () => SystemSettings,
-  onFire: (alarm: ShiftAlarm) => void,
+  onFire: (alarm: ShiftAlarm, isCatchup: boolean) => void,
 ): () => void {
   const tick = (lookbackMs: number = 60_000) => {
+    const isCatchup = lookbackMs > 60_000;
     const settings = getSettings();
     const alarms = getActiveAlarms(settings);
     if (alarms.length === 0) return;
@@ -471,7 +482,7 @@ export function watchShiftAlarms(
       if (!shouldFireNowOrRecently(alarm, lookbackMs)) continue;
       fired[alarm.id] = today;
       changed = true;
-      onFire(alarm);
+      onFire(alarm, isCatchup);
     }
     if (changed) saveFired(fired);
   };
@@ -479,12 +490,14 @@ export function watchShiftAlarms(
   // On initial mount, look back 30 minutes — catches alarms that would've
   // fired while the PWA was closed / suspended. Shop owners reopen the app
   // in the morning and immediately see "Lunch starts — 12:00" if it's past.
+  // isCatchup=true so no destructive actions run during this sweep.
   tick(30 * 60_000);
 
   const interval = setInterval(() => tick(60_000), 30_000); // 30s resolution
 
   // Re-check on visibility change — iOS Safari suspends timers but fires
   // `visibilitychange` the instant the app comes back to foreground.
+  // Also treated as a catch-up (tab was backgrounded — time may have passed).
   const onVis = () => { if (!document.hidden) tick(30 * 60_000); };
   document.addEventListener('visibilitychange', onVis);
   window.addEventListener('focus', onVis);

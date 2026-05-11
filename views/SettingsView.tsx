@@ -3458,6 +3458,149 @@ const CustomerPipelineAssigner: React.FC<{ settings: SystemSettings; setSettings
   );
 };
 
+// ── Clock-Out Audit Log ────────────────────────────────────────────────────
+// Shows recent completed time-logs with a colour-coded badge explaining WHY
+// the timer stopped — manual, alarm, admin force-stop, or system sweep.
+// Lets managers quickly confirm that workers clocked out themselves and catch
+// any system misfires at a glance.
+
+const STOP_REASON_META: Record<string, { label: string; color: string; dot: string }> = {
+  'manual':             { label: 'Manual',         color: 'text-emerald-400', dot: 'bg-emerald-400' },
+  'alarm:shift-end':    { label: 'Alarm (shift end)', color: 'text-blue-400', dot: 'bg-blue-400' },
+  'alarm:auto-pause':   { label: 'Alarm (pause)',   color: 'text-blue-300',  dot: 'bg-blue-300' },
+  'sweep:auto-clockout':{ label: 'Auto clock-out',  color: 'text-amber-400', dot: 'bg-amber-400' },
+  'sweep:14h-safety':   { label: '14-h safety net', color: 'text-red-400',   dot: 'bg-red-400' },
+  'admin:force-stop':   { label: 'Admin force-stop',color: 'text-orange-400',dot: 'bg-orange-400' },
+  'sw:notification':    { label: 'Notification btn',color: 'text-purple-400',dot: 'bg-purple-400' },
+};
+
+const UNKNOWN_REASON = { label: 'Unknown', color: 'text-zinc-500', dot: 'bg-zinc-500' };
+
+function fmtAuditTime(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const daysDiff = Math.floor((now.getTime() - ms) / 86400000);
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (daysDiff === 0) return `Today ${timeStr}`;
+  if (daysDiff === 1) return `Yesterday ${timeStr}`;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${timeStr}`;
+}
+
+function fmtDurShort(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+const ClockOutAuditLog = ({ logs }: { logs: TimeLog[] }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [filterReason, setFilterReason] = useState<string>('all');
+
+  // Only completed logs, sorted newest first
+  const completed = useMemo(() => {
+    return logs
+      .filter(l => l.endTime)
+      .sort((a, b) => (b.endTime ?? 0) - (a.endTime ?? 0));
+  }, [logs]);
+
+  const filtered = useMemo(() => {
+    if (filterReason === 'all') return completed;
+    if (filterReason === 'system') {
+      return completed.filter(l => l.stopReason && l.stopReason !== 'manual');
+    }
+    return completed.filter(l => (l.stopReason ?? 'manual') === filterReason);
+  }, [completed, filterReason]);
+
+  const systemCount = useMemo(() =>
+    completed.filter(l => l.stopReason && l.stopReason !== 'manual').length,
+    [completed]
+  );
+
+  const displayed = expanded ? filtered : filtered.slice(0, 10);
+
+  return (
+    <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-white">Clock-Out Audit Log</p>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            See whether each clock-out was manual, by alarm, or forced by the system
+            {systemCount > 0 && (
+              <span className="ml-2 text-amber-400 font-medium">{systemCount} system-initiated</span>
+            )}
+          </p>
+        </div>
+        {/* Filter pills */}
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {(['all', 'manual', 'system'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilterReason(f)}
+              className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                filterReason === f
+                  ? 'bg-orange-500 border-orange-500 text-white'
+                  : 'border-white/10 text-zinc-400 hover:border-white/25'
+              }`}
+            >
+              {f === 'all' ? 'All' : f === 'manual' ? 'Manual' : 'System'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="px-4 pb-4 text-xs text-zinc-600 italic">No completed logs yet.</div>
+      ) : (
+        <>
+          {/* Column headers */}
+          <div className="px-4 py-1.5 grid grid-cols-[1fr_90px_80px_130px] gap-2 text-[10px] uppercase tracking-widest text-zinc-600 border-t border-white/5">
+            <span>Worker / Job</span>
+            <span>Duration</span>
+            <span>Clocked out</span>
+            <span>Reason</span>
+          </div>
+          <div className="divide-y divide-white/5">
+            {displayed.map(l => {
+              const meta = STOP_REASON_META[l.stopReason ?? 'manual'] ?? UNKNOWN_REASON;
+              const isSystem = l.stopReason && l.stopReason !== 'manual';
+              return (
+                <div
+                  key={l.id}
+                  className={`px-4 py-2.5 grid grid-cols-[1fr_90px_80px_130px] gap-2 items-center text-xs ${isSystem ? 'bg-amber-500/5' : ''}`}
+                >
+                  <div className="min-w-0">
+                    <p className="text-white font-medium truncate">{l.userName}</p>
+                    <p className="text-zinc-500 truncate">{l.customer || l.jobId}</p>
+                  </div>
+                  <span className="text-zinc-300 tabular-nums">
+                    {l.durationMinutes != null ? fmtDurShort(l.durationMinutes) : '—'}
+                  </span>
+                  <span className="text-zinc-400 tabular-nums">
+                    {l.endTime ? fmtAuditTime(l.endTime) : '—'}
+                  </span>
+                  <span className={`flex items-center gap-1.5 font-medium ${meta.color}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${meta.dot}`} />
+                    {meta.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {filtered.length > 10 && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="w-full px-4 py-2.5 text-xs text-zinc-500 hover:text-white border-t border-white/5 transition-colors flex items-center justify-center gap-1"
+            >
+              {expanded ? <><ChevronUp className="w-3 h-3" /> Show less</> : <><ChevronDown className="w-3 h-3" /> Show all {filtered.length} records</>}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
@@ -3851,6 +3994,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               </div>
             </div>
           </div>
+
+          {/* ── Clock-Out Audit Log ────────────────────────────────────── */}
+          <ClockOutAuditLog logs={tvAllLogs} />
 
         </div>
       )}

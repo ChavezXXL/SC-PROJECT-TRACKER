@@ -1,4 +1,6 @@
 import type { Job, Quote, SystemSettings, PurchaseOrder } from '../types';
+import type { PartHistory } from '../utils/partHistory';
+import { printTraveler } from './travelerPrint';
 
 // ── Shared PDF Utilities ──
 
@@ -283,166 +285,13 @@ export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
 }
 
 // ── Job Traveler PDF ──
-// Uses its OWN print window with standalone CSS — does NOT use openPrintWindow.
-// Key guarantees:
-//   • @page margin:0.5in (matches Chrome default so we never fight the browser)
-//   • zoom:0.82 in @media print — Chrome scales layout for print, guaranteeing
-//     single-page even on worst-case printer driver margin settings
-//   • No external image requests (QR removed, replaced with large job number)
-//   • No page-break-inside:avoid on <tr> — that rule was cascading the entire
-//     table to page 2 if there wasn't enough room for ALL rows at once
-
-export function printJobTravelerPDF(job: Job, settings: SystemSettings) {
-  const priorityColor = job.priority === 'urgent' ? '#dc2626' : job.priority === 'high' ? '#ea580c' : '#374151';
-  const win = window.open('', '_blank', 'width=860,height=1050');
-  if (!win) return;
-
-  win.document.write(`<!DOCTYPE html><html><head><title>Traveler - ${job.poNumber || ''}</title>
-  <style>
-    /* ─── PAGE SETUP ─── */
-    @page { size: letter portrait; margin: 0.5in; }
-    * { margin:0; padding:0; box-sizing:border-box; }
-    html, body { background:#fff; font-family:'Segoe UI',-apple-system,sans-serif; font-size:10px; color:#111; height:auto; }
-
-    /* ─── PRINT: zoom scales the layout itself in Chrome/Edge ─── */
-    @media print {
-      html { zoom: 0.82; }
-      body { height: auto !important; }
-    }
-
-    /* ─── LAYOUT HELPERS ─── */
-    .wrap   { padding:0; }
-    .row    { display:flex; align-items:stretch; }
-    .grid4  { display:grid; grid-template-columns:repeat(4,1fr); }
-    .grid3  { display:grid; grid-template-columns:repeat(3,1fr); }
-    .cell   { border:1px solid #d1d5db; padding:5px 8px; }
-    .cell + .cell { border-left:none; }
-    .lbl    { font-size:8px; font-weight:700; color:#2563eb; text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
-    .val    { font-size:11px; font-weight:700; color:#111; }
-    .val.big{ font-size:16px; font-weight:900; color:#1d4ed8; }
-    .val.red{ color:#dc2626; }
-
-    /* ─── HEADER STRIP ─── */
-    .hdr { display:flex; align-items:center; justify-content:space-between;
-           border:2px solid #111; border-radius:3px; padding:6px 10px; margin-bottom:6px; }
-    .hdr-left { display:flex; align-items:center; gap:10px; }
-    .hdr-logo { max-height:38px; max-width:120px; object-fit:contain; }
-    .hdr-co   { font-size:14px; font-weight:900; color:#111; letter-spacing:-.2px; }
-    .hdr-title{ font-size:11px; font-weight:700; color:#6b7280; }
-    .hdr-jobno{ text-align:right; }
-    .hdr-jobno .lbl { font-size:8px; color:#2563eb; }
-    .hdr-jobno .num { font-size:20px; font-weight:900; color:#111; letter-spacing:-.5px; }
-
-    /* ─── INFO BAND ─── */
-    .info-band { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr; border:1px solid #d1d5db; border-radius:3px; margin-bottom:6px; overflow:hidden; }
-    .info-band .cell { border:none; border-right:1px solid #d1d5db; padding:5px 8px; }
-    .info-band .cell:last-child { border-right:none; }
-
-    /* ─── SPECIAL / NOTES ─── */
-    .special { border:1.5px solid #fbbf24; border-radius:3px; padding:5px 8px; margin-bottom:6px; background:#fffbeb; }
-    .special .lbl { color:#92400e; }
-    .special .txt { font-size:10px; color:#451a03; line-height:1.4; }
-    .notes   { border:1px solid #d1d5db; border-radius:3px; padding:5px 8px; margin-bottom:6px; background:#f9fafb; }
-    .notes .txt  { font-size:10px; color:#374151; line-height:1.4; }
-
-    /* ─── OPERATION LOG TABLE ─── */
-    .op-title { font-size:9px; font-weight:700; color:#2563eb; text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px; border-bottom:2px solid #2563eb; padding-bottom:2px; }
-    table { width:100%; border-collapse:collapse; }
-    thead th { font-size:8.5px; font-weight:700; color:#2563eb; text-align:left; padding:4px 6px; border-bottom:1.5px solid #2563eb; border-top:1px solid #d1d5db; background:#f8faff; white-space:nowrap; }
-    tbody td { padding:0 6px; border-bottom:1px solid #e5e7eb; font-size:10px; height:24px; }
-    tbody tr:last-child td { border-bottom:2px solid #d1d5db; }
-
-    /* ─── FOOTER ─── */
-    .footer { display:flex; justify-content:space-between; align-items:flex-end; margin-top:8px; padding-top:6px; border-top:1px solid #d1d5db; }
-    .sig-line { flex:1; margin-right:40px; }
-    .sig-name { font-size:9px; color:#2563eb; font-weight:700; margin-bottom:16px; }
-    .sig-rule { border-top:1px solid #111; padding-top:3px; font-size:8px; color:#6b7280; }
-    .coc { font-size:7.5px; color:#6b7280; max-width:320px; line-height:1.4; text-align:right; }
-  </style>
-  </head><body><div class="wrap">
-
-  <!-- ── HEADER ── -->
-  <div class="hdr">
-    <div class="hdr-left">
-      ${settings.companyLogo ? `<img class="hdr-logo" src="${settings.companyLogo}" />` : ''}
-      <div>
-        <div class="hdr-co">${settings.companyName || 'Company'}</div>
-        <div class="hdr-title">Production Traveler</div>
-      </div>
-    </div>
-    <div class="hdr-jobno">
-      <div class="lbl">Job No.</div>
-      <div class="num">${job.jobIdsDisplay || job.id.slice(-6)}</div>
-    </div>
-  </div>
-
-  <!-- ── INFO BAND ── -->
-  <div class="info-band">
-    <div class="cell">
-      <div class="lbl">Customer</div>
-      <div class="val">${job.customer || '—'}</div>
-    </div>
-    <div class="cell">
-      <div class="lbl">Purchase Order</div>
-      <div class="val">${job.poNumber || '—'}</div>
-    </div>
-    <div class="cell">
-      <div class="lbl">Part Number</div>
-      <div class="val">${job.partNumber || '—'}</div>
-    </div>
-    <div class="cell">
-      <div class="lbl">Quantity</div>
-      <div class="val big">${job.quantity ?? '—'}</div>
-    </div>
-    <div class="cell">
-      <div class="lbl">Due Date</div>
-      <div class="val red">${job.dueDate || '—'}</div>
-      ${job.dateReceived ? `<div style="font-size:8px;color:#6b7280;margin-top:2px">Recv: ${job.dateReceived}</div>` : ''}
-      ${job.priority ? `<div style="font-size:8px;font-weight:700;text-transform:uppercase;color:${priorityColor};margin-top:2px">${job.priority}</div>` : ''}
-    </div>
-  </div>
-
-  ${job.partImage ? `<div style="margin-bottom:6px"><img src="${job.partImage}" style="max-height:60px;max-width:120px;object-fit:contain;border:1px solid #e5e7eb;border-radius:3px" /></div>` : ''}
-
-  <!-- ── SPECIAL INSTRUCTIONS ── -->
-  ${job.specialInstructions ? `<div class="special"><div class="lbl">⚠ Special Instructions</div><div class="txt">${job.specialInstructions}</div></div>` : ''}
-
-  <!-- ── NOTES ── -->
-  ${job.info ? `<div class="notes"><div class="lbl">Notes</div><div class="txt">${job.info}</div></div>` : ''}
-
-  <!-- ── OPERATION LOG ── -->
-  <div class="op-title">Operation Log</div>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:22%">Operation</th>
-        <th style="width:14%">Machine / Station</th>
-        <th style="width:16%">Operator</th>
-        <th style="width:10%">Date</th>
-        <th style="width:9%">Start</th>
-        <th style="width:9%">End</th>
-        <th style="width:9%">Duration</th>
-        <th style="width:11%">Qty Out / Init</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${Array(8).fill('<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
-    </tbody>
-  </table>
-
-  <!-- ── FOOTER ── -->
-  <div class="footer">
-    <div class="sig-line">
-      <div class="sig-name">${settings.companyName || 'Company'}</div>
-      <div class="sig-rule">Authorized Signature &amp; Date</div>
-    </div>
-    <div class="coc">CERTIFICATE OF CONFORMANCE: All processes conform to applicable specifications, drawings, contracts and/or order requirements unless otherwise noted. Job #${job.jobIdsDisplay || ''} · PO ${job.poNumber || ''}</div>
-  </div>
-
-  </div></body></html>`);
-
-  win.document.close();
-  setTimeout(() => { win.print(); }, 600);
+// Thin wrapper — delegates entirely to travelerPrint.ts which is the single
+// source of truth for traveler design. Both the Jobs-view "Print" button and
+// the modal "Print Traveler" button now produce identical output.
+// The `history` param is kept for call-site compatibility but not used;
+// travelerPrint handles run history internally if needed in future.
+export function printJobTravelerPDF(job: Job, settings: SystemSettings, _history?: PartHistory | null): void {
+  void printTraveler(job, settings, {});
 }
 
 // ── Invoice PDF ──

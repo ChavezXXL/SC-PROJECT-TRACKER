@@ -14,7 +14,7 @@ import {
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
   Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
-  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan
+  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan, DollarSign, TrendingUp, TrendingDown, Award
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
@@ -37,6 +37,7 @@ import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
 import { POScanner } from './components/POScanner';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
+import { printTraveler } from './services/travelerPrint';
 import { businessDaysUntilSync, isHolidaySync, getHolidays } from './services/holidays';
 // ── Tier-gated feature wrapper ──
 // Wraps locked views with upgrade nudges based on the active tenant's plan.
@@ -50,6 +51,7 @@ import { TrialBanner } from './components/TrialBanner';
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
+import { computeJobETA, computeCapacityForecast, RISK_COLORS } from './utils/jobETA';
 import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
 import { findStageForOperation, shouldAutoRoute, resolveJobStage } from './utils/stageRouting';
 import { computeStageMetrics, FLOW_CONSTANTS } from './utils/flowMetrics';
@@ -502,74 +504,9 @@ const PWAInstallBanner = () => {
 // Uses the proven "visibility-only" pattern: hide everything, un-hide the
 // printable-area and its descendants, then reposition the printable-area
 // to the page origin. Previous approach used `display: none` on the parent
-// `main` element, which accidentally hid the printable modal too (the modal
-// lives inside main in the DOM) — result was a blank print.
-const PrintStyles = () => (
-  <style>{`
-    @media print {
-      /* -------------------------------------------------------------------
-         SINGLE-PAGE TRAVELER PRINT
-         Strategy: visibility toggle (not display:none) so the modal stays
-         in the DOM. Then zoom:0.75 on #printable-area — unlike CSS transform,
-         zoom actually shrinks the layout box the print engine uses for
-         pagination, so the browser calculates page breaks at the REDUCED
-         size rather than the original. transform:scale does NOT do this.
-         ------------------------------------------------------------------- */
-      @page {
-        size: letter portrait;
-        margin: 0.45in;
-      }
-
-      html, body, #root {
-        background: white !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        overflow: visible !important;
-        height: auto !important;
-      }
-
-      /* Hide everything except printable-area content */
-      body * { visibility: hidden !important; }
-      #printable-area,
-      #printable-area * { visibility: visible !important; }
-
-      /* Anchor to page top-left, let zoom handle the sizing.
-         width:100% keeps the scaled content from overflowing horizontally. */
-      #printable-area {
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        zoom: 0.75 !important;      /* shrinks layout size → 1 page */
-        background: white !important;
-        overflow: visible !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-      }
-
-      .no-print, .no-print * {
-        visibility: hidden !important;
-        display: none !important;
-      }
-
-      /* Images — must not overflow after zoom */
-      #printable-area img { max-width: 100% !important; height: auto !important; }
-      #printable-area .print-qr-img { max-width: 180px !important; width: 180px !important; mix-blend-mode: normal !important; }
-      #printable-area .print-qr-label { font-size: 12pt !important; }
-      #printable-area .traveler-logo { max-height: 44px !important; max-width: 180px !important; width: auto !important; height: auto !important; }
-      #printable-area .print-part-photo { max-width: 120px !important; max-height: 80px !important; }
-      #printable-area [class*="shadow"] { box-shadow: none !important; }
-
-      /* No forced page breaks inside boxes */
-      #printable-area .border-4,
-      #printable-area .border-2 {
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-      }
-    }
-  `}</style>
-);
+// PrintStyles is intentionally a no-op — the traveler prints in a dedicated
+// popup window via travelerPrint.ts, so no @media print rules are needed here.
+const PrintStyles = () => null;
 
 // --- DEFAULT WORKFLOW STAGES ---
 export const DEFAULT_STAGES: JobStage[] = [
@@ -1076,6 +1013,137 @@ function swPost(msg: object) {
   } catch {}
 }
 
+// ── Camera-based QR Scanner tab ──────────────────────────────────────────────
+const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (id: string) => void; addToast: any }) => {
+  const [mode, setMode] = useState<'input' | 'camera'>('input');
+  const [scanning, setScanning] = useState(false);
+  const [error, setError] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number>(0);
+
+  const resolveValue = (val: string) => {
+    let v = val.trim();
+    // Handle full deep-link URL from QR
+    try { const u = new URL(v); v = u.searchParams.get('jobId') || v; } catch {}
+    const m = v.match(/[?&]jobId=([^&]+)/);
+    if (m) v = decodeURIComponent(m[1]);
+    return v;
+  };
+
+  const handleResult = (raw: string) => {
+    const val = resolveValue(raw);
+    const found = jobs.find(j =>
+      j.id === val || j.jobIdsDisplay === val || j.poNumber === val ||
+      j.id.toLowerCase() === val.toLowerCase()
+    );
+    if (found) {
+      stopCamera();
+      onJobFound(found.id);
+      addToast('success', `Opened: ${found.poNumber}`);
+    } else {
+      addToast('info', 'QR scanned — job not found. Try typing the PO#.');
+    }
+  };
+
+  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      const val = (e.currentTarget as HTMLInputElement).value;
+      (e.currentTarget as HTMLInputElement).value = '';
+      handleResult(val);
+    }
+  };
+
+  const stopCamera = () => {
+    cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setScanning(false);
+  };
+
+  const startCamera = async () => {
+    setError('');
+    setScanning(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      // Use BarcodeDetector if available (Chrome 88+)
+      const BD = (window as any).BarcodeDetector;
+      if (!BD) { setError('Camera scan needs Chrome 88+. Use the text input instead.'); stopCamera(); return; }
+      const detector = new BD({ formats: ['qr_code'] });
+      const scan = async () => {
+        if (!videoRef.current || !streamRef.current) return;
+        try {
+          const codes = await detector.detect(videoRef.current);
+          if (codes.length > 0) { handleResult(codes[0].rawValue); return; }
+        } catch {}
+        rafRef.current = requestAnimationFrame(scan);
+      };
+      rafRef.current = requestAnimationFrame(scan);
+    } catch (e: any) {
+      setError(e.name === 'NotAllowedError' ? 'Camera permission denied. Allow camera access and try again.' : 'Could not start camera. Use the text input instead.');
+      setScanning(false);
+    }
+  };
+
+  useEffect(() => () => stopCamera(), []);
+
+  return (
+    <div className="flex-1 flex items-center justify-center animate-fade-in py-8 px-4">
+      <div className="bg-zinc-900 rounded-3xl border border-white/10 text-center w-full max-w-sm shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="p-6 pb-4">
+          <QrCode className="w-14 h-14 mx-auto text-blue-500 mb-3" />
+          <h2 className="text-xl font-bold text-white mb-1">Scan Job QR</h2>
+          <p className="text-zinc-500 text-xs">Point camera at printed traveler QR code or use hardware scanner</p>
+        </div>
+
+        {/* Mode tabs */}
+        <div className="flex border-t border-white/5">
+          <button onClick={() => { stopCamera(); setMode('input'); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'input' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+            ⌨️ Type / Hardware
+          </button>
+          <button onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'camera' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+            📷 Camera Scan
+          </button>
+        </div>
+
+        <div className="p-6 pt-4">
+          {mode === 'input' ? (
+            <>
+              <input autoFocus onKeyDown={handleKey} className="bg-black/50 border border-blue-500 rounded-xl px-4 py-3 text-white text-center w-full text-base focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Scan or type PO / Job ID…" />
+              <p className="text-zinc-600 text-xs mt-3">Press Enter after typing or scanning with a USB barcode reader</p>
+            </>
+          ) : (
+            <>
+              <div className="relative rounded-xl overflow-hidden bg-black aspect-square mb-3">
+                <video ref={videoRef} muted playsInline className="w-full h-full object-cover" />
+                {scanning && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="w-48 h-48 border-2 border-blue-400 rounded-lg" style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }} />
+                  </div>
+                )}
+              </div>
+              {error ? (
+                <p className="text-red-400 text-xs">{error}</p>
+              ) : scanning ? (
+                <p className="text-blue-400 text-xs animate-pulse">Hold QR code in the box…</p>
+              ) : null}
+              <button onClick={scanning ? stopCamera : startCamera} className={`mt-3 w-full py-2.5 rounded-xl font-bold text-sm transition-all ${scanning ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
+                {scanning ? 'Stop Camera' : 'Start Camera'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User, addToast: any, onLogout: () => void, notifBell?: React.ReactNode }) => {
   const [tab, setTab] = useState<'jobs' | 'history' | 'scan' | 'progress'>('jobs');
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
@@ -1208,20 +1276,36 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     scheduleUpcomingAlarms(shopSettingsForReminders).catch(() => {});
   }, [shopSettingsForReminders]);
 
-  // ── Stable ref for activeLog so the alarm watcher never needs to remount ──
-  // BUG FIX: previously `activeLog?.id` was in the dependency array, causing
-  // watchShiftAlarms to tear down + recreate on every clock-in/out. The new
-  // watcher immediately runs a 30-minute lookback catch-up, which could fire
-  // the clock-out alarm and instantly log the worker back out. Using a ref
-  // gives the callback live access without adding it as a dep.
+  // ── Stable refs so watchShiftAlarms mounts ONCE and never remounts ────
+  //
+  // ROOT CAUSE OF RANDOM CLOCK-OUT BUG:
+  // Previously the dependency array was [shopSettingsForReminders]. Any
+  // Firestore settings update (new object reference) would tear down and
+  // recreate the watcher. On recreation, tick(30 * 60_000) runs immediately —
+  // a 30-minute catch-up. If a clockOut alarm was within the last 30 minutes,
+  // DB.stopTimeLog() fired, randomly ending an active worker's shift.
+  //
+  // Fix strategy:
+  //   1. Keep both mutable values in refs so the callback always reads the
+  //      latest value without being listed as a dependency.
+  //   2. Empty dep array [] — watcher mounts once on component mount, cleaned
+  //      up once on unmount. Settings changes never cause a remount.
+  //   3. shiftAlarms.ts now passes `isCatchup: boolean` to onFire. Destructive
+  //      actions (clockOut, pauseTimers) are skipped during any catch-up sweep
+  //      — only real-time fires (exact 60s window) execute those.
   const activeLogRef = useRef<TimeLog | null>(null);
   useEffect(() => { activeLogRef.current = activeLog; }, [activeLog]);
 
+  const shopSettingsAlarmRef = useRef<SystemSettings>(shopSettingsForReminders);
+  useEffect(() => { shopSettingsAlarmRef.current = shopSettingsForReminders; }, [shopSettingsForReminders]);
+
   useEffect(() => {
     const stop = watchShiftAlarms(
-      () => shopSettingsForReminders,
-      async (alarm) => {
+      () => shopSettingsAlarmRef.current,
+      async (alarm, isCatchup) => {
         // Audible bell first — reliably wakes people on the floor.
+        // Audio fires in both real-time AND catch-up (good UX: user reopens
+        // the app and hears the bell they missed — but no destructive action).
         playAlarmSound(alarm.sound || 'bell', alarm.customSoundUrl, alarm.durationSec);
         // Visual notification (if permission granted).
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
@@ -1237,21 +1321,27 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             } as any);
           } catch {}
         }
-        // Side effects: pause running work or clock out when flagged.
+        // Destructive side-effects ONLY in real-time fires (isCatchup = false).
+        // This prevents workers being clocked out when:
+        //   • The tab is refreshed mid-shift
+        //   • Settings are saved (new Firestore snapshot)
+        //   • The phone/iPad wakes up from sleep
+        if (isCatchup) return;
         // Read from ref so we always have the current log without re-mounting.
         const currentLog = activeLogRef.current;
         if (alarm.pauseTimers && currentLog && !currentLog.pausedAt) {
           try { await DB.pauseTimeLog(currentLog.id, `Auto-pause: ${alarm.label}`); } catch {}
         }
         if (alarm.clockOut && currentLog) {
-          try { await DB.stopTimeLog(currentLog.id); } catch {}
+          try { await DB.stopTimeLog(currentLog.id, undefined, undefined, undefined, 'alarm:shift-end'); } catch {}
         }
       }
     );
     return stop;
-  // Intentionally omit activeLog?.id — use activeLogRef above instead.
+  // Empty dep array: watcher mounts once. Both activeLog and shopSettings are
+  // accessed via refs so they're always current without causing remounts.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shopSettingsForReminders]);
+  }, []);
 
   // ── Listen for TIMER_ACTION messages from SW notification buttons ──
   useEffect(() => {
@@ -1262,7 +1352,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       if (!logId) return;
       try {
         if (action === 'stop') {
-          await DB.stopTimeLog(logId);
+          await DB.stopTimeLog(logId, undefined, undefined, undefined, 'sw:notification');
           addToast('success', '⏹️ Timer stopped');
         } else if (action === 'pause') {
           await DB.pauseTimeLog(logId, 'manual');
@@ -1305,7 +1395,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const handleStopJob = async (logId: string) => {
     const stoppedJobId = activeLog?.jobId ?? null;
     try {
-      await DB.stopTimeLog(logId);
+      await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual');
       swPost({ type: 'TIMER_STOP' });
       addToast('success', 'Job Stopped');
       // Return user to the job they just stopped so they can start another operation
@@ -1466,14 +1556,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       </div>
 
       {tab === 'scan' ? (
-        <div className="flex-1 flex items-center justify-center animate-fade-in py-12">
-          <div className="bg-zinc-900 p-8 rounded-3xl border border-white/10 text-center max-w-sm w-full shadow-2xl">
-            <QrCode className="w-16 h-16 mx-auto text-blue-500 mb-4" />
-            <h2 className="text-2xl font-bold text-white mb-4">Scan Job QR</h2>
-            <input autoFocus onKeyDown={handleScan} className="bg-black/50 border border-blue-500 rounded-xl px-4 py-3 text-white text-center w-full text-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Scan or Type..." />
-            <p className="text-zinc-500 text-xs mt-4">Point scanner at Traveler QR code.</p>
-          </div>
-        </div>
+        <ScanJobTab jobs={jobs} onJobFound={(id) => { setScannedJobId(id); setTab('jobs'); }} addToast={addToast} />
+
       ) : tab === 'history' ? (
         <div className="space-y-4 animate-fade-in">
           {/* Weekly summary */}
@@ -1660,19 +1744,19 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
     priority: t.showPriority !== false,
     customer: t.showCustomer !== false,
   };
-  const opRows = Math.min(20, Math.max(4, t.operationLogRows ?? 8));
+  const opRows = Math.min(16, Math.max(4, t.operationLogRows ?? 6));
 
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col bg-black/90 backdrop-blur-sm animate-fade-in print-overlay" onClick={onClose}>
-      <div className="bg-white text-black w-full max-w-3xl mx-auto rounded-xl shadow-2xl relative flex flex-col my-4 mx-4 sm:mx-auto" style={{maxHeight:'calc(100dvh - 2rem)'}} id="printable-modal" onClick={e => e.stopPropagation()}>
-        <div className="bg-zinc-900 text-white p-3 sm:p-4 flex justify-between items-center no-print shrink-0 border-b border-zinc-700 sticky top-0 rounded-t-xl z-10">
+    <div className="fixed inset-0 z-[200] flex flex-col bg-black/90 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white text-black w-full max-w-3xl mx-auto rounded-xl shadow-2xl relative flex flex-col my-4 mx-4 sm:mx-auto" style={{maxHeight:'calc(100dvh - 2rem)'}} onClick={e => e.stopPropagation()}>
+        <div className="bg-zinc-900 text-white p-3 sm:p-4 flex justify-between items-center shrink-0 border-b border-zinc-700 sticky top-0 rounded-t-xl z-10">
           <div>
             <h3 className="font-bold flex items-center gap-2 text-base sm:text-lg"><Printer className="w-5 h-5 text-blue-500" /> Print Preview</h3>
             <p className="text-xs text-zinc-400 hidden sm:block">Review details before printing.</p>
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-3 py-2 text-zinc-400 hover:text-white text-sm font-medium">Cancel</button>
-            <button onClick={() => { window.print(); if (job && onPrinted) onPrinted(job.id); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm"><Printer className="w-4 h-4" /><span className="hidden sm:inline">Print </span>Traveler</button>
+            <button onClick={() => { printTraveler(job, appSettings).then(() => { if (onPrinted) onPrinted(job.id); }); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm"><Printer className="w-4 h-4" /><span className="hidden sm:inline">Print </span>Traveler</button>
           </div>
         </div>
         <div id="printable-area" className="flex-1 p-4 sm:p-6 bg-white overflow-y-auto overflow-x-hidden">
@@ -1717,12 +1801,12 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
                 {show.dueDate && (
                   <div className="border-2 border-gray-300 p-2"><label className="block text-xs uppercase font-bold text-gray-500 mb-1">Due Date</label><div className="print-field-md text-base font-black text-red-600">{job.dueDate || '—'}</div></div>
                 )}
-                {(job.expectedHours || 0) > 0 && (
-                  <div className="border-2 border-blue-400 bg-blue-50 p-2">
-                    <label className="block text-xs uppercase font-bold text-blue-600 mb-1">Est. Time</label>
-                    <div className="text-base font-black text-blue-700">{job.expectedHours}h</div>
+                <div className="border-2 border-blue-400 bg-blue-50 p-2">
+                  <label className="block text-xs uppercase font-bold text-blue-600 mb-1">Est. Time</label>
+                  <div className="text-base font-black text-blue-700">
+                    {(job.expectedHours || 0) > 0 ? `${job.expectedHours}h` : '—'}
                   </div>
-                )}
+                </div>
                 {(job.pricePerPart || 0) > 0 && (job.quantity || 0) > 0 && (
                   <div className="border-2 border-gray-300 p-2">
                     <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Job Value</label>
@@ -1965,6 +2049,23 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const overdueJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < todayN);
   const dueSoonJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3DaysN);
 
+  // ── Pipeline value — total quote $ across all open jobs
+  const pipelineValue = jobs
+    .filter(j => j.status !== 'completed' && (j.quoteAmount || 0) > 0)
+    .reduce((a, j) => a + (j.quoteAmount || 0), 0);
+
+  // ── On-time delivery rate (rolling 90 days of completed jobs with due dates)
+  const ninetyDaysAgo = Date.now() - 90 * 86400000;
+  const recentCompleted = jobs.filter(j =>
+    j.status === 'completed' && j.completedAt && j.completedAt > ninetyDaysAgo && j.dueDate
+  );
+  const onTimeCount = recentCompleted.filter(j =>
+    j.completedAt! <= new Date(j.dueDate! + 'T23:59:59').getTime()
+  ).length;
+  const onTimePct = recentCompleted.length > 0
+    ? Math.round((onTimeCount / recentCompleted.length) * 100)
+    : null;
+
   const todayStartMs = new Date(); (todayStartMs as any).setHours(0,0,0,0); const todayMs = todayStartMs.getTime();
 
   // Workers who haven't logged any operations today
@@ -1998,7 +2099,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
       {myActiveLog && (
         <ActiveJobPanel job={myActiveJob || null} log={myActiveLog}
           onStop={async id => {
-            try { await DB.stopTimeLog(id); addToast('success', 'Timer Stopped'); }
+            try { await DB.stopTimeLog(id, undefined, undefined, undefined, 'manual'); addToast('success', 'Timer Stopped'); }
             catch (e) { addToast('error', 'Failed to stop'); throw e; }
           }}
           onPause={async (id) => { try { await DB.pauseTimeLog(id, 'manual'); addToast('info', 'Timer Paused'); } catch { addToast('error', 'Failed to pause'); } }}
@@ -2029,6 +2130,19 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           return (mins / 60) * rate > j.quoteAmount!;
         }).length : 0;
 
+        // Brain: ETA / capacity forecast — compute inline for the dashboard
+        const openJobs = jobs.filter(j => j.status !== 'completed');
+        const dashEtaMap = new Map<string, ReturnType<typeof computeJobETA>>();
+        for (const job of openJobs) {
+          const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+          dashEtaMap.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
+        }
+        const workerCount = Math.max(1, dashWorkers.filter(w => w.isActive !== false).length || activeLogs.length || 1);
+        const activeWorkerCount = new Set(activeLogs.map(l => l.userId)).size;
+        const dashForecast = computeCapacityForecast(dashEtaMap, workerCount, activeWorkerCount);
+        const etaCriticalCount = [...dashEtaMap.values()].filter(e => e.riskLevel === 'critical' && !overdueJobs.find(j => j.id === e.jobId)).length;
+        const etaAtRiskCount = dashForecast.jobsAtRisk;
+
         // Customer duplicate detection — same normalizer as SettingsView.
         // Track UNIQUE original names per key (not job counts). After a
         // merge all jobs share one canonical name so the set size drops to 1
@@ -2056,6 +2170,20 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         if (missingQuotes > 0 && missingQuotes >= 5) items.push({ label: `${missingQuotes} completed jobs missing quote`, count: missingQuotes, color: '#3b82f6', icon: FileText, onClick: () => setView('admin-jobs') });
         if (overBudgetCount > 0) items.push({ label: `${overBudgetCount} job${overBudgetCount > 1 ? 's' : ''} over budget`, count: overBudgetCount, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
         if (staleCount > 0) items.push({ label: `${staleCount} stale job${staleCount > 1 ? 's' : ''} — no activity 48h+`, count: staleCount, color: '#71717a', icon: Clock, onClick: () => setView('admin-jobs') });
+        if (etaAtRiskCount > 0) items.push({ label: `${etaAtRiskCount} job${etaAtRiskCount > 1 ? 's' : ''} behind pace`, count: etaAtRiskCount, color: '#f97316', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
+        if (dashForecast.overloaded) items.push({ label: `Shop ${Math.round(dashForecast.capacityPct)}% loaded this week`, count: 1, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
+        else if (dashForecast.capacityPct > 75 && dashForecast.totalRemainingHours > 0) items.push({ label: `Capacity at ${Math.round(dashForecast.capacityPct)}% this week`, count: 1, color: '#f59e0b', icon: Clock, onClick: () => setView('admin-jobs') });
+        // Due-date clustering — multiple jobs sharing the same due date
+        const dueDateMap = new Map<string, number>();
+        jobs.filter(j => j.status !== 'completed' && j.dueDate).forEach(j => dueDateMap.set(j.dueDate!, (dueDateMap.get(j.dueDate!) || 0) + 1));
+        const clusteredDates = [...dueDateMap.entries()].filter(([, n]) => n >= 3);
+        if (clusteredDates.length > 0) {
+          const worst = clusteredDates.sort((a, b) => b[1] - a[1])[0];
+          items.push({ label: `${worst[1]} jobs all due ${worst[0]}`, count: worst[1], color: '#a78bfa', icon: Calendar, onClick: () => setView('admin-jobs') });
+        }
+        // Rush jobs — created with < 5 days lead time
+        const rushCount = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.createdAt && (new Date(j.dueDate + 'T23:59:59').getTime() - j.createdAt) / 86400000 <= 5).length;
+        if (rushCount > 0) items.push({ label: `${rushCount} rush job${rushCount > 1 ? 's' : ''} — short lead time`, count: rushCount, color: '#f87171', icon: Zap, onClick: () => setView('admin-jobs') });
 
         if (items.length === 0) return null;
         return (
@@ -2101,28 +2229,105 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         );
       })()}
 
-      <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Live Activity</p><h3 className="text-xl sm:text-3xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] sm:text-xs text-blue-400 mt-1 truncate">Jobs running now</p></div>
-          <Activity className={`w-7 h-7 sm:w-10 sm:h-10 text-blue-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
+      <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4">
+        {/* Live Activity */}
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Live</p><h3 className="text-xl sm:text-2xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] text-blue-400 mt-0.5 truncate">Jobs running</p></div>
+          <Activity className={`w-7 h-7 sm:w-8 sm:h-8 text-blue-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
         </div>
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-3xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Total open jobs</p></div>
-          <Briefcase className="text-zinc-600 w-7 h-7 sm:w-10 sm:h-10 shrink-0" />
+        {/* Open Jobs */}
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">In progress</p></div>
+          <Briefcase className="text-zinc-600 w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
         </div>
-        <div className={`card-shine hover-lift-glow p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10' : 'bg-zinc-900/50 border-white/5'}`}>
-          <div className="min-w-0"><p className={`text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-3xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] sm:text-xs mt-1 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due date</p></div>
-          <AlertTriangle className={`w-7 h-7 sm:w-10 sm:h-10 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
+        {/* Overdue */}
+        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0"><p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-2xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] mt-0.5 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due</p></div>
+          <AlertTriangle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
         </div>
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Floor Staff</p><h3 className="text-xl sm:text-3xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Active Operators</p></div>
-          <Users className="text-emerald-500 w-7 h-7 sm:w-10 sm:h-10 shrink-0" />
+        {/* Floor Staff */}
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Floor Staff</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">Clocked in</p></div>
+          <Users className="text-emerald-500 w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
         </div>
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-6 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-sm font-bold uppercase tracking-wider truncate">Today</p><h3 className="text-xl sm:text-3xl font-black text-white truncate">{todayHrsDisplay}</h3><p className="text-[10px] sm:text-xs text-zinc-500 mt-1 truncate">Hours logged</p></div>
-          <Clock className="text-blue-400 w-7 h-7 sm:w-10 sm:h-10 opacity-60 shrink-0" />
+        {/* Today's hours */}
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Today</p><h3 className="text-lg sm:text-xl font-black text-white truncate">{todayHrsDisplay}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">Hours logged</p></div>
+          <Clock className="text-blue-400 w-7 h-7 sm:w-8 sm:h-8 opacity-60 shrink-0" />
+        </div>
+        {/* Pipeline value */}
+        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${pipelineValue > 0 ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0">
+            <p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Pipeline</p>
+            <h3 className={`text-lg sm:text-xl font-black truncate ${pipelineValue > 0 ? 'text-emerald-400' : 'text-zinc-600'}`}>
+              {pipelineValue > 0 ? `$${pipelineValue >= 1000 ? (pipelineValue / 1000).toFixed(1) + 'k' : pipelineValue.toFixed(0)}` : '—'}
+            </h3>
+            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">Open order value</p>
+          </div>
+          <DollarSign className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${pipelineValue > 0 ? 'text-emerald-500' : 'text-zinc-700'}`} />
+        </div>
+        {/* On-time rate */}
+        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${onTimePct === null ? 'bg-zinc-900/50 border-white/5' : onTimePct >= 90 ? 'bg-emerald-500/5 border-emerald-500/20' : onTimePct >= 70 ? 'bg-amber-500/5 border-amber-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+          <div className="min-w-0">
+            <p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">On-Time</p>
+            <h3 className={`text-lg sm:text-xl font-black truncate ${onTimePct === null ? 'text-zinc-600' : onTimePct >= 90 ? 'text-emerald-400' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
+              {onTimePct === null ? '—' : `${onTimePct}%`}
+            </h3>
+            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">90-day delivery</p>
+          </div>
+          <CheckCircle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${onTimePct === null ? 'text-zinc-700' : onTimePct >= 90 ? 'text-emerald-500' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`} />
         </div>
       </div>
+
+      {/* ── WEEKLY CAPACITY FORECAST — ETA engine output ── */}
+      {(() => {
+        // Only show when we have real data (at least one job with expected hours or part history)
+        const openJobsForCap = jobs.filter(j => j.status !== 'completed');
+        if (openJobsForCap.length === 0) return null;
+        const dashEtaMap2 = new Map<string, ReturnType<typeof computeJobETA>>();
+        for (const job of openJobsForCap) {
+          const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+          dashEtaMap2.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
+        }
+        const workerCount2 = Math.max(1, dashWorkers.filter(w => w.isActive !== false).length || activeLogs.length || 1);
+        const activeCount2 = new Set(activeLogs.map(l => l.userId)).size;
+        const fc = computeCapacityForecast(dashEtaMap2, workerCount2, activeCount2);
+        if (fc.totalRemainingHours === 0) return null; // nothing to forecast
+
+        const barPct = Math.min(100, fc.capacityPct);
+        const barColor = fc.overloaded ? '#ef4444' : fc.capacityPct > 75 ? '#f97316' : '#10b981';
+        const statusLabel = fc.overloaded
+          ? `Overloaded — ${Math.round(fc.capacityPct - 100)}% more work than capacity`
+          : fc.capacityPct > 75
+          ? `Heavy — ${Math.round(fc.capacityPct)}% of weekly capacity`
+          : `On track — ${Math.round(fc.capacityPct)}% of weekly capacity`;
+
+        return (
+          <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4">
+            <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Weekly Capacity</span>
+                <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${fc.overloaded ? 'text-red-400 bg-red-500/10 border-red-500/30' : fc.capacityPct > 75 ? 'text-orange-400 bg-orange-500/10 border-orange-500/30' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'}`}>
+                  {statusLabel}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                <span><span className="font-black text-white">{fc.totalRemainingHours.toFixed(0)}h</span> remaining</span>
+                <span>·</span>
+                <span><span className="font-black text-white">{fc.weeklyCapacityHours.toFixed(0)}h</span> capacity ({fc.workdaysLeft}d left)</span>
+                {fc.jobsCritical > 0 && <><span>·</span><span className="font-black text-red-400">{fc.jobsCritical} critical</span></>}
+                {fc.jobsAtRisk > 0 && <><span>·</span><span className="font-black text-orange-400">{fc.jobsAtRisk} at-risk</span></>}
+              </div>
+            </div>
+            <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{ width: `${barPct}%`, background: barColor }}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── SHOP FLOW MAP — visual of jobs moving through each stage.
           Two-column layout on desktop: the scrollable flow on the left (fills
@@ -2684,7 +2889,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                   </div>
                   <button
                     aria-label={`Force stop ${l.userName}'s timer`}
-                    onClick={() => confirmAction({ title: 'Force Stop', message: 'Stop this timer?', onConfirm: () => DB.stopTimeLog(l.id) })}
+                    onClick={() => confirmAction({ title: 'Force Stop', message: 'Stop this timer?', onConfirm: () => DB.stopTimeLog(l.id, undefined, undefined, undefined, 'admin:force-stop') })}
                     className="bg-red-500/10 text-red-500 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors opacity-60 group-hover:opacity-100 shrink-0"
                     title="Force stop"
                   >
@@ -2739,6 +2944,124 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         </div>
       </div>
+
+      {/* ── WORKER PERFORMANCE — who's producing, efficiency index, on-time rate ── */}
+      {(() => {
+        if (dashWorkers.length === 0 || allLogs.length === 0) return null;
+        const thirtyDaysAgo = Date.now() - 30 * 86400000;
+        const rate = shopSettings.shopRate || 0;
+
+        interface WStats { id: string; name: string; jobsDone: number; totalMins: number; onTime: number; late: number; activeMinsToday: number; workerRate: number; }
+
+        const statMap = new Map<string, WStats>();
+        for (const w of dashWorkers) {
+          if ((w as any).role === 'admin') continue;
+          const wLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= thirtyDaysAgo);
+          if (wLogs.length === 0) continue;
+          const totalMins = wLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const jobIds = new Set(wLogs.map(l => l.jobId));
+          const completedForW = jobs.filter(j => j.status === 'completed' && jobIds.has(j.id) && j.dueDate && j.completedAt);
+          const onTime = completedForW.filter(j => j.completedAt! <= new Date(j.dueDate! + 'T23:59:59').getTime()).length;
+          const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+          const todayLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= todayStart.getTime());
+          const activeMinsToday = todayLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          statMap.set(w.id, { id: w.id, name: w.name, jobsDone: jobIds.size, totalMins, onTime, late: completedForW.length - onTime, activeMinsToday, workerRate: (w as any).hourlyRate || rate });
+        }
+        const workers30 = [...statMap.values()].sort((a, b) => b.totalMins - a.totalMins);
+        if (workers30.length === 0) return null;
+        const maxMins = workers30[0].totalMins || 1;
+
+        return (
+          <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-4 gap-3">
+              <div>
+                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Award className="w-3.5 h-3.5 text-amber-400" /> Worker Performance</h3>
+                <p className="text-[11px] text-zinc-600 mt-0.5">Rolling 30 days · hours logged per operator</p>
+              </div>
+            </div>
+            <div className="space-y-2.5">
+              {workers30.map((w, i) => {
+                const hrs = w.totalMins / 60;
+                const barPct = (w.totalMins / maxMins) * 100;
+                const onTimePctW = (w.onTime + w.late) > 0 ? Math.round((w.onTime / (w.onTime + w.late)) * 100) : null;
+                const todayHrs = w.activeMinsToday / 60;
+                return (
+                  <div key={w.id} className="flex items-center gap-3">
+                    <span className="text-[10px] font-black w-5 text-center shrink-0 text-zinc-600">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`}</span>
+                    <span className="text-sm font-bold text-white w-24 sm:w-28 truncate shrink-0">{w.name.split(' ')[0]}</span>
+                    <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden min-w-0">
+                      <div className={`h-full rounded-full transition-all duration-700 ${i === 0 ? 'bg-amber-400' : 'bg-blue-500/70'}`} style={{ width: `${barPct}%` }} />
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 text-[11px]">
+                      <span className="font-black text-white tabular">{hrs.toFixed(1)}h</span>
+                      {onTimePctW !== null && (
+                        <span className={`font-bold px-1.5 py-0.5 rounded border text-[10px] ${onTimePctW >= 90 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : onTimePctW >= 70 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20'}`}>{onTimePctW}% OT</span>
+                      )}
+                      {todayHrs > 0 && <span className="text-emerald-400 font-bold text-[10px] hidden sm:inline">{todayHrs.toFixed(1)}h today</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── QUOTE ACCURACY — are your quotes hitting actual cost? ── */}
+      {(() => {
+        if ((shopSettings.shopRate || 0) === 0) return null;
+        const rate = shopSettings.shopRate!;
+        const completedWithQuote = jobs.filter(j =>
+          j.status === 'completed' && (j.quoteAmount || 0) > 0 && j.completedAt && j.completedAt > Date.now() - 90 * 86400000
+        );
+        if (completedWithQuote.length < 3) return null;
+        const accuracy = completedWithQuote.map(j => {
+          const mins = allLogs.filter(l => l.jobId === j.id && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const actualCost = (mins / 60) * rate;
+          return ((actualCost - j.quoteAmount!) / j.quoteAmount!) * 100;
+        });
+        const avgDrift = accuracy.reduce((a, x) => a + x, 0) / accuracy.length;
+        const overQuoted = accuracy.filter(x => x < -10).length;
+        const underQuoted = accuracy.filter(x => x > 10).length;
+        const accurate = accuracy.length - overQuoted - underQuoted;
+        const driftColor = Math.abs(avgDrift) <= 10 ? 'text-emerald-400' : avgDrift > 10 ? 'text-red-400' : 'text-amber-400';
+        const driftLabel = Math.abs(avgDrift) <= 10 ? 'Quotes are accurate' : avgDrift > 10 ? 'Jobs costing more than quoted' : 'Leaving money on the table';
+        return (
+          <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+              <div>
+                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp className="w-3.5 h-3.5 text-blue-400" /> Quote Accuracy</h3>
+                <p className="text-[11px] text-zinc-600 mt-0.5">{completedWithQuote.length} jobs with quotes · last 90 days</p>
+              </div>
+              <div className="text-right">
+                <p className={`text-xl font-black tabular ${driftColor}`}>{avgDrift > 0 ? '+' : ''}{avgDrift.toFixed(1)}%</p>
+                <p className={`text-[10px] font-bold ${driftColor}`}>{driftLabel}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-emerald-400">{accurate}</p>
+                <p className="text-[10px] font-bold text-emerald-400/70 uppercase tracking-wide mt-0.5">Within 10%</p>
+              </div>
+              <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-amber-400">{overQuoted}</p>
+                <p className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wide mt-0.5">Overquoted</p>
+              </div>
+              <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-red-400">{underQuoted}</p>
+                <p className="text-[10px] font-bold text-red-400/70 uppercase tracking-wide mt-0.5">Underquoted</p>
+              </div>
+            </div>
+            {underQuoted > 0 && (
+              <div className="mt-3 flex items-start gap-2 bg-red-500/8 border border-red-500/20 rounded-xl px-3 py-2.5">
+                <TrendingDown className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-red-300/80">{underQuoted} job{underQuoted > 1 ? 's' : ''} cost more than quoted. Consider raising rates or tracking setup time separately.</p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
     </div>
   );
 };
@@ -3166,6 +3489,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
   }, []);
 
+  // ── All clients — settings list PLUS every unique customer name ever used on a job.
+  // This is the fix for "clients not showing in dropdown" — historically entered
+  // customer names that weren't explicitly added to Settings → Clients were invisible.
+  const allClients = useMemo(() => {
+    const set = new Set<string>(clients.map(c => c.trim()).filter(Boolean));
+    jobs.forEach(j => { if (j.customer?.trim()) set.add(j.customer.trim()); });
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [clients, jobs]);
+
   // Open rework counts per job
   const reworkByJob = useMemo(() => {
     const m = new Map<string, { open: number; total: number }>();
@@ -3267,6 +3599,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     });
     return ids;
   }, [jobs, allLogs]);
+
+  // ── ETA / risk map — computed once for the whole jobs view ──────────
+  // Maps jobId → JobETA so every job card can show a risk badge instantly.
+  const jobEtaMap = useMemo(() => {
+    const openJobs = jobs.filter(j => j.status !== 'completed');
+    const m = new Map<string, ReturnType<typeof computeJobETA>>();
+    for (const job of openJobs) {
+      const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+      m.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
+    }
+    return m;
+  }, [jobs, allLogs, activeLogs]);
+
+  // ── Capacity forecast — total queued hours vs this week's capacity ──
+  const capacityForecast = useMemo(() => {
+    const workerCount = Math.max(1, workers.length || activeLogs.length || 1);
+    const activeCount = new Set(activeLogs.map(l => l.userId)).size;
+    return computeCapacityForecast(jobEtaMap, workerCount, activeCount);
+  }, [jobEtaMap, workers.length, activeLogs]);
 
   // Budget map: per-job { usedPct, overBudget, atRisk }
   const jobBudgetMap = useMemo(() => {
@@ -3853,7 +4204,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const ids: string[] = Array.from(selectedJobIds);
               ids.forEach(id => {
                 const job = jobs.find(x => x.id === id);
-                if (job) printJobTravelerPDF(job, shopSettings);
+                if (job) printJobTravelerPDF(job, shopSettings, getPartHistory(job.partNumber || '', jobs, allLogs));
               });
               addToast('info', `Generated ${ids.length} traveler${ids.length > 1 ? 's' : ''}`);
             }}
@@ -3993,6 +4344,34 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {budget?.overBudget && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>OVER BUDGET</span>}
                         {budget?.atRisk && !budget.overBudget && <span className="text-[10px] font-black text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>AT RISK</span>}
                         {isStale && j.status !== 'completed' && <span className="text-[10px] font-black text-zinc-500 bg-zinc-800/60 border border-zinc-700/60 px-1.5 py-0.5 rounded" title="No activity in 48+ hours">STALE</span>}
+                        {/* RUSH badge — job was created with very little lead time (<= 5 days before due) */}
+                        {j.status !== 'completed' && j.dueDate && j.createdAt && (() => {
+                          const dueDateMs = new Date(j.dueDate + 'T23:59:59').getTime();
+                          const leadDays = (dueDateMs - j.createdAt) / 86400000;
+                          if (leadDays > 5) return null;
+                          return (
+                            <span className="text-[10px] font-black text-red-300 bg-red-600/20 border border-red-500/40 px-1.5 py-0.5 rounded animate-pulse" title={`Only ${leadDays < 1 ? '<1 day' : Math.ceil(leadDays) + ' days'} lead time`}>
+                              RUSH
+                            </span>
+                          );
+                        })()}
+                        {/* ETA risk badge — only for open jobs where the engine has a meaningful signal */}
+                        {(() => {
+                          if (j.status === 'completed') return null;
+                          const eta = jobEtaMap.get(j.id);
+                          if (!eta) return null;
+                          // 'critical' already surfaced by OVERDUE badge; 'on-track'/'no-data' are noise
+                          if (eta.riskLevel !== 'at-risk' && eta.riskLevel !== 'watch') return null;
+                          const c = RISK_COLORS[eta.riskLevel];
+                          return (
+                            <span
+                              className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${c.bg} ${c.border} ${c.text}`}
+                              title={`ETA: ${eta.riskReason}`}
+                            >
+                              {eta.riskLevel === 'at-risk' ? 'PACE RISK' : 'WATCH'}
+                            </span>
+                          );
+                        })()}
                         {/* Live worker indicators — who's clocked in right now */}
                         {activeLogs.filter(l => l.jobId === j.id).map(l => (
                           <span key={l.id} className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full" title={`${l.userName} — ${l.operation}`}>
@@ -4489,21 +4868,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   {user.role === 'admin' && (
                     <div>
                       <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Customer Name</label>
-                      {clients.length > 0 ? (
+                      {allClients.length > 0 ? (
                         <select
                           className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50"
                           value={editingJob.customer || ''}
                           onChange={e => setEditingJob({ ...editingJob, customer: e.target.value })}
                         >
                           <option value="">— Select a client —</option>
-                          {clients.sort((a, b) => a.localeCompare(b)).map(c => (
+                          {allClients.map(c => (
                             <option key={c} value={c}>{c}</option>
                           ))}
                         </select>
                       ) : (
                         <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50" value={editingJob.customer || ''} onChange={e => setEditingJob({ ...editingJob, customer: e.target.value })} placeholder="Client or Company Name" />
                       )}
-                      {clients.length === 0 && <p className="text-xs text-zinc-500 mt-1">💡 Add clients in <span className="text-purple-400 font-bold">Settings → Clients</span> to get a dropdown here.</p>}
+                      {allClients.length === 0 && <p className="text-xs text-zinc-500 mt-1">💡 Add clients in <span className="text-purple-400 font-bold">Settings → Clients</span> to get a dropdown here.</p>}
                     </div>
                   )}
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Priority Level</label><select className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50" value={editingJob.priority || 'normal'} onChange={e => setEditingJob({ ...editingJob, priority: e.target.value as any })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
@@ -4748,7 +5127,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 {editingJob.shippingMethod && (
                   <div className="flex gap-3">
                     <button onClick={() => { printPackingSlipPDF(editingJob as Job, shopSettings); }} className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Packing Slip</button>
-                    <button onClick={() => { printJobTravelerPDF(editingJob as Job, shopSettings); }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
+                    <button onClick={() => { printJobTravelerPDF(editingJob as Job, shopSettings, getPartHistory(editingJob.partNumber || '', jobs, allLogs)); }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
                   </div>
                 )}
               </div>
@@ -4854,7 +5233,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       {/* ── PO Scanner — free browser OCR, replaces Gemini API ── */}
       {showScanner && (
         <POScanner
-          clients={clients}
+          clients={allClients}
           onClose={() => setShowScanner(false)}
           onFill={(scannedFields) => {
             setEditingJob(prev => ({ ...prev, ...scannedFields }));
@@ -5544,10 +5923,29 @@ const TvAutoReload: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 };
 
 export default function App() {
-  // Check for TV mode (?tv=TOKEN — standalone fullscreen TV for any account)
+  // ── TV mode detection ───────────────────────────────────────────────
+  // Priority: URL param (?tv=1) → localStorage fallback (persists across browser restarts)
+  // When detected via URL, write to localStorage so Smart TV browsers that lose
+  // the query string on restart can recover automatically.
   const [tvToken] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('tv') || null;
+    const urlToken = params.get('tv');
+    if (urlToken) {
+      // Save TV mode so it survives browser restarts / tab closures
+      try { localStorage.setItem('fabtrack_tv', '1'); } catch {}
+      return urlToken;
+    }
+    // localStorage recovery — TV browser restarted without the ?tv param
+    try {
+      if (localStorage.getItem('fabtrack_tv') === '1') {
+        // Restore the URL param so TvAutoReload reloads preserve it
+        const p = new URLSearchParams(window.location.search);
+        p.set('tv', '1');
+        history.replaceState({}, '', `${window.location.pathname}?${p.toString()}`);
+        return '1';
+      }
+    } catch {}
+    return null;
   });
 
   // Check for Customer Portal mode
@@ -5622,7 +6020,9 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const unsub1 = DB.subscribeJobs(jobs => setAllJobs(jobs));
-    const unsub2 = DB.subscribeLogs(logs => setAllActiveLogs(logs.filter((l: TimeLog) => !l.endTime)));
+    const unsub2 = DB.subscribeLogs(logs => {
+      setAllActiveLogs(logs.filter((l: TimeLog) => !l.endTime));
+    });
     return () => { unsub1(); unsub2(); };
   }, [user]);
 
@@ -5963,6 +6363,7 @@ export default function App() {
           jobs={allJobs}
         />
       )}
+
 
       {/* Onboarding wizard — first-run only for admin/manager on a TRULY new account.
           Suppressed for existing shops (they already have data) so it doesn't nag during dev.
