@@ -3676,8 +3676,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // empty fields from the last run. Never overwrites user input — only
   // populates blanks. Runs whenever the memory match changes.
   // (User can still click the manual "Apply" buttons to override later.)
+  // ONLY runs on new jobs (no id yet) so opening an existing job to edit
+  // doesn't silently re-fill missing fields from some other prior run.
   useEffect(() => {
     if (!priceSuggestion) return;
+    if (editingJob.id) return; // existing job — let user use manual buttons
     const patch: Partial<Job> = {};
     // 1. Expected hours — from average if we have multiple runs, else last run
     const suggestedHrs = priceSuggestion.avgHrs ?? priceSuggestion.lastTotalHrs;
