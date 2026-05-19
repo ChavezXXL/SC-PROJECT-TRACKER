@@ -3671,6 +3671,36 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     };
   }, [jobs, allLogs, editingJob.customer, editingJob.partNumber, editingJob.id]);
 
+  // ── Shop Brain auto-apply ──────────────────────────────────────────────
+  // When customer + part number match a prior job, automatically fill in
+  // empty fields from the last run. Never overwrites user input — only
+  // populates blanks. Runs whenever the memory match changes.
+  // (User can still click the manual "Apply" buttons to override later.)
+  useEffect(() => {
+    if (!priceSuggestion) return;
+    const patch: Partial<Job> = {};
+    // 1. Expected hours — from average if we have multiple runs, else last run
+    const suggestedHrs = priceSuggestion.avgHrs ?? priceSuggestion.lastTotalHrs;
+    if (suggestedHrs && suggestedHrs > 0 && !editingJob.expectedHours) {
+      patch.expectedHours = parseFloat(suggestedHrs.toFixed(1));
+    }
+    // 2. Price per part — last paid rate
+    if (priceSuggestion.pricePerPart && !editingJob.pricePerPart && !editingJob.quoteAmount) {
+      patch.pricePerPart = priceSuggestion.pricePerPart;
+      const qty = editingJob.quantity || priceSuggestion.quantity || 0;
+      if (qty > 0) patch.quoteAmount = parseFloat((priceSuggestion.pricePerPart * qty).toFixed(2));
+    }
+    // 3. Special instructions — carry forward from last run if blank
+    const lastInstr = priceSuggestion.lastJob?.specialInstructions;
+    if (lastInstr && lastInstr.trim() && !editingJob.specialInstructions) {
+      patch.specialInstructions = lastInstr;
+    }
+    if (Object.keys(patch).length > 0) {
+      setEditingJob(prev => ({ ...prev, ...patch }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceSuggestion?.poNumber]); // only re-run when the matched-job identity changes
+
   // Customer pipeline hint: does this customer have a custom stage pipeline?
   const customerPipelineHint = useMemo(() => {
     const cust = (editingJob.customer || '').trim();
@@ -3731,6 +3761,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       shippedAt: editingJob.shippedAt || undefined,
       // Pricing
       pricePerPart: editingJob.pricePerPart || undefined,
+      // Time budget — must persist so traveler prints it and over-budget alerts work
+      expectedHours: editingJob.expectedHours || undefined,
       // Stage
       currentStage: editingJob.currentStage || undefined,
       stageHistory: editingJob.stageHistory || undefined,
@@ -5069,7 +5101,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     </label>
                     <div className="relative">
                       <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">$</span>
-                      <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quoteAmount || ''} onChange={e => setEditingJob({ ...editingJob, quoteAmount: Number(e.target.value) || 0, pricePerPart: undefined })} placeholder="0.00" />
+                      <input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.quoteAmount || ''} onChange={e => {
+                        const qa = Number(e.target.value) || 0;
+                        const qty = editingJob.quantity || 0;
+                        // Keep pricePerPart consistent — recalc from total/qty so both fields persist
+                        const ppp = qa > 0 && qty > 0 ? parseFloat((qa / qty).toFixed(2)) : editingJob.pricePerPart;
+                        setEditingJob({ ...editingJob, quoteAmount: qa, pricePerPart: ppp });
+                      }} placeholder="0.00" />
                     </div>
                     <p className="text-[10px] text-zinc-600 mt-1">What the customer pays. Profit calculated when complete.</p>
                   </div>
@@ -5236,7 +5274,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           clients={allClients}
           onClose={() => setShowScanner(false)}
           onFill={(scannedFields) => {
-            setEditingJob(prev => ({ ...prev, ...scannedFields }));
+            // Auto-compute Quote Total from price × qty so the price actually
+            // shows up + persists. Without this, the user sees pricePerPart
+            // filled but no Quote Total, gets confused, and the data is brittle.
+            const patch: Partial<Job> = { ...scannedFields };
+            const ppp = patch.pricePerPart;
+            const qty = patch.quantity;
+            if (ppp && qty && ppp > 0 && qty > 0 && !patch.quoteAmount) {
+              patch.quoteAmount = parseFloat((ppp * qty).toFixed(2));
+            }
+            setEditingJob(prev => ({ ...prev, ...patch }));
             setShowScanner(false);
             setShowModal(true);
           }}
