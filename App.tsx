@@ -36,6 +36,7 @@ import { VendorsManager } from './components/VendorsManager';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
 import { POScanner } from './components/POScanner';
+import { StopJobModal } from './components/StopJobModal';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
 import { printTraveler } from './services/travelerPrint';
 import { businessDaysUntilSync, isHolidaySync, getHolidays } from './services/holidays';
@@ -1393,17 +1394,23 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     }
   };
 
-  const handleStopJob = async (logId: string) => {
+  // Modal that captures sessionQty before stopping. Critical for the
+  // rate-learning engine — without this prompt, every log has
+  // sessionQty=undefined and the engine has nothing to learn from.
+  const [stopQtyModal, setStopQtyModal] = useState<{ log: TimeLog; job: Job | null } | null>(null);
+
+  // Actually performs the stop. Called from the modal (with qty) OR from
+  // the stuck-timer force path (without qty).
+  const performStop = async (logId: string, sessionQty: number | undefined, reason: string) => {
     const stoppedJobId = activeLog?.jobId ?? null;
     try {
-      await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual');
+      await DB.stopTimeLog(logId, sessionQty, undefined, undefined, reason);
       swPost({ type: 'TIMER_STOP' });
-      addToast('success', 'Job Stopped');
-      // Return user to the job they just stopped so they can start another operation
+      addToast('success', sessionQty ? `Stopped — logged ${sessionQty} pcs for rate learning` : 'Job Stopped');
+      setStopQtyModal(null);
       if (stoppedJobId) {
         setScannedJobId(stoppedJobId);
         setTab('jobs');
-        // Scroll to the job card after a brief delay for re-render
         setTimeout(() => {
           const jobCard = document.querySelector(`[data-job-id="${stoppedJobId}"]`);
           if (jobCard) jobCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1414,6 +1421,24 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       addToast('error', 'Failed to stop. Please try again.');
       throw e;
     }
+  };
+
+  // Normal stop — opens the qty modal first.
+  const handleStopJob = async (logId: string) => {
+    const log = activeLog && activeLog.id === logId ? activeLog : null;
+    if (!log) {
+      // Can't find the log — just stop directly (shouldn't happen, but safe)
+      await performStop(logId, undefined, 'manual');
+      return;
+    }
+    const job = jobs.find(j => j.id === log.jobId) || null;
+    setStopQtyModal({ log, job });
+  };
+
+  // Force stop without qty prompt — used for stuck timer clear where qty
+  // isn't meaningful (worker isn't actually finishing the session).
+  const forceStopJob = async (logId: string) => {
+    await performStop(logId, undefined, 'manual:force-clear');
   };
 
   const handleScan = (e: any) => {
@@ -1643,7 +1668,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                 </span>
                 {isStale && (
                   <button
-                    onClick={() => handleStopJob(activeLog.id)}
+                    onClick={() => forceStopJob(activeLog.id)}
                     className="shrink-0 text-xs font-bold text-red-400 hover:text-white bg-red-500/15 hover:bg-red-500 px-3 py-1.5 rounded-lg border border-red-500/20 transition-all"
                   >
                     Clear Stuck Timer
@@ -1659,6 +1684,16 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
         </div>
+      )}
+
+      {/* ── Stop-with-pieces modal — captures sessionQty for rate learning ── */}
+      {stopQtyModal && (
+        <StopJobModal
+          log={stopQtyModal.log}
+          job={stopQtyModal.job}
+          onCancel={() => setStopQtyModal(null)}
+          onConfirm={(sessionQty) => performStop(stopQtyModal.log.id, sessionQty, 'manual')}
+        />
       )}
     </div>
   );

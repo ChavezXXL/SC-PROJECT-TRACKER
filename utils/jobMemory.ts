@@ -93,3 +93,81 @@ export function enrichJobForPrint(job: Job, jobs: Job[], allLogs: TimeLog[]): Jo
 
 /** Re-export the rate breakdown helper so callers only need one import path. */
 export { getRateBreakdownForJob };
+
+// ────────────────────────────────────────────────────────────────────────
+//  Backfill — give the rate engine retroactive data
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * For completed jobs that have logs but no sessionQty anywhere, we can
+ * reasonably assume the worker(s) finished the full job quantity across
+ * the session(s) they logged. This function plans those backfills.
+ *
+ * Strategy per job:
+ *   • Skip jobs that already have ANY log with sessionQty set
+ *     (don't double-count or override real data)
+ *   • Skip jobs without a quantity (can't distribute what we don't know)
+ *   • For the rest: distribute job.quantity across the job's logs
+ *     proportional to each log's durationMinutes (a longer session
+ *     finished more pieces). This is a heuristic but a much better
+ *     starting point than "no data."
+ *
+ * Returns a list of patches the caller can write back to the DB. The
+ * function is pure — no I/O — so it's safe to dry-run.
+ */
+export interface BackfillPatch {
+  logId: string;
+  sessionQty: number;
+  jobId: string;
+  reason: 'distributed-from-job-qty';
+}
+
+export function planSessionQtyBackfill(jobs: Job[], allLogs: TimeLog[]): BackfillPatch[] {
+  const patches: BackfillPatch[] = [];
+
+  for (const job of jobs) {
+    if (job.status !== 'completed') continue;
+    if (!job.quantity || job.quantity <= 0) continue;
+
+    const jobLogs = allLogs.filter(l =>
+      l.jobId === job.id &&
+      typeof l.durationMinutes === 'number' && l.durationMinutes > 0
+    );
+    if (jobLogs.length === 0) continue;
+
+    // Skip if ANY log already has sessionQty — assume the worker entered real data
+    const hasAnyQty = jobLogs.some(l => typeof l.sessionQty === 'number' && l.sessionQty > 0);
+    if (hasAnyQty) continue;
+
+    const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    if (totalMins <= 0) continue;
+
+    // Distribute job.quantity proportional to each log's time. Round to
+    // whole pieces; absorb any rounding remainder into the LONGEST log
+    // so the total still sums to job.quantity exactly.
+    const longest = [...jobLogs].sort((a, b) => (b.durationMinutes || 0) - (a.durationMinutes || 0))[0];
+    let assigned = 0;
+    const rawAssignments: { log: TimeLog; qty: number }[] = [];
+
+    for (const l of jobLogs) {
+      if (l.id === longest.id) continue; // skip — we'll absorb remainder here
+      const share = Math.round(((l.durationMinutes || 0) / totalMins) * job.quantity);
+      rawAssignments.push({ log: l, qty: share });
+      assigned += share;
+    }
+    const remainder = Math.max(1, job.quantity - assigned);
+    rawAssignments.push({ log: longest, qty: remainder });
+
+    for (const a of rawAssignments) {
+      if (a.qty <= 0) continue;
+      patches.push({
+        logId: a.log.id,
+        sessionQty: a.qty,
+        jobId: job.id,
+        reason: 'distributed-from-job-qty',
+      });
+    }
+  }
+
+  return patches;
+}

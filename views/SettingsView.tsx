@@ -38,6 +38,7 @@ import { customerKey } from '../utils/customers';
 import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from '../utils/goals';
 import { getActiveAlarms, playAlarmSound } from '../services/shiftAlarms';
 import { isDeveloper } from '../utils/devMode';
+import { planSessionQtyBackfill } from '../utils/jobMemory';
 import { getStages, DEFAULT_STAGES } from '../App';
 
 const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: string }) => {
@@ -4819,6 +4820,59 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   />
                   <span className="text-xs text-zinc-500">hrs</span>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Rate Learning — backfill historical sessionQty so the rate engine
+              has data immediately for parts you've already done. */}
+          <div>
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Rate Learning</p>
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+              <div className="px-4 py-4">
+                <p className="text-sm font-semibold text-white">Backfill historical pieces data</p>
+                <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                  FabTrack learns cycle time per operation when each time log knows how many pieces
+                  were finished that session. Older logs are missing this. Running this once distributes
+                  each completed job's total quantity across its sessions (weighted by time logged) so
+                  past work feeds the rate engine.
+                </p>
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  Skips any job that already has session pieces recorded — never overwrites real data.
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const patches = planSessionQtyBackfill(tvJobs, tvAllLogs);
+                    if (patches.length === 0) {
+                      addToast('info', 'Nothing to backfill — all completed jobs already have piece data or no eligible logs found.');
+                      return;
+                    }
+                    const proceed = await askConfirm({
+                      title: `Backfill ${patches.length} log${patches.length === 1 ? '' : 's'}?`,
+                      message: `This will assign session pieces to ${patches.length} time log entries across your completed jobs. Cannot be undone (but won't overwrite logs that already have pieces).`,
+                      confirmLabel: 'Backfill Now',
+                    });
+                    if (!proceed) return;
+                    addToast('info', `Backfilling ${patches.length} logs…`);
+                    let ok = 0, fail = 0;
+                    for (const p of patches) {
+                      try {
+                        const log = tvAllLogs.find(l => l.id === p.logId);
+                        if (!log) { fail++; continue; }
+                        await DB.updateTimeLog({ ...log, sessionQty: p.sessionQty });
+                        ok++;
+                      } catch {
+                        fail++;
+                      }
+                    }
+                    if (fail === 0) addToast('success', `✅ Backfilled ${ok} logs. Rate learning is now active for past parts.`);
+                    else addToast('info', `Backfilled ${ok} logs (${fail} failed). Rate learning ready for everything else.`);
+                  }}
+                  className="mt-3 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-black tracking-wide transition-colors"
+                >
+                  ↻ Backfill Now
+                </button>
               </div>
             </div>
           </div>
