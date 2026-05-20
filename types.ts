@@ -269,6 +269,10 @@ export interface TimeLog {
   notes?: string;
   machineId?: string;
   sessionQty?: number;
+  /** True when this log was synthesized by admin via Settings → Rate Samples
+   *  to seed the rate-learning engine (not a real worker session). Filtered
+   *  out of worker stats / Reports / TV by default. */
+  isSample?: boolean;
   /**
    * Why this log was stopped. Set at clock-out time so admins can audit
    * whether a stop was worker-initiated or forced by the system.
@@ -595,6 +599,20 @@ export interface SystemSettings {
   shopRate?: number;           // $/hr billed to workers
   monthlyOverhead?: number;    // Monthly fixed costs (rent, utilities, insurance, etc.)
   monthlyWorkHours?: number;   // Estimated work hours per month (for overhead calc)
+  // ── Rate Learning ──
+  /** Multiplier applied to rate-based time estimates so they're a
+   *  "comfortable" target rather than a tight one. Default 1.15 (15%
+   *  buffer). Used by the traveler print + auto-apply + over-budget alerts. */
+  rateBuffer?: number;
+  /** When actual logged time exceeds (estimate × buffer), trigger an alert.
+   *  Disabled by default so shops with no rate data don't get false alarms. */
+  overBudgetAlertEnabled?: boolean;
+  // ── EmailJS notification config (browser-side email, no backend) ──
+  emailJsServiceId?: string;
+  emailJsTemplateId?: string;
+  emailJsPublicKey?: string;
+  /** Where over-budget alerts get emailed to. */
+  alertEmail?: string;
   // Shop Info
   companyName?: string;        // Shown in header, print travelers, etc.
   companyLogo?: string;        // URL to logo image

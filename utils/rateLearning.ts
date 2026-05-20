@@ -49,22 +49,27 @@ export interface RateEstimate {
 }
 
 /**
- * Build per-operation rate map for a given customer + part.
+ * Build per-operation rate map for a given part number.
+ *
+ * Keyed by partNumber (not customer + part) because the user's request:
+ * "part numbers are mainly the same, PO is unique." A part has the same
+ * physical cycle time regardless of which customer it ships to, so
+ * pooling data across customers gives stronger signal faster.
+ *
  * Only counts logs that have `sessionQty` AND `durationMinutes` — older
  * logs without sessionQty can't be converted to a per-piece rate.
+ * Admin-entered samples (isSample=true) are included by design — that's
+ * how the rate engine gets its seed data in this product.
  */
 export function computeOperationRates(
   logs: TimeLog[],
-  customer: string,
   partNumber: string
 ): Map<string, OperationRate> {
-  const cust = (customer || '').trim().toLowerCase();
   const part = (partNumber || '').trim().toLowerCase();
-  if (!cust || !part) return new Map();
+  if (!part) return new Map();
 
   const relevant = logs.filter(l =>
     (l.partNumber || '').trim().toLowerCase() === part &&
-    (l.customer || '').trim().toLowerCase() === cust &&
     !!l.operation &&
     typeof l.durationMinutes === 'number' && l.durationMinutes > 0 &&
     typeof l.sessionQty === 'number' && l.sessionQty > 0
@@ -105,14 +110,17 @@ export function computeOperationRates(
  */
 export function estimateJobMinutes(
   quantity: number,
-  rates: Map<string, OperationRate>
+  rates: Map<string, OperationRate>,
+  buffer: number = 1
 ): RateEstimate {
   const rows: RateBreakdownRow[] = [];
   let totalMinutes = 0;
   let maxRuns = 0;
 
+  const safeBuffer = Number.isFinite(buffer) && buffer > 0 ? buffer : 1;
+
   for (const r of rates.values()) {
-    const minutes = quantity * r.ratePerPiece;
+    const minutes = quantity * r.ratePerPiece * safeBuffer;
     rows.push({
       operation: r.operation,
       ratePerPiece: r.ratePerPiece,
@@ -139,14 +147,15 @@ export function estimateJobMinutes(
  * job.partNumber + job.quantity). Returns null if no rate data exists.
  */
 export function getRateBreakdownForJob(
-  job: { customer?: string; partNumber?: string; quantity?: number },
-  logs: TimeLog[]
+  job: { partNumber?: string; quantity?: number },
+  logs: TimeLog[],
+  buffer: number = 1
 ): RateEstimate | null {
   const qty = job.quantity || 0;
   if (!qty || qty <= 0) return null;
-  const rates = computeOperationRates(logs, job.customer || '', job.partNumber || '');
+  const rates = computeOperationRates(logs, job.partNumber || '');
   if (rates.size === 0) return null;
-  return estimateJobMinutes(qty, rates);
+  return estimateJobMinutes(qty, rates, buffer);
 }
 
 /** Format helper: "0.45 min/pc" or "27 sec/pc" depending on magnitude. */

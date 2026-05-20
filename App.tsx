@@ -36,7 +36,6 @@ import { VendorsManager } from './components/VendorsManager';
 import { QualityView, ReworkModal } from './views/QualityView';
 import { LogsView } from './views/LogsView';
 import { POScanner } from './components/POScanner';
-import { StopJobModal } from './components/StopJobModal';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
 import { printTraveler } from './services/travelerPrint';
 import { businessDaysUntilSync, isHolidaySync, getHolidays } from './services/holidays';
@@ -53,6 +52,8 @@ import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getL
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { enrichJobForPrint, getRateBreakdownForJob } from './utils/jobMemory';
+import { findOverBudgetJobs, getAlertedJobIds, markJobAlerted } from './utils/overBudget';
+import { sendOverBudgetEmail } from './services/emailNotify';
 import { computeJobETA, computeCapacityForecast, RISK_COLORS } from './utils/jobETA';
 import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
 import { findStageForOperation, shouldAutoRoute, resolveJobStage } from './utils/stageRouting';
@@ -1394,20 +1395,15 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     }
   };
 
-  // Modal that captures sessionQty before stopping. Critical for the
-  // rate-learning engine — without this prompt, every log has
-  // sessionQty=undefined and the engine has nothing to learn from.
-  const [stopQtyModal, setStopQtyModal] = useState<{ log: TimeLog; job: Job | null } | null>(null);
-
-  // Actually performs the stop. Called from the modal (with qty) OR from
-  // the stuck-timer force path (without qty).
-  const performStop = async (logId: string, sessionQty: number | undefined, reason: string) => {
+  // Worker flow: no qty prompt. Rate learning gets its data from
+  // admin-entered Sample Times (Settings → Rate Samples), not from
+  // every individual clock-out.
+  const handleStopJob = async (logId: string) => {
     const stoppedJobId = activeLog?.jobId ?? null;
     try {
-      await DB.stopTimeLog(logId, sessionQty, undefined, undefined, reason);
+      await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual');
       swPost({ type: 'TIMER_STOP' });
-      addToast('success', sessionQty ? `Stopped — logged ${sessionQty} pcs for rate learning` : 'Job Stopped');
-      setStopQtyModal(null);
+      addToast('success', 'Job Stopped');
       if (stoppedJobId) {
         setScannedJobId(stoppedJobId);
         setTab('jobs');
@@ -1423,22 +1419,10 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     }
   };
 
-  // Normal stop — opens the qty modal first.
-  const handleStopJob = async (logId: string) => {
-    const log = activeLog && activeLog.id === logId ? activeLog : null;
-    if (!log) {
-      // Can't find the log — just stop directly (shouldn't happen, but safe)
-      await performStop(logId, undefined, 'manual');
-      return;
-    }
-    const job = jobs.find(j => j.id === log.jobId) || null;
-    setStopQtyModal({ log, job });
-  };
-
-  // Force stop without qty prompt — used for stuck timer clear where qty
-  // isn't meaningful (worker isn't actually finishing the session).
+  // Stuck-timer force-clear — same direct stop, different audit reason.
   const forceStopJob = async (logId: string) => {
-    await performStop(logId, undefined, 'manual:force-clear');
+    try { await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual:force-clear'); }
+    catch { addToast('error', 'Failed to stop. Please try again.'); }
   };
 
   const handleScan = (e: any) => {
@@ -1686,15 +1670,6 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         </div>
       )}
 
-      {/* ── Stop-with-pieces modal — captures sessionQty for rate learning ── */}
-      {stopQtyModal && (
-        <StopJobModal
-          log={stopQtyModal.log}
-          job={stopQtyModal.job}
-          onCancel={() => setStopQtyModal(null)}
-          onConfirm={(sessionQty) => performStop(stopQtyModal.log.id, sessionQty, 'manual')}
-        />
-      )}
     </div>
   );
 };
@@ -1765,7 +1740,7 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
   if (!job) return null;
   // Operation-level rate breakdown for the traveler estimate section.
   // Recomputes if logs update while the preview is open.
-  const rateBreakdown = getRateBreakdownForJob(job, allLogs);
+  const rateBreakdown = getRateBreakdownForJob(job, allLogs, appSettings.rateBuffer ?? 1.15);
   const currentBaseUrl = window.location.href.split('?')[0];
   const deepLinkData = `${currentBaseUrl}?jobId=${job.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
@@ -3722,23 +3697,32 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // their travelers forever. Filling missing fields nudges the user to
   // save once and the data carries forward everywhere.
   useEffect(() => {
-    if (!priceSuggestion) return;
     const patch: Partial<Job> = {};
     const filled: string[] = [];
-    // 1. Expected hours — prefer rate-based math (scales with current qty);
-    //    falls back to job-level average if no per-piece data exists.
-    if (!editingJob.expectedHours) {
-      const rateEst = getRateBreakdownForJob(editingJob, allLogs);
+    // 1. Expected hours — rate-based (partNumber-only) is preferred since
+    //    it scales with quantity. Falls back to job-level avg from
+    //    priceSuggestion when no rate samples exist. Runs as soon as part
+    //    number + quantity are typed — customer not required.
+    if (!editingJob.expectedHours && editingJob.partNumber && (editingJob.quantity || 0) > 0) {
+      const rateEst = getRateBreakdownForJob(editingJob, allLogs, shopSettings.rateBuffer ?? 1.15);
       if (rateEst && rateEst.hasData && rateEst.totalHours > 0) {
         patch.expectedHours = parseFloat(rateEst.totalHours.toFixed(1));
         filled.push(`Est. ${patch.expectedHours}h (scaled to ${(editingJob.quantity || 0).toLocaleString()} pcs across ${rateEst.breakdown.length} ops)`);
-      } else {
+      } else if (priceSuggestion) {
         const suggestedHrs = priceSuggestion.avgHrs ?? priceSuggestion.lastTotalHrs;
         if (suggestedHrs && suggestedHrs > 0) {
           patch.expectedHours = parseFloat(suggestedHrs.toFixed(1));
           filled.push(`Est. ${patch.expectedHours}h`);
         }
       }
+    }
+    // Price/instructions still need customer+part match (priceSuggestion)
+    if (!priceSuggestion) {
+      if (Object.keys(patch).length > 0) {
+        setEditingJob(prev => ({ ...prev, ...patch }));
+        addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
+      }
+      return;
     }
     // 2. Price per part — last paid rate
     if (priceSuggestion.pricePerPart && !editingJob.pricePerPart && !editingJob.quoteAmount) {
@@ -3759,7 +3743,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [priceSuggestion?.poNumber]); // only re-run when the matched-job identity changes
+  }, [priceSuggestion?.poNumber, editingJob.partNumber, editingJob.quantity]);
 
   // Customer pipeline hint: does this customer have a custom stage pipeline?
   const customerPipelineHint = useMemo(() => {
@@ -4297,12 +4281,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               ids.forEach(id => {
                 const job = jobs.find(x => x.id === id);
                 if (job) {
-                  const enriched = enrichJobForPrint(job, jobs, allLogs);
+                  const buf = shopSettings.rateBuffer ?? 1.15;
+                  const enriched = enrichJobForPrint(job, jobs, allLogs, buf);
                   printJobTravelerPDF(
                     enriched,
                     shopSettings,
                     getPartHistory(job.partNumber || '', jobs, allLogs),
-                    getRateBreakdownForJob(enriched, allLogs),
+                    getRateBreakdownForJob(enriched, allLogs, buf),
                   );
                 }
               });
@@ -4676,7 +4661,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       )}
                       <button
                         aria-label={printed.includes(j.id) ? `Reprint traveler for ${j.poNumber || ''}` : `Print traveler for ${j.poNumber || ''}`}
-                        onClick={() => setPrintable(enrichJobForPrint(j, jobs, allLogs))} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
+                        onClick={() => setPrintable(enrichJobForPrint(j, jobs, allLogs, shopSettings.rateBuffer ?? 1.15))} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
                       <button aria-label={`Report rework for ${j.poNumber || ''}`} onClick={(e) => { e.stopPropagation(); setReworkModal({ jobId: j.id, poNumber: j.poNumber, partNumber: j.partNumber, customer: j.customer, reason: 'finish', quantity: 1, status: 'open' }); }} className="p-2 hover:bg-amber-500/10 rounded-lg text-amber-400/70 hover:text-amber-400 transition-colors relative" title="Report rework">
                         <AlertTriangle className="w-4 h-4" aria-hidden="true" />
                         {reworkByJob.get(j.id) && (reworkByJob.get(j.id)!.open > 0) && (
@@ -5234,12 +5219,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   <div className="flex gap-3">
                     <button onClick={() => { printPackingSlipPDF(editingJob as Job, shopSettings); }} className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Packing Slip</button>
                     <button onClick={() => {
-                      const enriched = enrichJobForPrint(editingJob as Job, jobs, allLogs);
+                      const buf = shopSettings.rateBuffer ?? 1.15;
+                      const enriched = enrichJobForPrint(editingJob as Job, jobs, allLogs, buf);
                       printJobTravelerPDF(
                         enriched,
                         shopSettings,
                         getPartHistory(editingJob.partNumber || '', jobs, allLogs),
-                        getRateBreakdownForJob(enriched, allLogs),
+                        getRateBreakdownForJob(enriched, allLogs, buf),
                       );
                     }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
                   </div>
@@ -6131,6 +6117,9 @@ export default function App() {
   // For notifications  track all jobs and active logs globally
   const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [allActiveLogs, setAllActiveLogs] = useState<TimeLog[]>([]);
+  // Full logs (including completed sessions + samples) — needed by the
+  // over-budget alert engine, which compares actual vs rate-learned est.
+  const [allFullLogs, setAllFullLogs] = useState<TimeLog[]>([]);
   // Command palette — global Cmd+K / Ctrl+K
   const [paletteOpen, setPaletteOpen] = useCommandPalette();
   const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user);
@@ -6145,9 +6134,52 @@ export default function App() {
     const unsub1 = DB.subscribeJobs(jobs => setAllJobs(jobs));
     const unsub2 = DB.subscribeLogs(logs => {
       setAllActiveLogs(logs.filter((l: TimeLog) => !l.endTime));
+      setAllFullLogs(logs);
     });
     return () => { unsub1(); unsub2(); };
   }, [user]);
+
+  // ── Over-budget alert engine ─────────────────────────────────────────
+  // Fires when a job's actual logged time crosses its rate-learned
+  // estimate (with buffer applied). Sends in-app toast + EmailJS email.
+  // Tracks already-alerted jobs in localStorage so we don't re-fire
+  // every render. Only admins/managers get the alerts.
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== 'admin' && user.role !== 'manager') return;
+    if (!appSettings.overBudgetAlertEnabled) return;
+    if (allJobs.length === 0 || allFullLogs.length === 0) return;
+
+    const buffer = appSettings.rateBuffer && appSettings.rateBuffer > 0 ? appSettings.rateBuffer : 1.15;
+    const hits = findOverBudgetJobs(allJobs, allFullLogs, buffer);
+    if (hits.length === 0) return;
+
+    const alerted = getAlertedJobIds();
+    const fresh = hits.filter(h => !alerted.has(h.job.id));
+    if (fresh.length === 0) return;
+
+    // Fire toast + email for each newly-over-budget job
+    fresh.forEach(async hit => {
+      markJobAlerted(hit.job.id);
+      const label = hit.job.jobIdsDisplay || hit.job.poNumber || hit.job.id.slice(-6);
+      addToast('error', `⚠ ${label} — ${hit.actualHours.toFixed(1)}h logged, est ${hit.estimatedHours.toFixed(1)}h. Over by ${hit.overByHours.toFixed(1)}h.`);
+
+      // Email (no-op if EmailJS not configured)
+      await sendOverBudgetEmail(appSettings, {
+        jobIdDisplay:   label,
+        poNumber:       hit.job.poNumber || '',
+        partNumber:     hit.job.partNumber || '',
+        customer:       hit.job.customer || '',
+        estimatedHours: hit.estimatedHours,
+        actualHours:    hit.actualHours,
+        overByHours:    hit.overByHours,
+        operations:     hit.operations.join(', '),
+        shopName:       appSettings.companyName || 'FabTrack',
+        jobUrl:         `${window.location.origin}?jobId=${hit.job.id}`,
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allJobs, allFullLogs, appSettings.rateBuffer, appSettings.overBudgetAlertEnabled, user?.id, user?.role]);
 
   useEffect(() => {
     if (user) {

@@ -39,6 +39,8 @@ import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as f
 import { getActiveAlarms, playAlarmSound } from '../services/shiftAlarms';
 import { isDeveloper } from '../utils/devMode';
 import { planSessionQtyBackfill } from '../utils/jobMemory';
+import { sendTestEmail, getEmailJsConfig } from '../services/emailNotify';
+import { clearAllAlerts } from '../utils/overBudget';
 import { getStages, DEFAULT_STAGES } from '../App';
 
 const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: string }) => {
@@ -3602,6 +3604,164 @@ const ClockOutAuditLog = ({ logs }: { logs: TimeLog[] }) => {
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+//  SampleTimesEntry — admin enters a cycle-time sample which becomes
+//  an isSample TimeLog the rate engine learns from. No worker clock
+//  needed; this is the calibration tool.
+// ═══════════════════════════════════════════════════════════════════════
+const SampleTimesEntry: React.FC<{ addToast: any; allLogs: TimeLog[] }> = ({ addToast, allLogs }) => {
+  const [partNumber, setPartNumber] = React.useState('');
+  const [operation, setOperation] = React.useState('');
+  const [qty, setQty] = React.useState('');
+  const [minutes, setMinutes] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  // Show only sample logs, most recent first
+  const samples = React.useMemo(() => {
+    return allLogs
+      .filter(l => l.isSample && l.durationMinutes && l.sessionQty)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .slice(0, 12);
+  }, [allLogs]);
+
+  const save = async () => {
+    const pn = partNumber.trim();
+    const op = operation.trim();
+    const q = parseInt(qty, 10);
+    const m = parseFloat(minutes);
+    if (!pn || !op || !(q > 0) || !(m > 0)) {
+      addToast('error', 'Need part number, operation, pieces, and minutes (all > 0).');
+      return;
+    }
+    setBusy(true);
+    try {
+      const now = Date.now();
+      const start = now - Math.round(m * 60_000);
+      // Synthetic TimeLog flagged as sample. The rate engine reads
+      // partNumber + operation + durationMinutes + sessionQty from it.
+      const sample: TimeLog = {
+        id: 'sample-' + now.toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        jobId: 'sample',
+        userId: 'sample',
+        userName: 'Sample Entry',
+        operation: op,
+        startTime: start,
+        endTime: now,
+        durationMinutes: m,
+        durationSeconds: Math.round(m * 60),
+        partNumber: pn,
+        status: 'completed',
+        sessionQty: q,
+        isSample: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await DB.updateTimeLog(sample);
+      addToast('success', `Sample saved: ${op} on ${pn} — ${q} pcs in ${m} min`);
+      setPartNumber(''); setOperation(''); setQty(''); setMinutes('');
+    } catch (e) {
+      console.error(e);
+      addToast('error', 'Failed to save sample.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (log: TimeLog) => {
+    try {
+      await DB.deleteTimeLog(log.id);
+      addToast('info', 'Sample removed.');
+    } catch {
+      addToast('error', 'Failed to remove sample.');
+    }
+  };
+
+  return (
+    <div className="px-4 py-4">
+      <p className="text-sm font-semibold text-white">Cycle-time samples</p>
+      <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+        Time yourself running a few parts through one operation, then log it here. FabTrack uses these
+        to estimate any future job size for that part. Example: "30 parts, polish, 60 min" → 2 min/pc.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+        <input
+          type="text" placeholder="Part Number (e.g. ABC-123)"
+          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+          value={partNumber} onChange={e => setPartNumber(e.target.value)}
+        />
+        <input
+          type="text" placeholder="Operation (e.g. polish, deburr, qc)"
+          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40"
+          value={operation} onChange={e => setOperation(e.target.value)}
+        />
+        <input
+          type="number" placeholder="Pieces in this sample" min="1" step="1"
+          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+          value={qty} onChange={e => setQty(e.target.value)}
+        />
+        <input
+          type="number" placeholder="Minutes it took" min="0.1" step="0.1"
+          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+          value={minutes} onChange={e => setMinutes(e.target.value)}
+        />
+      </div>
+
+      {/* Live rate preview */}
+      {(() => {
+        const q = parseInt(qty, 10);
+        const m = parseFloat(minutes);
+        if (!(q > 0) || !(m > 0)) return null;
+        const rate = m / q;
+        const display = rate >= 1 ? `${rate.toFixed(2)} min/pc` : `${(rate * 60).toFixed(1)} sec/pc`;
+        return (
+          <p className="text-[11px] text-emerald-400 mt-2 font-bold">
+            → Rate: {display} · 1000 pcs would take {(rate * 1000 / 60).toFixed(1)}h
+          </p>
+        );
+      })()}
+
+      <button
+        type="button" disabled={busy}
+        onClick={save}
+        className="mt-3 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-black tracking-wide transition-colors"
+      >
+        {busy ? 'Saving…' : '+ Save Sample'}
+      </button>
+
+      {samples.length > 0 && (
+        <div className="mt-4">
+          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-1.5">Recent samples</p>
+          <div className="bg-zinc-950/60 rounded-xl border border-white/[0.04] divide-y divide-white/[0.04] max-h-64 overflow-y-auto">
+            {samples.map(s => {
+              const rate = (s.durationMinutes || 0) / (s.sessionQty || 1);
+              const display = rate >= 1 ? `${rate.toFixed(2)} min/pc` : `${(rate * 60).toFixed(1)} sec/pc`;
+              return (
+                <div key={s.id} className="px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono font-bold text-white truncate">{s.partNumber} · <span className="text-zinc-400">{s.operation}</span></p>
+                    <p className="text-[10px] text-zinc-500 mt-0.5">
+                      {s.sessionQty} pcs in {s.durationMinutes?.toFixed(1)} min · <span className="text-emerald-400">{display}</span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => remove(s)}
+                    className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1 rounded transition-colors"
+                    aria-label="Remove sample"
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
@@ -4824,21 +4984,114 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
           </div>
 
-          {/* Rate Learning — backfill historical sessionQty so the rate engine
-              has data immediately for parts you've already done. */}
+          {/* ═══ Rate Learning ═══ */}
           <div>
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Rate Learning</p>
-            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden divide-y divide-white/[0.04]">
+
+              {/* ── Sample Times Entry ── */}
+              <SampleTimesEntry addToast={addToast} allLogs={tvAllLogs} />
+
+              {/* ── Buffer % ── */}
+              <div className="px-4 py-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Generosity buffer</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Pad estimates by this much so they're a comfortable target, not a tight one.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" step="5" min="0" max="100"
+                      className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-20 text-center focus:outline-none focus:border-amber-500/40"
+                      value={Math.round(((settings.rateBuffer ?? 1.15) - 1) * 100)}
+                      onChange={e => {
+                        const pct = Number(e.target.value) || 0;
+                        setSettings({ ...settings, rateBuffer: 1 + (pct / 100) });
+                      }}
+                    />
+                    <span className="text-xs text-zinc-500">% extra</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  Example: 15% on a 10h base estimate → 11.5h shown on the traveler. Set to 0 for no buffer.
+                </p>
+              </div>
+
+              {/* ── Over-budget alerts ── */}
+              <div className="px-4 py-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[200px]">
+                    <p className="text-sm font-semibold text-white">Over-budget email alerts</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Email when a job's actual time exceeds the buffered estimate.</p>
+                  </div>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={!!settings.overBudgetAlertEnabled} onChange={e => setSettings({ ...settings, overBudgetAlertEnabled: e.target.checked })} />
+                    <div className="w-10 h-5 bg-zinc-800 peer-checked:bg-amber-600 rounded-full peer-checked:after:translate-x-5 after:content-[''] after:absolute after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all after:mt-0.5 after:ml-0.5 relative" />
+                  </label>
+                </div>
+
+                {settings.overBudgetAlertEnabled && (
+                  <div className="mt-3 space-y-2.5 bg-zinc-950/50 rounded-xl p-3 border border-white/[0.04]">
+                    <p className="text-[10px] font-black text-amber-400 uppercase tracking-wider">EmailJS Configuration</p>
+                    <p className="text-[10px] text-zinc-500 -mt-1.5 leading-relaxed">
+                      Sign up free at <a className="text-amber-400 underline" href="https://www.emailjs.com" target="_blank" rel="noopener noreferrer">emailjs.com</a>, create a Service + Template, then paste the IDs below. Template should accept variables: <code className="text-zinc-400">job_id, po, part, customer, estimated, actual, over_by, operations, shop_name, link, to_email</code>.
+                    </p>
+                    <input
+                      type="email" placeholder="Email to alert (e.g. you@scdeburring.com)"
+                      className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40"
+                      value={settings.alertEmail || ''}
+                      onChange={e => setSettings({ ...settings, alertEmail: e.target.value })}
+                    />
+                    <input
+                      type="text" placeholder="EmailJS Service ID (e.g. service_xxxxxxx)"
+                      className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+                      value={settings.emailJsServiceId || ''}
+                      onChange={e => setSettings({ ...settings, emailJsServiceId: e.target.value })}
+                    />
+                    <input
+                      type="text" placeholder="EmailJS Template ID (e.g. template_xxxxxxx)"
+                      className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+                      value={settings.emailJsTemplateId || ''}
+                      onChange={e => setSettings({ ...settings, emailJsTemplateId: e.target.value })}
+                    />
+                    <input
+                      type="text" placeholder="EmailJS Public Key"
+                      className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+                      value={settings.emailJsPublicKey || ''}
+                      onChange={e => setSettings({ ...settings, emailJsPublicKey: e.target.value })}
+                    />
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          addToast('info', 'Sending test email…');
+                          const r = await sendTestEmail(settings);
+                          if (r.ok) addToast('success', '✉ Test email sent — check your inbox');
+                          else addToast('error', r.reason || 'Test email failed');
+                        }}
+                        disabled={!getEmailJsConfig(settings)}
+                        className="text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        ✉ Send Test Email
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { clearAllAlerts(); addToast('info', 'Cleared over-budget alert history — jobs will re-alert if still over.'); }}
+                        className="text-xs font-bold text-zinc-300 bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        Reset Alert History
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Backfill ── */}
               <div className="px-4 py-4">
                 <p className="text-sm font-semibold text-white">Backfill historical pieces data</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  FabTrack learns cycle time per operation when each time log knows how many pieces
-                  were finished that session. Older logs are missing this. Running this once distributes
-                  each completed job's total quantity across its sessions (weighted by time logged) so
-                  past work feeds the rate engine.
-                </p>
-                <p className="text-[10px] text-zinc-600 mt-2">
-                  Skips any job that already has session pieces recorded — never overwrites real data.
+                  Distributes each completed job's total quantity across its sessions (weighted by time logged) so past work also feeds the rate engine.
+                  Skips logs that already have piece counts — never overwrites real data.
                 </p>
                 <button
                   type="button"
@@ -4850,7 +5103,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                     }
                     const proceed = await askConfirm({
                       title: `Backfill ${patches.length} log${patches.length === 1 ? '' : 's'}?`,
-                      message: `This will assign session pieces to ${patches.length} time log entries across your completed jobs. Cannot be undone (but won't overwrite logs that already have pieces).`,
+                      message: `This will assign session pieces to ${patches.length} time log entries across your completed jobs.`,
                       confirmLabel: 'Backfill Now',
                     });
                     if (!proceed) return;
@@ -4867,7 +5120,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                       }
                     }
                     if (fail === 0) addToast('success', `✅ Backfilled ${ok} logs. Rate learning is now active for past parts.`);
-                    else addToast('info', `Backfilled ${ok} logs (${fail} failed). Rate learning ready for everything else.`);
+                    else addToast('info', `Backfilled ${ok} logs (${fail} failed).`);
                   }}
                   className="mt-3 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-black tracking-wide transition-colors"
                 >

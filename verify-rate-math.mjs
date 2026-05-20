@@ -2,13 +2,11 @@
 // Mirrors utils/rateLearning.ts exactly so we prove the math without a TS runner.
 // Run: node verify-rate-math.mjs
 
-function computeOperationRates(logs, customer, partNumber) {
-  const cust = (customer || '').trim().toLowerCase();
+function computeOperationRates(logs, partNumber) {
   const part = (partNumber || '').trim().toLowerCase();
-  if (!cust || !part) return new Map();
+  if (!part) return new Map();
   const relevant = logs.filter(l =>
     (l.partNumber || '').trim().toLowerCase() === part &&
-    (l.customer || '').trim().toLowerCase() === cust &&
     !!l.operation &&
     typeof l.durationMinutes === 'number' && l.durationMinutes > 0 &&
     typeof l.sessionQty === 'number' && l.sessionQty > 0
@@ -37,12 +35,13 @@ function computeOperationRates(logs, customer, partNumber) {
   return rates;
 }
 
-function estimateJobMinutes(quantity, rates) {
+function estimateJobMinutes(quantity, rates, buffer = 1) {
+  const safeBuf = Number.isFinite(buffer) && buffer > 0 ? buffer : 1;
   let totalMinutes = 0;
   const rows = [];
   let maxRuns = 0;
   for (const r of rates.values()) {
-    const minutes = quantity * r.ratePerPiece;
+    const minutes = quantity * r.ratePerPiece * safeBuf;
     rows.push({ operation: r.operation, ratePerPiece: r.ratePerPiece, estimatedMinutes: minutes, runCount: r.runCount });
     totalMinutes += minutes;
     if (r.runCount > maxRuns) maxRuns = r.runCount;
@@ -63,7 +62,7 @@ console.log('\n══ TEST 1: User\'s exact example — 30 samples × 20 min for
   const logs = [
     { jobId: 'j1', customer: 'S&H Machine', partNumber: 'ABC-123', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },
   ];
-  const rates = computeOperationRates(logs, 'S&H Machine', 'ABC-123');
+  const rates = computeOperationRates(logs, 'ABC-123');
   const rate = rates.get('deburr');
   assert('1 log creates 1 rate entry', rates.size === 1, 1, rates.size);
   assert('Rate is 0.667 min/pc (20/30)', Math.abs(rate.ratePerPiece - 0.6667) < 0.01, 0.6667, rate.ratePerPiece);
@@ -81,7 +80,7 @@ console.log('\n══ TEST 2: Multiple runs averaging — bigger runs get more w
     { jobId: 'j1', customer: 'S&H', partNumber: 'X', operation: 'deburr', durationMinutes: 20,  sessionQty: 30 },
     { jobId: 'j2', customer: 'S&H', partNumber: 'X', operation: 'deburr', durationMinutes: 600, sessionQty: 1000 },
   ];
-  const rates = computeOperationRates(logs, 'S&H', 'X');
+  const rates = computeOperationRates(logs, 'X');
   const rate = rates.get('deburr');
   const expectedRate = 620 / 1030;
   assert(`Weighted rate ≈ ${expectedRate.toFixed(3)} min/pc`, Math.abs(rate.ratePerPiece - expectedRate) < 0.001, expectedRate, rate.ratePerPiece);
@@ -97,7 +96,7 @@ console.log('\n══ TEST 3: Multiple operations on same part ══');
     { jobId: 'j1', customer: 'S&H', partNumber: 'X', operation: 'wash',   durationMinutes: 3,   sessionQty: 30 },
     { jobId: 'j1', customer: 'S&H', partNumber: 'X', operation: 'qc',     durationMinutes: 1.5, sessionQty: 30 },
   ];
-  const rates = computeOperationRates(logs, 'S&H', 'X');
+  const rates = computeOperationRates(logs, 'X');
   assert('3 operations tracked separately', rates.size === 3, 3, rates.size);
   const est = estimateJobMinutes(1000, rates);
   // Expected: deburr ~666.67 + wash ~100 + qc ~50 = ~816.67 min = ~13.61h
@@ -109,9 +108,9 @@ console.log('\n══ TEST 3: Multiple operations on same part ══');
 console.log('\n══ TEST 4: Case-insensitive matching + whitespace tolerance ══');
 {
   const logs = [
-    { jobId: 'j1', customer: '  S&H Machine  ', partNumber: 'abc-123', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },
+    { jobId: 'j1', partNumber: 'abc-123', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },
   ];
-  const rates = computeOperationRates(logs, 's&h machine', 'ABC-123');
+  const rates = computeOperationRates(logs, 'ABC-123');
   assert('Matches despite case+whitespace differences', rates.size === 1, 1, rates.size);
 }
 
@@ -122,29 +121,47 @@ console.log('\n══ TEST 5: Skips logs without sessionQty (legacy data safety)
     { jobId: 'j2', customer: 'X', partNumber: 'Y', operation: 'deburr', durationMinutes: 20, sessionQty: 0 }, // zero qty
     { jobId: 'j3', customer: 'X', partNumber: 'Y', operation: 'deburr', durationMinutes: 30, sessionQty: 60 }, // valid
   ];
-  const rates = computeOperationRates(logs, 'X', 'Y');
+  const rates = computeOperationRates(logs, 'Y');
   const rate = rates.get('deburr');
   assert('Only 1 valid log counted', rate.sampleCount === 1, 1, rate.sampleCount);
   assert('Rate from valid log only: 0.5 min/pc', Math.abs(rate.ratePerPiece - 0.5) < 0.001, 0.5, rate.ratePerPiece);
 }
 
-console.log('\n══ TEST 6: Different customer/part is invisible ══');
+console.log('\n══ TEST 6: Pools data across customers for the same part ══');
 {
+  // Rate engine is partNumber-keyed by design: a part's cycle time
+  // shouldn't change based on which customer it ships to.
   const logs = [
-    { jobId: 'j1', customer: 'X', partNumber: 'Y', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },
-    { jobId: 'j2', customer: 'OTHER', partNumber: 'Y', operation: 'deburr', durationMinutes: 999, sessionQty: 1 }, // would skew if counted
+    { jobId: 'j1', customer: 'X',     partNumber: 'Y', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },
+    { jobId: 'j2', customer: 'OTHER', partNumber: 'Y', operation: 'deburr', durationMinutes: 10, sessionQty: 20 },
   ];
-  const rates = computeOperationRates(logs, 'X', 'Y');
+  const rates = computeOperationRates(logs, 'Y');
   const rate = rates.get('deburr');
-  assert('Other customer\'s log ignored', Math.abs(rate.ratePerPiece - 0.6667) < 0.01, 0.6667, rate.ratePerPiece);
+  // Combined: (20+10) min / (30+20) qty = 30/50 = 0.6 min/pc
+  assert('Pooled rate across customers ≈ 0.6 min/pc', Math.abs(rate.ratePerPiece - 0.6) < 0.001, 0.6, rate.ratePerPiece);
+  assert('runCount = 2 (across customers)', rate.runCount === 2, 2, rate.runCount);
 }
 
 console.log('\n══ TEST 7: Empty inputs handled gracefully ══');
 {
-  assert('Empty logs → empty rates', computeOperationRates([], 'X', 'Y').size === 0, 0, computeOperationRates([], 'X', 'Y').size);
-  assert('Empty customer → empty rates', computeOperationRates([{}], '', 'Y').size === 0, 0, computeOperationRates([{}], '', 'Y').size);
-  assert('Empty part → empty rates', computeOperationRates([{}], 'X', '').size === 0, 0, computeOperationRates([{}], 'X', '').size);
+  assert('Empty logs → empty rates', computeOperationRates([], 'Y').size === 0, 0, computeOperationRates([], 'Y').size);
+  assert('Empty part → empty rates', computeOperationRates([{}], '').size === 0, 0, computeOperationRates([{}], '').size);
   assert('Zero quantity estimate → not hasData', estimateJobMinutes(0, new Map([['op', { operation: 'op', ratePerPiece: 1, totalPieces: 10, totalMinutes: 10, runCount: 1, sampleCount: 1 }]])).hasData === false, false, true);
+}
+
+console.log('\n══ TEST 8: Buffer multiplier applies cleanly ══');
+{
+  const logs = [
+    { jobId: 'j1', partNumber: 'X', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },
+  ];
+  const rates = computeOperationRates(logs, 'X');
+  const base = estimateJobMinutes(1000, rates, 1);     // no buffer
+  const buf15 = estimateJobMinutes(1000, rates, 1.15); // 15% buffer
+  const buf50 = estimateJobMinutes(1000, rates, 1.5);  // 50% buffer
+  assert('No buffer → 11.11h', Math.abs(base.totalHours - 11.11) < 0.05, 11.11, base.totalHours);
+  assert('15% buffer → 12.78h (11.11 × 1.15)', Math.abs(buf15.totalHours - 12.78) < 0.05, 12.78, buf15.totalHours);
+  assert('50% buffer → 16.67h (11.11 × 1.5)', Math.abs(buf50.totalHours - 16.67) < 0.05, 16.67, buf50.totalHours);
+  assert('Invalid buffer (0) treated as 1', Math.abs(estimateJobMinutes(1000, rates, 0).totalHours - 11.11) < 0.05, 11.11, estimateJobMinutes(1000, rates, 0).totalHours);
 }
 
 console.log(`\n────────────────────────────────────────`);

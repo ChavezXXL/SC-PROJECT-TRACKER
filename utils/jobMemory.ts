@@ -36,25 +36,28 @@ function totalMinutesFor(jobId: string, allLogs: TimeLog[]): number {
 export function inferExpectedHours(
   job: Pick<Job, 'id' | 'customer' | 'partNumber' | 'quantity'>,
   jobs: Job[],
-  allLogs: TimeLog[]
+  allLogs: TimeLog[],
+  buffer: number = 1
 ): number | null {
-  const cust = (job.customer || '').trim().toLowerCase();
   const part = (job.partNumber || '').trim().toLowerCase();
-  if (!cust || !part) return null;
+  if (!part) return null;
 
-  // ── 1. Rate-based estimate (best signal — scales with new qty)
+  // ── 1. Rate-based estimate (best signal — scales with new qty, keyed by partNumber)
   const qty = job.quantity || 0;
   if (qty > 0) {
-    const rates = computeOperationRates(allLogs, job.customer || '', job.partNumber || '');
+    const rates = computeOperationRates(allLogs, job.partNumber || '');
     if (rates.size > 0) {
-      const est = estimateJobMinutes(qty, rates);
+      const est = estimateJobMinutes(qty, rates, buffer);
       if (est.hasData && est.totalHours > 0) {
         return parseFloat(est.totalHours.toFixed(1));
       }
     }
   }
 
-  // ── 2. Job-level average across completed runs (legacy fallback)
+  // ── 2. Job-level average across completed runs (legacy fallback — still
+  //      customer+part keyed because cost/price varies by customer)
+  const cust = (job.customer || '').trim().toLowerCase();
+  if (!cust) return null;
   const matches = jobs.filter(j =>
     j.id !== job.id &&
     (j.customer || '').trim().toLowerCase() === cust &&
@@ -84,9 +87,14 @@ export function inferExpectedHours(
  *
  * If the saved value already exists, the job is returned unchanged.
  */
-export function enrichJobForPrint(job: Job, jobs: Job[], allLogs: TimeLog[]): Job {
+export function enrichJobForPrint(
+  job: Job,
+  jobs: Job[],
+  allLogs: TimeLog[],
+  buffer: number = 1,
+): Job {
   if ((job.expectedHours || 0) > 0) return job;
-  const inferred = inferExpectedHours(job, jobs, allLogs);
+  const inferred = inferExpectedHours(job, jobs, allLogs, buffer);
   if (inferred === null) return job;
   return { ...job, expectedHours: inferred };
 }
