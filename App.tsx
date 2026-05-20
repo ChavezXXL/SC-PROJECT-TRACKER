@@ -51,6 +51,7 @@ import { TrialBanner } from './components/TrialBanner';
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
+import { enrichJobForPrint } from './utils/jobMemory';
 import { computeJobETA, computeCapacityForecast, RISK_COLORS } from './utils/jobETA';
 import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
 import { findStageForOperation, shouldAutoRoute, resolveJobStage } from './utils/stageRouting';
@@ -3675,31 +3676,38 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // When customer + part number match a prior job, automatically fill in
   // empty fields from the last run. Never overwrites user input — only
   // populates blanks. Runs whenever the memory match changes.
-  // (User can still click the manual "Apply" buttons to override later.)
-  // ONLY runs on new jobs (no id yet) so opening an existing job to edit
-  // doesn't silently re-fill missing fields from some other prior run.
+  //
+  // Applies to BOTH new and existing jobs: existing jobs created before
+  // expectedHours started persisting are otherwise frozen with "—" on
+  // their travelers forever. Filling missing fields nudges the user to
+  // save once and the data carries forward everywhere.
   useEffect(() => {
     if (!priceSuggestion) return;
-    if (editingJob.id) return; // existing job — let user use manual buttons
     const patch: Partial<Job> = {};
+    const filled: string[] = [];
     // 1. Expected hours — from average if we have multiple runs, else last run
     const suggestedHrs = priceSuggestion.avgHrs ?? priceSuggestion.lastTotalHrs;
     if (suggestedHrs && suggestedHrs > 0 && !editingJob.expectedHours) {
       patch.expectedHours = parseFloat(suggestedHrs.toFixed(1));
+      filled.push(`Est. ${patch.expectedHours}h`);
     }
     // 2. Price per part — last paid rate
     if (priceSuggestion.pricePerPart && !editingJob.pricePerPart && !editingJob.quoteAmount) {
       patch.pricePerPart = priceSuggestion.pricePerPart;
       const qty = editingJob.quantity || priceSuggestion.quantity || 0;
       if (qty > 0) patch.quoteAmount = parseFloat((priceSuggestion.pricePerPart * qty).toFixed(2));
+      filled.push(`$${patch.pricePerPart.toFixed(2)}/part`);
     }
     // 3. Special instructions — carry forward from last run if blank
     const lastInstr = priceSuggestion.lastJob?.specialInstructions;
     if (lastInstr && lastInstr.trim() && !editingJob.specialInstructions) {
       patch.specialInstructions = lastInstr;
+      filled.push('instructions');
     }
     if (Object.keys(patch).length > 0) {
       setEditingJob(prev => ({ ...prev, ...patch }));
+      // Make the magic visible so the user knows to hit Save to keep it.
+      addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [priceSuggestion?.poNumber]); // only re-run when the matched-job identity changes
@@ -4239,7 +4247,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const ids: string[] = Array.from(selectedJobIds);
               ids.forEach(id => {
                 const job = jobs.find(x => x.id === id);
-                if (job) printJobTravelerPDF(job, shopSettings, getPartHistory(job.partNumber || '', jobs, allLogs));
+                if (job) printJobTravelerPDF(enrichJobForPrint(job, jobs, allLogs), shopSettings, getPartHistory(job.partNumber || '', jobs, allLogs));
               });
               addToast('info', `Generated ${ids.length} traveler${ids.length > 1 ? 's' : ''}`);
             }}
@@ -4611,7 +4619,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       )}
                       <button
                         aria-label={printed.includes(j.id) ? `Reprint traveler for ${j.poNumber || ''}` : `Print traveler for ${j.poNumber || ''}`}
-                        onClick={() => setPrintable(j)} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
+                        onClick={() => setPrintable(enrichJobForPrint(j, jobs, allLogs))} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
                       <button aria-label={`Report rework for ${j.poNumber || ''}`} onClick={(e) => { e.stopPropagation(); setReworkModal({ jobId: j.id, poNumber: j.poNumber, partNumber: j.partNumber, customer: j.customer, reason: 'finish', quantity: 1, status: 'open' }); }} className="p-2 hover:bg-amber-500/10 rounded-lg text-amber-400/70 hover:text-amber-400 transition-colors relative" title="Report rework">
                         <AlertTriangle className="w-4 h-4" aria-hidden="true" />
                         {reworkByJob.get(j.id) && (reworkByJob.get(j.id)!.open > 0) && (
@@ -5168,7 +5176,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 {editingJob.shippingMethod && (
                   <div className="flex gap-3">
                     <button onClick={() => { printPackingSlipPDF(editingJob as Job, shopSettings); }} className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Packing Slip</button>
-                    <button onClick={() => { printJobTravelerPDF(editingJob as Job, shopSettings, getPartHistory(editingJob.partNumber || '', jobs, allLogs)); }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
+                    <button onClick={() => { printJobTravelerPDF(enrichJobForPrint(editingJob as Job, jobs, allLogs), shopSettings, getPartHistory(editingJob.partNumber || '', jobs, allLogs)); }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
                   </div>
                 )}
               </div>
