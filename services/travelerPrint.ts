@@ -17,6 +17,8 @@
  */
 
 import type { Job, SystemSettings } from '../types';
+import type { RateEstimate } from '../utils/rateLearning';
+import { formatRate } from '../utils/rateLearning';
 import QRCode from 'qrcode';
 
 const TRAVELER_CSS = `
@@ -265,6 +267,41 @@ const TRAVELER_CSS = `
 
   /* clearfix for float:right photo */
   .cf::after { content:''; display:table; clear:both; }
+
+  /* ── ESTIMATE BY OPERATION (rate-learned) ── */
+  .est-table {
+    width: 100%; border-collapse: collapse; margin-top: 4pt; margin-bottom: 10pt;
+    font-size: 9pt;
+  }
+  .est-table th {
+    background: #f4f4f5; color: #3f3f46;
+    text-align: left; font-weight: 800;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: 7pt;
+    border: 1pt solid #d4d4d8;
+    padding: 4pt 7pt;
+  }
+  .est-table td {
+    border: 1pt solid #d4d4d8;
+    padding: 4pt 7pt;
+    vertical-align: middle;
+    font-variant-numeric: tabular-nums;
+  }
+  .est-table tfoot td {
+    background: #fff7ed;
+    font-weight: 900;
+    color: #9a3412;
+    font-size: 10pt;
+  }
+  .est-op   { font-weight: 800; color: #18181b; }
+  .est-rate { color: #71717a; font-size: 8.5pt; }
+  .est-hrs  { text-align: right; font-weight: 800; color: #1d4ed8; }
+  .est-src  { color: #a1a1aa; font-size: 7.5pt; font-style: italic; }
+  .est-caption {
+    font-size: 7.5pt; color: #71717a;
+    margin-top: 2pt; margin-bottom: 6pt;
+    letter-spacing: 0.02em;
+  }
 `;
 
 export interface TravelerOptions {
@@ -283,6 +320,11 @@ export interface TravelerOptions {
   footerText?: string;
   /** Pre-generated QR data URL (from qrcode lib). If omitted, QR is skipped. */
   _qrDataUrl?: string;
+  /** Operation-level rate breakdown for this job's quantity, computed from
+   *  past TimeLog history. When provided, the traveler renders an
+   *  "Estimated Time by Operation" section above the blank Operation Log
+   *  so the floor sees the predicted cycle next to the actual cycle. */
+  _rateBreakdown?: RateEstimate | null;
 }
 
 function flag(opt: boolean | undefined, fromSettings: boolean | undefined): boolean {
@@ -428,6 +470,44 @@ export function renderTravelerHtml(
         <div class="notes-txt">${escapeHtml(job.info)}</div>
        </div>` : '';
 
+  // ── ESTIMATE BY OPERATION (rate-learned from past runs) ──
+  // Renders only when we have rate data for this part. Shows the floor
+  // what's expected so they have a benchmark next to the blank log below.
+  const rate = options._rateBreakdown;
+  const qty = job.quantity || 0;
+  const estByOpHtml = rate && rate.hasData && qty > 0 ? `
+    <div class="sec-hdr">Estimated Time by Operation</div>
+    <div class="est-caption">
+      Computed from past runs of this part — actual times may vary.
+      Based on ${rate.basedOnRuns} prior run${rate.basedOnRuns === 1 ? '' : 's'}.
+    </div>
+    <table class="est-table">
+      <thead><tr>
+        <th style="width:32%">Operation</th>
+        <th style="width:22%">Learned Rate</th>
+        <th style="width:18%">${qty.toLocaleString()} pcs × rate</th>
+        <th style="width:12%; text-align:right">Est.</th>
+        <th style="width:16%">Sample size</th>
+      </tr></thead>
+      <tbody>
+        ${rate.breakdown.map(r => `
+          <tr>
+            <td class="est-op">${escapeHtml(r.operation)}</td>
+            <td class="est-rate">${escapeHtml(formatRate(r.ratePerPiece))}</td>
+            <td class="est-rate">${qty.toLocaleString()} × ${formatRate(r.ratePerPiece)}</td>
+            <td class="est-hrs">${(r.estimatedMinutes / 60).toFixed(2)}h</td>
+            <td class="est-src">${r.runCount} run${r.runCount === 1 ? '' : 's'} · ${r.sampleCount} session${r.sampleCount === 1 ? '' : 's'}</td>
+          </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3">Total estimated</td>
+          <td class="est-hrs">${rate.totalHours.toFixed(2)}h</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>` : '';
+
   // ── OPERATION LOG ──
   const opRowsHtml = Array.from({ length: opRows }, () =>
     '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'
@@ -567,6 +647,9 @@ export function renderTravelerHtml(
       ${instrHtml}
       ${notesHtml}
     </div>
+
+    <!-- ESTIMATE BY OPERATION (rate-learned) -->
+    ${estByOpHtml}
 
     <!-- OPERATION LOG -->
     ${opLogHtml}

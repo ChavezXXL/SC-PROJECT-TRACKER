@@ -51,7 +51,7 @@ import { TrialBanner } from './components/TrialBanner';
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
-import { enrichJobForPrint } from './utils/jobMemory';
+import { enrichJobForPrint, getRateBreakdownForJob } from './utils/jobMemory';
 import { computeJobETA, computeCapacityForecast, RISK_COLORS } from './utils/jobETA';
 import { fmtK, fmtMoneyK, fmtMoneySigned, shortName as fmtShortName } from './utils/format';
 import { findStageForOperation, shouldAutoRoute, resolveJobStage } from './utils/stageRouting';
@@ -1723,9 +1723,14 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
 // codes, change the row count, add a footer notice, etc. without code.
 const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClose: () => void, onPrinted?: (jobId: string) => void }) => {
   const [appSettings, setAppSettings] = useState<SystemSettings>(DB.getSettings());
+  const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   useEffect(() => DB.subscribeSettings(setAppSettings), []);
+  useEffect(() => DB.subscribeLogs(setAllLogs), []);
 
   if (!job) return null;
+  // Operation-level rate breakdown for the traveler estimate section.
+  // Recomputes if logs update while the preview is open.
+  const rateBreakdown = getRateBreakdownForJob(job, allLogs);
   const currentBaseUrl = window.location.href.split('?')[0];
   const deepLinkData = `${currentBaseUrl}?jobId=${job.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(deepLinkData)}`;
@@ -1757,7 +1762,7 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-3 py-2 text-zinc-400 hover:text-white text-sm font-medium">Cancel</button>
-            <button onClick={() => { printTraveler(job, appSettings).then(() => { if (onPrinted) onPrinted(job.id); }); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm"><Printer className="w-4 h-4" /><span className="hidden sm:inline">Print </span>Traveler</button>
+            <button onClick={() => { printTraveler(job, appSettings, { _rateBreakdown: rateBreakdown }).then(() => { if (onPrinted) onPrinted(job.id); }); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm"><Printer className="w-4 h-4" /><span className="hidden sm:inline">Print </span>Traveler</button>
           </div>
         </div>
         <div id="printable-area" className="flex-1 p-4 sm:p-6 bg-white overflow-y-auto overflow-x-hidden">
@@ -3685,11 +3690,20 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     if (!priceSuggestion) return;
     const patch: Partial<Job> = {};
     const filled: string[] = [];
-    // 1. Expected hours — from average if we have multiple runs, else last run
-    const suggestedHrs = priceSuggestion.avgHrs ?? priceSuggestion.lastTotalHrs;
-    if (suggestedHrs && suggestedHrs > 0 && !editingJob.expectedHours) {
-      patch.expectedHours = parseFloat(suggestedHrs.toFixed(1));
-      filled.push(`Est. ${patch.expectedHours}h`);
+    // 1. Expected hours — prefer rate-based math (scales with current qty);
+    //    falls back to job-level average if no per-piece data exists.
+    if (!editingJob.expectedHours) {
+      const rateEst = getRateBreakdownForJob(editingJob, allLogs);
+      if (rateEst && rateEst.hasData && rateEst.totalHours > 0) {
+        patch.expectedHours = parseFloat(rateEst.totalHours.toFixed(1));
+        filled.push(`Est. ${patch.expectedHours}h (scaled to ${(editingJob.quantity || 0).toLocaleString()} pcs across ${rateEst.breakdown.length} ops)`);
+      } else {
+        const suggestedHrs = priceSuggestion.avgHrs ?? priceSuggestion.lastTotalHrs;
+        if (suggestedHrs && suggestedHrs > 0) {
+          patch.expectedHours = parseFloat(suggestedHrs.toFixed(1));
+          filled.push(`Est. ${patch.expectedHours}h`);
+        }
+      }
     }
     // 2. Price per part — last paid rate
     if (priceSuggestion.pricePerPart && !editingJob.pricePerPart && !editingJob.quoteAmount) {
@@ -4247,7 +4261,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const ids: string[] = Array.from(selectedJobIds);
               ids.forEach(id => {
                 const job = jobs.find(x => x.id === id);
-                if (job) printJobTravelerPDF(enrichJobForPrint(job, jobs, allLogs), shopSettings, getPartHistory(job.partNumber || '', jobs, allLogs));
+                if (job) {
+                  const enriched = enrichJobForPrint(job, jobs, allLogs);
+                  printJobTravelerPDF(
+                    enriched,
+                    shopSettings,
+                    getPartHistory(job.partNumber || '', jobs, allLogs),
+                    getRateBreakdownForJob(enriched, allLogs),
+                  );
+                }
               });
               addToast('info', `Generated ${ids.length} traveler${ids.length > 1 ? 's' : ''}`);
             }}
@@ -5176,7 +5198,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 {editingJob.shippingMethod && (
                   <div className="flex gap-3">
                     <button onClick={() => { printPackingSlipPDF(editingJob as Job, shopSettings); }} className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Packing Slip</button>
-                    <button onClick={() => { printJobTravelerPDF(enrichJobForPrint(editingJob as Job, jobs, allLogs), shopSettings, getPartHistory(editingJob.partNumber || '', jobs, allLogs)); }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
+                    <button onClick={() => {
+                      const enriched = enrichJobForPrint(editingJob as Job, jobs, allLogs);
+                      printJobTravelerPDF(
+                        enriched,
+                        shopSettings,
+                        getPartHistory(editingJob.partNumber || '', jobs, allLogs),
+                        getRateBreakdownForJob(enriched, allLogs),
+                      );
+                    }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Job Traveler</button>
                   </div>
                 )}
               </div>

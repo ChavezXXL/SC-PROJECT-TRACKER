@@ -7,9 +7,20 @@
  * `expectedHours` field started persisting. Without an inference step,
  * the traveler shows "—" forever on legacy data. With it, the value
  * appears as soon as the print happens — no re-saving required.
+ *
+ * Inference strategy (best signal first):
+ *   1. RATE-BASED — sum minutes & pieces from past TimeLogs that have
+ *      sessionQty, divide for a min/pc rate, multiply by current qty.
+ *      Scales correctly when the new order is larger or smaller than
+ *      past runs. THIS IS THE PREFERRED PATH.
+ *   2. JOB-LEVEL AVG — average total job hours across completed runs.
+ *      Used when no sessionQty data exists (legacy logs).
+ *   3. LAST RUN — single most recent run's total hours.
+ *      Used when nothing is completed yet.
  */
 
 import type { Job, TimeLog } from '../types';
+import { computeOperationRates, estimateJobMinutes, getRateBreakdownForJob } from './rateLearning';
 
 /** Sum minutes logged against a single job id. */
 function totalMinutesFor(jobId: string, allLogs: TimeLog[]): number {
@@ -19,17 +30,11 @@ function totalMinutesFor(jobId: string, allLogs: TimeLog[]): number {
 }
 
 /**
- * Find prior runs of the same customer + part number and compute a
- * sensible expected-hours value:
- *   1. Average hours across completed runs (best signal — most recent
- *      typical performance, ignores in-progress runs that haven't logged
- *      everything yet)
- *   2. Last run's logged hours (fallback when nothing is completed)
- *
- * Returns null if no prior runs are found or no hours were logged.
+ * Compute the expected hours for a job using the best available signal.
+ * Pass the new job's `quantity` so the rate-based path can scale.
  */
 export function inferExpectedHours(
-  job: Pick<Job, 'id' | 'customer' | 'partNumber'>,
+  job: Pick<Job, 'id' | 'customer' | 'partNumber' | 'quantity'>,
   jobs: Job[],
   allLogs: TimeLog[]
 ): number | null {
@@ -37,6 +42,19 @@ export function inferExpectedHours(
   const part = (job.partNumber || '').trim().toLowerCase();
   if (!cust || !part) return null;
 
+  // ── 1. Rate-based estimate (best signal — scales with new qty)
+  const qty = job.quantity || 0;
+  if (qty > 0) {
+    const rates = computeOperationRates(allLogs, job.customer || '', job.partNumber || '');
+    if (rates.size > 0) {
+      const est = estimateJobMinutes(qty, rates);
+      if (est.hasData && est.totalHours > 0) {
+        return parseFloat(est.totalHours.toFixed(1));
+      }
+    }
+  }
+
+  // ── 2. Job-level average across completed runs (legacy fallback)
   const matches = jobs.filter(j =>
     j.id !== job.id &&
     (j.customer || '').trim().toLowerCase() === cust &&
@@ -51,7 +69,7 @@ export function inferExpectedHours(
     if (avgHrs > 0) return parseFloat(avgHrs.toFixed(1));
   }
 
-  // No completed runs — fall back to the most recent run regardless of status
+  // ── 3. Last run total (no completed runs yet)
   const recent = [...matches].sort(
     (a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt)
   )[0];
@@ -72,3 +90,6 @@ export function enrichJobForPrint(job: Job, jobs: Job[], allLogs: TimeLog[]): Jo
   if (inferred === null) return job;
   return { ...job, expectedHours: inferred };
 }
+
+/** Re-export the rate breakdown helper so callers only need one import path. */
+export { getRateBreakdownForJob };
