@@ -504,15 +504,43 @@
                           } catch(e) { callback(false, e.message); }
                 };
         </script>
-        <!-- Register Service Worker -->
+        <!-- Register Service Worker — auto-reloads on new deploy so users
+             never get stuck on stale shells (the iPad-PWA problem). -->
         <script>
-                if ('serviceWorker' in navigator) {
-                          window.addEventListener('load', () => {
-                                      navigator.serviceWorker.register('/sw.js')
-                                                    .then(reg => console.log('SW registered:', reg.scope))
-                                                    .catch(err => console.log('SW registration failed:', err));
-                          });
-                }
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('SW registered:', reg.scope);
+
+                // Check for updates every 30 minutes while the tab is open
+                setInterval(() => { reg.update().catch(() => {}); }, 30 * 60 * 1000);
+
+                // When a new SW finishes installing and is waiting, fire skipWaiting
+                // immediately. clients.claim() in the SW then takes over the page on
+                // the NEXT navigation. We auto-reload once that happens.
+                reg.addEventListener('updatefound', () => {
+                  const nw = reg.installing;
+                  if (!nw) return;
+                  nw.addEventListener('statechange', () => {
+                    if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                      // New SW ready — activate immediately
+                      nw.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                  });
+                });
+
+                // When controller changes (= new SW took over), reload once so the
+                // user sees the new code. Guard against infinite reload loops.
+                let reloaded = false;
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                  if (reloaded) return;
+                  reloaded = true;
+                  console.log('[SW] New version active — reloading…');
+                  window.location.reload();
+                });
+              }).catch(err => console.log('SW registration failed:', err));
+            });
+          }
         </script>
     </head>
     <body>
