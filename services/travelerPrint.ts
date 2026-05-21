@@ -36,35 +36,35 @@ const TRAVELER_CSS = `
   /* ── ACCENT STRIPE ── */
   .accent { height:5pt; background:#ea580c; }
 
-  /* ── HEADER (solid black bar) ── */
+  /* ── HEADER (ink-light: white bg, thick bottom border) ── */
   .hdr {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: #111;
-    color: #fff;
+    background: #fff;
+    color: #111;
     padding: 9pt 12pt 10pt;
     margin-bottom: 10pt;
+    border-bottom: 2.5pt solid #111;
   }
   .hdr-left { display:flex; align-items:center; gap:10pt; }
   .hdr-logo {
     max-height: 42pt; max-width: 140pt;
     object-fit: contain;
-    background: #fff;
-    padding: 3pt 5pt;
-    border-radius: 2pt;
+    background: transparent;
+    padding: 0;
   }
-  .hdr-co   { font-size:15pt; font-weight:900; letter-spacing:-0.01em; color:#fff; line-height:1.1; }
-  .hdr-sub  { font-size:7.5pt; color:#9ca3af; margin-top:2pt; }
+  .hdr-co   { font-size:15pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1.1; }
+  .hdr-sub  { font-size:7.5pt; color:#6b7280; margin-top:2pt; }
   .hdr-right { text-align:right; }
   .hdr-eyebrow { font-size:7pt; font-weight:800; letter-spacing:0.22em; text-transform:uppercase; color:#ea580c; margin-bottom:2pt; }
-  .hdr-doctype  { font-size:19pt; font-weight:900; letter-spacing:-0.01em; color:#fff; line-height:1; }
-  .hdr-meta     { font-size:7.5pt; color:#9ca3af; margin-top:3pt; font-variant-numeric:tabular-nums; }
+  .hdr-doctype  { font-size:19pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1; }
+  .hdr-meta     { font-size:7.5pt; color:#6b7280; margin-top:3pt; font-variant-numeric:tabular-nums; }
 
   /* ── IDENTITY BLOCK ── */
   /* HTML table — rowspan for QR column works flawlessly in Chrome print */
   .id-table { width:100%; border-collapse:collapse; }
-  .id-table td { border:2pt solid #111; vertical-align:top; }
+  .id-table td { border:1.5pt solid #111; vertical-align:top; }
 
   .id-lbl {
     font-size: 7pt; font-weight: 800;
@@ -89,7 +89,7 @@ const TRAVELER_CSS = `
     width: 88pt;
     text-align: center;
     vertical-align: middle;
-    background: #f9f9f9;
+    background: #fff;
     padding: 8pt 10pt;
   }
   .id-qr-cell img {
@@ -120,7 +120,7 @@ const TRAVELER_CSS = `
   /* Continues the identity block — no top border, same outer border */
   .meta-table {
     width: 100%; border-collapse: collapse;
-    border: 2pt solid #111; border-top: none;
+    border: 1.5pt solid #111; border-top: none;
     margin-bottom: 10pt;
   }
   .meta-table td {
@@ -189,14 +189,14 @@ const TRAVELER_CSS = `
   }
   .notes-txt { font-size:10pt; color:#3f3f46; line-height:1.5; white-space:pre-wrap; }
 
-  /* ── SECTION HEADERS ── */
-  /* Black filled bar — looks like a real shop form section divider */
+  /* ── SECTION HEADERS (ink-light: white bg, thick bottom rule) ── */
   .sec-hdr {
-    background: #111; color: #fff;
-    font-size: 7.5pt; font-weight: 800;
-    letter-spacing: 0.2em; text-transform: uppercase;
-    padding: 5pt 10pt;
-    margin-bottom: 0;
+    background: #fff; color: #111;
+    font-size: 9pt; font-weight: 900;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    padding: 4pt 0 3pt;
+    margin-top: 4pt; margin-bottom: 0;
+    border-bottom: 1.5pt solid #111;
     page-break-after: avoid;
   }
 
@@ -240,12 +240,12 @@ const TRAVELER_CSS = `
     display:inline-block; border-radius:1.5pt; flex-shrink:0;
   }
 
-  /* ── CERTIFICATE OF CONFORMANCE ── */
+  /* ── CERTIFICATE OF CONFORMANCE (no fill — saves ink) ── */
   .coc {
     font-size: 7pt; color: #71717a; line-height: 1.6;
     padding: 5pt 8pt;
     border: 0.5pt solid #d4d4d8;
-    background: #f9f9f9;
+    background: #fff;
     margin-bottom: 8pt;
   }
   .coc strong { color: #374151; }

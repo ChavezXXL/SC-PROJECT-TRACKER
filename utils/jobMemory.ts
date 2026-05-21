@@ -54,27 +54,33 @@ export function inferExpectedHours(
     }
   }
 
-  // ── 2. Job-level average across completed runs (legacy fallback — still
-  //      customer+part keyed because cost/price varies by customer)
-  const cust = (job.customer || '').trim().toLowerCase();
-  if (!cust) return null;
-  const matches = jobs.filter(j =>
+  // ── 2. Per-piece job-level estimate from completed runs of this part
+  //      (partNumber-only — same physical part has same cycle regardless
+  //      of which customer it ships to). Scales by current quantity.
+  const completedSamePart = jobs.filter(j =>
     j.id !== job.id &&
-    (j.customer || '').trim().toLowerCase() === cust &&
-    (j.partNumber || '').trim().toLowerCase() === part
+    j.status === 'completed' &&
+    (j.partNumber || '').trim().toLowerCase() === part &&
+    (j.quantity || 0) > 0,
   );
-  if (!matches.length) return null;
-
-  const completed = matches.filter(j => j.status === 'completed');
-  if (completed.length > 0) {
-    const totalMins = completed.reduce((sum, j) => sum + totalMinutesFor(j.id, allLogs), 0);
-    const avgHrs = totalMins / completed.length / 60;
-    if (avgHrs > 0) return parseFloat(avgHrs.toFixed(1));
+  if (completedSamePart.length > 0 && qty > 0) {
+    const totalUnits = completedSamePart.reduce((a, j) => a + (j.quantity || 0), 0);
+    const totalMins  = completedSamePart.reduce((a, j) => a + totalMinutesFor(j.id, allLogs), 0);
+    if (totalUnits > 0 && totalMins > 0) {
+      const hrsPerUnit = (totalMins / 60) / totalUnits;
+      const scaled = hrsPerUnit * qty * buffer;
+      if (scaled > 0) return parseFloat(scaled.toFixed(1));
+    }
   }
 
-  // ── 3. Last run total (no completed runs yet)
-  const recent = [...matches].sort(
-    (a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt)
+  // ── 3. Last run total of this part (no completed runs with qty — fallback)
+  const samePart = jobs.filter(j =>
+    j.id !== job.id &&
+    (j.partNumber || '').trim().toLowerCase() === part,
+  );
+  if (samePart.length === 0) return null;
+  const recent = [...samePart].sort(
+    (a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt),
   )[0];
   const hrs = totalMinutesFor(recent.id, allLogs) / 60;
   return hrs > 0 ? parseFloat(hrs.toFixed(1)) : null;
