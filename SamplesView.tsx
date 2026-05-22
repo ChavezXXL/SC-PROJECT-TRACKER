@@ -341,7 +341,9 @@ const StartWorkModal: React.FC<{
   onClose: () => void;
 }> = ({ sample, operations, userName, onStart, onClose }) => {
   const [op, setOp] = useState(operations[0] || 'Deburring');
-  const [qty, setQty] = useState<number>(0);
+  // Pre-fill from the sample's declared qty so admin doesn't have to type
+  // it twice. They can still override for partial sessions.
+  const [qty, setQty] = useState<number>(sample.qty || 0);
   return (
     <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden my-4">
@@ -358,9 +360,14 @@ const StartWorkModal: React.FC<{
             </select>
           </div>
           <div>
-            <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">How Many Samples?</label>
+            <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">Pieces This Session</label>
             <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-green-500 outline-none"
-              value={qty || ''} onChange={e => setQty(Number(e.target.value) || 0)} placeholder="Optional — number of pieces" />
+              value={qty || ''} onChange={e => setQty(Number(e.target.value) || 0)} placeholder="Pieces" />
+            <p className="text-[10px] text-zinc-600 mt-1.5">
+              {sample.qty && qty === sample.qty
+                ? <>Pre-filled from sample qty. Edit if you're only doing some of them this session.</>
+                : <>FabTrack uses time-per-piece to learn cycle rate for this part + operation.</>}
+            </p>
           </div>
           <p className="text-zinc-500 text-xs">Working as <span className="text-white font-bold">{userName}</span></p>
         </div>

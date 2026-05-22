@@ -604,6 +604,10 @@ export interface SystemSettings {
    *  "comfortable" target rather than a tight one. Default 1.15 (15%
    *  buffer). Used by the traveler print + auto-apply + over-budget alerts. */
   rateBuffer?: number;
+  /** Markup multiplier applied to labor cost when suggesting a price-per-part.
+   *  Default 2.0 (= 100% markup, i.e. charge 2× labor cost). Shows up on the
+   *  sample entry "suggested charge" preview. */
+  pricingMarkup?: number;
   /** When actual logged time exceeds (estimate × buffer), trigger an alert.
    *  Disabled by default so shops with no rate data don't get false alarms. */
   overBudgetAlertEnabled?: boolean;

@@ -3618,8 +3618,10 @@ const SampleTimesEntry: React.FC<{
   knownOperations: string[];
   knownPartNumbers: string[];
   rateBuffer: number;
+  shopRate: number;
+  pricingMarkup: number;
   askConfirm: (opts: any) => Promise<boolean>;
-}> = ({ addToast, allLogs, knownOperations, knownPartNumbers, rateBuffer, askConfirm }) => {
+}> = ({ addToast, allLogs, knownOperations, knownPartNumbers, rateBuffer, shopRate, pricingMarkup, askConfirm }) => {
   const [partNumber, setPartNumber] = React.useState('');
   const [operation, setOperation] = React.useState('');
   const [qty, setQty] = React.useState('');
@@ -3845,19 +3847,41 @@ const SampleTimesEntry: React.FC<{
         <datalist id="sample-parts">{partSuggestions.map(p => <option key={p} value={p} />)}</datalist>
         <datalist id="sample-ops">{opSuggestions.map(o => <option key={o} value={o} />)}</datalist>
 
-        {/* Live preview + duplicate warning */}
+        {/* Live preview: time + pricing math */}
         {(() => {
           const q = parseInt(qty, 10);
           const m = parseFloat(minutes);
           if (!(q > 0) || !(m > 0)) return null;
-          const rate = m / q;
+          const rate = m / q;                  // min per piece
           const buffered = rate * (rateBuffer || 1);
+          // Pricing math (only if shopRate configured)
+          const laborPerPc = shopRate > 0 ? (rate / 60) * shopRate : 0;        // $ per pc, time-based
+          const suggestedPerPc = laborPerPc * (pricingMarkup || 1);            // marked up
+          const revenue1000 = suggestedPerPc * 1000;
           return (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 space-y-0.5">
-              <p className="text-[11px] text-emerald-300 font-bold">
-                → Rate: {fmtRate(rate)} · 1000 pcs ≈ {(rate * 1000 / 60).toFixed(1)}h
-                {rateBuffer > 1 && <span className="text-emerald-400/70 ml-1">· w/ {Math.round((rateBuffer - 1) * 100)}% buffer: {(buffered * 1000 / 60).toFixed(1)}h</span>}
-              </p>
+            <div className="space-y-1.5">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                <p className="text-[11px] text-emerald-300 font-bold">
+                  ⏱ Rate: {fmtRate(rate)} · 1000 pcs ≈ {(rate * 1000 / 60).toFixed(1)}h
+                  {rateBuffer > 1 && <span className="text-emerald-400/70 ml-1">· w/ {Math.round((rateBuffer - 1) * 100)}% buffer: {(buffered * 1000 / 60).toFixed(1)}h</span>}
+                </p>
+              </div>
+              {shopRate > 0 ? (
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 space-y-0.5">
+                  <p className="text-[11px] text-amber-300 font-bold">
+                    💰 Labor cost: ${laborPerPc.toFixed(4)}/pc · @ {Math.round((pricingMarkup || 1) * 100)}% markup → <span className="text-amber-200">${suggestedPerPc.toFixed(3)}/pc</span>
+                  </p>
+                  <p className="text-[10px] text-amber-400/70">
+                    1000 pcs revenue ≈ ${revenue1000.toFixed(2)} (labor cost ${(laborPerPc * 1000).toFixed(2)}, margin ${(revenue1000 - laborPerPc * 1000).toFixed(2)})
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-zinc-800/40 border border-white/[0.04] rounded-lg px-3 py-2">
+                  <p className="text-[10px] text-zinc-500">
+                    💰 Set your shop hourly rate in Settings → Financial to see suggested charge per part.
+                  </p>
+                </div>
+              )}
             </div>
           );
         })()}
@@ -5239,6 +5263,8 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 knownOperations={settings.customOperations || []}
                 knownPartNumbers={Array.from(new Set(tvJobs.map(j => j.partNumber).filter(Boolean) as string[]))}
                 rateBuffer={settings.rateBuffer ?? 1.15}
+                shopRate={settings.shopRate ?? 0}
+                pricingMarkup={settings.pricingMarkup ?? 2.0}
                 askConfirm={askConfirm}
               />
 
@@ -5264,6 +5290,36 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 </div>
                 <p className="text-[10px] text-zinc-600 mt-2">
                   Example: 15% on a 10h base estimate → 11.5h shown on the traveler. Set to 0 for no buffer.
+                </p>
+              </div>
+
+              {/* ── Pricing markup % ── */}
+              <div className="px-4 py-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Pricing markup</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Multiplier on labor cost when suggesting a charge per part. Shows up on the sample preview.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" step="10" min="0" max="500"
+                      className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-20 text-center focus:outline-none focus:border-amber-500/40"
+                      value={Math.round(((settings.pricingMarkup ?? 2.0) - 1) * 100)}
+                      onChange={e => {
+                        const pct = Number(e.target.value) || 0;
+                        setSettings({ ...settings, pricingMarkup: 1 + (pct / 100) });
+                      }}
+                    />
+                    <span className="text-xs text-zinc-500">% markup</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  Example: 100% on $0.10/pc labor → $0.20/pc charge. Default 100% (= 2× labor cost).
+                  {!(settings.shopRate && settings.shopRate > 0) && (
+                    <span className="block mt-0.5 text-amber-500/70">⚠ Set Shop Hourly Rate in Financial tab to enable pricing previews.</span>
+                  )}
                 </p>
               </div>
 
