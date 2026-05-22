@@ -75,24 +75,29 @@ export function computeOperationRates(
     typeof l.sessionQty === 'number' && l.sessionQty > 0
   );
 
-  type Acc = { totalMins: number; totalQty: number; runIds: Set<string>; sampleCount: number };
+  // Bucket by lowercased operation so "Polish" / "polish" / "POLISH" merge.
+  // We remember the most recent display casing for friendly output.
+  type Acc = { totalMins: number; totalQty: number; runIds: Set<string>; sampleCount: number; displayName: string };
   const byOp = new Map<string, Acc>();
 
   for (const l of relevant) {
-    const op = l.operation;
-    const e = byOp.get(op) || { totalMins: 0, totalQty: 0, runIds: new Set<string>(), sampleCount: 0 };
+    const key = l.operation.trim().toLowerCase();
+    if (!key) continue;
+    const e = byOp.get(key) || { totalMins: 0, totalQty: 0, runIds: new Set<string>(), sampleCount: 0, displayName: l.operation.trim() };
     e.totalMins += l.durationMinutes!;
     e.totalQty += l.sessionQty!;
     e.runIds.add(l.jobId);
     e.sampleCount += 1;
-    byOp.set(op, e);
+    // Prefer Title Case or whatever the latest entry used (most likely current convention)
+    e.displayName = l.operation.trim();
+    byOp.set(key, e);
   }
 
   const rates = new Map<string, OperationRate>();
-  for (const [op, e] of byOp.entries()) {
+  for (const [, e] of byOp.entries()) {
     if (e.totalQty <= 0) continue;
-    rates.set(op, {
-      operation: op,
+    rates.set(e.displayName, {
+      operation: e.displayName,
       ratePerPiece: e.totalMins / e.totalQty,
       totalPieces: e.totalQty,
       totalMinutes: e.totalMins,

@@ -11,20 +11,24 @@ function computeOperationRates(logs, partNumber) {
     typeof l.durationMinutes === 'number' && l.durationMinutes > 0 &&
     typeof l.sessionQty === 'number' && l.sessionQty > 0
   );
-  const byOp = new Map();
+  // Lowercase bucketing — "Polish" / "polish" / "POLISH" merge into one
+  const byOpLower = new Map();
   for (const l of relevant) {
-    const e = byOp.get(l.operation) || { totalMins: 0, totalQty: 0, runIds: new Set(), sampleCount: 0 };
+    const key = l.operation.trim().toLowerCase();
+    if (!key) continue;
+    const e = byOpLower.get(key) || { totalMins: 0, totalQty: 0, runIds: new Set(), sampleCount: 0, displayName: l.operation.trim() };
     e.totalMins += l.durationMinutes;
     e.totalQty += l.sessionQty;
     e.runIds.add(l.jobId);
     e.sampleCount += 1;
-    byOp.set(l.operation, e);
+    e.displayName = l.operation.trim();
+    byOpLower.set(key, e);
   }
   const rates = new Map();
-  for (const [op, e] of byOp.entries()) {
+  for (const e of byOpLower.values()) {
     if (e.totalQty <= 0) continue;
-    rates.set(op, {
-      operation: op,
+    rates.set(e.displayName, {
+      operation: e.displayName,
       ratePerPiece: e.totalMins / e.totalQty,
       totalPieces: e.totalQty,
       totalMinutes: e.totalMins,
@@ -149,7 +153,22 @@ console.log('\n══ TEST 7: Empty inputs handled gracefully ══');
   assert('Zero quantity estimate → not hasData', estimateJobMinutes(0, new Map([['op', { operation: 'op', ratePerPiece: 1, totalPieces: 10, totalMinutes: 10, runCount: 1, sampleCount: 1 }]])).hasData === false, false, true);
 }
 
-console.log('\n══ TEST 8: Buffer multiplier applies cleanly ══');
+console.log('\n══ TEST 8: Operation case merging — "Polish" + "polish" + "POLISH" → one bucket ══');
+{
+  const logs = [
+    { jobId: 'j1', partNumber: 'X', operation: 'Polish',  durationMinutes: 20, sessionQty: 30 },
+    { jobId: 'j2', partNumber: 'X', operation: 'polish',  durationMinutes: 10, sessionQty: 20 },
+    { jobId: 'j3', partNumber: 'X', operation: 'POLISH',  durationMinutes: 30, sessionQty: 50 },
+  ];
+  const rates = computeOperationRates(logs, 'X');
+  assert('All three case variants merge into one operation', rates.size === 1, 1, rates.size);
+  // Total: (20+10+30) / (30+20+50) = 60/100 = 0.6 min/pc
+  const r = [...rates.values()][0];
+  assert('Pooled rate = 0.6 min/pc', Math.abs(r.ratePerPiece - 0.6) < 0.001, 0.6, r.ratePerPiece);
+  assert('sampleCount = 3', r.sampleCount === 3, 3, r.sampleCount);
+}
+
+console.log('\n══ TEST 9: Buffer multiplier applies cleanly ══');
 {
   const logs = [
     { jobId: 'j1', partNumber: 'X', operation: 'deburr', durationMinutes: 20, sessionQty: 30 },

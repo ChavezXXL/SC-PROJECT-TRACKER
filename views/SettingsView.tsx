@@ -3609,36 +3609,111 @@ const ClockOutAuditLog = ({ logs }: { logs: TimeLog[] }) => {
 //  an isSample TimeLog the rate engine learns from. No worker clock
 //  needed; this is the calibration tool.
 // ═══════════════════════════════════════════════════════════════════════
-const SampleTimesEntry: React.FC<{ addToast: any; allLogs: TimeLog[] }> = ({ addToast, allLogs }) => {
+const fmtRate = (minPerPiece: number): string =>
+  minPerPiece >= 1 ? `${minPerPiece.toFixed(2)} min/pc` : `${(minPerPiece * 60).toFixed(1)} sec/pc`;
+
+const SampleTimesEntry: React.FC<{
+  addToast: any;
+  allLogs: TimeLog[];
+  knownOperations: string[];
+  knownPartNumbers: string[];
+  rateBuffer: number;
+  askConfirm: (opts: any) => Promise<boolean>;
+}> = ({ addToast, allLogs, knownOperations, knownPartNumbers, rateBuffer, askConfirm }) => {
   const [partNumber, setPartNumber] = React.useState('');
   const [operation, setOperation] = React.useState('');
   const [qty, setQty] = React.useState('');
   const [minutes, setMinutes] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  const [search, setSearch] = React.useState('');
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  // Inline edit state: { sampleId: { qty, minutes } } when a row is being edited
+  const [editing, setEditing] = React.useState<{ id: string; qty: string; minutes: string } | null>(null);
 
-  // Show only sample logs, most recent first
-  const samples = React.useMemo(() => {
-    return allLogs
-      .filter(l => l.isSample && l.durationMinutes && l.sessionQty)
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-      .slice(0, 12);
+  // ── Group all sample logs by (partNumber lowercased, operation lowercased) ──
+  // One visible row per group; group includes aggregate + the underlying logs.
+  type Group = {
+    key: string;                  // "abc-123|polish"
+    partNumber: string;            // display
+    operation: string;             // display (latest casing)
+    samples: TimeLog[];            // individual rows, most recent first
+    totalMinutes: number;
+    totalPieces: number;
+    avgRate: number;               // weighted avg min/piece
+    latestAt: number;              // most recent createdAt — for sort order
+  };
+  const groups = React.useMemo<Group[]>(() => {
+    const byKey = new Map<string, Group>();
+    for (const l of allLogs) {
+      if (!l.isSample) continue;
+      if (!l.durationMinutes || !l.sessionQty) continue;
+      if (!l.partNumber || !l.operation) continue;
+      const pnKey = l.partNumber.trim().toLowerCase();
+      const opKey = l.operation.trim().toLowerCase();
+      if (!pnKey || !opKey) continue;
+      const key = pnKey + '|' + opKey;
+      const g = byKey.get(key);
+      if (!g) {
+        byKey.set(key, {
+          key,
+          partNumber: l.partNumber.trim(),
+          operation: l.operation.trim(),
+          samples: [l],
+          totalMinutes: l.durationMinutes,
+          totalPieces: l.sessionQty,
+          avgRate: l.durationMinutes / l.sessionQty,
+          latestAt: l.createdAt || 0,
+        });
+      } else {
+        g.samples.push(l);
+        g.totalMinutes += l.durationMinutes;
+        g.totalPieces += l.sessionQty;
+        g.avgRate = g.totalMinutes / g.totalPieces;
+        if ((l.createdAt || 0) > g.latestAt) {
+          g.latestAt = l.createdAt || 0;
+          g.operation = l.operation.trim(); // most recent display casing wins
+          g.partNumber = l.partNumber.trim();
+        }
+      }
+    }
+    // Sort each group's samples newest-first, then sort groups by recency
+    for (const g of byKey.values()) {
+      g.samples.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    return Array.from(byKey.values()).sort((a, b) => b.latestAt - a.latestAt);
   }, [allLogs]);
+
+  // ── Filter groups by search text ──
+  const filteredGroups = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return groups;
+    return groups.filter(g =>
+      g.partNumber.toLowerCase().includes(q) ||
+      g.operation.toLowerCase().includes(q)
+    );
+  }, [groups, search]);
+
+  // ── Live duplicate detection while typing ──
+  const existingGroup = React.useMemo<Group | null>(() => {
+    const pnKey = partNumber.trim().toLowerCase();
+    const opKey = operation.trim().toLowerCase();
+    if (!pnKey || !opKey) return null;
+    return groups.find(g => g.partNumber.trim().toLowerCase() === pnKey && g.operation.trim().toLowerCase() === opKey) || null;
+  }, [partNumber, operation, groups]);
 
   const save = async () => {
     const pn = partNumber.trim();
     const op = operation.trim();
     const q = parseInt(qty, 10);
     const m = parseFloat(minutes);
-    if (!pn || !op || !(q > 0) || !(m > 0)) {
-      addToast('error', 'Need part number, operation, pieces, and minutes (all > 0).');
-      return;
-    }
+    if (!pn) { addToast('error', 'Part number is required.'); return; }
+    if (!op) { addToast('error', 'Operation is required.'); return; }
+    if (!(q > 0)) { addToast('error', 'Pieces must be greater than 0.'); return; }
+    if (!(m > 0)) { addToast('error', 'Minutes must be greater than 0.'); return; }
     setBusy(true);
     try {
       const now = Date.now();
       const start = now - Math.round(m * 60_000);
-      // Synthetic TimeLog flagged as sample. The rate engine reads
-      // partNumber + operation + durationMinutes + sessionQty from it.
       const sample: TimeLog = {
         id: 'sample-' + now.toString(36) + '-' + Math.random().toString(36).slice(2, 7),
         jobId: 'sample',
@@ -3657,106 +3732,274 @@ const SampleTimesEntry: React.FC<{ addToast: any; allLogs: TimeLog[] }> = ({ add
         updatedAt: now,
       };
       await DB.updateTimeLog(sample);
-      addToast('success', `Sample saved: ${op} on ${pn} — ${q} pcs in ${m} min`);
-      setPartNumber(''); setOperation(''); setQty(''); setMinutes('');
+      const rate = m / q;
+      addToast('success', `✅ Saved: ${pn} · ${op} — ${q} pcs in ${m}m (${fmtRate(rate)})`);
+      // Keep part+operation in the form so admin can quickly add another
+      // sample for the same combo. Only clear qty + minutes.
+      setQty(''); setMinutes('');
+      // Auto-expand the group we just added to so the new row is visible
+      const justKey = pn.toLowerCase() + '|' + op.toLowerCase();
+      setExpanded(prev => new Set(prev).add(justKey));
     } catch (e) {
-      console.error(e);
-      addToast('error', 'Failed to save sample.');
+      console.error('[SampleTimesEntry] save failed:', e);
+      addToast('error', 'Failed to save sample — check your connection and try again.');
     } finally {
       setBusy(false);
     }
   };
 
   const remove = async (log: TimeLog) => {
+    const ok = await askConfirm({
+      title: 'Remove this sample?',
+      message: `${log.partNumber} · ${log.operation} — ${log.sessionQty} pcs / ${log.durationMinutes?.toFixed(1)} min. Cannot be undone.`,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     try {
       await DB.deleteTimeLog(log.id);
       addToast('info', 'Sample removed.');
-    } catch {
+    } catch (e) {
+      console.error('[SampleTimesEntry] remove failed:', e);
       addToast('error', 'Failed to remove sample.');
     }
   };
+
+  const saveEdit = async (original: TimeLog) => {
+    if (!editing) return;
+    const q = parseInt(editing.qty, 10);
+    const m = parseFloat(editing.minutes);
+    if (!(q > 0) || !(m > 0)) {
+      addToast('error', 'Pieces and minutes must both be greater than 0.');
+      return;
+    }
+    try {
+      await DB.updateTimeLog({
+        ...original,
+        sessionQty: q,
+        durationMinutes: m,
+        durationSeconds: Math.round(m * 60),
+        updatedAt: Date.now(),
+      });
+      addToast('success', `Updated: ${original.partNumber} · ${original.operation} — ${q} pcs / ${m}m`);
+      setEditing(null);
+    } catch (e) {
+      console.error('[SampleTimesEntry] edit failed:', e);
+      addToast('error', 'Failed to update sample.');
+    }
+  };
+
+  const toggleExpanded = (key: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  // Datalist values — unique known operations + part numbers, alpha sorted
+  const opSuggestions = React.useMemo(() => Array.from(new Set([
+    ...knownOperations,
+    ...groups.map(g => g.operation),
+  ])).filter(Boolean).sort((a, b) => a.localeCompare(b)), [knownOperations, groups]);
+
+  const partSuggestions = React.useMemo(() => Array.from(new Set([
+    ...knownPartNumbers,
+    ...groups.map(g => g.partNumber),
+  ])).filter(Boolean).sort((a, b) => a.localeCompare(b)), [knownPartNumbers, groups]);
 
   return (
     <div className="px-4 py-4">
       <p className="text-sm font-semibold text-white">Cycle-time samples</p>
       <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
         Time yourself running a few parts through one operation, then log it here. FabTrack uses these
-        to estimate any future job size for that part. Example: "30 parts, polish, 60 min" → 2 min/pc.
+        to estimate any future job size for that part. Example: 30 pcs of polish in 60 min → 2 min/pc.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
-        <input
-          type="text" placeholder="Part Number (e.g. ABC-123)"
-          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
-          value={partNumber} onChange={e => setPartNumber(e.target.value)}
-        />
-        <input
-          type="text" placeholder="Operation (e.g. polish, deburr, qc)"
-          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40"
-          value={operation} onChange={e => setOperation(e.target.value)}
-        />
-        <input
-          type="number" placeholder="Pieces in this sample" min="1" step="1"
-          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
-          value={qty} onChange={e => setQty(e.target.value)}
-        />
-        <input
-          type="number" placeholder="Minutes it took" min="0.1" step="0.1"
-          className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
-          value={minutes} onChange={e => setMinutes(e.target.value)}
-        />
+      {/* ── Entry form ── */}
+      <div className="bg-zinc-950/40 border border-white/[0.04] rounded-xl p-3 mt-3 space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input
+            type="text" placeholder="Part Number (e.g. ABC-123)"
+            list="sample-parts" autoComplete="off"
+            className="bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+            value={partNumber} onChange={e => setPartNumber(e.target.value)}
+          />
+          <input
+            type="text" placeholder="Operation (e.g. polish, deburr, qc)"
+            list="sample-ops" autoComplete="off"
+            className="bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40"
+            value={operation} onChange={e => setOperation(e.target.value)}
+          />
+          <input
+            type="number" placeholder="Pieces in this sample" min="1" step="1"
+            className="bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+            value={qty} onChange={e => setQty(e.target.value)}
+          />
+          <input
+            type="number" placeholder="Minutes it took" min="0.1" step="0.1"
+            className="bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500/40"
+            value={minutes} onChange={e => setMinutes(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !busy) save(); }}
+          />
+        </div>
+        <datalist id="sample-parts">{partSuggestions.map(p => <option key={p} value={p} />)}</datalist>
+        <datalist id="sample-ops">{opSuggestions.map(o => <option key={o} value={o} />)}</datalist>
+
+        {/* Live preview + duplicate warning */}
+        {(() => {
+          const q = parseInt(qty, 10);
+          const m = parseFloat(minutes);
+          if (!(q > 0) || !(m > 0)) return null;
+          const rate = m / q;
+          const buffered = rate * (rateBuffer || 1);
+          return (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 space-y-0.5">
+              <p className="text-[11px] text-emerald-300 font-bold">
+                → Rate: {fmtRate(rate)} · 1000 pcs ≈ {(rate * 1000 / 60).toFixed(1)}h
+                {rateBuffer > 1 && <span className="text-emerald-400/70 ml-1">· w/ {Math.round((rateBuffer - 1) * 100)}% buffer: {(buffered * 1000 / 60).toFixed(1)}h</span>}
+              </p>
+            </div>
+          );
+        })()}
+        {existingGroup && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+            <p className="text-[11px] text-amber-300 font-bold">
+              ℹ {existingGroup.samples.length} existing sample{existingGroup.samples.length === 1 ? '' : 's'} for this part/operation — current avg: {fmtRate(existingGroup.avgRate)}. Adding this one will combine.
+            </p>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            type="button" disabled={busy}
+            onClick={save}
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-black tracking-wide transition-colors"
+          >
+            {busy ? 'Saving…' : '+ Save Sample'}
+          </button>
+          {(partNumber || operation || qty || minutes) && (
+            <button
+              type="button"
+              onClick={() => { setPartNumber(''); setOperation(''); setQty(''); setMinutes(''); }}
+              className="px-3 py-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 text-xs font-bold transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Live rate preview */}
-      {(() => {
-        const q = parseInt(qty, 10);
-        const m = parseFloat(minutes);
-        if (!(q > 0) || !(m > 0)) return null;
-        const rate = m / q;
-        const display = rate >= 1 ? `${rate.toFixed(2)} min/pc` : `${(rate * 60).toFixed(1)} sec/pc`;
-        return (
-          <p className="text-[11px] text-emerald-400 mt-2 font-bold">
-            → Rate: {display} · 1000 pcs would take {(rate * 1000 / 60).toFixed(1)}h
-          </p>
-        );
-      })()}
-
-      <button
-        type="button" disabled={busy}
-        onClick={save}
-        className="mt-3 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-black tracking-wide transition-colors"
-      >
-        {busy ? 'Saving…' : '+ Save Sample'}
-      </button>
-
-      {samples.length > 0 && (
+      {/* ── Grouped sample list ── */}
+      {groups.length > 0 && (
         <div className="mt-4">
-          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-1.5">Recent samples</p>
-          <div className="bg-zinc-950/60 rounded-xl border border-white/[0.04] divide-y divide-white/[0.04] max-h-64 overflow-y-auto">
-            {samples.map(s => {
-              const rate = (s.durationMinutes || 0) / (s.sessionQty || 1);
-              const display = rate >= 1 ? `${rate.toFixed(2)} min/pc` : `${(rate * 60).toFixed(1)} sec/pc`;
+          <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em]">
+              {groups.length} part/op pair{groups.length === 1 ? '' : 's'} · {allLogs.filter(l => l.isSample).length} samples total
+            </p>
+            {groups.length > 3 && (
+              <input
+                type="text" placeholder="Filter by part or operation…"
+                value={search} onChange={e => setSearch(e.target.value)}
+                className="bg-zinc-900 border border-white/10 rounded-lg px-2.5 py-1 text-white text-[11px] w-48 focus:outline-none focus:border-amber-500/40"
+              />
+            )}
+          </div>
+
+          <div className="bg-zinc-950/60 rounded-xl border border-white/[0.04] divide-y divide-white/[0.04] max-h-96 overflow-y-auto">
+            {filteredGroups.length === 0 && (
+              <div className="px-3 py-4 text-center text-[11px] text-zinc-500">No samples match "{search}"</div>
+            )}
+            {filteredGroups.map(g => {
+              const open = expanded.has(g.key);
               return (
-                <div key={s.id} className="px-3 py-2 flex items-center justify-between gap-2 text-xs">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-mono font-bold text-white truncate">{s.partNumber} · <span className="text-zinc-400">{s.operation}</span></p>
-                    <p className="text-[10px] text-zinc-500 mt-0.5">
-                      {s.sessionQty} pcs in {s.durationMinutes?.toFixed(1)} min · <span className="text-emerald-400">{display}</span>
-                    </p>
-                  </div>
+                <div key={g.key} className="text-xs">
+                  {/* Group header row — aggregate */}
                   <button
                     type="button"
-                    onClick={() => remove(s)}
-                    className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1 rounded transition-colors"
-                    aria-label="Remove sample"
+                    onClick={() => toggleExpanded(g.key)}
+                    className="w-full px-3 py-2.5 flex items-center justify-between gap-2 hover:bg-zinc-900/40 transition-colors text-left"
                   >
-                    Remove
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono font-bold text-white truncate">
+                        {g.partNumber} <span className="text-zinc-500">·</span> <span className="text-zinc-300">{g.operation}</span>
+                      </p>
+                      <p className="text-[10px] text-zinc-500 mt-0.5 truncate">
+                        {g.samples.length} sample{g.samples.length === 1 ? '' : 's'} · {g.totalPieces.toLocaleString()} pcs · {g.totalMinutes.toFixed(1)} min · <span className="text-emerald-400 font-bold">{fmtRate(g.avgRate)}</span>
+                      </p>
+                    </div>
+                    <span className="text-zinc-500 text-[10px] shrink-0">{open ? '▾' : '▸'}</span>
                   </button>
+                  {/* Expanded individual samples */}
+                  {open && (
+                    <div className="bg-zinc-900/30 px-3 pb-2.5 pt-1 space-y-1">
+                      {g.samples.map(s => {
+                        const isEditing = editing?.id === s.id;
+                        const r = (s.durationMinutes || 0) / (s.sessionQty || 1);
+                        return (
+                          <div key={s.id} className="flex items-center gap-2 text-[11px] py-1">
+                            {isEditing ? (
+                              <>
+                                <input
+                                  type="number" min="1" step="1"
+                                  className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white w-16 font-mono focus:outline-none focus:border-amber-500/40"
+                                  value={editing!.qty}
+                                  onChange={e => setEditing(prev => prev ? { ...prev, qty: e.target.value } : prev)}
+                                  placeholder="pcs"
+                                />
+                                <span className="text-zinc-600">pcs ·</span>
+                                <input
+                                  type="number" min="0.1" step="0.1"
+                                  className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white w-20 font-mono focus:outline-none focus:border-amber-500/40"
+                                  value={editing!.minutes}
+                                  onChange={e => setEditing(prev => prev ? { ...prev, minutes: e.target.value } : prev)}
+                                  placeholder="min"
+                                />
+                                <span className="text-zinc-600">min</span>
+                                <button type="button" onClick={() => saveEdit(s)} className="ml-auto text-emerald-400 hover:text-emerald-300 font-bold">Save</button>
+                                <button type="button" onClick={() => setEditing(null)} className="text-zinc-500 hover:text-white">Cancel</button>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-zinc-400 font-mono">{s.sessionQty} pcs</span>
+                                <span className="text-zinc-600">·</span>
+                                <span className="text-zinc-400 font-mono">{s.durationMinutes?.toFixed(1)} min</span>
+                                <span className="text-zinc-600">·</span>
+                                <span className="text-emerald-400 font-bold">{fmtRate(r)}</span>
+                                {s.createdAt && (
+                                  <span className="text-zinc-600 text-[10px] ml-1">
+                                    {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditing({ id: s.id, qty: String(s.sessionQty || ''), minutes: String(s.durationMinutes || '') })}
+                                  className="ml-auto text-zinc-500 hover:text-amber-400 px-1.5 py-0.5 transition-colors"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => remove(s)}
+                                  className="text-zinc-500 hover:text-red-400 px-1.5 py-0.5 transition-colors"
+                                >
+                                  Remove
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
+      )}
+
+      {groups.length === 0 && (
+        <p className="text-[11px] text-zinc-600 mt-3 italic">No samples yet. Add one above to start training the rate engine.</p>
       )}
     </div>
   );
@@ -4990,7 +5233,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden divide-y divide-white/[0.04]">
 
               {/* ── Sample Times Entry ── */}
-              <SampleTimesEntry addToast={addToast} allLogs={tvAllLogs} />
+              <SampleTimesEntry
+                addToast={addToast}
+                allLogs={tvAllLogs}
+                knownOperations={settings.customOperations || []}
+                knownPartNumbers={Array.from(new Set(tvJobs.map(j => j.partNumber).filter(Boolean) as string[]))}
+                rateBuffer={settings.rateBuffer ?? 1.15}
+                askConfirm={askConfirm}
+              />
 
               {/* ── Buffer % ── */}
               <div className="px-4 py-4">
