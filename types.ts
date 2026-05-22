@@ -956,6 +956,13 @@ export interface Sample {
   workEntries?: SampleWorkEntry[];
   activeEntry?: SampleWorkEntry | null;
   totalWorkedMs?: number;
+  // ── Pricing (locked-in quote saved to the sample for future reference) ──
+  /** Charge per piece the admin locked in for this sample. Initially auto-
+   *  suggested from work time × shop rate × markup; can be manually overridden.
+   *  Once saved, persists with the sample so future jobs can reference it. */
+  pricePerPart?: number;
+  /** When the price was last set/updated, for audit / staleness display. */
+  quotedAt?: number;
 }
 
 export interface SmartPasteData {
