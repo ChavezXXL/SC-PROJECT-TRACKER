@@ -183,7 +183,7 @@ const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: s
 
   return (
     <div className="bg-zinc-900 border border-white/5 rounded-2xl p-6 space-y-4">
-      <h3 className="font-bold text-white flex items-center gap-2"><Bell className="w-4 h-4 text-blue-400" /> Push Notifications</h3>
+      <h3 className="font-bold text-white flex items-center gap-2"><Bell className="w-4 h-4 text-amber-400" /> Push Notifications</h3>
 
       {/* Environment check */}
       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -225,7 +225,7 @@ const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: s
       <button
         onClick={register}
         disabled={status === 'working'}
-        className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-5 py-3 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2"
+        className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-50 text-white px-5 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow shadow-amber-900/20"
       >
         <Bell className="w-4 h-4" />
         {status === 'working' ? 'Registering...' : status === 'done' ? 'Re-register This Device' : 'Register This Device for Alerts'}
@@ -422,7 +422,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
                 type="button"
                 onClick={() => testAlarm(alarm)}
                 title="Play this alarm sound now"
-                className="shrink-0 p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 hover:text-white"
+                className="shrink-0 p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 hover:text-white"
                 aria-label={`Test ${alarm.label} sound`}
               >
                 <Play className="w-3.5 h-3.5" aria-hidden="true" />
@@ -452,7 +452,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
                     type="button"
                     onClick={() => toggleDay(idx, d.value)}
                     aria-pressed={active}
-                    className={`text-[9px] font-black px-1.5 py-0.5 rounded transition-colors ${active ? (allDays ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/15 text-blue-400 border border-blue-500/30') : 'bg-zinc-900 text-zinc-600 border border-white/5 hover:text-white'}`}
+                    className={`text-[9px] font-black px-1.5 py-0.5 rounded transition-colors ${active ? (allDays ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border border-amber-500/30') : 'bg-zinc-900 text-zinc-600 border border-white/5 hover:text-white'}`}
                     title={allDays ? 'Every day' : undefined}
                   >
                     {d.label}
@@ -529,7 +529,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
           <button
             type="button"
             onClick={addAlarm}
-            className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+            className="flex-1 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add Alarm
           </button>
@@ -755,21 +755,21 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
                 <div className="border-t border-white/5 bg-zinc-950/60 p-4 space-y-3">
                   <div>
                     <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Display Name</label>
-                    <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.label} onChange={e => update(idx, { label: e.target.value })} />
+                    <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-amber-500/50 focus:outline-none" value={goal.label} onChange={e => update(idx, { label: e.target.value })} />
                     <p className="text-[10px] text-zinc-600 mt-1">What the TV shows as the goal name.</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Target</label>
-                      <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:border-blue-500/50 focus:outline-none" value={goal.target} onChange={e => update(idx, { target: Number(e.target.value) || 0 })} />
+                      <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:border-amber-500/50 focus:outline-none" value={goal.target} onChange={e => update(idx, { target: Number(e.target.value) || 0 })} />
                     </div>
                     <div>
                       <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Unit</label>
-                      <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.unit || meta.unit} onChange={e => update(idx, { unit: e.target.value })} placeholder={meta.unit} />
+                      <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-amber-500/50 focus:outline-none" value={goal.unit || meta.unit} onChange={e => update(idx, { unit: e.target.value })} placeholder={meta.unit} />
                     </div>
                     <div>
                       <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Period</label>
-                      <select className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.period} onChange={e => update(idx, { period: e.target.value as GoalPeriod })}>
+                      <select className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-amber-500/50 focus:outline-none" value={goal.period} onChange={e => update(idx, { period: e.target.value as GoalPeriod })}>
                         {(['day','week','month','quarter','year'] as GoalPeriod[]).map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
                       </select>
                     </div>
@@ -788,7 +788,7 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
                   {goal.metric === 'customer-jobs' && (
                     <div>
                       <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Customer Filter</label>
-                      <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none" value={goal.customerFilter || ''} onChange={e => update(idx, { customerFilter: e.target.value })} placeholder="e.g. PAMCO" list="goal-customers" />
+                      <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-amber-500/50 focus:outline-none" value={goal.customerFilter || ''} onChange={e => update(idx, { customerFilter: e.target.value })} placeholder="e.g. PAMCO" list="goal-customers" />
                       <datalist id="goal-customers">
                         {(settings.clients || []).map(c => <option key={c} value={c} />)}
                       </datalist>
@@ -884,8 +884,8 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
             <p className="text-xl sm:text-2xl font-black text-white tabular">{fmtCurrency(totalCost30)}</p>
             <p className="text-[10px] text-zinc-500 mt-1">{fmtCurrency(laborCost30)} labor + {fmtCurrency(overheadCost30)} OH</p>
           </div>
-          <div className={`card-shine border rounded-xl p-4 ${grossProfit30 >= 0 ? 'bg-gradient-to-br from-blue-500/10 to-blue-500/[0.02] border-blue-500/20' : 'bg-gradient-to-br from-red-500/10 to-red-500/[0.02] border-red-500/30'}`}>
-            <div className="flex items-center gap-1.5 mb-1"><span className={`w-1.5 h-1.5 rounded-full ${grossProfit30 >= 0 ? 'bg-blue-400' : 'bg-red-400'}`} /><p className={`text-[10px] font-black uppercase tracking-widest ${grossProfit30 >= 0 ? 'text-blue-400' : 'text-red-400'}`}>Gross Profit</p></div>
+          <div className={`card-shine border rounded-xl p-4 ${grossProfit30 >= 0 ? 'bg-gradient-to-br from-emerald-500/10 to-emerald-500/[0.02] border-emerald-500/20' : 'bg-gradient-to-br from-red-500/10 to-red-500/[0.02] border-red-500/30'}`}>
+            <div className="flex items-center gap-1.5 mb-1"><span className={`w-1.5 h-1.5 rounded-full ${grossProfit30 >= 0 ? 'bg-emerald-400' : 'bg-red-400'}`} /><p className={`text-[10px] font-black uppercase tracking-widest ${grossProfit30 >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>Gross Profit</p></div>
             <p className={`text-xl sm:text-2xl font-black tabular ${grossProfit30 >= 0 ? 'text-white' : 'text-red-300'}`}>{grossProfit30 < 0 ? '-' : ''}{fmtCurrency(Math.abs(grossProfit30))}</p>
             <p className="text-[10px] text-zinc-500 mt-1">on completed jobs</p>
           </div>
@@ -907,17 +907,17 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Fallback Rate</label>
-              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-blue-500/50 focus:outline-none" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Used when a worker has no individual rate.</p>
             </div>
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Monthly Overhead</label>
-              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-blue-500/50 focus:outline-none" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Rent, utilities, insurance, software, etc.</p>
             </div>
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Productive Hours</label>
-              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-blue-500/50 focus:outline-none" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Billable hours per month per worker.</p>
             </div>
           </div>
@@ -937,10 +937,10 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
             </div>
           )}
           {workers.length > 0 && (
-            <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-3 flex items-start gap-2">
-              <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 p-3 flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <p className="text-xs text-zinc-300 leading-relaxed">
-                <strong className="text-blue-300">Worker-specific rates</strong> override the fallback. Set them in
+                <strong className="text-amber-300">Worker-specific rates</strong> override the fallback. Set them in
                 <strong className="text-white"> Team → edit worker</strong>. Currently {workers.filter(w => w.hourlyRate).length} of {workers.length} workers have individual rates set.
               </p>
             </div>
@@ -1009,7 +1009,7 @@ const QuoteCalculator = ({ settings }: { settings: SystemSettings }) => {
               </div>
               <div className="text-center">
                 <p className="text-xs text-zinc-500">Labor</p>
-                <p className="text-xl font-black text-blue-400">${laborCost.toFixed(0)}</p>
+                <p className="text-xl font-black text-amber-400">${laborCost.toFixed(0)}</p>
               </div>
               <div className="text-center">
                 <p className="text-xs text-zinc-500">Overhead</p>
@@ -1336,7 +1336,7 @@ const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any
               placeholder="Final name…"
               className="flex-1 min-w-[140px] bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white outline-none"
             />
-            <button onClick={handleMerge} disabled={merging || selected.size < 2 || !canonicalName.trim()} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
+            <button onClick={handleMerge} disabled={merging || selected.size < 2 || !canonicalName.trim()} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
               {merging ? 'Merging…' : 'Merge'}
             </button>
             <button onClick={() => { setSelected(new Set()); setCanonicalName(''); }} className="text-zinc-400 hover:text-white text-xs font-medium px-2 py-1 rounded hover:bg-white/5">Clear</button>
@@ -1374,7 +1374,7 @@ const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggle(r.name)}
-                      className="w-4 h-4 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500 shrink-0 cursor-pointer"
+                      className="w-4 h-4 rounded bg-zinc-800 border-white/10 text-amber-500 focus:ring-amber-500 shrink-0 cursor-pointer"
                       aria-label={`Select ${r.name} for merge`}
                       title="Select to merge duplicates"
                     />
@@ -1830,7 +1830,7 @@ const CustomerPortalPreview: React.FC<{
           onClick={() => setTab('notes')}
           className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 transition-colors -mb-[1px] ${
             tab === 'notes'
-              ? 'border-blue-500 text-white'
+              ? 'border-amber-500 text-white'
               : 'border-transparent text-zinc-500 hover:text-zinc-300'
           }`}
         >
@@ -1841,7 +1841,7 @@ const CustomerPortalPreview: React.FC<{
           onClick={() => setTab('preview')}
           className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 transition-colors -mb-[1px] ${
             tab === 'preview'
-              ? 'border-blue-500 text-white'
+              ? 'border-amber-500 text-white'
               : 'border-transparent text-zinc-500 hover:text-zinc-300'
           }`}
         >
@@ -1870,7 +1870,7 @@ const CustomerPortalPreview: React.FC<{
       {tab === 'preview' && (
         <div className="space-y-3 -mx-4 -mb-4">
           <div className="mx-4 bg-zinc-950/60 border border-white/10 rounded-xl p-3 flex items-center gap-2 text-[11px] text-zinc-400">
-            <Eye className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <Eye className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <span>This is exactly what <strong className="text-white">{customerName}</strong> sees when they visit their portal link.</span>
           </div>
           <div className="border-t border-white/10 max-h-[600px] overflow-y-auto">
@@ -1952,7 +1952,7 @@ const PortalNoteRow: React.FC<{ job: Job; addToast: any }> = ({ job, addToast })
           value={text}
           onChange={e => setText(e.target.value)}
           placeholder={'On track for Friday EOD · 2 parts remaining in QC'}
-          className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500/40"
+          className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-amber-500/40"
         />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
@@ -1963,7 +1963,7 @@ const PortalNoteRow: React.FC<{ job: Job; addToast: any }> = ({ job, addToast })
             value={expectedDate}
             onChange={e => setExpectedDate(e.target.value)}
             placeholder="MM/DD/YYYY or 'Friday EOD'"
-            className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white tabular outline-none focus:border-blue-500/40"
+            className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white tabular outline-none focus:border-amber-500/40"
           />
         </div>
         {job.portalNote && (
@@ -1980,7 +1980,7 @@ const PortalNoteRow: React.FC<{ job: Job; addToast: any }> = ({ job, addToast })
           type="button"
           onClick={save}
           disabled={saving || !dirty}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5"
+          className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5"
         >
           {saving ? 'Saving…' : dirty ? 'Save update' : 'Saved'}
         </button>
@@ -2035,7 +2035,7 @@ const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSett
           {processes.length === 0 && (
             <button type="button" onClick={() => setShowSeeds(!showSeeds)} className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold">✨ Starter Pack</button>
           )}
-          <button type="button" onClick={() => add()} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add</button>
+          <button type="button" onClick={() => add()} className="text-[10px] bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add</button>
         </div>
       </div>
 
@@ -2174,7 +2174,7 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
       <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold text-white">Content Blocks (Snippets)</span>
-          <span className="text-[9px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded uppercase tracking-widest">{snippets.length}</span>
+          <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded uppercase tracking-widest">{snippets.length}</span>
         </div>
         <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
       </summary>
@@ -2184,7 +2184,7 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
           {snippets.length === 0 && (
             <button type="button" onClick={() => setShowSeeds(!showSeeds)} className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold">✨ Starter Pack</button>
           )}
-          <button type="button" onClick={() => add()} className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add</button>
+          <button type="button" onClick={() => add()} className="text-[10px] bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 rounded font-bold flex items-center gap-1"><Plus className="w-3 h-3" aria-hidden="true" /> Add</button>
         </div>
 
         {showSeeds && (
@@ -2249,7 +2249,7 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
 
 // ── TV Slides Editor ─ full-featured editor for rotating slideshow
 const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: string; color: string }> = {
-  workers:     { label: 'Live Workers + Jobs', desc: 'Running timers + auto-scroll jobs belt (the default view)', icon: '👷', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400' },
+  workers:     { label: 'Live Workers + Jobs', desc: 'Running timers + auto-scroll jobs belt (the default view)', icon: '👷', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
   jobs:        { label: 'Open Jobs (full-screen)', desc: 'All open jobs on one screen, auto-scrolling', icon: '📋', color: 'bg-purple-500/15 border-purple-500/30 text-purple-400' },
   leaderboard: { label: 'Leaderboard', desc: 'Ranked workers by hours/jobs', icon: '🏆', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
   weather:     { label: 'Weather Forecast', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400' },
@@ -2476,7 +2476,7 @@ const WeatherLocationCard = ({ addToast, settings, setSettings }: { addToast: an
               <p className={`text-xs font-bold ${statusColor}`}>Location needed</p>
               <p className="text-[10px] text-zinc-400 mt-0.5">Click below to allow this site to see your location.</p>
             </div>
-            <button type="button" onClick={request} className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Enable</button>
+            <button type="button" onClick={request} className="shrink-0 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Enable</button>
           </>
         )}
       </div>
@@ -2552,7 +2552,7 @@ const ManualWeatherEditor: React.FC<{ settings: SystemSettings; setSettings: (s:
           type="button"
           onClick={resolve}
           disabled={looking || !input.trim()}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg"
+          className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg"
         >
           {looking ? 'Looking…' : 'Set'}
         </button>
@@ -2657,7 +2657,7 @@ const SlideMessagesEditor = ({ slide, onUpdate }: { slide: TvSlide; onUpdate: (p
           <button type="button" onClick={loadPreset} className="text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded-md flex items-center gap-1" title="Replace with preset pack">
             ✨ Preset Pack
           </button>
-          <button type="button" onClick={addMsg} className="text-[10px] font-bold bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded-md flex items-center gap-1">
+          <button type="button" onClick={addMsg} className="text-[10px] font-bold bg-amber-600 hover:bg-amber-500 text-white px-2 py-1 rounded-md flex items-center gap-1">
             <Plus className="w-3 h-3" aria-hidden="true" /> Add
           </button>
         </div>
@@ -2773,7 +2773,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
           <button
             type="button"
             onClick={() => setAddOpen(!addOpen)}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold px-3 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30"
+            className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-xs font-bold px-3 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20"
           >
             <Plus className="w-4 h-4" aria-hidden="true" /> Add Slide {addOpen ? '▲' : '▼'}
           </button>
@@ -2882,7 +2882,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
                         <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Period</label>
                         <div role="group" className="inline-flex gap-1 p-1 bg-zinc-900 border border-white/10 rounded-lg w-full">
                           {(['today', 'week', 'month'] as const).map(p => (
-                            <button key={p} type="button" onClick={() => update(idx, { leaderboardPeriod: p })} aria-pressed={(slide.leaderboardPeriod || 'week') === p} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardPeriod || 'week') === p ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{p}</button>
+                            <button key={p} type="button" onClick={() => update(idx, { leaderboardPeriod: p })} aria-pressed={(slide.leaderboardPeriod || 'week') === p} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardPeriod || 'week') === p ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{p}</button>
                           ))}
                         </div>
                       </div>
@@ -2890,7 +2890,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
                         <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Show</label>
                         <div role="group" className="inline-flex gap-1 p-1 bg-zinc-900 border border-white/10 rounded-lg w-full">
                           {(['hours', 'jobs', 'mixed'] as const).map(m => (
-                            <button key={m} type="button" onClick={() => update(idx, { leaderboardMetric: m })} aria-pressed={(slide.leaderboardMetric || 'mixed') === m} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardMetric || 'mixed') === m ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{m === 'mixed' ? 'Hours + Jobs' : m}</button>
+                            <button key={m} type="button" onClick={() => update(idx, { leaderboardMetric: m })} aria-pressed={(slide.leaderboardMetric || 'mixed') === m} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardMetric || 'mixed') === m ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{m === 'mixed' ? 'Hours + Jobs' : m}</button>
                           ))}
                         </div>
                       </div>
@@ -3105,7 +3105,7 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
               return (
                 <div key={log.id} className={`bg-gradient-to-br rounded-lg p-1.5 border ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`}>
                   <div className="flex items-center gap-1.5">
-                    <div className={`shrink-0 w-6 h-6 rounded-md flex items-center justify-center font-black text-[9px] text-white ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>{log.userName.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()}</div>
+                    <div className={`shrink-0 w-6 h-6 rounded-md flex items-center justify-center font-black text-[9px] text-white ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-orange-500 to-amber-500'}`}>{log.userName.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()}</div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[10px] font-black text-white truncate leading-tight">{log.userName}</p>
                       <p className="text-[7px] text-blue-300 truncate">{log.operation}</p>
@@ -4200,7 +4200,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 type="button"
                 onClick={() => setDocSubTab('quote')}
                 aria-pressed={docSubTab === 'quote'}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${docSubTab === 'quote' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${docSubTab === 'quote' ? 'bg-amber-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}
               >
                 <FileText className="w-3.5 h-3.5" aria-hidden="true" /> Quote / Invoice
               </button>
@@ -4208,7 +4208,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 type="button"
                 onClick={() => setDocSubTab('traveler')}
                 aria-pressed={docSubTab === 'traveler'}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${docSubTab === 'traveler' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${docSubTab === 'traveler' ? 'bg-amber-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}
               >
                 📋 Job Traveler
               </button>
@@ -4441,7 +4441,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 ))}
                 <div className="flex gap-2">
                   <input id="newPF" className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="e.g. Job No., Machine ID" />
-                  <button onClick={() => { const inp = document.getElementById('newPF') as HTMLInputElement; if (inp?.value.trim()) { setSettings({ ...settings, customProjectFields: [...(settings.customProjectFields || ['Purchase Order', 'Part No.']), inp.value.trim()] }); inp.value = ''; } }} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold">Add</button>
+                  <button onClick={() => { const inp = document.getElementById('newPF') as HTMLInputElement; if (inp?.value.trim()) { setSettings({ ...settings, customProjectFields: [...(settings.customProjectFields || ['Purchase Order', 'Part No.']), inp.value.trim()] }); inp.value = ''; } }} className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg text-xs font-bold">Add</button>
                 </div>
               </div>
             </details>
@@ -4497,7 +4497,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               <div className="px-4 pb-4">
                 <div className="flex flex-wrap gap-2">
                   {['None', 'DRAFT', 'SAMPLE', 'CONFIDENTIAL', 'COPY', 'VOID'].map(w => (
-                    <button key={w} onClick={() => setSettings({ ...settings, watermark: w === 'None' ? '' : w })} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${(settings.watermark || '') === (w === 'None' ? '' : w) ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>{w}</button>
+                    <button key={w} onClick={() => setSettings({ ...settings, watermark: w === 'None' ? '' : w })} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${(settings.watermark || '') === (w === 'None' ? '' : w) ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>{w}</button>
                   ))}
                 </div>
               </div>
@@ -4614,7 +4614,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                       <div className="space-y-2">
                         <div className="flex gap-2">
                           <input readOnly value={tvUrl} className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono truncate" />
-                          <button onClick={() => { navigator.clipboard.writeText(tvUrl); addToast('success', 'TV link copied!'); }} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors shrink-0">Copy</button>
+                          <button onClick={() => { navigator.clipboard.writeText(tvUrl); addToast('success', 'TV link copied!'); }} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg transition-colors shrink-0">Copy</button>
                         </div>
                         <div className="flex gap-2">
                           <button onClick={() => window.open(tvUrl, '_blank')} className="flex-1 px-3 py-2 bg-white/5 hover:bg-white/10 text-white text-xs font-bold rounded-lg transition-colors">Open in New Tab</button>
@@ -4630,7 +4630,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                         </div>
                       </div>
                     ) : (
-                      <button onClick={() => setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) })} className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-colors">Generate TV Link</button>
+                      <button onClick={() => setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) })} className="w-full px-4 py-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-sm font-bold rounded-xl transition-all shadow shadow-amber-900/20">Generate TV Link</button>
                     )}
                   </>
                 );
@@ -4690,7 +4690,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   <p className="text-xs text-white">Jobs Belt Scroll Speed</p>
                   <div role="group" aria-label="Jobs belt scroll speed" className="inline-flex gap-1 p-1 bg-zinc-950 border border-white/10 rounded-lg">
                     {(['off', 'slow', 'normal', 'fast'] as const).map(s => (
-                      <button key={s} type="button" onClick={() => setSettings({ ...settings, tvScrollSpeed: s })} aria-pressed={(settings.tvScrollSpeed || 'normal') === s} className={`px-2.5 py-1 text-[11px] font-bold rounded capitalize min-h-[28px] ${(settings.tvScrollSpeed || 'normal') === s ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white'}`}>{s}</button>
+                      <button key={s} type="button" onClick={() => setSettings({ ...settings, tvScrollSpeed: s })} aria-pressed={(settings.tvScrollSpeed || 'normal') === s} className={`px-2.5 py-1 text-[11px] font-bold rounded capitalize min-h-[28px] ${(settings.tvScrollSpeed || 'normal') === s ? 'bg-amber-600 text-white' : 'text-zinc-500 hover:text-white'}`}>{s}</button>
                     ))}
                   </div>
                 </div>
@@ -5135,11 +5135,11 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
                   <span className="text-[10px] font-mono text-zinc-500">{d.mins >= 60 ? `${Math.floor(d.mins/60)}h` : d.mins > 0 ? `${d.mins}m` : ''}</span>
                   <div className="w-full flex items-end" style={{ height: 80 }}>
                     <div
-                      className={`w-full rounded-t-md transition-all duration-700 ${isToday ? 'bg-gradient-to-t from-blue-600 to-blue-400' : d.mins > 0 ? 'bg-gradient-to-t from-zinc-700 to-zinc-500' : 'bg-zinc-800'}`}
+                      className={`w-full rounded-t-md transition-all duration-700 ${isToday ? 'bg-gradient-to-t from-orange-600 to-amber-400' : d.mins > 0 ? 'bg-gradient-to-t from-zinc-700 to-zinc-500' : 'bg-zinc-800'}`}
                       style={{ height: `${h}%` }}
                     />
                   </div>
-                  <span className={`text-[10px] font-bold ${isToday ? 'text-blue-400' : 'text-zinc-500'}`}>{d.label}</span>
+                  <span className={`text-[10px] font-bold ${isToday ? 'text-amber-400' : 'text-zinc-500'}`}>{d.label}</span>
                 </div>
               );
             })}

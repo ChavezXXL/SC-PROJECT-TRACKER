@@ -337,7 +337,7 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
         onClick={() => { setOpen(!open); if (!open && unread > 0) markAllRead(); }}
         className={`relative p-2 rounded-xl transition-all min-h-[40px] min-w-[40px] ${
           unread > 0
-            ? 'bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
+            ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
             : 'bg-zinc-800 border border-white/5 text-zinc-400 hover:text-white'
         }`}
         title="Notifications"
@@ -370,8 +370,8 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
             {/* Header */}
             <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/60 to-transparent shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
-                  <Bell className="w-4 h-4 text-blue-400" aria-hidden="true" />
+                <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/25 flex items-center justify-center shrink-0">
+                  <Bell className="w-4 h-4 text-amber-400" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-white leading-none">Notifications</p>
@@ -392,18 +392,18 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
 
             {/* Permission banner */}
             {permission !== 'granted' && (
-              <div className="mx-3 mt-3 rounded-xl bg-gradient-to-br from-blue-500/15 to-indigo-500/10 border border-blue-500/25 p-3 flex items-center gap-3 shrink-0">
-                <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0">
-                  <BellRing className="w-4 h-4 text-blue-400" aria-hidden="true" />
+              <div className="mx-3 mt-3 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/20 p-3 flex items-center gap-3 shrink-0">
+                <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0">
+                  <BellRing className="w-4 h-4 text-amber-400" aria-hidden="true" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-blue-200 leading-tight">Get desktop alerts</p>
-                  <p className="text-[10px] text-blue-300/70 mt-0.5 leading-snug">Overdue jobs &amp; long timers alert even when the tab is closed.</p>
+                  <p className="text-xs font-bold text-amber-200 leading-tight">Get desktop alerts</p>
+                  <p className="text-[10px] text-amber-300/60 mt-0.5 leading-snug">Overdue jobs &amp; long timers alert even when the tab is closed.</p>
                 </div>
                 <button
                   onClick={() => requestPermission(userId)}
                   aria-label="Enable desktop notifications"
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shrink-0 transition-all shadow-lg shadow-blue-900/40"
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shrink-0 transition-all shadow-lg shadow-amber-900/30"
                 >
                   Enable
                 </button>
@@ -429,9 +429,9 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
                       type="button"
                       onClick={() => markRead(alert.id)}
                       aria-label={`${alert.title}: ${alert.body}`}
-                      className={`w-full text-left px-3 py-3 border-b border-white/5 last:border-b-0 hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!alert.read ? 'bg-blue-500/[0.04]' : ''}`}
+                      className={`w-full text-left px-3 py-3 border-b border-white/5 last:border-b-0 hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!alert.read ? 'bg-amber-500/[0.04]' : ''}`}
                     >
-                      {!alert.read && <span aria-hidden="true" className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-blue-500" />}
+                      {!alert.read && <span aria-hidden="true" className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-amber-500" />}
                       <div className={`w-9 h-9 rounded-lg ${tint} border border-white/5 flex items-center justify-center shrink-0`}>
                         <Icon className="w-4 h-4" style={{ color }} aria-hidden="true" />
                       </div>
@@ -494,14 +494,14 @@ const PWAInstallBanner = () => {
 
   return (
     <div className="fixed bottom-20 left-4 right-4 md:left-auto md:right-6 md:w-80 z-40 animate-fade-in">
-      <div className="bg-zinc-900 border border-blue-500/30 rounded-2xl p-4 shadow-2xl shadow-black/50">
+      <div className="bg-zinc-900 border border-amber-500/20 rounded-2xl p-4 shadow-2xl shadow-black/50">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 text-white font-black text-sm">SC</div>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-400 flex items-center justify-center shrink-0 text-white font-black text-sm shadow shadow-amber-900/30">FT</div>
           <div className="flex-1">
-            <p className="text-white font-bold text-sm">Install SC Tracker</p>
-            <p className="text-zinc-400 text-xs mt-0.5">Add to your home screen for quick access  works offline too.</p>
+            <p className="text-white font-bold text-sm">Install FabTrack IO</p>
+            <p className="text-zinc-400 text-xs mt-0.5">Add to your home screen for quick access — works offline too.</p>
             <div className="flex gap-2 mt-3">
-              <button onClick={install} className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex-1">
+              <button onClick={install} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex-1">
                 Install App
               </button>
               <button onClick={dismiss} className="text-zinc-500 hover:text-white text-xs px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 transition-all">
@@ -792,7 +792,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setShowImageLightbox(true); }}
-              className="relative group shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-lg"
+              className="relative group shrink-0 focus:outline-none focus:ring-2 focus:ring-amber-500/50 rounded-lg"
               aria-label="View part photo full size"
             >
               <img src={job.partImage} alt="Part reference photo" className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 border-cyan-500/30 group-hover:border-cyan-400 transition-all" />
@@ -861,7 +861,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           document.body
         )}
         {!expanded && (
-          <div className="mt-4 flex items-center text-blue-400 text-xs font-bold uppercase tracking-wide">
+          <div className="mt-4 flex items-center text-amber-400 text-xs font-bold uppercase tracking-wide">
             Tap to Start <ArrowRight className="w-3 h-3 ml-1" />
           </div>
         )}
@@ -947,7 +947,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           <div className="grid grid-cols-2 gap-2">
             {operations.map(op => (
               <button key={op} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
-                className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-4 rounded-xl text-sm text-zinc-300 transition-colors font-bold active:scale-95">
+                className="bg-zinc-800 hover:bg-amber-600 hover:text-white border border-white/5 py-3 px-4 rounded-xl text-sm text-zinc-300 transition-colors font-bold active:scale-95">
                 {op}
               </button>
             ))}
@@ -957,7 +957,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           {/* Notes toggle */}
           <button onClick={(e) => { e.stopPropagation(); setShowNotes(!showNotes); }} className="mt-3 w-full flex items-center justify-between bg-zinc-900 hover:bg-zinc-800 border border-white/5 rounded-lg px-3 py-2 transition-colors">
             <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-              📝 Notes {(job.jobNotes?.length || 0) > 0 && <span className="bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded-full text-[10px]">{job.jobNotes!.length}</span>}
+              📝 Notes {(job.jobNotes?.length || 0) > 0 && <span className="bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded-full text-[10px]">{job.jobNotes!.length}</span>}
             </span>
             {showNotes ? <ChevronUp className="w-3 h-3 text-zinc-500" /> : <ChevronDown className="w-3 h-3 text-zinc-500" />}
           </button>
@@ -971,7 +971,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                     <p className="text-sm text-zinc-200 leading-relaxed">{n.text}</p>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
-                    <span className="text-[10px] font-bold text-blue-400">{n.userName}</span>
+                    <span className="text-[10px] font-bold text-amber-400">{n.userName}</span>
                     <span className="text-[10px] text-zinc-600">{new Date(n.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 </div>
@@ -995,7 +995,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                     }}
                     onClick={e => e.stopPropagation()}
                     placeholder="Add a note..."
-                    className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
                   />
                   <button
                     onClick={(e) => {
@@ -1006,7 +1006,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                       setNewNote('');
                     }}
                     disabled={!newNote.trim()}
-                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white px-3 py-2 rounded-lg text-sm font-bold transition-colors"
+                    className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 text-white px-3 py-2 rounded-lg text-sm font-bold transition-colors"
                   >Add</button>
                 </div>
               )}
@@ -1119,10 +1119,10 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
 
         {/* Mode tabs */}
         <div className="flex border-t border-white/5">
-          <button onClick={() => { stopCamera(); setMode('input'); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'input' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+          <button onClick={() => { stopCamera(); setMode('input'); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'input' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
             ⌨️ Type / Hardware
           </button>
-          <button onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'camera' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+          <button onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'camera' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
             📷 Camera Scan
           </button>
         </div>
@@ -1130,7 +1130,7 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
         <div className="p-6 pt-4">
           {mode === 'input' ? (
             <>
-              <input autoFocus onKeyDown={handleKey} className="bg-black/50 border border-blue-500 rounded-xl px-4 py-3 text-white text-center w-full text-base focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Scan or type PO / Job ID…" />
+              <input autoFocus onKeyDown={handleKey} className="bg-black/50 border border-amber-500 rounded-xl px-4 py-3 text-white text-center w-full text-base focus:ring-2 focus:ring-amber-500 outline-none" placeholder="Scan or type PO / Job ID…" />
               <p className="text-zinc-600 text-xs mt-3">Press Enter after typing or scanning with a USB barcode reader</p>
             </>
           ) : (
@@ -1139,16 +1139,16 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
                 <video ref={videoRef} muted playsInline className="w-full h-full object-cover" />
                 {scanning && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-48 h-48 border-2 border-blue-400 rounded-lg" style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }} />
+                    <div className="w-48 h-48 border-2 border-amber-400 rounded-lg" style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }} />
                   </div>
                 )}
               </div>
               {error ? (
                 <p className="text-red-400 text-xs">{error}</p>
               ) : scanning ? (
-                <p className="text-blue-400 text-xs animate-pulse">Hold QR code in the box…</p>
+                <p className="text-amber-400 text-xs animate-pulse">Hold QR code in the box…</p>
               ) : null}
-              <button onClick={scanning ? stopCamera : startCamera} className={`mt-3 w-full py-2.5 rounded-xl font-bold text-sm transition-all ${scanning ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
+              <button onClick={scanning ? stopCamera : startCamera} className={`mt-3 w-full py-2.5 rounded-xl font-bold text-sm transition-all ${scanning ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}>
                 {scanning ? 'Stop Camera' : 'Start Camera'}
               </button>
             </>
@@ -1565,7 +1565,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         </div>
         <div className="flex items-center gap-2">
           {notifBell}
-          <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-blue-600 text-white shadow' : 'bg-zinc-800 text-blue-400 hover:bg-blue-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
+          <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-amber-600 text-white shadow' : 'bg-zinc-800 text-amber-400 hover:bg-amber-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
           <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
         </div>
       </div>
@@ -1578,7 +1578,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           {/* Weekly summary */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center">
-              <p className="text-2xl font-bold text-blue-400">
+              <p className="text-2xl font-bold text-amber-400">
                 {histWeekMins >= 60 ? `${Math.floor(histWeekMins/60)}h ${histWeekMins%60}m` : `${histWeekMins}m`}
               </p>
               <p className="text-xs text-zinc-500 mt-1">This Week</p>
@@ -1618,7 +1618,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                         {log.durationMinutes ? <span className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">{formatDuration(log.durationMinutes)}</span> : null}
                         {log.endTime
                           ? <span className="text-xs text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full">Done</span>
-                          : <span className="text-xs text-blue-400 font-bold bg-blue-500/10 px-2 py-0.5 rounded-full flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Active</span>
+                          : <span className="text-xs text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded-full flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>Active</span>
                         }
                       </div>
                     </div>
@@ -1642,13 +1642,13 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         <div className="flex-1 flex flex-col animate-fade-in">
           <div className="relative mb-6">
             <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-500" />
-            <input type="text" placeholder="Search by Job #, PO, or Part..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-sm" />
+            <input type="text" placeholder="Search by Job #, PO, or Part..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none shadow-sm" />
           </div>
           {activeLog && (() => {
             const staleMinutes = Math.floor((Date.now() - activeLog.startTime) / 60000);
             const isStale = staleMinutes > 60; // running > 1 hour with no interaction
             return (
-              <div className={`mb-4 p-3 rounded-xl border text-sm flex items-center justify-between gap-2 ${isStale ? 'bg-amber-900/20 border-amber-500/30 text-amber-300' : 'bg-blue-900/20 border-blue-500/30 text-blue-300'}`}>
+              <div className={`mb-4 p-3 rounded-xl border text-sm flex items-center justify-between gap-2 ${isStale ? 'bg-red-900/20 border-red-500/30 text-red-300' : 'bg-emerald-900/20 border-emerald-500/30 text-emerald-300'}`}>
                 <span className="flex items-center gap-2">
                   <Info className="w-4 h-4 shrink-0" />
                   {isStale
@@ -1771,7 +1771,7 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-3 py-2 text-zinc-400 hover:text-white text-sm font-medium">Cancel</button>
-            <button onClick={() => { printTraveler(job, appSettings).then(() => { if (onPrinted) onPrinted(job.id); }); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm"><Printer className="w-4 h-4" /><span className="hidden sm:inline">Print </span>Traveler</button>
+            <button onClick={() => { printTraveler(job, appSettings).then(() => { if (onPrinted) onPrinted(job.id); }); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm shadow shadow-amber-900/20 transition-all"><Printer className="w-4 h-4" /><span className="hidden sm:inline">Print </span>Traveler</button>
           </div>
         </div>
         <div id="printable-area" className="flex-1 p-4 sm:p-6 bg-white overflow-y-auto overflow-x-hidden">
@@ -1979,6 +1979,15 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
   const [username, setUsername] = useState(initialUsername);
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loginSettings, setLoginSettings] = useState<SystemSettings>(DB.getSettings());
+
+  useEffect(() => {
+    const unsub = DB.subscribeSettings(setLoginSettings);
+    return unsub;
+  }, []);
+
+  const companyName = loginSettings.companyName || 'My Shop';
+  const companyLogo = loginSettings.companyLogo;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2000,21 +2009,57 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-6">
-      <div className="w-full max-w-sm bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-8 rounded-3xl shadow-2xl">
-        <div className="flex justify-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <Sparkles className="w-8 h-8 text-white" />
+      {/* subtle background texture */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-950/20 via-zinc-950 to-zinc-950 pointer-events-none" />
+      <div className="relative w-full max-w-sm">
+        {/* Card */}
+        <div className="bg-zinc-900/60 backdrop-blur-xl border border-white/8 p-8 rounded-3xl shadow-2xl shadow-black/60">
+          {/* Logo / Icon */}
+          <div className="flex justify-center mb-5">
+            {companyLogo ? (
+              <div className="w-16 h-16 rounded-2xl overflow-hidden border border-white/10 shadow-lg bg-white flex items-center justify-center">
+                <img src={companyLogo} alt={companyName} className="w-full h-full object-contain" />
+              </div>
+            ) : (
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-orange-500 to-amber-400 flex items-center justify-center shadow-lg shadow-amber-900/30">
+                <Sparkles className="w-8 h-8 text-white" />
+              </div>
+            )}
           </div>
+
+          {/* Company + product name */}
+          <h1 className="text-2xl font-semibold text-center text-white tracking-tight mb-0.5">{companyName}</h1>
+          <p className="text-center text-zinc-500 text-xs mb-1 font-medium tracking-widest uppercase">FabTrack IO</p>
+          <p className="text-center text-zinc-600 text-xs mb-7">Sign in to continue</p>
+
+          <form onSubmit={handleLogin} className="space-y-3">
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500/50 outline-none transition-all"
+              placeholder="Username"
+              autoFocus
+            />
+            <input
+              type="password"
+              value={pin}
+              onChange={e => setPin(e.target.value)}
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500/50 outline-none transition-all"
+              placeholder="PIN"
+            />
+            <button
+              disabled={loading}
+              type="submit"
+              className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white py-3.5 rounded-xl font-semibold tracking-wide transition-all shadow-lg shadow-amber-900/30 mt-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Verifying…' : 'Sign In →'}
+            </button>
+          </form>
         </div>
-        <h1 className="text-2xl font-semibold text-center text-white tracking-tight mb-1">SC DEBURRING</h1>
-        <p className="text-center text-zinc-500 text-sm mb-6">Access Portal</p>
-        <form onSubmit={handleLogin} className="space-y-4">
-          <input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Username" autoFocus />
-          <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="PIN" />
-          <button disabled={loading} type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3.5 rounded-xl font-medium transition-all shadow-lg shadow-blue-900/20 mt-2 disabled:opacity-50">
-            {loading ? 'Verifying...' : 'Sign In'}
-          </button>
-        </form>
+
+        {/* Footer */}
+        <p className="text-center text-zinc-700 text-xs mt-5">Powered by <span className="text-zinc-500 font-medium">FabTrack IO</span></p>
       </div>
     </div>
   );
@@ -3773,7 +3818,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           <p className="text-zinc-500 text-sm">{calendarOnly ? 'Month view of every job due date. Click a day to see what ships.' : 'Manage orders and track by PO, priority, and due date.'}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Plus className="w-4 h-4" /> New Job</button>
+          <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all shadow-lg shadow-amber-900/20"><Plus className="w-4 h-4" /> New Job</button>
           <button onClick={() => setShowScanner(true)} title="Scan a PO document to auto-fill a new job" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Scan className="w-4 h-4 text-blue-400" /> Scan PO</button>
           <button
             onClick={() => setShowClientUpdate(true)}
@@ -3920,7 +3965,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 <button aria-label="Next month" onClick={nextMonth} className="p-2.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white min-w-[40px] min-h-[40px]"><ChevronRight className="w-5 h-5" aria-hidden="true" /></button>
               </div>
               <div className="flex items-center gap-3">
-                <button onClick={goToday} className="text-xs text-blue-400 hover:text-blue-300 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-500/10 border border-blue-500/20">Today</button>
+                <button onClick={goToday} className="text-xs text-amber-400 hover:text-amber-300 font-bold px-3 py-1.5 rounded-lg hover:bg-amber-500/10 border border-amber-500/20">Today</button>
                 <div className="hidden md:flex items-center gap-3 text-[10px] text-zinc-500">
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-zinc-500" /> Pending</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Active</span>
@@ -4006,16 +4051,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search PO, Job ID, Part, Customer, Notes..."
-              className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-amber-500 outline-none"
             />
           </div>
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${showFilters || activeFilterCount > 0 ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${showFilters || activeFilterCount > 0 ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
           >
             <Filter className="w-4 h-4" />
             Filters
-            {activeFilterCount > 0 && <span className="bg-blue-500 text-white text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{activeFilterCount}</span>}
+            {activeFilterCount > 0 && <span className="bg-amber-500 text-white text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{activeFilterCount}</span>}
           </button>
         </div>
 
@@ -4035,7 +4080,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     setSortBy(v.sortBy);
                     setActiveTab(v.tab);
                   }}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-colors ${isActive ? 'bg-blue-500/15 border-blue-500/30 text-blue-400' : 'bg-zinc-900 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-colors ${isActive ? 'bg-amber-500/15 border-amber-500/30 text-amber-400' : 'bg-zinc-900 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
                 >
                   {v.name}
                   <X className="w-3 h-3 opacity-50 hover:opacity-100" onClick={(e) => { e.stopPropagation(); setSavedViews(savedViews.filter(x => x.id !== v.id)); }} />
@@ -4148,9 +4193,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
 
       {/* ── Bulk Action Bar (Jobs R1 #5) — appears when rows are selected ── */}
       {selectedJobIds.size > 0 && (
-        <div className="bg-gradient-to-r from-blue-500/15 to-indigo-500/10 border border-blue-500/30 rounded-xl p-3 flex items-center gap-3 flex-wrap animate-fade-in">
+        <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/5 border border-amber-500/25 rounded-xl p-3 flex items-center gap-3 flex-wrap animate-fade-in">
           <span className="text-sm font-bold text-white flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-blue-400" aria-hidden="true" />
+            <CheckCircle className="w-4 h-4 text-amber-400" aria-hidden="true" />
             {selectedJobIds.size} selected
           </span>
           <button
@@ -4257,7 +4302,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     if (e.target.checked) setSelectedJobIds(new Set(filteredJobs.map(j => j.id)));
                     else setSelectedJobIds(new Set());
                   }}
-                  className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                  className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
                 />
               </th>
               <th className="p-2 sm:p-4">PO / Job</th>
@@ -4295,7 +4340,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const hasQuote = (j.quoteAmount || 0) > 0;
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
-                <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-blue-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
+                <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-amber-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
                   <td className="p-2 sm:p-3 w-8" onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -4307,7 +4352,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         else next.delete(j.id);
                         setSelectedJobIds(next);
                       }}
-                      className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                      className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
                     />
                   </td>
                   <td className="p-2 sm:p-4">
@@ -4520,7 +4565,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </td>
                   <td className="p-1.5 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-1 sm:gap-2 flex-wrap sm:flex-nowrap">
-                      <button aria-label="Start operation" onClick={() => setStartJobModal(j)} className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" aria-hidden="true" /></button>
+                      <button aria-label="Start operation" onClick={() => setStartJobModal(j)} className="p-2 bg-amber-500/10 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" aria-hidden="true" /></button>
                       {activeTab === 'active' && (() => {
                         const stages = getStages(shopSettings);
                         const nextStage = getNextStage(j, stages);
@@ -4573,7 +4618,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             const updated = [...calAdded]; if (!updated.includes(j.id)) { updated.push(j.id); setCalAdded(updated); localStorage.setItem('cal_added_jobs', JSON.stringify(updated)); }
                             window.location.href = url;
                           }
-                        }} className={`hidden sm:flex p-2 rounded-lg transition-colors ${calAdded.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-blue-500/10 text-zinc-500 hover:text-blue-400'}`} title={calAdded.includes(j.id) ? 'Already in Google Calendar' : 'Add to Google Calendar'}>
+                        }} className={`hidden sm:flex p-2 rounded-lg transition-colors ${calAdded.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-700/50 text-zinc-500 hover:text-zinc-300'}`} title={calAdded.includes(j.id) ? 'Already in Google Calendar' : 'Add to Google Calendar'}>
                           {calAdded.includes(j.id) ? <CheckCircle className="w-4 h-4" aria-hidden="true" /> : <Calendar className="w-4 h-4" aria-hidden="true" />}
                         </button>
                       )}
@@ -4633,7 +4678,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     type="button"
                     title="Scan a PO document to auto-fill fields"
                     onClick={() => { setShowModal(false); setShowScanner(true); }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-blue-400 hover:text-blue-300 text-xs font-bold transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 text-amber-400 hover:text-amber-300 text-xs font-bold transition-colors"
                   >
                     <Scan className="w-3.5 h-3.5" /> Scan PO
                   </button>
@@ -4747,18 +4792,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               })()}
 
               <div className="space-y-5">
-                <h4 className="text-xs font-black text-blue-400 uppercase tracking-[0.2em] border-b border-blue-500/20 pb-2 flex items-center gap-2">
-                  <span className="bg-blue-500/10 text-blue-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">1</span>
+                <h4 className="text-xs font-black text-amber-400 uppercase tracking-[0.2em] border-b border-amber-500/20 pb-2 flex items-center gap-2">
+                  <span className="bg-amber-500/10 text-amber-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">1</span>
                   Primary Information
                 </h4>
                 <div>
                   <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Purchase Order (PO) # <span className="text-red-500">*</span></label>
-                  <input className="w-full bg-black/40 border-2 border-blue-500/30 focus:border-blue-500 rounded-xl p-4 text-white text-2xl font-black outline-none transition-all placeholder-zinc-700" value={editingJob.poNumber || ''} onChange={e => setEditingJob({ ...editingJob, poNumber: e.target.value })} placeholder="e.g. PO-4500123" autoFocus />
+                  <input className="w-full bg-black/40 border-2 border-amber-500/30 focus:border-amber-500 rounded-xl p-4 text-white text-2xl font-black outline-none transition-all placeholder-zinc-700" value={editingJob.poNumber || ''} onChange={e => setEditingJob({ ...editingJob, poNumber: e.target.value })} placeholder="e.g. PO-4500123" autoFocus />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="relative">
                     <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Part Number <span className="text-red-500">*</span></label>
-                    <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-bold outline-none focus:ring-2 focus:ring-blue-500/50" value={editingJob.partNumber || ''} autoComplete="off" onChange={e => {
+                    <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-bold outline-none focus:ring-2 focus:ring-amber-500/50" value={editingJob.partNumber || ''} autoComplete="off" onChange={e => {
                       setEditingJob({ ...editingJob, partNumber: e.target.value });
                       const q = e.target.value.toLowerCase();
                       setPartSuggestions(q.length >= 2 ? jobs.filter(j => j.partNumber?.toLowerCase().includes(q) && j.partNumber !== e.target.value).reduce((acc: Job[], j) => acc.find(a => a.partNumber === j.partNumber) ? acc : [...acc, j], [] as Job[]).slice(0, 5) : []);
@@ -4767,7 +4812,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-zinc-900 border border-white/10 rounded-xl overflow-hidden shadow-2xl">
                         <div className="px-3 py-1.5 bg-zinc-800/50 text-[10px] text-zinc-500 font-bold uppercase">Previous Parts — tap to auto-fill</div>
                         {partSuggestions.map(s => (
-                          <button key={s.id} className="w-full text-left px-3 py-2.5 hover:bg-blue-500/10 border-t border-white/5 transition-colors" onClick={() => {
+                          <button key={s.id} className="w-full text-left px-3 py-2.5 hover:bg-amber-500/10 border-t border-white/5 transition-colors" onClick={() => {
                             setEditingJob({ ...editingJob, partNumber: s.partNumber, customer: s.customer || editingJob.customer, info: s.info || editingJob.info, specialInstructions: s.specialInstructions || editingJob.specialInstructions, partImage: s.partImage || editingJob.partImage });
                             setPartSuggestions([]);
                           }}>
@@ -4780,7 +4825,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </div>
                   <div>
                     <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">SC Job # <span className="text-zinc-600 normal-case font-normal">(auto-generated if empty)</span></label>
-                    <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-blue-500/50 placeholder-zinc-600" value={editingJob.jobIdsDisplay || ''} onChange={e => setEditingJob({ ...editingJob, jobIdsDisplay: e.target.value })} placeholder="e.g. J-001234" />
+                    <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono outline-none focus:ring-2 focus:ring-amber-500/50 placeholder-zinc-600" value={editingJob.jobIdsDisplay || ''} onChange={e => setEditingJob({ ...editingJob, jobIdsDisplay: e.target.value })} placeholder="e.g. J-001234" />
                   </div>
                 </div>
               </div>
@@ -4915,7 +4960,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     </div>
                   </div>
                   <textarea
-                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white min-h-[80px] outline-none focus:ring-2 focus:ring-blue-500/40 resize-y text-sm leading-relaxed"
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white min-h-[80px] outline-none focus:ring-2 focus:ring-amber-500/40 resize-y text-sm leading-relaxed"
                     value={editingJob.portalNote?.text || ''}
                     onChange={e => setEditingJob({
                       ...editingJob,
@@ -4940,7 +4985,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           expectedDate: e.target.value,
                         },
                       })}
-                      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-blue-500/40 tabular"
+                      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-amber-500/40 tabular"
                     />
                     <p className="text-[10px] text-zinc-600 mt-1">Rendered as a green badge on the customer's portal card.</p>
                   </div>
@@ -5229,7 +5274,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             </div>
             <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3 sticky bottom-0 z-10">
               <button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
-              <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-900/20 flex items-center gap-2">
+              <button onClick={handleSave} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-900/20 flex items-center gap-2 transition-all">
                 {editingJob.id ? <><Save className="w-4 h-4" /> Save Changes</> : <>Create Job <ArrowRight className="w-4 h-4" /></>}
               </button>
             </div>
@@ -5806,7 +5851,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                 <button
                   type="button"
                   onClick={handleSave}
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/40 flex items-center gap-2 transition-all"
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-amber-900/30 flex items-center gap-2 transition-all"
                 >
                   <Save className="w-4 h-4" aria-hidden="true" />
                   {isEditing ? 'Save Changes' : 'Invite Member'}
@@ -5816,7 +5861,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                   type="button"
                   onClick={() => canNextWizard && setWizardStep(wizardStep + 1)}
                   disabled={!canNextWizard}
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/40 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-amber-900/30 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
                 >
                   Continue <ChevronRight className="w-4 h-4" aria-hidden="true" />
                 </button>
