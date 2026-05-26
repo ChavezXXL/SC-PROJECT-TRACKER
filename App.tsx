@@ -66,6 +66,21 @@ import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder }
 import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms } from './services/shiftAlarms';
 import { VAPID_KEY, vapidKeyToUint8 } from './utils/vapid';
 
+/** iOS-style toggle switch — shared across App.tsx components. */
+const Toggle = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex w-10 h-6 rounded-full transition-colors duration-200 shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 ${
+      checked ? 'bg-amber-500' : 'bg-zinc-700 hover:bg-zinc-600'
+    }`}
+  >
+    <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${checked ? 'translate-x-5' : 'translate-x-1'}`} />
+  </button>
+);
+
 /** Hook: track viewport width for responsive chart sizing */
 export const useIsMobile = () => {
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
@@ -5677,13 +5692,13 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                     </div>
                   )}
                   {isEditing && (
-                    <label className="flex items-center gap-3 p-3 rounded-xl bg-zinc-900/60 border border-white/5 cursor-pointer">
-                      <input type="checkbox" checked={editingUser.isActive !== false} onChange={e => setEditingUser({ ...editingUser, isActive: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 border-white/10 text-blue-600 focus:ring-blue-500" />
-                      <div className="flex-1">
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/60 border border-white/5">
+                      <div>
                         <p className="text-sm font-semibold text-white">Active</p>
                         <p className="text-[10px] text-zinc-500">Inactive members can't sign in but their history stays intact.</p>
                       </div>
-                    </label>
+                      <Toggle checked={editingUser.isActive !== false} onChange={v => setEditingUser({ ...editingUser, isActive: v })} />
+                    </div>
                   )}
                 </div>
               )}
@@ -6161,19 +6176,27 @@ export default function App() {
             md:translate-x-0
           `}>
             {/* Gradient accent line */}
-            <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
+            <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-amber-500/50 to-transparent" />
 
             <div className={`font-bold text-white flex items-center ${sidebarCollapsed ? 'md:flex-col md:p-3 md:gap-3 md:justify-center p-5 justify-between gap-3' : 'p-5 justify-between gap-3'}`}>
               <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'md:justify-center' : ''}`}>
                 <div className="relative shrink-0">
-                  <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl blur-md opacity-60" />
-                  <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                    <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
-                  </div>
+                  {appSettings.companyLogo ? (
+                    <div className="w-9 h-9 rounded-xl overflow-hidden bg-white flex items-center justify-center shadow-lg shadow-black/40">
+                      <img src={appSettings.companyLogo} alt="" className="w-full h-full object-contain p-0.5" />
+                    </div>
+                  ) : (
+                    <>
+                      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-orange-500 to-amber-600 rounded-xl blur-md opacity-60" />
+                      <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+                        <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className={`min-w-0 ${sidebarCollapsed ? 'md:hidden' : ''}`}>
-                  <p className="text-[15px] font-black tracking-tight leading-none">SC DEBURRING</p>
-                  <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-widest mt-0.5">Shop OS</p>
+                  <p className="text-[15px] font-black tracking-tight leading-none truncate">{appSettings.companyName || 'My Shop'}</p>
+                  <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-widest mt-0.5">FabTrack IO</p>
                 </div>
               </div>
               <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} align="left" />
@@ -6204,10 +6227,10 @@ export default function App() {
                           className={`relative flex items-center gap-3 w-full rounded-xl text-sm font-semibold transition-all group
                             ${sidebarCollapsed ? 'md:justify-center md:px-2.5 md:py-2.5 px-3.5 py-2.5' : 'px-3.5 py-2.5'}
                             ${active
-                              ? 'bg-gradient-to-r from-blue-500/15 to-transparent text-white shadow-sm'
+                              ? 'bg-gradient-to-r from-amber-500/15 to-transparent text-white shadow-sm'
                               : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
-                          {active && <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-gradient-to-b from-blue-400 to-indigo-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />}
-                          <x.i className={`w-[18px] h-[18px] flex-shrink-0 transition-colors ${active ? 'text-blue-400' : 'text-zinc-500 group-hover:text-zinc-300'}`} aria-hidden="true" />
+                          {active && <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-gradient-to-b from-amber-400 to-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" />}
+                          <x.i className={`w-[18px] h-[18px] flex-shrink-0 transition-colors ${active ? 'text-amber-400' : 'text-zinc-500 group-hover:text-zinc-300'}`} aria-hidden="true" />
                           <span className={sidebarCollapsed ? 'md:hidden' : ''}>{x.l}</span>
                         </button>
                       );

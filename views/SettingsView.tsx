@@ -363,10 +363,10 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
             <p className="text-[10px] text-amber-400 mt-1 font-bold">⚠ Allow notifications so alarms work when the app is closed</p>
           )}
         </div>
-        <label className="flex items-center gap-2 cursor-pointer shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <span className={`text-[10px] font-bold uppercase tracking-widest ${alarmsEnabled ? 'text-emerald-400' : 'text-zinc-600'}`}>{alarmsEnabled ? 'On' : 'Off'}</span>
-          <input type="checkbox" checked={alarmsEnabled} onChange={e => enableAlarms(e.target.checked)} className="w-4 h-4 rounded accent-blue-500" />
-        </label>
+          <Toggle checked={alarmsEnabled} onChange={enableAlarms} />
+        </div>
       </div>
 
       <div className={`px-4 py-3 space-y-2 ${!alarmsEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -794,10 +794,10 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
                       </datalist>
                     </div>
                   )}
-                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
-                    <input type="checkbox" checked={!!goal.lowerIsBetter} onChange={e => update(idx, { lowerIsBetter: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
-                    <span><strong className="text-white">Lower is better</strong> — treat the target as a ceiling instead of a floor</span>
-                  </label>
+                  <div className="flex items-center justify-between py-1 gap-3">
+                    <span className="text-xs text-zinc-400"><strong className="text-white">Lower is better</strong> — treat the target as a ceiling instead of a floor</span>
+                    <Toggle checked={!!goal.lowerIsBetter} onChange={v => update(idx, { lowerIsBetter: v })} />
+                  </div>
                 </div>
               )}
             </div>
