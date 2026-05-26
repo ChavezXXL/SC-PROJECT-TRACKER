@@ -69,7 +69,7 @@ export const Field: React.FC<{
       autoComplete={autoComplete}
       required={required}
       disabled={disabled}
-      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
+      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-50"
     />
     {hint && <span className="mt-1 block text-xs text-zinc-500">{hint}</span>}
   </label>
@@ -85,7 +85,7 @@ export const PrimaryButton: React.FC<{
     type={type}
     onClick={onClick}
     disabled={disabled}
-    className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-4 py-2.5 text-sm font-bold text-white transition-colors"
+    className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:bg-zinc-700 disabled:cursor-not-allowed px-4 py-2.5 text-sm font-bold text-white transition-all shadow shadow-amber-900/20"
   >
     {children}
   </button>

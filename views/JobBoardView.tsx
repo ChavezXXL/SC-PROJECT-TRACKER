@@ -128,7 +128,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tight"><Columns3 className="w-6 h-6 text-blue-500" aria-hidden="true" /> Job Flow Board</h2>
+          <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tight"><Columns3 className="w-6 h-6 text-amber-500" aria-hidden="true" /> Job Flow Board</h2>
           <p className="text-zinc-500 text-sm mt-0.5">{wipJobs} in flight · {overdueCount} overdue · drag to advance</p>
         </div>
         <div className="flex items-center gap-2 w-full md:w-auto">
@@ -168,7 +168,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
                 key={w}
                 onClick={() => setCompletedWindow(w)}
                 aria-pressed={completedWindow === w}
-                className={`px-3 py-1.5 text-[11px] font-bold rounded transition-colors min-h-[32px] ${completedWindow === w ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+                className={`px-3 py-1.5 text-[11px] font-bold rounded transition-colors min-h-[32px] ${completedWindow === w ? 'bg-amber-600 text-white' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
               >
                 {w === 'all' ? 'All' : `${w}d`}
               </button>
@@ -201,7 +201,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
                 key={p}
                 onClick={() => setFilterPriority(p)}
                 aria-pressed={filterPriority === p}
-                className={`px-3 py-1.5 text-[11px] font-bold rounded transition-colors capitalize min-h-[32px] ${filterPriority === p ? (p === 'urgent' ? 'bg-red-600 text-white' : p === 'high' ? 'bg-orange-600 text-white' : 'bg-blue-600 text-white') : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+                className={`px-3 py-1.5 text-[11px] font-bold rounded transition-colors capitalize min-h-[32px] ${filterPriority === p ? (p === 'urgent' ? 'bg-red-600 text-white' : p === 'high' ? 'bg-orange-600 text-white' : 'bg-amber-600 text-white') : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
               >
                 {p}
               </button>
@@ -330,7 +330,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
         </div>
         <div className="text-center">
           <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">In Flight</p>
-          <p className="text-xl font-black text-blue-400 tabular mt-0.5">{wipJobs}</p>
+          <p className="text-xl font-black text-amber-400 tabular mt-0.5">{wipJobs}</p>
         </div>
         <div className="text-center">
           <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Completed</p>

@@ -568,11 +568,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 no-print">
         <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2 text-white"><Calendar className="w-6 h-6 text-blue-500" /> Work Logs</h2>
+          <h2 className="text-2xl font-bold flex items-center gap-2 text-white"><Calendar className="w-6 h-6 text-amber-500" /> Work Logs</h2>
           <p className="text-zinc-500 text-sm mt-1">Time entries grouped by job. Filter by date, status, or search.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfJobSearch(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors">
+          <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfJobSearch(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-all shadow shadow-amber-900/20">
             <Plus className="w-4 h-4" /> Backfill Entry
           </button>
           <button onClick={openExportModal} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors shadow-lg shadow-emerald-900/20">
@@ -590,7 +590,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         </div>
         <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl">
           <p className="text-zinc-500 text-xs uppercase font-bold">Total Hours</p>
-          <p className="text-2xl font-bold text-blue-400">{totalHours.toFixed(1)}h</p>
+          <p className="text-2xl font-bold text-amber-400">{totalHours.toFixed(1)}h</p>
         </div>
         <div className="bg-zinc-900/50 border border-orange-500/10 p-4 rounded-xl">
           <p className="text-zinc-500 text-xs uppercase font-bold">Active Jobs</p>
@@ -651,7 +651,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               placeholder="Search by PO#, Part#, Employee, Operation..."
               value={filterSearch}
               onChange={e => setFilterSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-black/30 border border-white/10 rounded-xl text-sm text-white focus:ring-1 focus:ring-blue-500 outline-none"
+              className="w-full pl-9 pr-4 py-2 bg-black/30 border border-white/10 rounded-xl text-sm text-white focus:ring-1 focus:ring-amber-500 outline-none"
             />
           </div>
         </div>
@@ -670,7 +670,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             </p>
             {logs.length > 0 && (
               <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
-                <button onClick={() => { setActiveTab('all'); setPreset('all'); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">Show All Logs</button>
+                <button onClick={() => { setActiveTab('all'); setPreset('all'); }} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg transition-colors">Show All Logs</button>
                 <button onClick={() => setPreset('90d')} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors">Last 90 Days</button>
               </div>
             )}
@@ -712,8 +712,8 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     {group.runningCount > 0 && (
-                      <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                         {group.runningCount} timer{group.runningCount > 1 ? 's' : ''} running
                       </span>
                     )}
@@ -784,24 +784,24 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                     <tr className="hover:bg-white/5 transition-colors group/row">
                       <td className="p-3 pl-6 text-zinc-400 whitespace-nowrap">{new Date(log.startTime).toLocaleDateString()}</td>
                       <td className="p-3 text-white font-semibold">{log.userName}</td>
-                      <td className="p-3 text-blue-400 font-medium">{log.operation}</td>
+                      <td className="p-3 text-amber-400 font-medium">{log.operation}</td>
                       <td className="p-3 font-mono text-zinc-400 whitespace-nowrap">
                         {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         <span className="text-zinc-600 mx-1.5" aria-hidden="true">→</span>
                         {log.endTime
                           ? new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                          : <span className="text-blue-400 font-bold">Running</span>
+                          : <span className="text-emerald-400 font-bold">Running</span>
                         }
                       </td>
                       <td className="p-3">
                         {log.endTime
                           ? <span className="text-[10px] font-bold text-zinc-400 bg-zinc-800 border border-white/10 px-2 py-0.5 rounded-full">Stopped</span>
-                          : <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Live</span>
+                          : <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Live</span>
                         }
                       </td>
                       <td className="p-3 text-right pr-6 font-mono text-zinc-300 font-bold">{formatDuration(getLogDurationMins(log) ?? log.durationMinutes)}</td>
                       <td className="p-3 text-right pr-6 no-print opacity-0 group-hover/row:opacity-100 transition-opacity">
-                        <button aria-label="Edit log entry" onClick={() => handleEditLog(log)} className="text-blue-500 hover:text-white p-1.5 rounded hover:bg-blue-500/20 transition-colors" title="Edit log"><Edit2 className="w-3 h-3" aria-hidden="true" /></button>
+                        <button aria-label="Edit log entry" onClick={() => handleEditLog(log)} className="text-zinc-500 hover:text-white p-1.5 rounded hover:bg-white/10 transition-colors" title="Edit log"><Edit2 className="w-3 h-3" aria-hidden="true" /></button>
                       </td>
                     </tr>
                     {log.notes && (
@@ -831,7 +831,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         <Overlay open onClose={closeEditModal} ariaLabel="Edit time log" zIndex={200}>
           <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
-              <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-blue-500" /> Edit Time Log</h3>
+              <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-amber-500" /> Edit Time Log</h3>
               <button aria-label="Close dialog" onClick={closeEditModal} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
             </div>
             {/* Job context strip — always shows WHICH job this log belongs to
@@ -842,12 +842,12 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               const partNumber = parentJob?.partNumber || editingLog.partNumber || '';
               const customer = parentJob?.customer || editingLog.customer || '';
               return (
-                <div className="px-6 py-3 bg-blue-500/5 border-b border-blue-500/20 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
-                    <Briefcase className="w-4 h-4 text-blue-400" aria-hidden="true" />
+                <div className="px-6 py-3 bg-amber-500/5 border-b border-amber-500/15 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/25 flex items-center justify-center shrink-0">
+                    <Briefcase className="w-4 h-4 text-amber-400" aria-hidden="true" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest">Job</p>
+                    <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Job</p>
                     <p className="text-sm font-bold text-white truncate tabular">
                       {poNumber}
                       {partNumber && <span className="text-zinc-400 font-normal"> · {partNumber}</span>}
@@ -860,7 +860,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             <div className="p-6 space-y-5">
               <div>
                 <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Employee</label>
-                <select className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                <select className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-amber-500 outline-none"
                   value={editingLog.userId}
                   onChange={e => {
                     const u = users.find(u => u.id === e.target.value);
@@ -871,7 +871,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               </div>
               <div>
                 <label className="text-xs text-zinc-500 uppercase font-bold mb-1 block">Operation</label>
-                <select className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                <select className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-amber-500 outline-none"
                   value={editingLog.operation}
                   onChange={e => setEditingLog({ ...editingLog, operation: e.target.value })}>
                   {ops.map(o => <option key={o} value={o}>{o}</option>)}
@@ -906,7 +906,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               <button onClick={handleDeleteLog} className="text-red-500 hover:text-red-400 text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /> Delete Log</button>
               <div className="flex gap-2">
                 <button onClick={closeEditModal} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
-                <button onClick={handleSaveLog} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-bold">Save Changes</button>
+                <button onClick={handleSaveLog} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2 rounded-xl font-bold transition-all">Save Changes</button>
               </div>
             </div>
           </div>
@@ -918,7 +918,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         <Overlay open onClose={() => setShowBackfill(false)} ariaLabel="Backfill time entry" zIndex={200} padding="p-0 sm:p-4">
           <div className="bg-zinc-900 border border-white/10 w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col my-0 sm:my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
-              <div><h3 className="text-lg font-bold text-white flex items-center gap-2"><Clock className="w-5 h-5 text-blue-400" /> Backfill Time Entry</h3><p className="text-sm text-zinc-400 mt-0.5">Add a past entry for a worker who forgot to scan</p></div>
+              <div><h3 className="text-lg font-bold text-white flex items-center gap-2"><Clock className="w-5 h-5 text-amber-400" /> Backfill Time Entry</h3><p className="text-sm text-zinc-400 mt-0.5">Add a past entry for a worker who forgot to scan</p></div>
               <button onClick={() => setShowBackfill(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400"><X className="w-4 h-4" /></button>
             </div>
             <div className="overflow-y-auto flex-1 px-5 pb-4 space-y-4">
@@ -927,7 +927,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 {bfJob ? (() => {
                   const sel = jobs.find(j => j.id === bfJob);
                   return sel ? (
-                    <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3">
+                    <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
                       <div>
                         <p className="font-black text-white text-sm">PO {sel.poNumber}</p>
                         <p className="text-xs text-zinc-400 mt-0.5">{sel.partNumber}{sel.customer ? ` · ${sel.customer}` : ''}{sel.quantity ? ` · Qty ${sel.quantity}` : ''}</p>
@@ -946,7 +946,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                         placeholder="Search PO#, part#, customer…"
                         value={bfJobSearch}
                         onChange={e => setBfJobSearch(e.target.value)}
-                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white text-sm focus:ring-2 focus:ring-amber-500 outline-none"
                       />
                     </div>
                     <div className="mt-1.5 rounded-xl border border-white/10 overflow-hidden bg-zinc-950 max-h-44 overflow-y-auto">
@@ -1002,8 +1002,8 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 </div>
               </div>
               {bfStart && bfEnd && new Date(bfEnd) > new Date(bfStart) && (
-                <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 text-center">
-                  <span className="text-blue-400 font-bold">{((new Date(bfEnd).getTime() - new Date(bfStart).getTime()) / 3600000).toFixed(1)}h</span>
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-center">
+                  <span className="text-amber-400 font-bold">{((new Date(bfEnd).getTime() - new Date(bfStart).getTime()) / 3600000).toFixed(1)}h</span>
                   <span className="text-zinc-400 text-sm"> will be logged</span>
                 </div>
               )}
@@ -1027,7 +1027,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                     setRefreshKey(k => k + 1);
                   } catch (e: any) { addToast('error', e?.message || 'Failed to create backfill'); }
                 }}
-                className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white font-bold text-sm transition-colors"
+                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-30 text-white font-bold text-sm transition-all"
               >
                 Save Entry
               </button>
@@ -1060,7 +1060,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 <div className="flex gap-2">
                   <button
                     onClick={() => setSelectedExportJobs(new Set(groupedLogs.map(g => g.internalJobId)))}
-                    className="text-[11px] text-blue-400 hover:text-blue-300 font-bold"
+                    className="text-[11px] text-amber-400 hover:text-amber-300 font-bold"
                   >Select All</button>
                   <span className="text-zinc-700">·</span>
                   <button
