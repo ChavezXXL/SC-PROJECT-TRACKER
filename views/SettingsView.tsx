@@ -39,6 +39,32 @@ import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as f
 import { getActiveAlarms, playAlarmSound } from '../services/shiftAlarms';
 import { isDeveloper } from '../utils/devMode';
 import { getStages, DEFAULT_STAGES } from '../App';
+import { buildTravelerBlobUrl, printTraveler } from '../services/travelerPrint';
+
+/** iOS-style toggle switch — replaces all native checkboxes in Settings. */
+const Toggle = ({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex w-10 h-6 rounded-full transition-colors duration-200 shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 ${
+      checked ? 'bg-amber-500' : 'bg-zinc-700 hover:bg-zinc-600'
+    }`}
+  >
+    <span
+      className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${
+        checked ? 'translate-x-5' : 'translate-x-1'
+      }`}
+    />
+  </button>
+);
 
 const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
@@ -2242,164 +2268,105 @@ const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: strin
 // the shop has zero real jobs yet.
 const TravelerPreview = ({ settings }: { settings: SystemSettings }) => {
   const sampleJob: Job = {
-    id: 'sample',
-    jobIdsDisplay: 'SAMPLE-001',
-    poNumber: 'PO-12345',
-    partNumber: 'WIDGET-A',
+    id: 'PREVIEW-001',
+    jobIdsDisplay: 'PREVIEW-001',
+    poNumber: 'PO-78432',
+    partNumber: 'BRK-1200-A',
     customer: 'Acme Manufacturing',
     priority: 'high',
-    quantity: 200,
-    dateReceived: '04/20/2026',
-    dueDate: '05/01/2026',
-    info: 'Sample job. Changes to your Traveler settings update this preview live.',
-    specialInstructions: 'No sharp edges — break 0.010 max.',
+    quantity: 250,
+    dateReceived: new Date().toLocaleDateString('en-US'),
+    dueDate: new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-US'),
+    info: 'Deburr all edges per print. Inspect per AS9102 FAI requirements.',
+    specialInstructions: 'No sharp edges — break 0.010 max. Passivate per AMS 2700.',
     status: 'in-progress',
     createdAt: Date.now() - 86400000,
+    expectedHours: 4,
   };
-  const t = settings.traveler || {};
-  const show = {
-    logo: t.showLogo !== false,
-    qr: t.showQrCode !== false,
-    photo: t.showPartPhoto !== false,
-    instructions: t.showSpecialInstructions !== false,
-    notes: t.showNotes !== false,
-    operationLog: t.showOperationLog !== false,
-    signOff: t.showSignOff !== false,
-    dueDate: t.showDueDate !== false,
-    priority: t.showPriority !== false,
-    customer: t.showCustomer !== false,
-  };
-  const opRows = Math.min(20, Math.max(4, t.operationLogRows ?? 8));
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0.6);
+  const [blobUrl, setBlobUrl] = useState('');
+
+  // Auto-scale to container width
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setScale(Math.min(1, (entry.contentRect.width - 2) / 850));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Regenerate real traveler HTML whenever branding or traveler settings change
+  const depKey = JSON.stringify({
+    t: settings.traveler,
+    n: settings.companyName,
+    ph: settings.companyPhone,
+    hasLogo: !!settings.companyLogo,
+  });
+  useEffect(() => {
+    let currentUrl = '';
+    buildTravelerBlobUrl(sampleJob, settings, {}).then(url => {
+      currentUrl = url;
+      setBlobUrl(url);
+    });
+    return () => { if (currentUrl) URL.revokeObjectURL(currentUrl); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depKey]);
+
+  const scaledHeight = Math.round(1100 * scale);
 
   return (
-    <div className="sticky top-4 bg-white text-black rounded-2xl shadow-2xl overflow-hidden">
-      <div className="p-5" style={{ fontFamily: '-apple-system, sans-serif', fontSize: 10 }}>
-        {t.headerBanner && (
-          <div className="bg-yellow-100 border-2 border-yellow-500 text-yellow-900 text-center font-black uppercase tracking-widest text-[9px] px-2 py-1 mb-2 rounded">
-            {t.headerBanner}
-          </div>
-        )}
-        <div className="flex justify-between items-center border-b-2 border-black pb-2 mb-3 gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            {show.logo && settings.companyLogo && (
-              <img src={settings.companyLogo} alt="" className="h-8 object-contain shrink-0" />
-            )}
-            <div className="min-w-0">
-              <h1 className="text-base font-black tracking-tighter truncate">{settings.companyName || 'Your Company'}</h1>
-              <p className="text-[8px] font-bold uppercase tracking-widest text-gray-500">Production Traveler</p>
-            </div>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-[10px] font-bold">{new Date().toLocaleDateString()}</p>
-            <p className="text-[8px] text-gray-400">Printed On</p>
-          </div>
+    <div className="sticky top-4 rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-zinc-900">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+        <div>
+          <p className="text-sm font-bold text-white flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+            Live Traveler Preview
+          </p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">Reflects your exact settings — what will actually print</p>
         </div>
+        <button
+          onClick={() => void printTraveler(sampleJob, settings, {})}
+          className="flex items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white text-xs font-bold px-3 py-2 rounded-lg border border-white/10 transition-all"
+        >
+          <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+          Print Sample
+        </button>
+      </div>
 
-        <div className={`grid ${show.qr ? 'grid-cols-[1fr_90px]' : 'grid-cols-1'} gap-2 mb-2`}>
-          <div className="space-y-1.5">
-            <div className="border-2 border-black p-2">
-              <p className="text-[8px] uppercase font-bold text-gray-500">PO Number</p>
-              <p className="text-xl font-black leading-tight">{sampleJob.poNumber}</p>
-              {show.priority && sampleJob.priority && sampleJob.priority !== 'normal' && (
-                <span className="inline-block mt-1 text-[8px] font-black uppercase px-1 rounded bg-orange-500 text-white">
-                  {sampleJob.priority}
-                </span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="border border-gray-300 p-1.5">
-                <p className="text-[8px] uppercase font-bold text-gray-500">Part #</p>
-                <p className="text-xs font-black">{sampleJob.partNumber}</p>
-              </div>
-              <div className="border border-gray-300 p-1.5">
-                <p className="text-[8px] uppercase font-bold text-gray-500">Qty</p>
-                <p className="text-xs font-black">{sampleJob.quantity}</p>
-              </div>
-              <div className="border border-gray-300 p-1.5">
-                <p className="text-[8px] uppercase font-bold text-gray-500">Received</p>
-                <p className="text-[10px] font-bold">{sampleJob.dateReceived}</p>
-              </div>
-              {show.dueDate && (
-                <div className="border border-gray-300 p-1.5">
-                  <p className="text-[8px] uppercase font-bold text-gray-500">Due Date</p>
-                  <p className="text-[10px] font-black text-red-600">{sampleJob.dueDate}</p>
-                </div>
-              )}
-            </div>
-            {show.customer && (
-              <div className="border border-gray-300 p-1.5">
-                <p className="text-[8px] uppercase font-bold text-gray-500">Customer</p>
-                <p className="text-xs font-bold">{sampleJob.customer}</p>
-              </div>
-            )}
-          </div>
-          {show.qr && (
-            <div className="flex flex-col items-center justify-center border-2 border-black p-2 bg-gray-50 min-w-0">
-              <div className="w-[60px] h-[60px] bg-white border border-gray-300 grid grid-cols-7 gap-px p-1">
-                {Array.from({ length: 49 }).map((_, i) => (
-                  <div key={i} className={Math.random() > 0.55 ? 'bg-black' : 'bg-white'} />
-                ))}
-              </div>
-              <p className="text-[8px] font-bold uppercase tracking-widest mt-1">SCAN JOB</p>
-            </div>
-          )}
-        </div>
-
-        {show.instructions && sampleJob.specialInstructions && (
-          <div className="border-2 border-orange-500 bg-orange-50 p-1.5 mb-1.5">
-            <p className="text-[8px] uppercase font-black text-orange-700 tracking-wider">⚠ Special Instructions</p>
-            <p className="text-[10px] font-bold text-gray-900">{sampleJob.specialInstructions}</p>
-          </div>
-        )}
-
-        {show.notes && sampleJob.info && (
-          <div className="border-l-2 border-gray-400 pl-2 py-1 bg-gray-50 mb-1.5">
-            <p className="text-[8px] uppercase font-bold text-gray-500">Notes</p>
-            <p className="text-[9px] text-gray-700">{sampleJob.info}</p>
-          </div>
-        )}
-
-        {show.operationLog && (
-          <div className="mt-2">
-            <p className="text-[8px] uppercase font-black text-blue-700 tracking-wider mb-1">Operation Log</p>
-            <table className="w-full border-collapse text-[8px]">
-              <thead>
-                <tr className="border-b border-black">
-                  <th className="text-left py-1 px-1 font-black">Op</th>
-                  <th className="text-left py-1 px-1 font-black">Operator</th>
-                  <th className="text-left py-1 px-1 font-black">Start</th>
-                  <th className="text-left py-1 px-1 font-black">End</th>
-                  <th className="text-left py-1 px-1 font-black">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: Math.min(opRows, 6) }).map((_, i) => (
-                  <tr key={i} className="border-b border-gray-200">
-                    <td className="px-1" style={{ height: 14 }}></td>
-                    <td></td><td></td><td></td><td></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {opRows > 6 && <p className="text-[7px] text-gray-400 italic mt-0.5">+{opRows - 6} more rows</p>}
-          </div>
-        )}
-
-        {show.signOff && (
-          <div className="mt-3 grid grid-cols-2 gap-4 pt-2 border-t border-gray-300">
-            <div><p className="border-t border-black pt-0.5 text-[7px] font-bold uppercase text-gray-500">Operator</p></div>
-            <div><p className="border-t border-black pt-0.5 text-[7px] font-bold uppercase text-gray-500">Inspector</p></div>
-          </div>
-        )}
-
-        {t.footerText && (
-          <div className="mt-2 pt-1 border-t border-gray-200 text-center text-[8px] text-gray-500 whitespace-pre-wrap">
-            {t.footerText}
+      {/* Scaled iframe — shows the real traveler HTML */}
+      <div ref={containerRef} className="bg-white overflow-hidden" style={{ height: scaledHeight + 2 }}>
+        {blobUrl ? (
+          <iframe
+            key={blobUrl}
+            src={blobUrl}
+            title="Traveler Preview"
+            style={{
+              width: 850,
+              height: 1100,
+              border: 'none',
+              transform: `scale(${scale})`,
+              transformOrigin: 'top left',
+              pointerEvents: 'none',
+              display: 'block',
+            }}
+          />
+        ) : (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-7 h-7 border-2 border-zinc-200 border-t-orange-500 rounded-full animate-spin" />
           </div>
         )}
       </div>
-      <div className="bg-zinc-950 px-3 py-2 border-t border-zinc-800 text-center">
-        <p className="text-[9px] text-zinc-500">Live preview · <span className="text-zinc-300 font-bold">sample data</span></p>
+
+      <div className="bg-zinc-950 px-3 py-2.5 border-t border-zinc-800 flex items-center justify-between">
+        <p className="text-[9px] text-zinc-500">
+          Sample data · <span className="text-zinc-300 font-bold">exact match</span> to printed output
+        </p>
+        <p className="text-[9px] text-zinc-600">PO-78432 · 250 pcs</p>
       </div>
     </div>
   );
@@ -3990,7 +3957,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   <p className="text-sm text-white">Auto-Pause Timers at Lunch</p>
                   <p className="text-xs text-zinc-500">When on, any alarm marked "Pause Timers" will pause running work</p>
                 </div>
-                <input type="checkbox" checked={settings.autoLunchPauseEnabled || false} onChange={e => setSettings({ ...settings, autoLunchPauseEnabled: e.target.checked })} className="w-4 h-4 rounded bg-zinc-800 text-blue-600" />
+                <Toggle checked={settings.autoLunchPauseEnabled || false} onChange={v => setSettings({ ...settings, autoLunchPauseEnabled: v })} />
               </div>
             </div>
           </div>
@@ -4310,14 +4277,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               </summary>
               <div className="px-4 pb-4 space-y-3">
                 {[
-                  { key: 'showShippingOnDocs', label: 'Shipping Details', desc: 'Show Ship To address' },
-                  { key: 'showDueDateOnDocs', label: 'Due Date', desc: 'Show due date', def: true },
-                  { key: 'showTermsOnDocs', label: 'Payment Terms', desc: 'Show terms (e.g. Net 30)', def: true },
+                  { key: 'showShippingOnDocs', label: 'Shipping Details', desc: 'Show Ship To address', def: false },
+                  { key: 'showDueDateOnDocs',  label: 'Due Date',         desc: 'Show due date',        def: true },
+                  { key: 'showTermsOnDocs',    label: 'Payment Terms',    desc: 'Show terms (Net 30)',   def: true },
                 ].map(o => (
-                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
-                    <div><p className="text-sm text-white">{o.label}</p><p className="text-[10px] text-zinc-600">{o.desc}</p></div>
-                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def ?? false} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
-                  </label>
+                  <div key={o.key} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
+                    <div><p className="text-sm text-white font-medium">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5">{o.desc}</p></div>
+                    <Toggle checked={(settings as any)[o.key] ?? o.def ?? false} onChange={v => setSettings({ ...settings, [o.key]: v })} />
+                  </div>
                 ))}
               </div>
             </details>
@@ -4339,32 +4306,30 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
                 {/* Section toggles — each maps to a show.* flag in the renderer */}
                 {([
-                  { key: 'showLogo', label: 'Company Logo' },
-                  { key: 'showQrCode', label: 'QR Code', desc: 'Scannable job-ID square' },
-                  { key: 'showPartPhoto', label: 'Part Photo', desc: 'Reference image if uploaded' },
-                  { key: 'showSpecialInstructions', label: 'Special Instructions', desc: 'Orange warning block' },
-                  { key: 'showNotes', label: 'Notes Block' },
-                  { key: 'showOperationLog', label: 'Operation Log', desc: 'Blank rows for sign-off' },
-                  { key: 'showSignOff', label: 'Sign-off Lines', desc: 'Operator + Inspector' },
-                  { key: 'showDueDate', label: 'Due Date', desc: 'Prominently in red' },
-                  { key: 'showPriority', label: 'Priority Badge', desc: 'URGENT / HIGH markers' },
-                  { key: 'showCustomer', label: 'Customer Block' },
+                  { key: 'showLogo',                label: 'Company Logo' },
+                  { key: 'showQrCode',              label: 'QR Code',              desc: 'Scannable job-ID square' },
+                  { key: 'showPartPhoto',           label: 'Part Photo',           desc: 'Reference image if uploaded' },
+                  { key: 'showSpecialInstructions', label: 'Special Instructions', desc: 'Orange warning callout' },
+                  { key: 'showNotes',               label: 'Notes Block' },
+                  { key: 'showOperationLog',        label: 'Operation Log',        desc: 'Sign-off rows for each op' },
+                  { key: 'showSignOff',             label: 'Sign-off Lines',       desc: 'Operator + Inspector' },
+                  { key: 'showDueDate',             label: 'Due Date',             desc: 'Shown in red' },
+                  { key: 'showPriority',            label: 'Priority Badge',       desc: 'URGENT / HIGH markers' },
+                  { key: 'showCustomer',            label: 'Customer Block' },
                 ] as const).map(o => {
                   const v = settings.traveler?.[o.key as keyof NonNullable<SystemSettings['traveler']>];
-                  const checked = v !== false; // default ON for all flags (opt-out model)
+                  const checked = v !== false; // default ON — opt-out model
                   return (
-                    <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                    <div key={o.key} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
                       <div>
-                        <p className="text-sm text-white">{o.label}</p>
-                        {'desc' in o && o.desc && <p className="text-[10px] text-zinc-600">{o.desc}</p>}
+                        <p className="text-sm text-white font-medium">{o.label}</p>
+                        {'desc' in o && o.desc && <p className="text-[10px] text-zinc-500 mt-0.5">{o.desc}</p>}
                       </div>
-                      <input
-                        type="checkbox"
+                      <Toggle
                         checked={checked as boolean}
-                        onChange={e => setSettings({ ...settings, traveler: { ...(settings.traveler || {}), [o.key]: e.target.checked } })}
-                        className="w-5 h-5 rounded accent-blue-500"
+                        onChange={v => setSettings({ ...settings, traveler: { ...(settings.traveler || {}), [o.key]: v } })}
                       />
-                    </label>
+                    </div>
                   );
                 })}
 
@@ -4430,14 +4395,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               </summary>
               <div className="px-4 pb-4 space-y-3">
                 {[
-                  { key: 'showUnitCol', label: 'Unit Column', desc: 'Show unit (ea, hr, ft) column', def: true },
-                  { key: 'showRateCol', label: 'Rate Column', desc: 'Show unit price column', def: true },
-                  { key: 'showQtyCol', label: 'Quantity Column', desc: 'Show quantity column', def: true },
+                  { key: 'showUnitCol', label: 'Unit Column',     desc: 'Show unit (ea, hr, ft) column', def: true },
+                  { key: 'showRateCol', label: 'Rate Column',     desc: 'Show unit price column',         def: true },
+                  { key: 'showQtyCol',  label: 'Quantity Column', desc: 'Show quantity column',            def: true },
                 ].map(o => (
-                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
-                    <div><p className="text-sm text-white">{o.label}</p><p className="text-[10px] text-zinc-600">{o.desc}</p></div>
-                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def ?? true} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
-                  </label>
+                  <div key={o.key} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
+                    <div><p className="text-sm text-white font-medium">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5">{o.desc}</p></div>
+                    <Toggle checked={(settings as any)[o.key] ?? o.def ?? true} onChange={v => setSettings({ ...settings, [o.key]: v })} />
+                  </div>
                 ))}
               </div>
             </details>
@@ -4449,10 +4414,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
               </summary>
               <div className="px-4 pb-4 space-y-3">
-                <label className="flex items-center justify-between cursor-pointer py-1">
-                  <div><p className="text-sm text-white">Signature Lines</p><p className="text-[10px] text-zinc-600">Show company + client signature lines</p></div>
-                  <input type="checkbox" checked={settings.showSignatureLines ?? true} onChange={e => setSettings({ ...settings, showSignatureLines: e.target.checked })} className="w-5 h-5 rounded accent-blue-500" />
-                </label>
+                <div className="flex items-center justify-between py-2">
+                  <div><p className="text-sm text-white font-medium">Signature Lines</p><p className="text-[10px] text-zinc-500 mt-0.5">Show company + client signature lines</p></div>
+                  <Toggle checked={settings.showSignatureLines ?? true} onChange={v => setSettings({ ...settings, showSignatureLines: v })} />
+                </div>
                 <div>
                   <label className="text-[10px] text-zinc-500 block mb-1">Default Comment / Certificate</label>
                   <textarea className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white min-h-[70px]" value={settings.defaultQuoteComment || ''} onChange={e => setSettings({ ...settings, defaultQuoteComment: e.target.value })} placeholder="CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform..." />

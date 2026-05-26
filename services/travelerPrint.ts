@@ -31,38 +31,30 @@ const TRAVELER_CSS = `
   }
   @media print { html, body { height:auto !important; } }
 
-  /* ── ACCENT STRIPE ── */
-  .accent { height:5pt; background:#ea580c; }
+  /* ── ACCENT STRIPE (just the thin top line — no ink-heavy fills) ── */
+  .accent { height:4pt; background:#ea580c; margin-bottom:10pt; }
 
-  /* ── HEADER (solid black bar) ── */
+  /* ── HEADER — white bg, black text, thin bottom rule ── */
   .hdr {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: #111;
-    color: #fff;
-    padding: 9pt 12pt 10pt;
+    padding-bottom: 9pt;
     margin-bottom: 10pt;
+    border-bottom: 1.5pt solid #111;
   }
   .hdr-left { display:flex; align-items:center; gap:10pt; }
-  .hdr-logo {
-    max-height: 42pt; max-width: 140pt;
-    object-fit: contain;
-    background: #fff;
-    padding: 3pt 5pt;
-    border-radius: 2pt;
-  }
-  .hdr-co   { font-size:15pt; font-weight:900; letter-spacing:-0.01em; color:#fff; line-height:1.1; }
-  .hdr-sub  { font-size:7.5pt; color:#9ca3af; margin-top:2pt; }
+  .hdr-logo { max-height:44pt; max-width:150pt; object-fit:contain; }
+  .hdr-co   { font-size:16pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1.1; }
+  .hdr-sub  { font-size:7.5pt; color:#71717a; margin-top:2pt; letter-spacing:0.05em; }
   .hdr-right { text-align:right; }
   .hdr-eyebrow { font-size:7pt; font-weight:800; letter-spacing:0.22em; text-transform:uppercase; color:#ea580c; margin-bottom:2pt; }
-  .hdr-doctype  { font-size:19pt; font-weight:900; letter-spacing:-0.01em; color:#fff; line-height:1; }
-  .hdr-meta     { font-size:7.5pt; color:#9ca3af; margin-top:3pt; font-variant-numeric:tabular-nums; }
+  .hdr-doctype  { font-size:18pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1; }
+  .hdr-meta     { font-size:7.5pt; color:#71717a; margin-top:3pt; font-variant-numeric:tabular-nums; }
 
   /* ── IDENTITY BLOCK ── */
-  /* HTML table — rowspan for QR column works flawlessly in Chrome print */
   .id-table { width:100%; border-collapse:collapse; }
-  .id-table td { border:2pt solid #111; vertical-align:top; }
+  .id-table td { border:1.5pt solid #111; vertical-align:top; }
 
   .id-lbl {
     font-size: 7pt; font-weight: 800;
@@ -87,14 +79,13 @@ const TRAVELER_CSS = `
     width: 88pt;
     text-align: center;
     vertical-align: middle;
-    background: #f9f9f9;
     padding: 8pt 10pt;
   }
   .id-qr-cell img {
     width: 72pt; height: 72pt;
     display: block; margin: 0 auto 5pt;
     image-rendering: pixelated;
-    border: 0.5pt solid #e5e5e7;
+    border: 0.5pt solid #d4d4d8;
   }
   .qr-cap {
     font-size: 6pt; font-weight: 800;
@@ -102,7 +93,7 @@ const TRAVELER_CSS = `
     color: #a1a1aa;
   }
 
-  /* Priority badge inside PO cell */
+  /* Priority badge */
   .pri-pill {
     display: inline-block;
     margin-top: 6pt;
@@ -110,15 +101,15 @@ const TRAVELER_CSS = `
     border-radius: 99pt;
     font-size: 8pt; font-weight: 800;
     letter-spacing: 0.06em; text-transform: uppercase;
+    border: 1pt solid currentColor;
   }
-  .pri-urgent { background:#fee2e2; color:#7f1d1d; }
-  .pri-high   { background:#ffedd5; color:#9a3412; }
+  .pri-urgent { color:#b91c1c; }
+  .pri-high   { color:#9a3412; }
 
   /* ── META STRIP ── */
-  /* Continues the identity block — no top border, same outer border */
   .meta-table {
     width: 100%; border-collapse: collapse;
-    border: 2pt solid #111; border-top: none;
+    border: 1.5pt solid #111; border-top: none;
     margin-bottom: 10pt;
   }
   .meta-table td {
@@ -145,9 +136,8 @@ const TRAVELER_CSS = `
   /* ── PART PHOTO ── */
   .photo-wrap { float:right; margin:0 0 10pt 14pt; }
   .photo-wrap img {
-    display:block; width:120pt; height:90pt;
-    object-fit:cover;
-    border:1pt solid #d4d4d8;
+    display:block; width:110pt; height:82pt;
+    object-fit:cover; border:1pt solid #d4d4d8;
   }
   .photo-cap {
     font-size:6.5pt; text-align:center; color:#a1a1aa;
@@ -156,7 +146,7 @@ const TRAVELER_CSS = `
 
   /* ── SPECIAL INSTRUCTIONS ── */
   .callout {
-    border-left: 4pt solid #ea580c;
+    border-left: 3.5pt solid #ea580c;
     background: #fff7ed;
     padding: 8pt 12pt;
     margin-bottom: 10pt;
@@ -169,15 +159,13 @@ const TRAVELER_CSS = `
   }
   .callout-txt {
     font-size: 10.5pt; font-weight: 500;
-    color: #1c1917; line-height: 1.55;
-    white-space: pre-wrap;
+    color: #1c1917; line-height: 1.55; white-space: pre-wrap;
   }
 
   /* ── NOTES ── */
   .notes-block {
-    background: #f9fafb;
-    border-left: 3pt solid #d4d4d8;
-    padding: 7pt 12pt; margin-bottom: 10pt;
+    border-left: 2.5pt solid #d4d4d8;
+    padding: 6pt 12pt; margin-bottom: 10pt;
     page-break-inside: avoid; break-inside: avoid;
   }
   .notes-lbl {
@@ -187,14 +175,14 @@ const TRAVELER_CSS = `
   }
   .notes-txt { font-size:10pt; color:#3f3f46; line-height:1.5; white-space:pre-wrap; }
 
-  /* ── SECTION HEADERS ── */
-  /* Black filled bar — looks like a real shop form section divider */
+  /* ── SECTION HEADERS — ink-friendly: just a bold rule, no fill ── */
   .sec-hdr {
-    background: #111; color: #fff;
     font-size: 7.5pt; font-weight: 800;
     letter-spacing: 0.2em; text-transform: uppercase;
-    padding: 5pt 10pt;
+    color: #111;
+    padding: 0 0 4pt 0;
     margin-bottom: 0;
+    border-bottom: 1.5pt solid #111;
     page-break-after: avoid;
   }
 
@@ -203,7 +191,7 @@ const TRAVELER_CSS = `
   .op-table thead th {
     font-size: 7pt; font-weight: 800;
     text-transform: uppercase; letter-spacing: 0.1em;
-    color: #71717a; background: #f4f4f5;
+    color: #71717a;
     padding: 5pt 6pt;
     border: 1pt solid #d4d4d8;
     text-align: left; white-space: nowrap;
@@ -243,7 +231,6 @@ const TRAVELER_CSS = `
     font-size: 7pt; color: #71717a; line-height: 1.6;
     padding: 5pt 8pt;
     border: 0.5pt solid #d4d4d8;
-    background: #f9f9f9;
     margin-bottom: 8pt;
   }
   .coc strong { color: #374151; }

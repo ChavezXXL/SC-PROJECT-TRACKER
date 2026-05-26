@@ -1807,12 +1807,6 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
                     {(job.expectedHours || 0) > 0 ? `${job.expectedHours}h` : '—'}
                   </div>
                 </div>
-                {(job.pricePerPart || 0) > 0 && (job.quantity || 0) > 0 && (
-                  <div className="border-2 border-gray-300 p-2">
-                    <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Job Value</label>
-                    <div className="text-base font-black text-gray-800">${((job.pricePerPart || 0) * (job.quantity || 0)).toLocaleString()}</div>
-                  </div>
-                )}
               </div>
               {show.customer && job.customer && (
                 <div className="border-2 border-gray-300 p-2">
