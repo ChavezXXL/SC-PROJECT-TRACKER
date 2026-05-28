@@ -133,7 +133,7 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
         <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-              <FileText className="w-4 h-4 text-blue-400" aria-hidden="true" />
+              <FileText className="w-4 h-4 text-amber-400" aria-hidden="true" />
               Client Update Generator
             </h2>
             <p className="text-[11px] text-zinc-500 mt-0.5">Pick jobs, pick a template — get a message ready to send.</p>
@@ -182,7 +182,7 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
                     type="button"
                     onClick={() => { setTemplateId(t.id); setCustomBody(null); setEditingBody(false); }}
                     aria-pressed={templateId === t.id}
-                    className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${templateId === t.id ? 'bg-blue-500/15 border-blue-500/40 text-white' : 'bg-zinc-950 border-white/5 text-zinc-400 hover:text-white hover:border-white/15'}`}
+                    className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${templateId === t.id ? 'bg-amber-500/15 border-amber-500/40 text-white' : 'bg-zinc-950 border-white/5 text-zinc-400 hover:text-white hover:border-white/15'}`}
                   >
                     <p className="text-xs font-black">{t.label}</p>
                     {t.filter && t.filter !== 'all' && (
@@ -200,9 +200,9 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
                   Jobs ({selectedJobs.length}/{customerJobs.length})
                 </label>
                 <div className="flex items-center gap-1 text-[10px]">
-                  <button type="button" onClick={selectOpen} className="text-blue-400 hover:text-white font-bold">Open</button>
+                  <button type="button" onClick={selectOpen} className="text-amber-400 hover:text-white font-bold">Open</button>
                   <span className="text-zinc-700">·</span>
-                  <button type="button" onClick={selectAll} className="text-blue-400 hover:text-white font-bold">All</button>
+                  <button type="button" onClick={selectAll} className="text-amber-400 hover:text-white font-bold">All</button>
                   <span className="text-zinc-700">·</span>
                   <button type="button" onClick={selectNone} className="text-zinc-500 hover:text-white font-bold">None</button>
                 </div>
@@ -216,13 +216,13 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
                   return (
                     <label
                       key={job.id}
-                      className={`flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.03] border-b border-white/5 last:border-b-0 ${picked ? 'bg-blue-500/5' : ''}`}
+                      className={`flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.03] border-b border-white/5 last:border-b-0 ${picked ? 'bg-amber-500/5' : ''}`}
                     >
                       <input
                         type="checkbox"
                         checked={picked}
                         onChange={() => toggleJob(job.id)}
-                        className="mt-0.5 accent-blue-500 shrink-0"
+                        className="mt-0.5 accent-amber-500 shrink-0"
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -267,7 +267,7 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
                       if (customBody === null) setCustomBody(rendered.body);
                     }
                   }}
-                  className="text-[10px] font-black text-blue-400 hover:text-white"
+                  className="text-[10px] font-black text-amber-400 hover:text-white"
                 >
                   {editingBody ? 'Done editing' : 'Edit before sending'}
                 </button>
@@ -277,7 +277,7 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
                   value={finalBody}
                   onChange={e => setCustomBody(e.target.value)}
                   rows={20}
-                  className="w-full bg-zinc-950 border border-blue-500/40 rounded-lg px-3 py-2 text-sm text-white font-mono leading-relaxed"
+                  className="w-full bg-zinc-950 border border-amber-500/40 rounded-lg px-3 py-2 text-sm text-white font-mono leading-relaxed"
                 />
               ) : (
                 <pre className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono leading-relaxed whitespace-pre-wrap break-words min-h-[300px] max-h-[60vh] overflow-y-auto">
@@ -312,7 +312,7 @@ export const ClientUpdateGenerator: React.FC<Props> = ({
             onClick={openEmail}
             disabled={!contact?.email && customers.length > 0}
             title={contact?.email ? `Email to ${contact.email}` : 'No email on file — will open blank compose'}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
+            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
           >
             <Mail className="w-3.5 h-3.5" aria-hidden="true" />
             Email{contact?.email ? '' : ' (blank)'}

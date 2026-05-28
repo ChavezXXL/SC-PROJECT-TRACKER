@@ -44,12 +44,12 @@ export interface StageMetrics {
  */
 export function stageArrivalTime(job: Job): number {
   const history: StageHistoryEntry[] = job.stageHistory || [];
-  if (!job.currentStage) return job.createdAt;
+  if (!job.currentStage) return job.createdAt || Date.now();
   // Walk history backwards for the most recent entry matching currentStage.
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].stageId === job.currentStage) return history[i].timestamp;
   }
-  return job.createdAt;
+  return job.createdAt || Date.now();
 }
 
 /** Did this job leave `stageId` within the last `withinMs`? */

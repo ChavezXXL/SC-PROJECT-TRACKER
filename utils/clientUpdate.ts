@@ -29,7 +29,7 @@
 
 import type { Job, JobStage, SystemSettings } from '../types';
 import { getJobStage } from '../App';
-import { fmt, dateNum, todayFmt } from './date';
+import { fmt, dateNum, todayFmt, parseDueDate } from './date';
 
 export interface ClientUpdateContext {
   customer: string;
@@ -152,7 +152,7 @@ function etaNote(job: Job): string {
   const due = dateNum(job.dueDate);
   const today = dateNum(todayFmt());
   if (due < today) return `overdue since ${fmt(job.dueDate)}`;
-  const daysOut = Math.round((new Date(job.dueDate).getTime() - Date.now()) / 86_400_000);
+  const daysOut = Math.round(((parseDueDate(job.dueDate)?.getTime() ?? 0) - Date.now()) / 86_400_000);
   if (daysOut <= 0) return `due today`;
   if (daysOut <= 3) return `due ${fmt(job.dueDate)} · ${daysOut}d left`;
   return `due ${fmt(job.dueDate)}`;
@@ -167,6 +167,7 @@ function filterJobs(jobs: Job[], stages: JobStage[], filter?: ClientUpdateTempla
     case 'overdue': return jobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < today);
     case 'ready':   return jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= weekAgo);
     case 'open':    return jobs.filter(j => j.status !== 'completed');
+    default:        return jobs;
   }
 }
 

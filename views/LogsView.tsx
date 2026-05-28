@@ -31,6 +31,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [editStartStr, setEditStartStr] = useState('');
   const [editEndStr, setEditEndStr] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
+  const [savingLog, setSavingLog] = useState(false);
   const savedScrollRef = useRef(0);
   const [ops, setOps] = useState<string[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -124,7 +125,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   };
 
   const handleSaveLog = async () => {
-    if (!editingLog) return;
+    if (!editingLog || savingLog) return;
     // Convert the string state to timestamps NOW, at save time, after the
     // user is done typing. Empty end = still-running timer.
     const startTs = new Date(editStartStr).getTime();
@@ -141,16 +142,30 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
       addToast('error', 'End time cannot be before Start time');
       return;
     }
+    // Recalculate duration fields whenever timestamps change — without this,
+    // editing start/end times leaves durationMinutes stale and corrupts reports.
+    const durSeconds = endTs ? Math.max(0, Math.floor((endTs - startTs) / 1000)) : undefined;
+    const durMinutes = durSeconds != null ? Math.round(durSeconds / 60) : null;
     const updated: TimeLog = {
       ...editingLog,
       startTime: startTs,
-      endTime: endTs as any,
+      endTime: endTs as number | null,
+      durationSeconds: durSeconds,
+      durationMinutes: durMinutes,
+      status: endTs ? 'completed' : 'in_progress',
+      updatedAt: Date.now(),
     };
+    setSavingLog(true);
     try {
       await DB.updateTimeLog(updated);
-      addToast('success', 'Log updated successfully');
+      addToast('success', 'Log updated');
       closeEditModal();
-    } catch (e) { addToast('error', 'Failed to update log'); }
+    } catch (e) {
+      console.error('[LogsView] updateTimeLog failed:', e);
+      addToast('error', 'Failed to update log');
+    } finally {
+      setSavingLog(false);
+    }
   };
 
   const handleDeleteLog = () => {
@@ -293,7 +308,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
       }
       const g = groups[groupKey];
       g.logs.push(log);
-      if (log.durationMinutes) g.totalDurationMinutes += log.durationMinutes;
+      // Use durationSeconds (precise) when available; fall back to rounded durationMinutes
+      const logMins = log.durationSeconds != null && log.durationSeconds >= 0
+        ? log.durationSeconds / 60
+        : (log.durationMinutes || 0);
+      g.totalDurationMinutes += logMins;
       g.users.add(log.userName);
       const t = log.endTime || log.startTime;
       if (t > g.lastActivity) g.lastActivity = t;
@@ -382,7 +401,8 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         const drEnd   = new Date(dateRange.end   + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
         const totalExportMins = exportGroups.reduce((a, g) => a + g.totalDurationMinutes, 0);
         const now = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
-        const title = `SC Deburring Work Logs — ${drStart} to ${drEnd}`;
+        const coName = settings?.companyName?.trim() || 'Shop';
+        const title = `${coName} Work Logs — ${drStart} to ${drEnd}`;
 
         // ── Build rows + track formatting targets ──────────────────
         const rows: any[][] = [];
@@ -392,7 +412,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         const colCount = 13;
 
         // Rows 0-4: Report header
-        rows.push(['SC DEBURRING — Work Log Export', ...Array(colCount - 1).fill('')]);
+        rows.push([`${coName.toUpperCase()} — Work Log Export`, ...Array(colCount - 1).fill('')]);
         rows.push([`Date Range: ${drStart} to ${drEnd}`, ...Array(colCount - 1).fill('')]);
         rows.push([`Generated: ${now}  |  POs: ${exportGroups.length}  |  Total Hours: ${(totalExportMins / 60).toFixed(2)}`, ...Array(colCount - 1).fill('')]);
         rows.push(Array(colCount).fill(''));
@@ -435,8 +455,8 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               log.operation,
               fmtTime(log.startTime),
               log.endTime ? fmtTime(log.endTime) : 'Running',
-              log.durationMinutes ? Math.round(log.durationMinutes) : '',
-              log.durationMinutes ? fmtDur(log.durationMinutes) : '',
+              (() => { const m = log.endTime ? getLogDurationMins(log) : undefined; return m != null ? Math.round(m) : ''; })(),
+              (() => { const m = log.endTime ? getLogDurationMins(log) : undefined; return m != null ? fmtDur(m) : ''; })(),
               log.endTime ? 'Stopped' : 'Live',
             ]);
           });
@@ -741,11 +761,10 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 </div>
                 {(() => {
                   const job = jobs.find(j => j.id === group.internalJobId);
-                  const ss = DB.getSettings();
-                  const r = ss.shopRate || 0;
+                  const r = settings?.shopRate || 0;
                   if (!r || !group.totalDurationMinutes) return null;
                   const hrs = group.totalDurationMinutes / 60;
-                  const ohR = (ss.monthlyOverhead || 0) / (ss.monthlyWorkHours || 160);
+                  const ohR = (settings?.monthlyOverhead || 0) / (settings?.monthlyWorkHours || 160);
                   const cost = hrs * (r + ohR);
                   const quote = job?.quoteAmount || 0;
                   const profit = quote > 0 ? quote - cost : null;
@@ -866,6 +885,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                     const u = users.find(u => u.id === e.target.value);
                     if (u) setEditingLog({ ...editingLog, userId: u.id, userName: u.name });
                   }}>
+                  {/* Fallback option when the log's userId is no longer in the users list
+                      (e.g. user was deleted or renamed). Prevents the select showing blank. */}
+                  {!users.find(u => u.id === editingLog.userId) && (
+                    <option value={editingLog.userId}>{editingLog.userName || editingLog.userId || '(Unknown Employee)'}</option>
+                  )}
                   {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </div>
@@ -906,7 +930,9 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               <button onClick={handleDeleteLog} className="text-red-500 hover:text-red-400 text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /> Delete Log</button>
               <div className="flex gap-2">
                 <button onClick={closeEditModal} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
-                <button onClick={handleSaveLog} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2 rounded-xl font-bold transition-all">Save Changes</button>
+                <button onClick={handleSaveLog} disabled={savingLog} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-bold transition-all flex items-center gap-2 min-w-[120px] justify-center">
+                  {savingLog ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Saving…</span></> : 'Save Changes'}
+                </button>
               </div>
             </div>
           </div>

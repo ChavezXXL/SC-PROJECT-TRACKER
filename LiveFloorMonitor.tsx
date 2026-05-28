@@ -34,6 +34,10 @@ import { computeJobETA, RISK_COLORS } from './utils/jobETA';
 import type { JobETA, JobRiskLevel } from './utils/jobETA';
 import { getPartHistory } from './utils/partHistory';
 
+/** Log duration in fractional minutes — prefers precise durationSeconds when available. */
+const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
+  l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (lMs(l));
+
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [
   { id: 'pending', label: 'Pending', color: '#71717a', order: 0 },
@@ -292,7 +296,7 @@ const WorkerCard: React.FC<{
             <div>
               <p className="text-white font-bold text-lg">{log.userName}</p>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs font-bold text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md">{log.operation}</span>
+                <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md">{log.operation}</span>
                 {isPaused && <span className="text-[10px] font-black text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">PAUSED</span>}
                 {isLong && !isPaused && <span className="text-[10px] font-black text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded animate-pulse">{Math.floor(minsElapsed / 60)}h+</span>}
               </div>
@@ -487,7 +491,9 @@ function fetchWeather(override?: { lat?: number; lon?: number }): Promise<void> 
       const forecast: WeatherDay[] = [];
       if (d.daily?.time) {
         for (let i = 0; i < d.daily.time.length; i++) {
-          const day = new Date(d.daily.time[i]);
+          // Append T12:00:00 so the date is parsed as local noon, not UTC midnight.
+          // Without this, US timezones (negative UTC offset) would show the day before.
+          const day = new Date(d.daily.time[i] + 'T12:00:00');
           forecast.push({
             dateMs: day.getTime(),
             dayLabel: i === 0 ? 'Today' : day.toLocaleDateString('en-US', { weekday: 'short' }),
@@ -752,7 +758,7 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
     const start = new Date(weekStart); start.setDate(weekStart.getDate() + i); start.setHours(0, 0, 0, 0);
     const end = new Date(start); end.setDate(start.getDate() + 1);
     const logs = allLogs.filter(l => l.startTime >= start.getTime() && l.startTime < end.getTime() && l.endTime);
-    const hours = logs.reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+    const hours = logs.reduce((a, l) => a + (lMs(l)) / 60, 0);
     const dayJobs = new Set(logs.map(l => l.jobId)).size;
     const sessions = logs.length;
     return { name, hours, jobs: dayJobs, sessions, isToday: new Date().toDateString() === start.toDateString() };
@@ -792,8 +798,8 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
 
         {/* Primary metrics — hero row. Revenue card only shows if admin opts-in (money is sensitive) */}
         <div className={`mt-6 grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
-          <div className="bg-gradient-to-br from-blue-500/15 to-blue-500/[0.02] border border-blue-500/20 rounded-2xl p-4 text-center">
-            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Hours Logged</p>
+          <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-4 text-center">
+            <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Hours Logged</p>
             <p className="text-4xl font-black text-white tabular mt-1.5">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
           </div>
           <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl p-4 text-center">
@@ -849,11 +855,11 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
                   <div className="text-[11px] font-black text-white tabular">{d.hours > 0 ? d.hours.toFixed(1) + 'h' : ''}</div>
                   <div className="w-full flex-1 flex items-end min-h-0">
                     <div
-                      className={`w-full rounded-t-xl transition-all ${d.isToday ? 'bg-gradient-to-t from-blue-500 to-indigo-400 shadow-lg shadow-blue-500/40' : 'bg-gradient-to-t from-zinc-700 to-zinc-600'}`}
+                      className={`w-full rounded-t-xl transition-all ${d.isToday ? 'bg-gradient-to-t from-orange-500 to-amber-400 shadow-lg shadow-amber-500/40' : 'bg-gradient-to-t from-zinc-700 to-zinc-600'}`}
                       style={{ height: d.hours > 0 ? `${Math.max(4, pct)}%` : '2%' }}
                     />
                   </div>
-                  <div className={`text-[10px] font-black uppercase tracking-widest ${d.isToday ? 'text-blue-400' : 'text-white/40'}`}>{d.name}</div>
+                  <div className={`text-[10px] font-black uppercase tracking-widest ${d.isToday ? 'text-amber-400' : 'text-white/40'}`}>{d.name}</div>
                   {d.sessions > 0 && <div className="text-[9px] text-white/30 tabular">{d.sessions}×</div>}
                 </div>
               );
@@ -1112,7 +1118,7 @@ const TvTodaySlide: React.FC<{
   const completedToday = jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= todayMs);
   const completedCount = completedToday.length;
 
-  const finishedHours = allLogs.filter(l => l.startTime >= todayMs && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+  const finishedHours = allLogs.filter(l => l.startTime >= todayMs && l.endTime).reduce((a, l) => a + (lMs(l)) / 60, 0);
   const activeHours   = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => a + DB.getWorkingElapsedMs(l) / 3_600_000, 0);
   const totalHours    = finishedHours + activeHours;
 
@@ -1252,8 +1258,8 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
           </div>
           <p className="text-zinc-200 text-3xl font-black">No goals set yet</p>
           <p className="text-zinc-400 text-base mt-3 leading-relaxed">Set targets that matter to your shop — jobs per week, revenue, on-time delivery, and more.</p>
-          <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20">
-            <span className="text-blue-400 text-sm font-bold">📍 Settings → Goals → Add Goal</span>
+          <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/20">
+            <span className="text-amber-400 text-sm font-bold">📍 Settings → Goals → Add Goal</span>
           </div>
           <div className="mt-8 grid grid-cols-3 gap-3 text-left max-w-2xl mx-auto">
             {[
@@ -1401,12 +1407,12 @@ const TvWorkersColumn: React.FC<{
                   return (
                     <div key={`${copy}-${log.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-gradient-to-br rounded-3xl border transition-all ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
                       <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
-                        <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.75rem, 4.5vw, 4rem)', height: 'clamp(2.75rem, 4.5vw, 4rem)', fontSize: 'clamp(1rem, 1.75vw, 1.5rem)' }}>
+                        <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-emerald-500 to-teal-600'}`} style={{ width: 'clamp(2.75rem, 4.5vw, 4rem)', height: 'clamp(2.75rem, 4.5vw, 4rem)', fontSize: 'clamp(1rem, 1.75vw, 1.5rem)' }}>
                           {(log.userName || '??').split(' ').map(n => n[0] || '').slice(0, 2).join('').toUpperCase() || '??'}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 1.9vw, 1.5rem)' }}>{log.userName}</p>
-                          <p className="text-blue-300 font-semibold truncate" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.875rem)' }}>{log.operation}</p>
+                          <p className="text-amber-300 font-semibold truncate" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.875rem)' }}>{log.operation}</p>
                           {job && (
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               <p className="text-white/40 truncate" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>PO {job.poNumber} · {job.partNumber}</p>
@@ -1444,7 +1450,7 @@ const TvJobsBelt: React.FC<{ jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'n
         <h2 className="text-sm font-black text-white/60 uppercase tracking-[0.3em]">All Open Jobs</h2>
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-white/40 font-mono">{jobs.length} on the floor</span>
-          {speed !== 'off' && <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto-scroll</span>}
+          {speed !== 'off' && <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto-scroll</span>}
         </div>
       </div>
       <div className="flex-1 overflow-hidden relative">
@@ -1555,14 +1561,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // Works on Chrome / Edge / Safari 16.4+ (exactly the browsers shops use
   // on wall-mounted TVs). Ignored silently on older browsers.
   //
-  // Triple safety net because TVs are LAZY about holding the lock:
+  // Quad safety net because TVs are LAZY about holding the lock:
   //   1. Initial request on TV mode entry
   //   2. Re-request on visibilitychange (handles background/foreground)
-  //   3. Re-request every 90s on a timer regardless (handles the case
-  //      where the lock silently drops on TVs with no focus events)
-  //   4. Also bumps a meaningless DOM write every 90s so the tab never
-  //      enters the "idle" background-tier that browsers use to throttle
-  //      / discard long-idle tabs.
+  //   3. Re-request every 30s on a timer (beats the typical 5-min background throttle)
+  //   4. requestAnimationFrame keepalive loop — the single most reliable
+  //      signal to the browser that this tab is actively rendering. Without
+  //      rAF, TV browsers (Samsung Tizen, LG webOS, Fire TV, Chromecast)
+  //      classify the tab as idle after ~10 min and kill its JS timers.
   useEffect(() => {
     if (!tvMode) return;
     let lock: any = null;
@@ -1587,23 +1593,36 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const onVis = () => { if (!document.hidden && tvMode) acquire(); };
     document.addEventListener('visibilitychange', onVis);
 
-    // Periodic heartbeat every 90s: re-acquire the wake lock + do a tiny
-    // DOM write. Both keep the tab "alive" from the browser's tier-down
-    // policy. Must be short enough to beat the typical 5-min background
-    // throttle, long enough not to burn battery on passive TVs.
+    // Periodic heartbeat every 30s: re-acquire the wake lock + do a DOM write.
+    // 30s beats the 5-min background-throttle tier used by Chromium-based TVs.
     const heartbeat = window.setInterval(() => {
       if (!tvMode || cancelled) return;
       acquire();
-      // Ping the DOM with a data-attr so the tab isn't pure-idle. Cheap.
-      try {
-        document.body.dataset.tvHeartbeat = String(Date.now());
-      } catch {}
-    }, 90_000);
+      try { document.body.dataset.tvHeartbeat = String(Date.now()); } catch {}
+    }, 30_000);
+
+    // rAF keepalive — runs continuously while TV mode is active.
+    // requestAnimationFrame is the browser's own "active rendering" signal.
+    // As long as we keep calling it, the browser won't throttle or discard
+    // this tab no matter how long it runs. We only write to the DOM every
+    // 15 s to avoid unnecessary layout work.
+    let rafId = 0;
+    let lastRafWrite = 0;
+    const rafLoop = (ts: number) => {
+      if (cancelled) return;
+      if (ts - lastRafWrite > 15_000) {
+        lastRafWrite = ts;
+        try { document.body.dataset.tvRaf = String(Math.floor(ts / 1000)); } catch {}
+      }
+      rafId = requestAnimationFrame(rafLoop);
+    };
+    rafId = requestAnimationFrame(rafLoop);
 
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVis);
       window.clearInterval(heartbeat);
+      cancelAnimationFrame(rafId);
       try { lock?.release?.(); } catch {}
     };
   }, [tvMode]);
@@ -1774,17 +1793,46 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     };
   }, [standalone]);
 
-  // ── Heartbeat ping — some TV browsers kill tabs they think are idle.
-  // A tiny no-op every 30 s keeps the JS event loop "active" in the eyes
-  // of aggressive tab-culling heuristics (Samsung Tizen, LG webOS, etc.).
+  // ── Keepalive for standalone TV URL — rAF loop + auto-reload safety net.
+  // requestAnimationFrame is the only signal browsers unconditionally respect
+  // as "active rendering." DOM read/writes alone aren't enough on Samsung Tizen,
+  // LG webOS, Fire TV, and older Chromium TV builds — they all kill JS timers
+  // after ~10 min of no rAF activity regardless of setInterval heartbeats.
   useEffect(() => {
     if (!standalone) return;
-    const id = setInterval(() => {
-      // Harmless DOM read — just enough to register "activity"
-      void document.title;
-    }, 30_000);
-    return () => clearInterval(id);
+
+    // rAF loop — runs 24/7 while the page is open, prevents every known
+    // form of browser tab throttling and culling on TV platforms.
+    let rafId = 0;
+    let lastWrite = 0;
+    const loop = (ts: number) => {
+      // Write a timestamp to a data-attr every 10 s — cheap but meaningful DOM work.
+      if (ts - lastWrite > 10_000) {
+        lastWrite = ts;
+        try { document.body.dataset.tvAlive = String(Math.floor(ts / 1000)); } catch {}
+      }
+      rafId = requestAnimationFrame(loop);
+    };
+    rafId = requestAnimationFrame(loop);
+
+    // Auto-reload after 6 hours — resets Firebase connection, clears memory,
+    // gives a fresh start. TV typically runs 8-12 h/day so one reload mid-shift
+    // is fine and far better than a stale or dead display.
+    const reloadTimer = setTimeout(() => { try { window.location.reload(); } catch {} }, 6 * 60 * 60 * 1000);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(reloadTimer);
+    };
   }, [standalone]);
+
+  // Auto-reload for interactive tvMode (non-standalone) — same reason as above.
+  // Only fires if the user has been in TV mode for 6 continuous hours.
+  useEffect(() => {
+    if (!tvMode || standalone) return;
+    const id = setTimeout(() => { try { window.location.reload(); } catch {} }, 6 * 60 * 60 * 1000);
+    return () => clearTimeout(id);
+  }, [tvMode, standalone]);
 
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
@@ -1962,7 +2010,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const userMap = new Map<string, { userId: string; name: string; hours: number; jobIds: Set<string>; sessions: number; topOp: string }>();
     allLogs.filter(l => l.startTime >= cutoffMs && l.endTime).forEach(l => {
       const cur = userMap.get(l.userId) || { userId: l.userId, name: l.userName, hours: 0, jobIds: new Set(), sessions: 0, topOp: '' };
-      cur.hours += (l.durationMinutes || 0) / 60;
+      cur.hours += (lMs(l)) / 60;
       cur.sessions += 1;
       cur.jobIds.add(l.jobId);
       cur.name = l.userName;
@@ -2119,8 +2167,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
         {/* Ambient glow */}
         <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[120px]" />
-          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-600/10 blur-[120px]" />
+          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-600/10 blur-[120px]" />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-amber-600/10 blur-[120px]" />
         </div>
 
         {/* Double-Escape guard indicator — shows briefly after first Esc press */}
@@ -2216,7 +2264,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                 <div className="w-px h-8 bg-white/10" />
                 <div className="text-center">
                   <div className="flex items-center gap-1 justify-center">
-                    <Activity className="w-3 h-3 sm:w-4 sm:h-4 text-blue-400 animate-pulse shrink-0" aria-hidden="true" />
+                    <Activity className="w-3 h-3 sm:w-4 sm:h-4 text-amber-400 animate-pulse shrink-0" aria-hidden="true" />
                     <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{runningCount}</span>
                   </div>
                   <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Running</p>
@@ -2266,7 +2314,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                   aria-current={i === tvSlideIdx ? 'true' : undefined}
                   className="group flex items-center gap-1.5"
                 >
-                  <span className={`h-1.5 rounded-full transition-all duration-500 ${i === tvSlideIdx ? 'w-12 bg-blue-500' : 'w-1.5 bg-white/20 group-hover:bg-white/40'}`} />
+                  <span className={`h-1.5 rounded-full transition-all duration-500 ${i === tvSlideIdx ? 'w-12 bg-amber-500' : 'w-1.5 bg-white/20 group-hover:bg-white/40'}`} />
                   {i === tvSlideIdx && (
                     <span className="text-[10px] text-white/60 font-black uppercase tracking-widest">{slideLabel(s)}</span>
                   )}
@@ -2297,7 +2345,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             <span className="text-white font-black text-sm tracking-wide">LIVE FLOOR</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <button aria-label={dimMode ? 'Exit dim mode' : 'Enter dim mode'} aria-pressed={dimMode} onClick={() => setDimMode(!dimMode)} className={`p-2 rounded-lg transition-colors min-w-[36px] min-h-[36px] ${dimMode ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40 hover:text-white'}`} title={dimMode ? 'Normal' : 'Dim'}>
+            <button aria-label={dimMode ? 'Exit dim mode' : 'Enter dim mode'} aria-pressed={dimMode} onClick={() => setDimMode(!dimMode)} className={`p-2 rounded-lg transition-colors min-w-[36px] min-h-[36px] ${dimMode ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-white/40 hover:text-white'}`} title={dimMode ? 'Normal' : 'Dim'}>
               {dimMode ? <Sun className="w-4 h-4" aria-hidden="true" /> : <Moon className="w-4 h-4" aria-hidden="true" />}
             </button>
             <button aria-label={compact ? 'Expand layout' : 'Compact layout'} aria-pressed={compact} onClick={() => setCompact(!compact)} className={`p-2 rounded-lg transition-colors min-w-[36px] min-h-[36px] ${compact ? 'bg-white/10 text-white' : 'bg-white/5 text-white/40 hover:text-white'}`} title={compact ? 'Expand' : 'Compact'}>
@@ -2306,7 +2354,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             <button aria-label="Toggle fullscreen" onClick={() => {
               if (document.fullscreenElement) document.exitFullscreen();
               else document.documentElement.requestFullscreen().catch(() => {});
-            }} className="p-2 rounded-lg transition-colors bg-white/5 text-white/40 hover:text-white hover:bg-blue-500/20 min-w-[36px] min-h-[36px]" title="Fullscreen">
+            }} className="p-2 rounded-lg transition-colors bg-white/5 text-white/40 hover:text-white hover:bg-amber-500/20 min-w-[36px] min-h-[36px]" title="Fullscreen">
               <Smartphone className="w-4 h-4" aria-hidden="true" />
             </button>
             <button
@@ -2331,7 +2379,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           <div className="flex items-center justify-center gap-6 px-4 py-2">
             <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5 text-emerald-400" /><span className="text-white font-bold text-sm">{workerCount}</span><span className="text-white/30 text-xs">workers</span></div>
             <div className="w-px h-4 bg-white/10" />
-            <div className="flex items-center gap-2"><Activity className="w-3.5 h-3.5 text-blue-400" /><span className="text-white font-bold text-sm">{runningCount}</span><span className="text-white/30 text-xs">running</span></div>
+            <div className="flex items-center gap-2"><Activity className="w-3.5 h-3.5 text-amber-400" /><span className="text-white font-bold text-sm">{runningCount}</span><span className="text-white/30 text-xs">running</span></div>
             {pausedCount > 0 && (<><div className="w-px h-4 bg-white/10" /><div className="flex items-center gap-2"><Pause className="w-3.5 h-3.5 text-yellow-400" /><span className="text-yellow-400 font-bold text-sm">{pausedCount}</span><span className="text-white/30 text-xs">paused</span></div></>)}
             <div className="w-px h-4 bg-white/10" />
             <div className="flex items-center gap-2"><Briefcase className="w-3.5 h-3.5 text-purple-400" /><span className="text-white font-bold text-sm">{openJobs.length}</span><span className="text-white/30 text-xs">open jobs</span></div>

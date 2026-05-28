@@ -72,8 +72,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
     <div className="fixed inset-0 z-[10000] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 overflow-y-auto animate-fade-in">
       {/* Ambient glow */}
       <div aria-hidden="true" className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[120px]" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-600/10 blur-[120px]" />
+        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-600/10 blur-[120px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-amber-600/10 blur-[120px]" />
       </div>
 
       <div className="relative min-h-full flex items-center justify-center p-4 sm:p-8">
@@ -81,7 +81,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
           {/* Progress bar */}
           <div className="h-1 bg-zinc-800">
             <div
-              className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500"
+              className="h-full bg-gradient-to-r from-orange-500 to-amber-500 transition-all duration-500"
               style={{ width: `${((stepIdx + 1) / STEPS.length) * 100}%` }}
             />
           </div>
@@ -90,7 +90,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
             {/* ═══ Step: Welcome ═══ */}
             {step === 'welcome' && (
               <div className="text-center space-y-6 py-8">
-                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-xl shadow-blue-900/40">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 shadow-xl shadow-amber-900/40">
                   <Sparkles className="w-10 h-10 text-white" aria-hidden="true" />
                 </div>
                 <div>
@@ -103,7 +103,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                   <button
                     type="button"
                     onClick={next}
-                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-8 py-3 rounded-xl font-bold text-base shadow-lg shadow-blue-900/40 flex items-center gap-2 transition-all"
+                    className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-8 py-3 rounded-xl font-bold text-base shadow-lg shadow-amber-900/40 flex items-center gap-2 transition-all"
                   >
                     Let's Go <ArrowRight className="w-5 h-5" aria-hidden="true" />
                   </button>
@@ -119,7 +119,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
             {step === 'types' && (
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Step 1 of 5</p>
+                  <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Step 1 of 5</p>
                   <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">What does your shop do?</h2>
                   <p className="text-sm text-zinc-500 mt-1">Pick every service you offer. You can select multiple.</p>
                 </div>
@@ -132,14 +132,14 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                         key={t}
                         type="button"
                         onClick={() => toggleType(t)}
-                        className={`text-left px-4 py-3 rounded-xl border-2 transition-all flex items-start gap-3 ${selected ? 'bg-blue-500/10 border-blue-500/50 ring-1 ring-blue-500/30' : 'bg-zinc-800/40 border-white/5 hover:border-white/20 hover:bg-zinc-800/70'}`}
+                        className={`text-left px-4 py-3 rounded-xl border-2 transition-all flex items-start gap-3 ${selected ? 'bg-amber-500/10 border-amber-500/50 ring-1 ring-amber-500/30' : 'bg-zinc-800/40 border-white/5 hover:border-white/20 hover:bg-zinc-800/70'}`}
                       >
                         <span className="text-2xl shrink-0" aria-hidden="true">{meta.icon}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-bold text-white">{meta.label}</p>
                           <p className="text-[11px] text-zinc-500 mt-0.5 leading-snug">{meta.desc}</p>
                         </div>
-                        {selected && <Check className="w-5 h-5 text-blue-400 shrink-0" aria-hidden="true" />}
+                        {selected && <Check className="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true" />}
                       </button>
                     );
                   })}
@@ -151,7 +151,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
             {step === 'size' && (
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Step 2 of 5</p>
+                  <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Step 2 of 5</p>
                   <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">How big is the shop?</h2>
                   <p className="text-sm text-zinc-500 mt-1">Helps us tune the UI for your team size.</p>
                 </div>
@@ -164,20 +164,20 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                         key={s}
                         type="button"
                         onClick={() => setSize(s)}
-                        className={`text-left px-4 py-4 rounded-xl border-2 transition-all ${selected ? 'bg-blue-500/10 border-blue-500/50 ring-1 ring-blue-500/30' : 'bg-zinc-800/40 border-white/5 hover:border-white/20'}`}
+                        className={`text-left px-4 py-4 rounded-xl border-2 transition-all ${selected ? 'bg-amber-500/10 border-amber-500/50 ring-1 ring-amber-500/30' : 'bg-zinc-800/40 border-white/5 hover:border-white/20'}`}
                       >
                         <div className="flex items-center justify-between">
                           <p className="text-lg font-black text-white">{meta.label}</p>
-                          {selected && <Check className="w-5 h-5 text-blue-400" aria-hidden="true" />}
+                          {selected && <Check className="w-5 h-5 text-amber-400" aria-hidden="true" />}
                         </div>
-                        <p className="text-xs text-blue-400 font-bold mt-0.5">{meta.operators}</p>
+                        <p className="text-xs text-amber-400 font-bold mt-0.5">{meta.operators}</p>
                         <p className="text-[11px] text-zinc-500 mt-1">{meta.desc}</p>
                       </button>
                     );
                   })}
                 </div>
                 <label className="flex items-start gap-2.5 cursor-pointer p-3 rounded-xl bg-zinc-800/30 border border-white/5 hover:border-white/10">
-                  <input type="checkbox" checked={sharedFloorTablet} onChange={e => setSharedFloorTablet(e.target.checked)} className="w-4 h-4 mt-0.5 rounded accent-blue-500" />
+                  <input type="checkbox" checked={sharedFloorTablet} onChange={e => setSharedFloorTablet(e.target.checked)} className="w-4 h-4 mt-0.5 rounded accent-amber-500" />
                   <div>
                     <p className="text-sm font-bold text-white">Workers use a shared tablet on the floor</p>
                     <p className="text-[11px] text-zinc-500 mt-0.5">They'll clock in with a 4-digit PIN. Unlimited operators, no per-seat fees.</p>
@@ -190,7 +190,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
             {step === 'certs' && (
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Step 3 of 5</p>
+                  <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Step 3 of 5</p>
                   <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">Any quality certifications?</h2>
                   <p className="text-sm text-zinc-500 mt-1">We'll unlock NCR tracking + audit trail exports for certified shops.</p>
                 </div>
@@ -224,7 +224,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
             {step === 'workflow' && (
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Step 4 of 5</p>
+                  <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Step 4 of 5</p>
                   <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">How do you work?</h2>
                   <p className="text-sm text-zinc-500 mt-1">A few yes/no questions to turn on the right tools.</p>
                 </div>
@@ -235,7 +235,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                     { key: 'tanks', label: 'Do you use chemistry tanks?', desc: 'Plating, anodizing, passivation, cleaning, etc.', value: usesTanks, set: setUsesTanks },
                     { key: 'ncr', label: 'Do you track rework / NCRs formally?', desc: 'Non-conformance reports, corrective actions', value: tracksNCR, set: setTracksNCR },
                   ].map(q => (
-                    <div key={q.key} className={`p-4 rounded-xl border-2 transition-all ${q.value ? 'bg-blue-500/5 border-blue-500/30' : 'bg-zinc-800/30 border-white/5'}`}>
+                    <div key={q.key} className={`p-4 rounded-xl border-2 transition-all ${q.value ? 'bg-amber-500/5 border-amber-500/30' : 'bg-zinc-800/30 border-white/5'}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-white">{q.label}</p>
@@ -256,7 +256,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                           key={c}
                           type="button"
                           onClick={() => setChargesBy(cur => cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c])}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-colors ${chargesBy.includes(c) ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-colors ${chargesBy.includes(c) ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}
                         >
                           {chargesBy.includes(c) && <Check className="w-3 h-3 inline mr-1" aria-hidden="true" />}
                           {c === 'hour' ? 'Per Hour' : c === 'piece' ? 'Per Piece' : c === 'lot' ? 'Per Lot' : 'Mixed'}
@@ -277,7 +277,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
               return (
                 <div className="space-y-5">
                   <div>
-                    <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Step 5 of 5</p>
+                    <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Step 5 of 5</p>
                     <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">Here's your setup</h2>
                     <p className="text-sm text-zinc-500 mt-1">Review — you can change any of this later in Settings → Shop Profile.</p>
                   </div>
@@ -310,7 +310,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                       value={notes}
                       onChange={e => setNotes(e.target.value)}
                       placeholder="e.g. We run 2 shifts, do a lot of repeat work for Boeing, etc."
-                      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500/50 resize-y"
+                      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 resize-y"
                       rows={2}
                     />
                   </div>
@@ -341,7 +341,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ currentSetti
                     type="button"
                     onClick={next}
                     disabled={!canAdvance}
-                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-blue-900/40 flex items-center gap-2 transition-all"
+                    className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-amber-900/40 flex items-center gap-2 transition-all"
                   >
                     Next <ArrowRight className="w-4 h-4" aria-hidden="true" />
                   </button>

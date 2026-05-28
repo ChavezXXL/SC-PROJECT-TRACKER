@@ -557,7 +557,7 @@ const ActiveStopRow: React.FC<{
 
         {/* Navigation button */}
         <a href={directionsUrl(stop.address)} target="_blank" rel="noreferrer"
-          className="p-1.5 text-blue-400 hover:bg-blue-500/10 rounded-lg shrink-0">
+          className="p-1.5 text-amber-400 hover:bg-amber-500/10 rounded-lg shrink-0">
           <Navigation className="w-4 h-4" />
         </a>
 
@@ -653,7 +653,7 @@ const HistoryList: React.FC<{
         const vendorStops = d.stops.filter(s => s.stopType === 'vendor-dropoff' || s.stopType === 'vendor-pickup');
         const isExpanded = expanded === d.id;
         return (
-          <div key={d.id} className={`bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden hover:border-white/10 transition-all ${cancelled ? 'opacity-60' : ''}`}>
+          <div key={d.id} className={`group bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden hover:border-white/10 transition-all ${cancelled ? 'opacity-60' : ''}`}>
             {/* Main row */}
             <div className="flex items-center gap-3 p-3 sm:p-4">
               <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${cancelled ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
@@ -848,7 +848,7 @@ const DeliveryEditor: React.FC<{
 
   // Stop type quick-add buttons
   const quickAddTypes: Array<{ type: StopType; label: string; color: string }> = [
-    { type: 'customer-dropoff', label: '+ Customer Drop', color: 'text-blue-400 border-blue-500/30 hover:bg-blue-500/10' },
+    { type: 'customer-dropoff', label: '+ Customer Drop', color: 'text-amber-400 border-amber-500/30 hover:bg-amber-500/10' },
     { type: 'vendor-dropoff', label: '+ Vendor Drop', color: 'text-orange-400 border-orange-500/30 hover:bg-orange-500/10' },
     { type: 'vendor-pickup', label: '+ Vendor Pickup', color: 'text-purple-400 border-purple-500/30 hover:bg-purple-500/10' },
     { type: 'other', label: '+ Other Stop', color: 'text-zinc-400 border-white/10 hover:bg-zinc-800' },

@@ -691,6 +691,12 @@ export interface SystemSettings {
   quoteTemplates?: QuoteTemplate[];
   // Margin guardrails — warn red when quote's gross profit % drops below this threshold
   minMarginPct?: number;          // default 20
+  // ── Email Notifications ──
+  recapEmail?: string;            // primary recap recipient
+  recapEmailCC?: string;          // comma-separated additional recipients
+  recapEmailEnabled?: boolean;    // master switch (default false)
+  recapTime?: string;             // HH:MM 24h — auto-send time each day, e.g. "17:00"
+  recapTimezone?: string;         // IANA tz string, e.g. "America/Los_Angeles"
 }
 
 // ── QUOTE HELPERS ──

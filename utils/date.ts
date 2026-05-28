@@ -70,26 +70,42 @@ export function toDateTimeLocal(ts: number | undefined | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Format minutes as "Xh Ym" or "Ym". Returns "Running..." for nullish. */
+/** Format minutes as "Xh Ym" or "Ym". Returns "Running..." for nullish.
+ *  Rounds to the nearest whole minute first so fractional inputs (e.g. 59.8)
+ *  never produce the impossible "60m" display. */
 export function formatDuration(mins: number | undefined): string {
   if (mins === undefined || mins === null) return 'Running...';
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
+  const total = Math.round(mins);   // integer minutes — prevents "60m" edge case
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
 
 /** Compute accurate duration minutes from a log's actual timestamps,
- *  subtracting any paused time. */
+ *  subtracting any paused time.
+ *
+ *  Priority order:
+ *   1. `durationSeconds` (stored at clock-out with Math.floor — most precise)
+ *   2. Fall back to raw timestamp diff (Math.round to match stopTimeLog)
+ *
+ *  Using Math.round (not Math.ceil) keeps display numbers consistent with
+ *  what was stored: a 61-second session is "1m" everywhere, not "2m". */
 export function getLogDurationMins(log: {
   startTime: number;
   endTime?: number | null;
   totalPausedMs?: number;
   durationMinutes?: number | null;
+  durationSeconds?: number;
 }): number | undefined {
   if (!log.endTime) return undefined;
+  // Use stored durationSeconds when available — it was set at clock-out with
+  // Math.floor(workingMs/1000) so it's the most accurate figure we have.
+  if (log.durationSeconds != null && log.durationSeconds >= 0) {
+    return Math.round(log.durationSeconds / 60);
+  }
   const wallMs = log.endTime - log.startTime;
   const pausedMs = log.totalPausedMs || 0;
   const workingMs = Math.max(0, wallMs - pausedMs);
-  return Math.ceil(workingMs / 1000 / 60);
+  return Math.round(workingMs / 1000 / 60);
 }

@@ -881,7 +881,7 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
             </a>
           )}
           {po.status === 'draft' && (
-            <button type="button" onClick={() => handleSave({ status: 'sent', historyNote: 'Marked as sent' })} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5">
+            <button type="button" onClick={() => handleSave({ status: 'sent', historyNote: 'Marked as sent' })} className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5">
               <Send className="w-3.5 h-3.5" aria-hidden="true" /> Save & Mark Sent
             </button>
           )}

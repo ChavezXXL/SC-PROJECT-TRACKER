@@ -139,6 +139,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
   const [filterStatus, setFilterStatus] = useState<'all' | ReworkStatus>('all');
   const [filterReason, setFilterReason] = useState<'all' | ReworkReason>('all');
   const [search, setSearch] = useState('');
+  const [dismissedAlerts, setDismissedAlerts] = useState<Set<ReworkReason>>(new Set());
 
   useEffect(() => {
     const u1 = DB.subscribeRework(setEntries);
@@ -187,6 +188,28 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
   }, [recent]);
   const maxReason = byReason.reduce((m, [, c]) => Math.max(m, c), 0) || 1;
 
+  // Recurring pattern detection — same reason 3+ times in last 30 days
+  const recurringPatterns = useMemo(() => {
+    const map = new Map<ReworkReason, { count: number; pieces: number; customers: Set<string> }>();
+    recent.forEach(e => {
+      const cur = map.get(e.reason) || { count: 0, pieces: 0, customers: new Set() };
+      cur.count++;
+      cur.pieces += e.quantity;
+      if (e.customer) cur.customers.add(e.customer);
+      map.set(e.reason, cur);
+    });
+    return [...map.entries()]
+      .filter(([, v]) => v.count >= 3)
+      .sort((a, b) => b[1].count - a[1].count);
+  }, [recent]);
+
+  // Count per reason across all entries (for filter chips)
+  const reasonCounts = useMemo(() => {
+    const map = new Map<ReworkReason, number>();
+    entries.forEach(e => map.set(e.reason, (map.get(e.reason) || 0) + 1));
+    return map;
+  }, [entries]);
+
   return (
     <div className="space-y-5 animate-fade-in">
       {/* Header */}
@@ -199,6 +222,52 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
           <Plus className="w-4 h-4" aria-hidden="true" /> Report Rework
         </button>
       </div>
+
+      {/* Recurring pattern alerts — fire when same reason hits 3+ times in 30d */}
+      {recurringPatterns.filter(([r]) => !dismissedAlerts.has(r)).length > 0 && (
+        <div className="space-y-2">
+          {recurringPatterns.filter(([r]) => !dismissedAlerts.has(r)).map(([reason, data]) => {
+            const meta = reworkReasonMeta(reason);
+            const custList = [...data.customers].slice(0, 3).join(', ') + (data.customers.size > 3 ? ` +${data.customers.size - 3}` : '');
+            return (
+              <div key={reason} className="flex items-start gap-3 rounded-2xl p-3.5 border animate-fade-in" style={{ background: `${meta.color}0D`, borderColor: `${meta.color}30` }}>
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${meta.color}20`, border: `1px solid ${meta.color}30` }}>
+                  <AlertTriangle className="w-4 h-4" style={{ color: meta.color }} aria-hidden="true" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-black text-white">
+                    Recurring pattern: <span style={{ color: meta.color }}>{meta.label}</span>
+                  </p>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                    <span className="font-bold" style={{ color: meta.color }}>{data.count} incidents</span>
+                    {' '}· {data.pieces} piece{data.pieces !== 1 ? 's' : ''} affected
+                    {data.customers.size > 0 && <span className="text-zinc-500"> · {custList}</span>}
+                    <span className="text-zinc-600"> · last 30 days</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setFilterReason(reason)}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg border transition-colors hover:opacity-80"
+                    style={{ background: `${meta.color}15`, borderColor: `${meta.color}30`, color: meta.color }}
+                  >
+                    Filter ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDismissedAlerts(prev => new Set([...prev, reason]))}
+                    aria-label="Dismiss alert"
+                    className="p-1 rounded-lg text-zinc-600 hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* How-it-works hint — only visible when there are no entries */}
       {entries.length === 0 && (
@@ -218,11 +287,11 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                     <p className="text-zinc-500 mt-0.5">Click <span className="text-amber-400 font-bold">Report Rework</span> above, or the amber ⚠ button on any job row.</p>
                   </div>
                 </div>
-                <div className="flex items-start gap-2 bg-blue-500/5 border border-blue-500/10 rounded-lg p-2.5">
-                  <span className="text-blue-400 font-black shrink-0">2.</span>
+                <div className="flex items-start gap-2 bg-sky-500/5 border border-sky-500/10 rounded-lg p-2.5">
+                  <span className="text-sky-400 font-black shrink-0">2.</span>
                   <div>
                     <p className="text-white font-semibold">Start working</p>
-                    <p className="text-zinc-500 mt-0.5">Click <span className="text-blue-400 font-bold">Start</span> on the card to move it to "In Rework".</p>
+                    <p className="text-zinc-500 mt-0.5">Click <span className="text-sky-400 font-bold">Start</span> on the card to move it to "In Rework".</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-2.5">
@@ -250,7 +319,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
           <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Logged · 30d</p>
           <p className="text-2xl font-black text-white tabular mt-1">{recent.length}</p>
           <p className="text-[10px] text-zinc-600 mt-0.5">{recent.reduce((a, e) => a + e.quantity, 0)} total pieces</p>
-          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-blue-500/40 to-transparent mt-2" aria-hidden="true" />
+          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-amber-500/40 to-transparent mt-2" aria-hidden="true" />
         </div>
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 overflow-hidden">
           <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Resolved · 30d</p>
@@ -321,7 +390,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
         </div>
         <div role="group" aria-label="Filter by status" className="inline-flex gap-1 p-1 bg-zinc-950/60 border border-white/5 rounded-lg">
           {(['all', 'open', 'in-rework', 'resolved'] as const).map(s => (
-            <button key={s} onClick={() => setFilterStatus(s)} aria-pressed={filterStatus === s} className={`px-3 py-1.5 text-[11px] font-bold rounded transition-colors capitalize min-h-[32px] ${filterStatus === s ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}>{s === 'in-rework' ? 'In Rework' : s}</button>
+            <button key={s} onClick={() => setFilterStatus(s)} aria-pressed={filterStatus === s} className={`px-3 py-1.5 text-[11px] font-bold rounded transition-colors capitalize min-h-[32px] ${filterStatus === s ? 'bg-amber-600 text-white' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}>{s === 'in-rework' ? 'In Rework' : s}</button>
           ))}
         </div>
         <select aria-label="Filter by reason" value={filterReason} onChange={e => setFilterReason(e.target.value as any)} className="bg-zinc-950/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-[12px] text-white outline-none cursor-pointer min-h-[32px]">
@@ -329,6 +398,37 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
           {REWORK_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
       </div>
+      {/* Reason chip pills — quick-filter shortcuts */}
+      {entries.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-1">
+          <button
+            type="button"
+            onClick={() => setFilterReason('all')}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${filterReason === 'all' ? 'bg-zinc-700 border-zinc-500 text-white' : 'bg-zinc-950/60 border-white/5 text-zinc-500 hover:text-white hover:border-white/15'}`}
+          >
+            All
+            <span className="text-[10px] font-mono opacity-70">{entries.length}</span>
+          </button>
+          {REWORK_REASONS.filter(r => (reasonCounts.get(r.value) || 0) > 0).map(r => {
+            const count = reasonCounts.get(r.value) || 0;
+            const active = filterReason === r.value;
+            return (
+              <button
+                key={r.value}
+                type="button"
+                onClick={() => setFilterReason(active ? 'all' : r.value)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${active ? 'text-white' : 'bg-zinc-950/60 border-white/5 text-zinc-400 hover:text-white'}`}
+                style={active ? { background: `${r.color}20`, borderColor: `${r.color}50`, color: r.color } : undefined}
+                aria-pressed={active}
+              >
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: r.color }} aria-hidden="true" />
+                {r.label}
+                <span className="text-[10px] font-mono opacity-70">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* List */}
       <div className="space-y-2">
@@ -343,7 +443,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
         ) : (
           filtered.map(e => {
             const meta = reworkReasonMeta(e.reason);
-            const statusTint = e.status === 'resolved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : e.status === 'in-rework' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+            const statusTint = e.status === 'resolved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : e.status === 'in-rework' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
             return (
               <div key={e.id} className="card-shine hover-lift-glow group bg-zinc-900/50 border border-white/5 rounded-2xl p-4 relative overflow-hidden">
                 <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-[2px]" style={{ backgroundImage: `linear-gradient(90deg, ${meta.color}66, transparent)` }} />
@@ -355,7 +455,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-black text-white">{e.poNumber || 'No PO'}</span>
                       <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border" style={{ background: `${meta.color}15`, color: meta.color, borderColor: `${meta.color}40` }}>{meta.label}</span>
-                      <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${statusTint}`}>{e.status === 'in-rework' ? 'IN REWORK' : e.status.toUpperCase()}</span>
+                      <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${statusTint}`}>{e.status === 'in-rework' ? 'IN REWORK' : (e.status || 'open').toUpperCase()}</span>
                       <span className="text-[10px] font-mono text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">{e.quantity} pc{e.quantity !== 1 ? 's' : ''}</span>
                     </div>
                     <p className="text-xs text-zinc-400 mt-1 truncate">{e.partNumber || '—'}{e.customer ? ` · ${e.customer}` : ''}</p>
@@ -372,13 +472,22 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                         <span className="truncate">{e.reporterName}</span>
                         <span>·</span>
                         <span>{new Date(e.createdAt).toLocaleDateString()}</span>
+                        {e.status !== 'resolved' && (() => {
+                          const daysOpen = Math.floor((Date.now() - e.createdAt) / 86400000);
+                          const tint = daysOpen >= 7 ? 'text-red-400 bg-red-500/10 border-red-500/20' : daysOpen >= 3 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-zinc-500 bg-zinc-800/60 border-white/5';
+                          return (
+                            <span className={`px-1.5 py-0.5 rounded border font-mono font-bold ${tint}`} title="Days open">
+                              {daysOpen}d open
+                            </span>
+                          );
+                        })()}
                       </div>
                       {/* Quick-action status transitions — no need to open the full modal */}
                       <div className="flex items-center gap-1 shrink-0">
                         {e.status === 'open' && (
                           <button
-                            onClick={() => DB.saveRework({ ...e, status: 'in-rework' })}
-                            className="text-[10px] font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
+                            onClick={() => DB.saveRework({ ...e, status: 'in-rework' }).catch(() => addToast('error', 'Failed to update'))}
+                            className="text-[10px] font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
                             title="Start working on it"
                           >
                             <Play className="w-2.5 h-2.5" aria-hidden="true" /> Start
@@ -386,7 +495,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                         )}
                         {e.status !== 'resolved' && (
                           <button
-                            onClick={() => DB.saveRework({ ...e, status: 'resolved', resolvedAt: Date.now(), resolvedBy: user.id, resolvedByName: user.name })}
+                            onClick={() => DB.saveRework({ ...e, status: 'resolved', resolvedAt: Date.now(), resolvedBy: user.id, resolvedByName: user.name }).catch(() => addToast('error', 'Failed to update'))}
                             className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
                             title="Mark as resolved"
                           >
@@ -395,7 +504,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                         )}
                         {e.status === 'resolved' && (
                           <button
-                            onClick={() => DB.saveRework({ ...e, status: 'open', resolvedAt: undefined, resolvedBy: undefined, resolvedByName: undefined, resolutionNotes: undefined })}
+                            onClick={() => DB.saveRework({ ...e, status: 'open', resolvedAt: undefined, resolvedBy: undefined, resolvedByName: undefined, resolutionNotes: undefined }).catch(() => addToast('error', 'Failed to update'))}
                             className="text-[10px] font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
                             title="Reopen this issue"
                           >

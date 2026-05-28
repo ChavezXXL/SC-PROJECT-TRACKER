@@ -989,10 +989,11 @@ export async function createBackfillLog(
   jobIdsDisplay?: string
 ) {
   const id = 'bf_' + Date.now().toString();
-  const durationMinutes = Math.round((endTime - startTime) / 60000);
+  const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
+  const durationMinutes = Math.round(durationSeconds / 60);
   const log: TimeLog = {
     id, jobId, userId, userName, operation,
-    startTime, endTime, durationMinutes,
+    startTime, endTime, durationSeconds, durationMinutes,
     status: 'completed',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -1053,49 +1054,66 @@ export async function sweepStaleLogs(): Promise<number> {
 
     if (activeLogs.length === 0) return 0;
 
-    // ── Parse configured cutoff time (only used when auto-clock-out is on) ──
-    let cutoffHour = 17, cutoffMin = 30; // sensible default, only used if enabled
+    // ── Build a list of all active cutoff times to check ──────────────────
+    // Sources (in priority order):
+    //  1. settings.autoClockOutEnabled + autoClockOutTime  (explicit setting)
+    //  2. Any shift alarm with clockOut:true && enabled !== false  (alarm-driven)
+    // This way, workers are clocked out even when the browser tab was closed if
+    // either the dedicated setting is on OR a "Shift Ends" alarm has "Clock out"
+    // checked — users only need to configure one place.
+    const cutoffTimes: number[] = []; // HH*60+MM integers for fast comparison
+
     if (settings.autoClockOutEnabled) {
       const timeStr = settings.autoClockOutTime || '17:30';
       const m = timeStr.match(/^(\d{1,2}):(\d{2})$/);
-      if (m) {
-        cutoffHour = parseInt(m[1], 10);
-        cutoffMin  = parseInt(m[2], 10);
-      }
+      if (m) cutoffTimes.push(parseInt(m[1], 10) * 60 + parseInt(m[2], 10));
+    }
+
+    // Pick up any alarm flagged as a clock-out alarm (e.g. "Shift Ends")
+    for (const alarm of (settings.shiftAlarms || []) as any[]) {
+      if (!alarm.clockOut) continue;
+      if (alarm.enabled === false) continue;
+      const m = (alarm.time || '').match(/^(\d{1,2}):(\d{2})$/);
+      if (m) cutoffTimes.push(parseInt(m[1], 10) * 60 + parseInt(m[2], 10));
     }
 
     let stopped = 0;
     for (const log of activeLogs) {
-      // ── 14-hour safety net — ALWAYS runs, regardless of autoClockOutEnabled.
+      // ── 14-hour safety net — ALWAYS runs, regardless of settings.
       // Clears orphaned logs from crashed sessions / closed browsers / forgotten
       // clock-ins. Without this, workers are permanently blocked from clocking in.
       const runningHours = (nowMs - log.startTime) / 3600000;
       const forcedStop = runningHours > 14;
 
-      // ── Configured cutoff — only when the setting is enabled.
-      // Calculates cutoff for the day the log STARTED so previous-day logs are
-      // caught even if the sweep missed them at the time.
+      // ── Configured / alarm-driven cutoff ──────────────────────────────────
+      // For each cutoff time, check if the log started before that time on its
+      // own start-day AND the current time has already passed it. Use the
+      // earliest cutoff that qualifies (shouldn't matter in practice, but keeps
+      // the end-time accurate when multiple alarms are configured).
       let shouldStop = false;
-      if (settings.autoClockOutEnabled) {
+      let stopAtMs: number = log.startTime + 14 * 3600000; // default: 14h safety
+
+      for (const cutoffMins of cutoffTimes) {
+        const cutoffH = Math.floor(cutoffMins / 60);
+        const cutoffM = cutoffMins % 60;
         const logStart = new Date(log.startTime);
         const logDayCutoff = new Date(
           logStart.getFullYear(), logStart.getMonth(), logStart.getDate(),
-          cutoffHour, cutoffMin, 0, 0
+          cutoffH, cutoffM, 0, 0
         ).getTime();
-        shouldStop = log.startTime < logDayCutoff && nowMs > logDayCutoff;
+        if (log.startTime < logDayCutoff && nowMs > logDayCutoff) {
+          // Prefer the EARLIEST qualifying cutoff so the end time is correct
+          if (!shouldStop || logDayCutoff < stopAtMs) {
+            shouldStop = true;
+            stopAtMs = logDayCutoff;
+          }
+        }
       }
 
       if (shouldStop || forcedStop) {
         try {
-          const logStart = new Date(log.startTime);
-          const logDayCutoff = new Date(
-            logStart.getFullYear(), logStart.getMonth(), logStart.getDate(),
-            cutoffHour, cutoffMin, 0, 0
-          ).getTime();
-          const autoEndTime = shouldStop
-            ? logDayCutoff
-            : log.startTime + 14 * 3600000;
-          const sweepReason = forcedStop ? 'sweep:14h-safety' : 'sweep:auto-clockout';
+          const autoEndTime = shouldStop ? stopAtMs : log.startTime + 14 * 3600000;
+          const sweepReason = forcedStop && !shouldStop ? 'sweep:14h-safety' : 'sweep:auto-clockout';
           await stopTimeLog(log.id, undefined, undefined, autoEndTime, sweepReason);
           stopped++;
         } catch (e) {

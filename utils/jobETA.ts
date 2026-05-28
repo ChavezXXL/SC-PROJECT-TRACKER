@@ -75,9 +75,15 @@ export function computeJobETA(
   const now = Date.now();
 
   // ── Logged hours (finished)
+  // Prefer durationSeconds (most precise) over rounded durationMinutes.
   const finishedHours = allLogs
     .filter(l => l.jobId === job.id && l.endTime)
-    .reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+    .reduce((a, l) => {
+      const mins = l.durationSeconds != null && l.durationSeconds >= 0
+        ? l.durationSeconds / 60
+        : (l.durationMinutes || 0);
+      return a + mins / 60;
+    }, 0);
 
   // ── Active log hours (live, mid-run)
   const activeHours = activeLogs
@@ -113,14 +119,17 @@ export function computeJobETA(
   let riskLevel: JobRiskLevel;
   let riskReason: string;
 
+  /** Format a days-remaining value as a human string. Sub-1-day = "today". */
+  const fmtDue = (d: number) => d < 1 ? 'today' : `in ${Math.ceil(d)}d`;
+
   if (isOverdue) {
     riskLevel = 'critical';
-    const daysLate = Math.abs(daysUntilDue ?? 0);
-    riskReason = `${daysLate < 1 ? 'Due today' : `${Math.ceil(daysLate)}d overdue`}`;
+    const daysLate = Math.abs(daysUntilDue!);
+    riskReason = daysLate < 1 ? 'Overdue (today)' : `${Math.ceil(daysLate)}d overdue`;
   } else if (daysUntilDue !== null && daysUntilDue <= WATCH_DAYS && expectedHours === null) {
     // No prediction data but due very soon
     riskLevel = 'watch';
-    riskReason = daysUntilDue < 1 ? 'Due today' : `Due in ${Math.ceil(daysUntilDue)}d`;
+    riskReason = `Due ${fmtDue(daysUntilDue)}`;
   } else if (remainingHours !== null && daysUntilDue !== null) {
     // We have enough data to predict
     const daysNeeded = remainingHours / WORKDAY_HOURS;
@@ -134,11 +143,13 @@ export function computeJobETA(
     } else if (buffer < 1) {
       // Very tight
       riskLevel = 'at-risk';
-      riskReason = `Only ${(buffer * WORKDAY_HOURS).toFixed(1)}h margin`;
+      riskReason = buffer <= 0
+        ? `No buffer — due ${fmtDue(daysUntilDue)}`
+        : `Only ${(buffer * WORKDAY_HOURS).toFixed(1)}h margin`;
     } else if (daysUntilDue <= WATCH_DAYS || pctComplete > 80) {
       riskLevel = 'watch';
       riskReason = daysUntilDue <= WATCH_DAYS
-        ? `Due in ${Math.ceil(daysUntilDue)}d`
+        ? `Due ${fmtDue(daysUntilDue)}`
         : `${pctComplete}% of est. time used`;
     } else {
       riskLevel = 'on-track';
@@ -148,7 +159,7 @@ export function computeJobETA(
     // Have due date, no expected hours — can't predict pace
     if (daysUntilDue <= WATCH_DAYS) {
       riskLevel = 'watch';
-      riskReason = `Due in ${Math.ceil(Math.max(0, daysUntilDue))}d — no estimate`;
+      riskReason = `Due ${fmtDue(Math.max(0, daysUntilDue))} — no estimate`;
     } else {
       riskLevel = 'no-data';
       riskReason = 'No time estimate set';

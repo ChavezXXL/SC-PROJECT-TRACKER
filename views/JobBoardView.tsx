@@ -32,7 +32,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
 
   const stages = getStages(shopSettings);
   const todayN = dateNum(todayFmt());
-  const in3N = dateNum(new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
+  const in3N = dateNum(new Date(Date.now() + 3 * 86400000).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
 
   // Unique customers for filter — case/whitespace-insensitive dedup
   // so "ACME" and "acme " aren't two separate filter entries.

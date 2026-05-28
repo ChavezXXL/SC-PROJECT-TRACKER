@@ -54,7 +54,12 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
 
   const runs: PartRun[] = priorJobs.map(job => {
     const jobLogs = logs.filter(l => l.jobId === job.id && l.endTime);
-    const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    // Prefer durationSeconds (stored precisely at clock-out) over the rounded
+    // durationMinutes integer so that sub-minute sessions are counted accurately.
+    const totalMins = jobLogs.reduce((a, l) => {
+      if (l.durationSeconds != null && l.durationSeconds >= 0) return a + l.durationSeconds / 60;
+      return a + (l.durationMinutes || 0);
+    }, 0);
     const totalHours = totalMins / 60;
     const hoursPerUnit = job.quantity > 0 ? totalHours / job.quantity : 0;
     // On-time: completed before end-of-day on dueDate
@@ -64,7 +69,10 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
     const byWorker = new Map<string, { name: string; mins: number }>();
     jobLogs.forEach(l => {
       const cur = byWorker.get(l.userId) || { name: l.userName, mins: 0 };
-      cur.mins += l.durationMinutes || 0;
+      const mins = l.durationSeconds != null && l.durationSeconds >= 0
+        ? l.durationSeconds / 60
+        : (l.durationMinutes || 0);
+      cur.mins += mins;
       byWorker.set(l.userId, cur);
     });
     let primaryWorker: string | undefined;

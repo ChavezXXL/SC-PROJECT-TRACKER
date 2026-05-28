@@ -697,10 +697,10 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
   const term = search.toLowerCase().trim();
   const filtered = term
     ? samples.filter(s =>
-        s.companyName.toLowerCase().includes(term) ||
-        s.partNumber.toLowerCase().includes(term) ||
-        s.partName.toLowerCase().includes(term) ||
-        s.notes.toLowerCase().includes(term))
+        (s.companyName || '').toLowerCase().includes(term) ||
+        (s.partNumber || '').toLowerCase().includes(term) ||
+        (s.partName || '').toLowerCase().includes(term) ||
+        (s.notes || '').toLowerCase().includes(term))
     : samples;
 
   const groups: Record<string, Sample[]> = {};

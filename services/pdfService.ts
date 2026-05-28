@@ -104,8 +104,19 @@ function openPrintWindow(html: string, title: string) {
 
 function formatDate(ts?: number | string): string {
   if (!ts) return new Date().toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
-  const d = typeof ts === 'string' ? new Date(ts) : new Date(ts);
-  return d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
+  if (typeof ts === 'number') {
+    return new Date(ts).toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
+  }
+  // MM/DD/YYYY already in correct format — return as-is
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(ts)) return ts;
+  // ISO YYYY-MM-DD → reformat
+  const iso = ts.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[2]}/${iso[3]}/${iso[1]}`;
+  // Fallback: let Date() try (works for ISO datetime strings with time component)
+  const d = new Date(ts);
+  return isNaN(d.getTime())
+    ? ts  // last resort: return the raw string rather than "Invalid Date"
+    : d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
 }
 
 // ── Quote PDF ──

@@ -4,6 +4,7 @@ import type { Quote, QuoteLineItem, QuoteStatus, SystemSettings, CustomerContact
 import * as DB from './services/mockDb';
 import { printQuotePDF } from './services/pdfService';
 import { fmtMoneyK } from './utils/format';
+import { normDate } from './utils/date';
 import { Overlay } from './components/Overlay';
 import { useConfirm } from './components/useConfirm';
 import { usePrompt } from './components/usePrompt';
@@ -51,7 +52,7 @@ const SnippetInserter = ({ snippets, target, onInsert }: { snippets: QuoteSnippe
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="text-[10px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 px-2 py-1 rounded transition-colors flex items-center gap-1"
+        className="text-[10px] font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 px-2 py-1 rounded transition-colors flex items-center gap-1"
         title="Insert a saved snippet"
       >
         ⚡ Insert snippet ({applicable.length})
@@ -65,7 +66,7 @@ const SnippetInserter = ({ snippets, target, onInsert }: { snippets: QuoteSnippe
                 key={s.id}
                 type="button"
                 onClick={() => { onInsert(s.text); setOpen(false); }}
-                className="w-full text-left px-3 py-2 hover:bg-blue-500/10 border-b border-white/5 last:border-0"
+                className="w-full text-left px-3 py-2 hover:bg-amber-500/10 border-b border-white/5 last:border-0"
               >
                 <p className="text-xs font-bold text-white truncate">{s.label}</p>
                 <p className="text-[10px] text-zinc-500 truncate mt-0.5">{s.text.slice(0, 80)}…</p>
@@ -82,7 +83,7 @@ const SnippetInserter = ({ snippets, target, onInsert }: { snippets: QuoteSnippe
 const SectionLabel = ({ num, title, sub, done }: { num: number; title: string; sub?: string; done?: boolean }) => (
   <div className="flex items-center gap-3 mb-3">
     <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 transition-colors ${
-      done ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30' : 'bg-blue-500/10 text-blue-400'
+      done ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30' : 'bg-amber-500/10 text-amber-400'
     }`}>
       {done ? <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> : num}
     </span>
@@ -100,14 +101,14 @@ const QuoteStepper = ({ steps, currentIdx, completedCount }: { steps: { num: num
     <div className="px-5 pt-3 pb-4 space-y-2 border-b border-white/5 bg-gradient-to-b from-zinc-800/40 to-transparent">
       {/* Progress percent bar */}
       <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
-        <span className={pct >= 100 ? 'text-emerald-400' : 'text-blue-400'}>
+        <span className={pct >= 100 ? 'text-emerald-400' : 'text-amber-400'}>
           {pct >= 100 ? '✓ Ready to save' : `${completedCount} of ${steps.length} sections complete`}
         </span>
         <span className="text-zinc-500 tabular">{pct}%</span>
       </div>
       <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${pct >= 100 ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`}
+          className={`h-full rounded-full transition-all duration-500 ${pct >= 100 ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-orange-500 to-amber-500'}`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -118,7 +119,7 @@ const QuoteStepper = ({ steps, currentIdx, completedCount }: { steps: { num: num
             <div
               title={s.label}
               className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition-all ${
-                s.done ? 'bg-emerald-500/25 text-emerald-300 ring-1 ring-emerald-500/50' : i === currentIdx ? 'bg-blue-500/30 text-blue-300 ring-1 ring-blue-500/50' : 'bg-zinc-800 text-zinc-500'
+                s.done ? 'bg-emerald-500/25 text-emerald-300 ring-1 ring-emerald-500/50' : i === currentIdx ? 'bg-amber-500/30 text-amber-300 ring-1 ring-amber-500/50' : 'bg-zinc-800 text-zinc-500'
               }`}
             >
               {s.done ? <Check className="w-2.5 h-2.5" /> : s.num}
@@ -154,7 +155,7 @@ const ContactBlock = ({ label, contact, onChange, clients, savedContacts, onSave
           <button
             type="button"
             onClick={() => onSaveContact(contact)}
-            className="text-[10px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 px-2 py-0.5 rounded transition-colors flex items-center gap-1"
+            className="text-[10px] font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 px-2 py-0.5 rounded transition-colors flex items-center gap-1"
             title="Save this contact info so next time you pick this client, fields auto-fill"
           >
             💾 Save for next time
@@ -302,53 +303,54 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   };
 
   const updateItem = (idx: number, field: keyof QuoteLineItem, value: any) => {
-    const next = [...items];
-    (next[idx] as any)[field] = value;
-    // Recalculate total — honor tier pricing if defined
+    // Deep-copy the mutated item so React detects the reference change and
+    // all downstream memos/effects re-run with fresh data.
+    const next = items.map((item, i) => i === idx ? { ...item, [field]: value } : item);
     const current = next[idx];
     const effectiveUnit = resolveTierPrice(current.qty, current.priceTiers, current.unitPrice);
     // If a tier was applied, sync unitPrice to it so the display matches the math
     if (current.priceTiers && current.priceTiers.length > 0 && field === 'qty') {
-      current.unitPrice = effectiveUnit;
+      next[idx] = { ...current, unitPrice: effectiveUnit, total: current.qty * effectiveUnit };
+    } else {
+      next[idx] = { ...current, total: current.qty * effectiveUnit };
     }
-    current.total = current.qty * effectiveUnit;
     setItems(next);
   };
 
   // Add a new tier row. Starts at qty 1 if no tiers yet.
   const addTier = (idx: number) => {
-    const next = [...items];
+    const next = items.map((item, i) => i !== idx ? item : { ...item });
     const existing = next[idx].priceTiers || [];
     const lastMinQty = existing.length > 0 ? Math.max(...existing.map(t => t.minQty)) : 0;
     const newTier = { minQty: lastMinQty > 0 ? lastMinQty * 2 : 1, unitPrice: next[idx].unitPrice };
-    next[idx].priceTiers = [...existing, newTier].sort((a, b) => a.minQty - b.minQty);
+    let tiers = [...existing, newTier].sort((a, b) => a.minQty - b.minQty);
     // Seed the first tier from current unitPrice so math matches
     if (!existing.length) {
-      next[idx].priceTiers = [{ minQty: 1, unitPrice: next[idx].unitPrice }, newTier].sort((a, b) => a.minQty - b.minQty);
+      tiers = [{ minQty: 1, unitPrice: next[idx].unitPrice }, newTier].sort((a, b) => a.minQty - b.minQty);
     }
+    next[idx] = { ...next[idx], priceTiers: tiers };
     setItems(next);
   };
 
   const updateTier = (itemIdx: number, tierIdx: number, field: 'minQty' | 'unitPrice', value: number) => {
-    const next = [...items];
+    const next = items.map((item, i) => i !== itemIdx ? item : { ...item });
     const tiers = [...(next[itemIdx].priceTiers || [])];
     tiers[tierIdx] = { ...tiers[tierIdx], [field]: value };
     tiers.sort((a, b) => a.minQty - b.minQty);
-    next[itemIdx].priceTiers = tiers;
     // Recalculate current row price + total
     const effective = resolveTierPrice(next[itemIdx].qty, tiers, next[itemIdx].unitPrice);
-    next[itemIdx].unitPrice = effective;
-    next[itemIdx].total = next[itemIdx].qty * effective;
+    next[itemIdx] = { ...next[itemIdx], priceTiers: tiers, unitPrice: effective, total: next[itemIdx].qty * effective };
     setItems(next);
   };
 
   const removeTier = (itemIdx: number, tierIdx: number) => {
-    const next = [...items];
-    next[itemIdx].priceTiers = (next[itemIdx].priceTiers || []).filter((_, i) => i !== tierIdx);
-    if (next[itemIdx].priceTiers!.length === 0) delete next[itemIdx].priceTiers;
-    // Recalculate
-    const effective = resolveTierPrice(next[itemIdx].qty, next[itemIdx].priceTiers, next[itemIdx].unitPrice);
-    next[itemIdx].total = next[itemIdx].qty * effective;
+    const next = items.map((item, i) => i !== itemIdx ? item : { ...item });
+    const newTiers = (next[itemIdx].priceTiers || []).filter((_, i) => i !== tierIdx);
+    const effective = resolveTierPrice(next[itemIdx].qty, newTiers.length ? newTiers : undefined, next[itemIdx].unitPrice);
+    const updatedItem: QuoteLineItem = { ...next[itemIdx], total: next[itemIdx].qty * effective };
+    if (newTiers.length === 0) delete updatedItem.priceTiers;
+    else updatedItem.priceTiers = newTiers;
+    next[itemIdx] = updatedItem;
     setItems(next);
   };
 
@@ -597,7 +599,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
           partNumber: q.items[0]?.description?.slice(0, 60) || 'See quote',
           customer: q.customer,
           quantity: q.items.reduce((a, i) => a + i.qty, 0),
-          dueDate: q.validUntil || '',
+          dueDate: normDate(q.validUntil) || '',
           info,
           quoteAmount: q.total,
           linkedQuoteId: q.id,
@@ -682,10 +684,10 @@ ${settings.companyPhone || ''}`.trim()
       {/* ── Page Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2"><FileText className="w-5 h-5 text-blue-400" /> Quotes & Estimates</h2>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2"><FileText className="w-5 h-5 text-amber-400" /> Quotes & Estimates</h2>
           <p className="text-sm text-zinc-500">Create professional quotes, track approvals, and convert to jobs.</p>
         </div>
-        <button onClick={openNew} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shrink-0 shadow-lg shadow-blue-500/20"><Plus className="w-4 h-4" /> New Quote</button>
+        <button onClick={openNew} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shrink-0 shadow-lg shadow-amber-500/20"><Plus className="w-4 h-4" /> New Quote</button>
       </div>
 
       {/* ── Summary Cards ── */}
@@ -696,7 +698,7 @@ ${settings.companyPhone || ''}`.trim()
         </div>
         <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
           <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Quoted This Month</p>
-          <p className="text-2xl font-black text-blue-400">{fmtMoneyK(monthTotal)}</p>
+          <p className="text-2xl font-black text-amber-400">{fmtMoneyK(monthTotal)}</p>
         </div>
         <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
           <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Awaiting Response</p>
@@ -731,7 +733,7 @@ ${settings.companyPhone || ''}`.trim()
             {(['all', 'draft', 'sent', 'accepted', 'declined'] as const).map(f => (
               <button key={f} onClick={() => setFilter(f)}
                 aria-pressed={filter === f}
-                className={`px-3 py-1.5 text-xs font-bold rounded transition-colors whitespace-nowrap min-h-[28px] ${filter === f ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
+                className={`px-3 py-1.5 text-xs font-bold rounded transition-colors whitespace-nowrap min-h-[28px] ${filter === f ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}>
                 {f === 'all' ? `All (${quotes.length})` : `${f.charAt(0).toUpperCase() + f.slice(1)} (${quotes.filter(q => q.status === f).length})`}
               </button>
             ))}
@@ -776,8 +778,8 @@ ${settings.companyPhone || ''}`.trim()
                 <p className="text-2xl font-black text-white tabular mt-1">{winRate}%</p>
                 <p className="text-[10px] text-zinc-500 mt-0.5">{byStatus.accepted.length} won / {decided} decided</p>
               </div>
-              <div className="bg-gradient-to-br from-blue-500/15 to-blue-500/[0.02] border border-blue-500/25 rounded-xl p-3">
-                <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">In Pipeline</p>
+              <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/25 rounded-xl p-3">
+                <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">In Pipeline</p>
                 <p className="text-2xl font-black text-white tabular mt-1">{fmtMoneyK(pipelineValue)}</p>
                 <p className="text-[10px] text-zinc-500 mt-0.5">{byStatus.draft.length + byStatus.sent.length} active</p>
               </div>
@@ -867,7 +869,7 @@ ${settings.companyPhone || ''}`.trim()
             <FileText className="w-12 h-12 text-zinc-700 mx-auto mb-3" />
             <p className="text-zinc-400 font-bold">No quotes yet</p>
             <p className="text-zinc-600 text-sm mt-1">Create your first quote to start winning work.</p>
-            <button onClick={openNew} className="mt-4 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl font-bold text-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> Create Quote</button>
+            <button onClick={openNew} className="mt-4 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-xl font-bold text-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> Create Quote</button>
           </div>
         )}
         {filtered.map(q => {
@@ -876,7 +878,7 @@ ${settings.companyPhone || ''}`.trim()
             <div key={q.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 hover:bg-white/[0.03] transition-colors">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0"><FileText className="w-5 h-5 text-blue-400" /></div>
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0"><FileText className="w-5 h-5 text-amber-400" /></div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-white font-bold">{q.quoteNumber}</span>
@@ -914,11 +916,11 @@ ${settings.companyPhone || ''}`.trim()
                     {actionMenuId === q.id && (
                       <div className="absolute right-0 top-full mt-1 bg-zinc-800 border border-white/10 rounded-xl shadow-2xl z-50 min-w-[200px] py-1 animate-fade-in">
                         {q.status === 'draft' && <button onClick={() => openEdit(q)} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Edit2 className="w-3.5 h-3.5" /> Edit Quote</button>}
-                        {q.status === 'draft' && <button onClick={() => { sendQuoteToCustomer(q); }} className="w-full text-left px-4 py-2.5 text-sm text-blue-400 hover:bg-white/5 flex items-center gap-2"><Send className="w-3.5 h-3.5" /> Send to Customer</button>}
+                        {q.status === 'draft' && <button onClick={() => { sendQuoteToCustomer(q); }} className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-white/5 flex items-center gap-2"><Send className="w-3.5 h-3.5" /> Send to Customer</button>}
                         {q.status === 'draft' && <button onClick={() => updateStatus(q, 'sent')} className="w-full text-left px-4 py-2.5 text-sm text-zinc-400 hover:bg-white/5 flex items-center gap-2"><Check className="w-3.5 h-3.5" /> Mark as Sent (no email)</button>}
                         {q.status === 'sent' && <button onClick={() => updateStatus(q, 'accepted')} className="w-full text-left px-4 py-2.5 text-sm text-emerald-400 hover:bg-white/5 flex items-center gap-2"><Check className="w-3.5 h-3.5" /> Accept & Create Job</button>}
                         {q.status === 'sent' && <button onClick={() => updateStatus(q, 'declined')} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/5 flex items-center gap-2"><X className="w-3.5 h-3.5" /> Mark Declined</button>}
-                        {q.status === 'sent' && <button onClick={() => { sendQuoteToCustomer(q); }} className="w-full text-left px-4 py-2.5 text-sm text-blue-400 hover:bg-white/5 flex items-center gap-2"><Send className="w-3.5 h-3.5" /> Resend to Customer</button>}
+                        {q.status === 'sent' && <button onClick={() => { sendQuoteToCustomer(q); }} className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-white/5 flex items-center gap-2"><Send className="w-3.5 h-3.5" /> Resend to Customer</button>}
                         <button onClick={async () => { try { await navigator.clipboard.writeText(getPortalLink(q)); addToast('success', 'Share link copied!'); } catch {} setActionMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Copy className="w-3.5 h-3.5" /> Copy Share Link</button>
                         <div className="border-t border-white/5 my-1" />
                         <button onClick={() => { printQuotePDF(q, settings); setActionMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Download className="w-3.5 h-3.5" /> Print / Save as PDF</button>
@@ -1002,7 +1004,7 @@ ${settings.companyPhone || ''}`.trim()
                     💾 Save as Template
                   </button>
                   <button onClick={() => setShowModal(false)} className="text-zinc-400 hover:text-white text-sm px-2">Close</button>
-                  <button onClick={handleSave} className={`${completedCount >= 4 ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-lg shadow-blue-900/40' : 'bg-blue-600 hover:bg-blue-500'} text-white px-4 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all`}>
+                  <button onClick={handleSave} className={`${completedCount >= 4 ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 shadow-lg shadow-amber-900/40' : 'bg-amber-600 hover:bg-amber-500'} text-white px-4 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all`}>
                     <Save className="w-3.5 h-3.5" aria-hidden="true" /> Save
                   </button>
                 </div>
@@ -1010,7 +1012,7 @@ ${settings.companyPhone || ''}`.trim()
               <div className="flex gap-0 mt-3 px-4">
                 {(['edit', 'preview', 'send'] as const).map(t => (
                   <button key={t} onClick={() => setModalTab(t)}
-                    className={`px-5 py-2.5 text-sm font-bold transition-colors border-b-2 ${modalTab === t ? 'text-blue-400 border-blue-400' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}>
+                    className={`px-5 py-2.5 text-sm font-bold transition-colors border-b-2 ${modalTab === t ? 'text-amber-400 border-amber-400' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}>
                     {t === 'edit' ? 'Edit' : t === 'preview' ? 'Preview' : 'Send'}
                   </button>
                 ))}
@@ -1090,7 +1092,7 @@ ${settings.companyPhone || ''}`.trim()
                     onInsert={(text) => setForm({ ...form, jobDescription: form.jobDescription ? `${form.jobDescription}\n\n${text}` : text })}
                   />
                 </div>
-                <textarea value={form.jobDescription} onChange={e => setForm({ ...form, jobDescription: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white text-sm outline-none min-h-[70px] focus:ring-2 focus:ring-blue-500/30" placeholder="e.g. Deburr 500 units of Part #ABC-123, tumble finish, QC inspection..." />
+                <textarea value={form.jobDescription} onChange={e => setForm({ ...form, jobDescription: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white text-sm outline-none min-h-[70px] focus:ring-2 focus:ring-amber-500/30" placeholder="e.g. Deburr 500 units of Part #ABC-123, tumble finish, QC inspection..." />
               </div>
 
               {/* §4 — Line Items */}
@@ -1176,7 +1178,7 @@ ${settings.companyPhone || ''}`.trim()
                   ))}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button onClick={addItem} type="button" className="flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 px-3 py-1.5 rounded-lg transition-colors">
+                  <button onClick={addItem} type="button" className="flex items-center gap-1.5 text-xs font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 px-3 py-1.5 rounded-lg transition-colors">
                     <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add Blank Line
                   </button>
                   {(settings.processTemplates?.length || 0) > 0 ? (
@@ -1272,7 +1274,7 @@ ${settings.companyPhone || ''}`.trim()
                     <div className="flex gap-1 flex-wrap">
                       {[0, 15, 20, 25, 30, 40, 50].map(m => (
                         <button key={m} onClick={() => setForm({ ...form, markupPct: m })}
-                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors ${form.markupPct === m ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors ${form.markupPct === m ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>
                           {m}%
                         </button>
                       ))}
@@ -1369,7 +1371,7 @@ ${settings.companyPhone || ''}`.trim()
                     </div>
                     <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white text-sm outline-none min-h-[60px]" placeholder={settings.defaultQuoteComment || 'CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.'} />
                     {!form.notes && (settings.defaultQuoteComment || true) && (
-                      <button onClick={() => setForm({ ...form, notes: settings.defaultQuoteComment || 'CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.' })} className="text-[10px] text-blue-400 hover:text-blue-300 mt-1">+ Insert default comment</button>
+                      <button onClick={() => setForm({ ...form, notes: settings.defaultQuoteComment || 'CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.' })} className="text-[10px] text-amber-400 hover:text-amber-300 mt-1">+ Insert default comment</button>
                     )}
                   </div>
                 </div>
@@ -1407,7 +1409,7 @@ ${settings.companyPhone || ''}`.trim()
                   {/* Scope */}
                   {form.jobDescription && (
                     <div className="bg-blue-50 rounded-lg p-3 mb-4 border border-blue-200">
-                      <div className="text-[10px] uppercase text-blue-600 font-bold mb-1">Scope of Work</div>
+                      <div className="text-[10px] uppercase text-amber-600 font-bold mb-1">Scope of Work</div>
                       <div className="text-xs text-blue-900">{form.jobDescription}</div>
                     </div>
                   )}
@@ -1465,7 +1467,7 @@ ${settings.companyPhone || ''}`.trim()
                     <div>
                       <textarea value={sendEmail.body} onChange={e => setSendEmail({ ...sendEmail, body: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white text-sm outline-none min-h-[140px]" />
                     </div>
-                    <div className="text-center text-xs text-zinc-500 py-2">Already approved? <button className="text-blue-400 hover:text-blue-300 underline" onClick={() => { if (editing) updateStatus(editing, 'accepted'); }}>Click here</button> to mark as accepted.</div>
+                    <div className="text-center text-xs text-zinc-500 py-2">Already approved? <button className="text-amber-400 hover:text-amber-300 underline" onClick={() => { if (editing) updateStatus(editing, 'accepted'); }}>Click here</button> to mark as accepted.</div>
                     {/* Approval Link */}
                     <div className="bg-zinc-800/30 rounded-xl p-3">
                       <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1.5">Approval Link</p>
@@ -1479,7 +1481,7 @@ ${settings.companyPhone || ''}`.trim()
                   <div className="w-full md:w-64 p-5 space-y-4 bg-zinc-800/20 shrink-0">
                     <div>
                       <p className="text-white font-bold">Quote</p>
-                      <p className="text-blue-400 font-mono text-lg font-bold">#{form.quoteNumber}</p>
+                      <p className="text-amber-400 font-mono text-lg font-bold">#{form.quoteNumber}</p>
                       <span className="text-[10px] font-bold text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded mt-1 inline-block">{editing?.status?.toUpperCase() || 'DRAFT'}</span>
                     </div>
                     <div className="space-y-1.5 text-sm">
@@ -1496,7 +1498,7 @@ ${settings.companyPhone || ''}`.trim()
                       const body = encodeURIComponent(`${sendEmail.body}\n\nView & Approve Online:\n${portalLink}\n\nThank you,\n${settings.companyName || ''}\n${settings.companyPhone || ''}`);
                       window.open(`mailto:${to}?subject=${subj}&body=${body}`, '_blank');
                       if (editing && editing.status === 'draft') updateStatus(editing, 'sent');
-                    }} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"><Send className="w-4 h-4" /> Send Quote</button>
+                    }} className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"><Send className="w-4 h-4" /> Send Quote</button>
                     <button onClick={() => { if (editing) printQuotePDF(editing, settings); }} className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"><Download className="w-4 h-4" /> Download PDF</button>
                     <button onClick={async () => { if (editing) { try { await navigator.clipboard.writeText(getPortalLink(editing)); addToast('success', 'Link copied!'); } catch {} } }} className="w-full border border-white/10 text-zinc-400 hover:text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"><Copy className="w-4 h-4" /> Copy Share Link</button>
                   </div>

@@ -33,6 +33,7 @@ import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/useConfirm';
 import { CustomerPortal } from '../CustomerPortal';
 import { makeClientSlug, buildPortalUrl } from '../utils/url';
+import { parseDueDate } from '../utils/date';
 import { VAPID_KEY, vapidKeyToUint8 } from '../utils/vapid';
 import { customerKey } from '../utils/customers';
 import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from '../utils/goals';
@@ -40,6 +41,11 @@ import { getActiveAlarms, playAlarmSound } from '../services/shiftAlarms';
 import { isDeveloper } from '../utils/devMode';
 import { getStages, DEFAULT_STAGES } from '../App';
 import { buildTravelerBlobUrl, printTraveler } from '../services/travelerPrint';
+import { sendDailyRecap } from '../utils/sendDailyRecap';
+
+/** Log duration in fractional minutes — prefers precise durationSeconds when available. */
+const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
+  l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (lMs(l));
 
 /** iOS-style toggle switch — replaces all native checkboxes in Settings. */
 const Toggle = ({
@@ -829,7 +835,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
   // Real-data calculations — last 30 days
   const thirtyDaysAgo = Date.now() - 30 * 86400000;
   const completedRecent = allJobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= thirtyDaysAgo);
-  const loggedMins30 = allLogs.filter(l => l.startTime >= thirtyDaysAgo && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const loggedMins30 = allLogs.filter(l => l.startTime >= thirtyDaysAgo && l.endTime).reduce((a, l) => a + (lMs(l)), 0);
   const loggedHrs30 = loggedMins30 / 60;
 
   // Revenue from completed jobs' quoteAmount
@@ -840,7 +846,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
   const laborCost30 = allLogs.filter(l => l.startTime >= thirtyDaysAgo && l.endTime).reduce((acc, l) => {
     const w = workers.find(w => w.id === l.userId);
     const r = w?.hourlyRate || shopRate;
-    return acc + ((l.durationMinutes || 0) / 60) * r;
+    return acc + ((lMs(l)) / 60) * r;
   }, 0);
   const overheadCost30 = loggedHrs30 * ohRate;
   const totalCost30 = laborCost30 + overheadCost30;
@@ -851,7 +857,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
   const avgJobMargin = jobsWithQuote.length > 0
     ? jobsWithQuote.reduce((acc, j) => {
         const logs = allLogs.filter(l => l.jobId === j.id);
-        const mins = logs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+        const mins = logs.reduce((a, l) => a + (lMs(l)), 0);
         const cost = (mins / 60) * trueCost;
         return acc + ((j.quoteAmount || 0) - cost);
       }, 0) / jobsWithQuote.length
@@ -1922,7 +1928,7 @@ const PortalNoteRow: React.FC<{ job: Job; addToast: any }> = ({ job, addToast })
     }
   };
 
-  const isOverdue = job.dueDate && new Date(job.dueDate).getTime() < Date.now();
+  const isOverdue = job.dueDate && (parseDueDate(job.dueDate)?.getTime() ?? 0) < Date.now();
 
   return (
     <div className="bg-zinc-950/60 border border-white/5 rounded-xl p-4 space-y-3">
@@ -2933,7 +2939,7 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
                   { id: `slide_${ts}_7`, type: 'weather', enabled: true },
                 ]});
               }}
-              className="w-full text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/5 py-1.5 rounded transition-colors font-bold"
+              className="w-full text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/5 py-1.5 rounded transition-colors font-bold"
             >
               ↻ Load Default Lineup
             </button>
@@ -3169,7 +3175,7 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
     const userMap = new Map<string, { name: string; hours: number }>();
     (allLogs as TimeLog[]).filter(l => l.startTime >= cutoff && l.endTime).forEach(l => {
       const cur = userMap.get(l.userId) || { name: l.userName, hours: 0 };
-      cur.hours += (l.durationMinutes || 0) / 60;
+      cur.hours += (lMs(l)) / 60;
       cur.name = l.userName;
       userMap.set(l.userId, cur);
     });
@@ -3240,14 +3246,14 @@ const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, 
     const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0, 0, 0, 0);
     const wkMs = weekStart.getTime();
     const weekLogs = (allLogs as TimeLog[]).filter(l => l.startTime >= wkMs && l.endTime);
-    const totalH = weekLogs.reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+    const totalH = weekLogs.reduce((a, l) => a + (lMs(l)) / 60, 0);
     const sessions = weekLogs.length;
     const completedThisWeek = (jobs as Job[]).filter(j => j.status === 'completed' && (j.completedAt || 0) >= wkMs).length;
     // Hours per day of week (Sun..Sat)
     const daily = Array.from({ length: 7 }, (_, i) => {
       const start = new Date(weekStart); start.setDate(weekStart.getDate() + i);
       const end = new Date(start); end.setDate(start.getDate() + 1);
-      const hrs = weekLogs.filter(l => l.startTime >= start.getTime() && l.startTime < end.getTime()).reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+      const hrs = weekLogs.filter(l => l.startTime >= start.getTime() && l.startTime < end.getTime()).reduce((a, l) => a + (lMs(l)) / 60, 0);
       return hrs;
     });
     const maxH = Math.max(1, ...daily);
@@ -3541,7 +3547,7 @@ const ClockOutAuditLog = ({ logs }: { logs: TimeLog[] }) => {
                     <p className="text-zinc-500 truncate">{l.customer || l.jobId}</p>
                   </div>
                   <span className="text-zinc-300 tabular-nums">
-                    {l.durationMinutes != null ? fmtDurShort(l.durationMinutes) : '—'}
+                    {(l.durationSeconds != null || l.durationMinutes != null) ? fmtDurShort(lMs(l)) : '—'}
                   </span>
                   <span className="text-zinc-400 tabular-nums">
                     {l.endTime ? fmtAuditTime(l.endTime) : '—'}
@@ -3649,6 +3655,39 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   ];
   // Flat list for mobile pills
   const sideItems = sideGroups.flatMap(g => g.items);
+
+  // ── Email recap ──────────────────────────────────────────────────────
+  const [recapSending, setRecapSending] = useState(false);
+  const [recapStatus, setRecapStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const handleSendRecap = useCallback(async () => {
+    if (!settings.recapEmail?.trim()) {
+      setRecapStatus({ ok: false, msg: 'Enter an email address first.' });
+      return;
+    }
+    setRecapSending(true);
+    setRecapStatus(null);
+    try {
+      // Parse comma-separated CC addresses
+      const ccEmails = (settings.recapEmailCC || '')
+        .split(',').map(e => e.trim()).filter(Boolean);
+      const result = await sendDailyRecap({
+        to: settings.recapEmail.trim(),
+        ccEmails,
+        logs: tvAllLogs,
+        allJobs: tvJobs,
+        users: [],
+        shopName: settings.companyName || 'Your Shop',
+        shopRate: settings.shopRate,
+        openReworkCount: 0,
+      });
+      setRecapStatus({ ok: result.ok, msg: result.ok ? 'Recap sent!' : (result.error || 'Send failed') });
+    } catch (e: any) {
+      setRecapStatus({ ok: false, msg: e?.message || 'Unknown error' });
+    } finally {
+      setRecapSending(false);
+    }
+  }, [settings, tvAllLogs, tvJobs]);
 
   // Autosave indicator — pulses briefly after each change
   const [savedFlash, setSavedFlash] = useState(false);
@@ -3786,7 +3825,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
               <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Company Logo</p>
               <div
-                className="border-2 border-dashed border-white/10 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500/40 hover:bg-blue-500/5 transition-all aspect-square flex items-center justify-center"
+                className="border-2 border-dashed border-white/10 rounded-xl p-5 text-center cursor-pointer hover:border-amber-500/40 hover:bg-amber-500/5 transition-all aspect-square flex items-center justify-center"
                 onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/10'); }}
                 onDragLeave={e => { e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10'); }}
                 onDrop={e => {
@@ -3959,6 +3998,49 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 </div>
                 <Toggle checked={settings.autoLunchPauseEnabled || false} onChange={v => setSettings({ ...settings, autoLunchPauseEnabled: v })} />
               </div>
+            </div>
+          </div>
+
+          {/* ── Auto Clock-Out ────────────────────────────────────────────
+              Server-side sweep that stops forgotten timers even when the
+              browser tab is closed. Works in addition to shift alarm clock-out.
+              Shift alarm clock-out = in-browser only (tab must be open).
+              This setting = server sweep runs every minute regardless.
+              ─────────────────────────────────────────────────────────── */}
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 flex items-center justify-between border-b border-white/[0.04]">
+              <div>
+                <p className="text-sm font-semibold text-white flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                  Auto Clock-Out
+                </p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Automatically stops any running timer at this time — even if the browser is closed
+                </p>
+              </div>
+              <Toggle
+                checked={settings.autoClockOutEnabled || false}
+                onChange={v => setSettings({ ...settings, autoClockOutEnabled: v })}
+              />
+            </div>
+            {settings.autoClockOutEnabled && (
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-zinc-300">Clock-Out Time</p>
+                  <p className="text-[11px] text-zinc-600 mt-0.5">24-hour · local time</p>
+                </div>
+                <input
+                  type="time"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-32 focus:outline-none focus:border-amber-500/40"
+                  value={settings.autoClockOutTime || '15:30'}
+                  onChange={e => setSettings({ ...settings, autoClockOutTime: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="px-4 py-2 bg-zinc-950/30 border-t border-white/[0.03]">
+              <p className="text-[11px] text-zinc-600">
+                💡 Tip: Also check "Clock out" on any Shift Alarm above — that plays a sound <em>and</em> stops timers when the app is open.
+              </p>
             </div>
           </div>
 
@@ -4222,7 +4304,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               </summary>
               <div className="px-4 pb-4">
                 <div
-                  className="border-2 border-dashed border-white/10 rounded-xl p-4 text-center cursor-pointer hover:border-blue-500/40 hover:bg-blue-500/5 transition-all"
+                  className="border-2 border-dashed border-white/10 rounded-xl p-4 text-center cursor-pointer hover:border-amber-500/40 hover:bg-amber-500/5 transition-all"
                   onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/10'); }}
                   onDragLeave={e => { e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10'); }}
                   onDrop={e => {
@@ -4788,6 +4870,86 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
           </div>
 
+          {/* Daily Email Recap */}
+          <div>
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Daily Email Recap</p>
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
+                <div>
+                  <p className="text-sm font-semibold text-white">Enable Daily Recap</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Get a nightly summary of hours, jobs, and revenue</p>
+                </div>
+                <Toggle
+                  checked={!!settings.recapEmailEnabled}
+                  onChange={v => setSettings({ ...settings, recapEmailEnabled: v })}
+                />
+              </div>
+              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
+                <div className="shrink-0">
+                  <p className="text-sm font-semibold text-white">Primary Email</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Main recipient for the daily summary</p>
+                </div>
+                <input
+                  type="email"
+                  placeholder="you@example.com"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-52 focus:outline-none focus:border-amber-500/40 ml-4"
+                  value={settings.recapEmail || ''}
+                  onChange={e => setSettings({ ...settings, recapEmail: e.target.value })}
+                />
+              </div>
+              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
+                <div className="shrink-0">
+                  <p className="text-sm font-semibold text-white">Also Send To</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Comma-separated additional addresses</p>
+                </div>
+                <input
+                  type="text"
+                  placeholder="other@example.com, ..."
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-52 focus:outline-none focus:border-amber-500/40 ml-4"
+                  value={settings.recapEmailCC || ''}
+                  onChange={e => setSettings({ ...settings, recapEmailCC: e.target.value })}
+                />
+              </div>
+              <div className="px-4 py-3.5 flex items-center justify-between border-t border-white/[0.04]">
+                <div>
+                  <p className="text-sm font-semibold text-white">Auto-Send Time</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Recap fires automatically each day at this time (Pacific)</p>
+                </div>
+                <input
+                  type="time"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-36 focus:outline-none focus:border-amber-500/40 ml-4"
+                  value={settings.recapTime || ''}
+                  onChange={e => setSettings({ ...settings, recapTime: e.target.value })}
+                />
+              </div>
+              <div className="px-4 py-3.5 flex items-center justify-between border-t border-white/[0.04]">
+                <div>
+                  <p className="text-sm font-semibold text-white">Send Recap Now</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Sends today's hours &amp; jobs immediately</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {recapStatus && (
+                    <span className={`text-xs font-semibold animate-fade-in ${recapStatus.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {recapStatus.ok ? '✓ ' : '✗ '}{recapStatus.msg}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleSendRecap}
+                    disabled={recapSending || !settings.recapEmail?.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    {recapSending ? 'Sending…' : 'Send Now'}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-zinc-600 mt-2 px-1">
+              Requires <code className="font-mono text-zinc-500 bg-zinc-800/60 px-1 py-0.5 rounded text-[10px]">RESEND_API_KEY</code> in Netlify environment variables.
+              Free tier: 100 emails/day — <span className="text-zinc-500">resend.com</span>
+            </p>
+          </div>
+
           {/* Notifications — dev-only */}
           {isDeveloper() && (
             <div>
@@ -4891,7 +5053,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
     if (!weekJobMap.has(l.jobId)) weekJobMap.set(l.jobId, { label: l.jobIdsDisplay || l.jobId, ops: new Set(), mins: 0 });
     const entry = weekJobMap.get(l.jobId)!;
     entry.ops.add(l.operation);
-    entry.mins += l.durationMinutes || 0;
+    entry.mins += lMs(l);
   });
   const weekJobs = Array.from(weekJobMap.values());
 
@@ -4899,7 +5061,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
   const todayMins = recentLogs
     .filter(l => l.endTime && new Date(l.startTime) >= todayStart)
-    .reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    .reduce((a, l) => a + (lMs(l)), 0);
 
   const weekHours = progress?.weekHours || 0;
   const weekOps = progress?.weekOpCount || 0;
@@ -4927,7 +5089,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
   }
 
   // Weekly goal
-  const weekMins = recentLogs.filter(l => l.endTime && new Date(l.startTime) >= weekStart).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const weekMins = recentLogs.filter(l => l.endTime && new Date(l.startTime) >= weekStart).reduce((a, l) => a + (lMs(l)), 0);
   const weekHrsCalc = weekMins / 60;
   const goalPct = Math.min(100, (weekHrsCalc / WEEKLY_GOAL_HRS) * 100);
 
@@ -4938,7 +5100,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
     const d = new Date(todayStart); d.setDate(d.getDate() - i);
     const dEnd = new Date(d); dEnd.setHours(23,59,59,999);
     const dayLogs = recentLogs.filter(l => l.endTime && l.startTime >= d.getTime() && l.startTime <= dEnd.getTime());
-    const mins = dayLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    const mins = dayLogs.reduce((a, l) => a + (lMs(l)), 0);
     dailyData.push({ label: i === 0 ? 'Today' : i === 1 ? 'Yest' : dayNames[d.getDay()], mins, ops: dayLogs.length });
   }
   const maxDayMins = Math.max(...dailyData.map(d => d.mins), 60);
@@ -4946,7 +5108,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
   // Operation breakdown
   const opMap = new Map<string, number>();
   recentLogs.filter(l => l.endTime && new Date(l.startTime) >= weekStart).forEach(l => {
-    opMap.set(l.operation, (opMap.get(l.operation) || 0) + (l.durationMinutes || 0));
+    opMap.set(l.operation, (opMap.get(l.operation) || 0) + (lMs(l)));
   });
   const opBreakdown = Array.from(opMap.entries()).sort((a, b) => b[1] - a[1]);
   const totalOpMins = opBreakdown.reduce((a, [, m]) => a + m, 0) || 1;
@@ -4965,7 +5127,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
   for (const l of allLogs) {
     if (!l.endTime) continue;
     if (l.startTime < monthStart.getTime()) continue;
-    monthMinsByUser.set(l.userId, (monthMinsByUser.get(l.userId) || 0) + (l.durationMinutes || 0));
+    monthMinsByUser.set(l.userId, (monthMinsByUser.get(l.userId) || 0) + (lMs(l)));
   }
 
   // Build leaderboard from the active employee roster. Skip admins (managers

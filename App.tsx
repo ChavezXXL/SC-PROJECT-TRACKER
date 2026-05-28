@@ -48,7 +48,7 @@ import { FeatureGate } from './backend/FeatureGate';
 // Shows X days left when on a trialing subscription. Hidden for SC Deburring.
 import { TrialBanner } from './components/TrialBanner';
 // Pure helpers — extracted to utils/ so each file has a single responsibility
-import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins } from './utils/date';
+import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins, parseDueDate } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { computeJobETA, computeCapacityForecast, RISK_COLORS } from './utils/jobETA';
@@ -656,9 +656,9 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
   };
 
   return (
-    <div className={`bg-zinc-900 border ${isPaused ? 'border-yellow-500/30' : 'border-blue-500/30'} rounded-3xl p-6 shadow-2xl relative overflow-hidden animate-fade-in mb-8 no-print`}>
-      <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Briefcase className="w-64 h-64 text-blue-500" /></div>
-      <div className={`absolute top-0 left-0 w-full h-1 ${isPaused ? 'bg-gradient-to-r from-yellow-500 via-orange-500 to-yellow-500' : 'bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500'} opacity-50 animate-pulse`}></div>
+    <div className={`bg-zinc-900 border ${isPaused ? 'border-yellow-500/30' : 'border-emerald-500/30'} rounded-3xl p-6 shadow-2xl relative overflow-hidden animate-fade-in mb-8 no-print`}>
+      <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Briefcase className="w-64 h-64 text-emerald-500" /></div>
+      <div className={`absolute top-0 left-0 w-full h-1 ${isPaused ? 'bg-gradient-to-r from-yellow-500 via-orange-500 to-yellow-500' : 'bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-500'} opacity-50 animate-pulse`}></div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
         <div className="flex flex-col justify-center">
           <div className="flex items-center gap-2 mb-4">
@@ -668,8 +668,8 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
           <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-1">PO Number</p>
           <h2 className="text-4xl md:text-5xl font-black text-white mb-1">{job ? job.poNumber : 'Unknown'}</h2>
           <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job ? job.jobIdsDisplay : ''}</span></p>
-          <div className="text-xl text-blue-400 font-medium mb-8 flex items-center gap-2">
-            <span className="px-3 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20">{log.operation}</span>
+          <div className="text-xl text-amber-400 font-medium mb-8 flex items-center gap-2">
+            <span className="px-3 py-1 bg-amber-500/10 rounded-lg border border-amber-500/20">{log.operation}</span>
           </div>
           <div className="bg-black/40 rounded-2xl p-6 border border-white/10 mb-6 w-full max-w-sm flex items-center justify-between">
             <div>
@@ -773,7 +773,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
   const borderClass = isOverdue ? 'border-red-500/40 bg-red-500/5' : priorityColors[job.priority || 'normal'];
 
   return (
-    <div ref={cardRef} data-job-id={job.id} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-blue-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''} ${defaultExpanded ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-500/10' : ''}`}>
+    <div ref={cardRef} data-job-id={job.id} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-amber-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''} ${defaultExpanded ? 'ring-2 ring-amber-500 shadow-lg shadow-amber-500/10' : ''}`}>
       <div className="p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-1">
           <div>
@@ -1112,7 +1112,7 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
       <div className="bg-zinc-900 rounded-3xl border border-white/10 text-center w-full max-w-sm shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="p-6 pb-4">
-          <QrCode className="w-14 h-14 mx-auto text-blue-500 mb-3" />
+          <QrCode className="w-14 h-14 mx-auto text-amber-500 mb-3" />
           <h2 className="text-xl font-bold text-white mb-1">Scan Job QR</h2>
           <p className="text-zinc-500 text-xs">Point camera at printed traveler QR code or use hardware scanner</p>
         </div>
@@ -1462,7 +1462,9 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     }
   };
 
-  const filteredJobs = jobs.filter(j => JSON.stringify(j).toLowerCase().includes(search.toLowerCase()));
+  const filteredJobs = jobs.filter(j => {
+    try { return JSON.stringify(j).toLowerCase().includes((search || '').toLowerCase()); } catch { return false; }
+  });
 
   // History grouping
   const histToday = new Date(); histToday.setHours(0,0,0,0);
@@ -1470,7 +1472,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const histWeekAgo = new Date(histToday); histWeekAgo.setDate(histToday.getDate() - 7);
   const histWeekStart = new Date(histToday); histWeekStart.setDate(histToday.getDate() - histToday.getDay());
   const histWeekLogs = myHistory.filter(l => l.endTime && new Date(l.startTime) >= histWeekStart);
-  const histWeekMins = histWeekLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const histWeekMins = histWeekLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
   const historyGroups = [
     { label: 'Today', logs: myHistory.filter(l => new Date(l.startTime) >= histToday) },
     { label: 'Yesterday', logs: myHistory.filter(l => new Date(l.startTime) >= histYesterday && new Date(l.startTime) < histToday) },
@@ -1481,7 +1483,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   // Today stats for worker header
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
   const todayLogs = myHistory.filter(l => new Date(l.startTime) >= todayStart);
-  const todayMins = todayLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const todayMins = todayLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
   const todayHours = todayMins >= 60 ? `${Math.floor(todayMins/60)}h ${todayMins%60}m` : `${todayMins}m`;
   const todayJobs = new Set(todayLogs.map(l => l.jobId)).size;
   const greeting = (() => {
@@ -1495,7 +1497,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     <div className="space-y-5 max-w-5xl mx-auto h-full flex flex-col pb-20">
       {/* Worker hero — personalized greeting + today stats */}
       <div className="card-shine bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden relative">
-        <div aria-hidden="true" className="absolute top-0 right-0 w-40 h-40 bg-blue-500/10 blur-3xl rounded-full" />
+        <div aria-hidden="true" className="absolute top-0 right-0 w-40 h-40 bg-amber-500/10 blur-3xl rounded-full" />
         <div className="relative flex items-center gap-4">
           <Avatar name={user.name} size="xl" ring dot={activeLog ? 'live' : undefined} />
           <div className="flex-1 min-w-0">
@@ -1519,7 +1521,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             </div>
             <div className="text-right">
               <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</p>
-              <p className="text-xl font-black text-blue-400 tabular mt-0.5">{todayJobs}</p>
+              <p className="text-xl font-black text-amber-400 tabular mt-0.5">{todayJobs}</p>
             </div>
           </div>
         </div>
@@ -1615,7 +1617,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
-                        {log.durationMinutes ? <span className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">{formatDuration(log.durationMinutes)}</span> : null}
+                        {(log.durationSeconds != null && log.durationSeconds >= 0 ? log.durationSeconds / 60 : log.durationMinutes) ? <span className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">{formatDuration(log.durationSeconds != null && log.durationSeconds >= 0 ? log.durationSeconds / 60 : (log.durationMinutes || 0))}</span> : null}
                         {log.endTime
                           ? <span className="text-xs text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full">Done</span>
                           : <span className="text-xs text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded-full flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>Active</span>
@@ -1766,7 +1768,7 @@ const PrintableJobSheet = ({ job, onClose, onPrinted }: { job: Job | null, onClo
       <div className="bg-white text-black w-full max-w-3xl mx-auto rounded-xl shadow-2xl relative flex flex-col my-4 mx-4 sm:mx-auto" style={{maxHeight:'calc(100dvh - 2rem)'}} onClick={e => e.stopPropagation()}>
         <div className="bg-zinc-900 text-white p-3 sm:p-4 flex justify-between items-center shrink-0 border-b border-zinc-700 sticky top-0 rounded-t-xl z-10">
           <div>
-            <h3 className="font-bold flex items-center gap-2 text-base sm:text-lg"><Printer className="w-5 h-5 text-blue-500" /> Print Preview</h3>
+            <h3 className="font-bold flex items-center gap-2 text-base sm:text-lg"><Printer className="w-5 h-5 text-amber-500" /> Print Preview</h3>
             <p className="text-xs text-zinc-400 hidden sm:block">Review details before printing.</p>
           </div>
           <div className="flex gap-2">
@@ -2113,9 +2115,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const recentCompleted = jobs.filter(j =>
     j.status === 'completed' && j.completedAt && j.completedAt > ninetyDaysAgo && j.dueDate
   );
-  const onTimeCount = recentCompleted.filter(j =>
-    j.completedAt! <= new Date(j.dueDate! + 'T23:59:59').getTime()
-  ).length;
+  const onTimeCount = recentCompleted.filter(j => {
+    const dueD = parseDueDate(j.dueDate!);
+    if (!dueD) return false;
+    dueD.setHours(23, 59, 59, 999);
+    return j.completedAt! <= dueD.getTime();
+  }).length;
   const onTimePct = recentCompleted.length > 0
     ? Math.round((onTimeCount / recentCompleted.length) * 100)
     : null;
@@ -2127,7 +2132,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const workersWithLogsToday = new Set(allLogs.filter(l => l.startTime >= todayMs).map(l => l.userId));
   const workersNoScansToday = activeWorkers.filter((w: User) => !workersWithLogsToday.has(w.id) && !activeLogs.some(l => l.userId === w.id));
   // Completed logs today (fixed: use allLogs not the trimmed top-5 `logs`)
-  const completedTodayMins = allLogs.filter(l => l.endTime && l.startTime >= todayMs).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+  const completedTodayMins = allLogs.filter(l => l.endTime && l.startTime >= todayMs).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
   // Add time from still-running active logs that started today (subtract any paused time)
   const runningTodayMins = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => {
     const pausedMs = (l.totalPausedMs || 0) + (l.pausedAt ? Date.now() - l.pausedAt : 0);
@@ -2141,7 +2146,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
       {/* Page header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl font-black text-white flex items-center gap-2.5 tracking-tight"><LayoutDashboard className="w-7 h-7 text-blue-500" aria-hidden="true" /> <span>Overview</span></h1>
+          <h1 className="text-3xl font-black text-white flex items-center gap-2.5 tracking-tight"><LayoutDashboard className="w-7 h-7 text-amber-500" aria-hidden="true" /> <span>Overview</span></h1>
           <p className="text-zinc-500 text-sm mt-1">Real-time shop floor status &amp; financials</p>
         </div>
         <div className="text-right hidden sm:block">
@@ -2180,7 +2185,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         // Brain: over-budget active jobs
         const rate = shopSettings.shopRate || 0;
         const overBudgetCount = rate > 0 ? jobs.filter(j => j.status !== 'completed' && j.quoteAmount && j.quoteAmount > 0).filter(j => {
-          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           return (mins / 60) * rate > j.quoteAmount!;
         }).length : 0;
 
@@ -2236,7 +2241,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           items.push({ label: `${worst[1]} jobs all due ${worst[0]}`, count: worst[1], color: '#a78bfa', icon: Calendar, onClick: () => setView('admin-jobs') });
         }
         // Rush jobs — created with < 5 days lead time
-        const rushCount = jobs.filter(j => j.status !== 'completed' && j.dueDate && j.createdAt && (new Date(j.dueDate + 'T23:59:59').getTime() - j.createdAt) / 86400000 <= 5).length;
+        const rushCount = jobs.filter(j => { if (j.status === 'completed' || !j.dueDate || !j.createdAt) return false; const dueD = parseDueDate(j.dueDate); if (!dueD) return false; dueD.setHours(23,59,59,999); return (dueD.getTime() - j.createdAt) / 86400000 <= 5; }).length;
         if (rushCount > 0) items.push({ label: `${rushCount} rush job${rushCount > 1 ? 's' : ''} — short lead time`, count: rushCount, color: '#f87171', icon: Zap, onClick: () => setView('admin-jobs') });
 
         if (items.length === 0) return null;
@@ -2286,8 +2291,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
       <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4">
         {/* Live Activity */}
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Live</p><h3 className="text-xl sm:text-2xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] text-blue-400 mt-0.5 truncate">Jobs running</p></div>
-          <Activity className={`w-7 h-7 sm:w-8 sm:h-8 text-blue-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Live</p><h3 className="text-xl sm:text-2xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] text-emerald-400 mt-0.5 truncate">Jobs running</p></div>
+          <Activity className={`w-7 h-7 sm:w-8 sm:h-8 text-emerald-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
         </div>
         {/* Open Jobs */}
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
@@ -2392,7 +2397,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
           <div>
             <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-              <Activity className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" /> Shop Flow Map
+              <Activity className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Shop Flow Map
             </h3>
             <p className="text-[11px] text-zinc-600 mt-0.5">Tap a stage for jobs inside · glowing = workers on it · flame = stuck</p>
           </div>
@@ -2477,11 +2482,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
         const calcJobFinancials = (j: any) => {
           const jLogs = allLogs.filter(l => l.jobId === j.id && l.endTime);
-          const hrs = jLogs.reduce((a: number, l: any) => a + (l.durationMinutes || 0), 0) / 60;
+          const _lm = (l: any) => l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
+          const hrs = jLogs.reduce((a: number, l: any) => a + _lm(l), 0) / 60;
           const laborCost = jLogs.reduce((acc: number, l: any) => {
             const w = dashWorkers.find(w => w.id === l.userId);
             const r = w?.hourlyRate || rate;
-            return acc + ((l.durationMinutes || 0) / 60) * r;
+            return acc + (_lm(l) / 60) * r;
           }, 0);
           const cost = laborCost + (hrs * ohRate);
           const revenue = j.quoteAmount || 0;
@@ -2515,9 +2521,10 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const otdWindow = Date.now() - 30 * 86400000;
         const otdJobs = completedJobs.filter(j => j.dueDate && j.completedAt && j.completedAt >= otdWindow);
         const otdOnTime = otdJobs.filter(j => {
-          // End-of-day on due date
-          const due = new Date(j.dueDate + 'T23:59:59').getTime();
-          return (j.completedAt || 0) <= due;
+          const dueD = parseDueDate(j.dueDate!);
+          if (!dueD) return false;
+          dueD.setHours(23, 59, 59, 999);
+          return (j.completedAt || 0) <= dueD.getTime();
         }).length;
         const otdPct = otdJobs.length > 0 ? Math.round((otdOnTime / otdJobs.length) * 100) : null;
         const otdLate = otdJobs.length - otdOnTime;
@@ -2583,8 +2590,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
               </div>
               <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
                 <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">$/Hour Earned</p>
-                <p className="text-base sm:text-xl md:text-2xl font-black text-blue-400 truncate tabular">${avgRevenuePerHr.toFixed(0)}</p>
-                <p className="text-[10px] text-zinc-600 truncate">Cost: ${avgCostPerHr.toFixed(0)}/hr</p>
+                <p className={`text-base sm:text-xl md:text-2xl font-black truncate tabular ${monthTotals.hrs > 0 ? 'text-amber-400' : 'text-zinc-600'}`}>{monthTotals.hrs > 0 ? `$${avgRevenuePerHr.toFixed(0)}` : '—'}</p>
+                <p className="text-[10px] text-zinc-600 truncate">{monthTotals.hrs > 0 ? `Cost: $${avgCostPerHr.toFixed(0)}/hr` : 'No hours logged'}</p>
               </div>
             </div>
 
@@ -2931,7 +2938,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                   <Avatar name={l.userName} size="md" ring dot={l.pausedAt ? 'paused' : 'live'} />
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-white text-sm truncate">{l.userName}</p>
-                    <p className="text-xs text-blue-400 font-semibold truncate">{l.operation}</p>
+                    <p className="text-xs text-amber-400 font-semibold truncate">{l.operation}</p>
                     {liveJob && (
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span className="text-[10px] font-black text-white/60 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono">PO {liveJob.poNumber}</span>
@@ -2960,8 +2967,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         </div>
         <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col">
           <div className="p-5 border-b border-white/5 flex justify-between items-center">
-            <h3 className="font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-blue-500" /> Recent Completed</h3>
-            <button onClick={() => setView('admin-logs')} className="text-xs font-semibold text-blue-400 hover:text-white transition-colors flex items-center gap-1">View All <ChevronRight className="w-3 h-3" /></button>
+            <h3 className="font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-amber-500" /> Recent Completed</h3>
+            <button onClick={() => setView('admin-logs')} className="text-xs font-semibold text-amber-400 hover:text-white transition-colors flex items-center gap-1">View All <ChevronRight className="w-3 h-3" /></button>
           </div>
           <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[420px]">
             {logs.length === 0 && (
@@ -2990,8 +2997,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                     </div>
                   )}
                 </div>
-                {l.durationMinutes != null && (
-                  <div className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded shrink-0 font-bold">{formatDuration(l.durationMinutes)}</div>
+                {(l.durationSeconds != null ? l.durationSeconds >= 0 : l.durationMinutes != null) && (
+                  <div className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded shrink-0 font-bold">{formatDuration(l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0))}</div>
                 )}
               </div>
             ))}
@@ -3012,13 +3019,13 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           if ((w as any).role === 'admin') continue;
           const wLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= thirtyDaysAgo);
           if (wLogs.length === 0) continue;
-          const totalMins = wLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const totalMins = wLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           const jobIds = new Set(wLogs.map(l => l.jobId));
           const completedForW = jobs.filter(j => j.status === 'completed' && jobIds.has(j.id) && j.dueDate && j.completedAt);
-          const onTime = completedForW.filter(j => j.completedAt! <= new Date(j.dueDate! + 'T23:59:59').getTime()).length;
+          const onTime = completedForW.filter(j => { const dueD = parseDueDate(j.dueDate!); if (!dueD) return false; dueD.setHours(23,59,59,999); return j.completedAt! <= dueD.getTime(); }).length;
           const todayStart = new Date(); todayStart.setHours(0,0,0,0);
           const todayLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= todayStart.getTime());
-          const activeMinsToday = todayLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const activeMinsToday = todayLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           statMap.set(w.id, { id: w.id, name: w.name, jobsDone: jobIds.size, totalMins, onTime, late: completedForW.length - onTime, activeMinsToday, workerRate: (w as any).hourlyRate || rate });
         }
         const workers30 = [...statMap.values()].sort((a, b) => b.totalMins - a.totalMins);
@@ -3070,11 +3077,11 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         );
         if (completedWithQuote.length < 3) return null;
         const accuracy = completedWithQuote.map(j => {
-          const mins = allLogs.filter(l => l.jobId === j.id && l.endTime).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const mins = allLogs.filter(l => l.jobId === j.id && l.endTime).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           const actualCost = (mins / 60) * rate;
           return ((actualCost - j.quoteAmount!) / j.quoteAmount!) * 100;
         });
-        const avgDrift = accuracy.reduce((a, x) => a + x, 0) / accuracy.length;
+        const avgDrift = accuracy.length > 0 ? accuracy.reduce((a, x) => a + x, 0) / accuracy.length : 0;
         const overQuoted = accuracy.filter(x => x < -10).length;
         const underQuoted = accuracy.filter(x => x > 10).length;
         const accurate = accuracy.length - overQuoted - underQuoted;
@@ -3084,7 +3091,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
             <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
               <div>
-                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp className="w-3.5 h-3.5 text-blue-400" /> Quote Accuracy</h3>
+                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp className="w-3.5 h-3.5 text-amber-400" /> Quote Accuracy</h3>
                 <p className="text-[11px] text-zinc-600 mt-0.5">{completedWithQuote.length} jobs with quotes · last 90 days</p>
               </div>
               <div className="text-right">
@@ -3671,7 +3678,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const workerCount = Math.max(1, workers.length || activeLogs.length || 1);
     const activeCount = new Set(activeLogs.map(l => l.userId)).size;
     return computeCapacityForecast(jobEtaMap, workerCount, activeCount);
-  }, [jobEtaMap, workers.length, activeLogs]);
+  }, [jobEtaMap, workers, activeLogs]);
 
   // Budget map: per-job { usedPct, overBudget, atRisk }
   const jobBudgetMap = useMemo(() => {
@@ -3679,7 +3686,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const m = new Map<string, { usedPct: number; overBudget: boolean; atRisk: boolean; cost: number }>();
     if (!rate) return m;
     jobs.filter(j => j.quoteAmount && j.quoteAmount > 0).forEach(j => {
-      const totalMins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+      const totalMins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
       const cost = (totalMins / 60) * rate;
       const usedPct = Math.min(999, (cost / j.quoteAmount!) * 100);
       m.set(j.id, { usedPct, overBudget: cost > j.quoteAmount!, atRisk: usedPct >= 70 && cost <= j.quoteAmount!, cost });
@@ -3701,13 +3708,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const last = matches[0];
     // Total hours logged for the last completed run
     const lastLogs = allLogs.filter(l => l.jobId === last.id);
-    const totalMins = lastLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+    const logMs = (l: TimeLog) => l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
+    const totalMins = lastLogs.reduce((a, l) => a + logMs(l), 0);
     const totalHrs = totalMins / 60;
     // Average hours across all completed runs
     const completedRuns = matches.filter(j => j.status === 'completed');
     const avgHrs = completedRuns.length > 0
       ? completedRuns.reduce((sum, j) => {
-          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationMinutes || 0), 0);
+          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + logMs(l), 0);
           return sum + mins;
         }, 0) / completedRuns.length / 60
       : null;
@@ -3761,8 +3769,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const handleSave = async () => {
     if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
     const today = new Date();
-    const localDate = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    // Format as MM/DD/YYYY — the app's canonical date format.
+    // The old ISO-string approach produced YYYY-MM-DD which broke every dateNum() comparison.
+    const localDate = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
     const job: Job = {
+      // Spread all existing fields FIRST so completedAt, jobNotes, checklist,
+      // attachments, expectedHours, linkedQuoteId etc. survive a save in
+      // localStorage mode (which does a full replace, not a merge like Firestore).
+      ...(editingJob as Job),
+      // Explicit fields below override the spread — these are the form-controlled values.
       id: editingJob.id || Date.now().toString(),
       jobIdsDisplay: editingJob.jobIdsDisplay || editingJob.poNumber || 'J-' + Date.now().toString().slice(-4),
       poNumber: editingJob.poNumber,
@@ -3813,13 +3828,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-            {calendarOnly ? <><Calendar className="w-6 h-6 text-blue-500" /> Production Calendar</> : <><Briefcase className="w-6 h-6 text-blue-500" /> Production Jobs</>}
+            {calendarOnly ? <><Calendar className="w-6 h-6 text-amber-500" /> Production Calendar</> : <><Briefcase className="w-6 h-6 text-amber-500" /> Production Jobs</>}
           </h2>
           <p className="text-zinc-500 text-sm">{calendarOnly ? 'Month view of every job due date. Click a day to see what ships.' : 'Manage orders and track by PO, priority, and due date.'}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all shadow-lg shadow-amber-900/20"><Plus className="w-4 h-4" /> New Job</button>
-          <button onClick={() => setShowScanner(true)} title="Scan a PO document to auto-fill a new job" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Scan className="w-4 h-4 text-blue-400" /> Scan PO</button>
+          <button onClick={() => setShowScanner(true)} title="Scan a PO document to auto-fill a new job" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Scan className="w-4 h-4 text-amber-400" /> Scan PO</button>
           <button
             onClick={() => setShowClientUpdate(true)}
             title="Generate a status message for a customer based on their open jobs"
@@ -3839,9 +3854,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             <span className={`text-xs font-black px-2 py-0.5 rounded-full ${activeTab === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>{jobs.filter(j => j.status !== 'completed').length}</span>
           </button>
           <button onClick={() => { setActiveTab('completed'); setFilterStatus('all'); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'completed' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-white'}`}>
-            <CheckCircle className={`w-3.5 h-3.5 ${activeTab === 'completed' ? 'text-blue-400' : 'text-zinc-600'}`} />
+            <CheckCircle className={`w-3.5 h-3.5 ${activeTab === 'completed' ? 'text-amber-400' : 'text-zinc-600'}`} />
             Completed History
-            <span className={`text-xs font-black px-2 py-0.5 rounded-full ${activeTab === 'completed' ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-800 text-zinc-500'}`}>{jobs.filter(j => j.status === 'completed').length}</span>
+            <span className={`text-xs font-black px-2 py-0.5 rounded-full ${activeTab === 'completed' ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-500'}`}>{jobs.filter(j => j.status === 'completed').length}</span>
           </button>
         </div>
       )}
@@ -3867,9 +3882,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         // Group ALL jobs (including completed) by due date
         const jobsByDay: Record<number, Job[]> = {};
         jobs.filter(j => j.dueDate).forEach(j => {
-          const m = j.dueDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-          if (!m) return;
-          const jMo = parseInt(m[1]) - 1, jDay = parseInt(m[2]), jYr = parseInt(m[3]);
+          const dueD = parseDueDate(j.dueDate);
+          if (!dueD) return;
+          const jYr = dueD.getFullYear(), jMo = dueD.getMonth(), jDay = dueD.getDate();
           if (jYr === yr && jMo === mo) {
             if (!jobsByDay[jDay]) jobsByDay[jDay] = [];
             jobsByDay[jDay].push(j);
@@ -4007,7 +4022,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       {selectedDayJobs.map(j => {
                         const isOverdue = j.status !== 'completed' && dateNum(j.dueDate) < dateNum(todayStr);
                         const jobLogs = allLogs.filter(l => l.jobId === j.id);
-                        const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+                        const totalMins = jobLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
                         return (
                           <div key={j.id} onClick={() => { setEditingJob(j); setShowModal(true); }}
                             className="bg-zinc-800/50 border border-white/5 rounded-lg p-3 cursor-pointer hover:bg-zinc-800 hover:border-white/10 transition-all">
@@ -4319,21 +4334,24 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const isOverdue = j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < todayN;
               const isDueSoon = j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3DaysN;
               // Historical on-time / late for completed jobs
-              const deliveredLate = j.status === 'completed' && j.dueDate && j.completedAt && j.completedAt > new Date(j.dueDate + 'T23:59:59').getTime();
-              const deliveredOnTime = j.status === 'completed' && j.dueDate && j.completedAt && j.completedAt <= new Date(j.dueDate + 'T23:59:59').getTime();
+              const _dueD = j.dueDate ? parseDueDate(j.dueDate) : null;
+              const _dueMs = _dueD ? (_dueD.setHours(23,59,59,999), _dueD.getTime()) : null;
+              const deliveredLate = j.status === 'completed' && _dueMs != null && j.completedAt != null && j.completedAt > _dueMs;
+              const deliveredOnTime = j.status === 'completed' && _dueMs != null && j.completedAt != null && j.completedAt <= _dueMs;
               // Brain signals
               const isStale = staleJobIds.has(j.id);
               const budget = jobBudgetMap.get(j.id);
-              // Job costing — per-worker rates
+              // Job costing — per-worker rates (prefer durationSeconds for precision)
               const jobLogs = allLogs.filter(l => l.jobId === j.id);
-              const totalMins = jobLogs.reduce((a, l) => a + (l.durationMinutes || 0), 0);
+              const logMins2 = (l: TimeLog) => l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
+              const totalMins = jobLogs.reduce((a, l) => a + logMins2(l), 0);
               const totalHrs = totalMins / 60;
               const fallbackRate = shopSettings.shopRate || 0;
               const overheadRate = (shopSettings.monthlyOverhead || 0) / (shopSettings.monthlyWorkHours || 160);
               const laborCost = jobLogs.reduce((acc, l) => {
                 const w = workers.find(w => w.id === l.userId);
                 const r = w?.hourlyRate || fallbackRate;
-                return acc + ((l.durationMinutes || 0) / 60) * r;
+                return acc + (logMins2(l) / 60) * r;
               }, 0);
               const overheadCost = totalHrs * overheadRate;
               const totalCost = laborCost + overheadCost;
@@ -4400,7 +4418,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {isStale && j.status !== 'completed' && <span className="text-[10px] font-black text-zinc-500 bg-zinc-800/60 border border-zinc-700/60 px-1.5 py-0.5 rounded" title="No activity in 48+ hours">STALE</span>}
                         {/* RUSH badge — job was created with very little lead time (<= 5 days before due) */}
                         {j.status !== 'completed' && j.dueDate && j.createdAt && (() => {
-                          const dueDateMs = new Date(j.dueDate + 'T23:59:59').getTime();
+                          const _dueD2 = parseDueDate(j.dueDate); if (!_dueD2) return null;
+                          _dueD2.setHours(23,59,59,999); const dueDateMs = _dueD2.getTime();
                           const leadDays = (dueDateMs - j.createdAt) / 86400000;
                           if (leadDays > 5) return null;
                           return (
@@ -4637,7 +4656,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-zinc-950">{reworkByJob.get(j.id)!.open}</span>
                         )}
                       </button>
-                      <button aria-label={`Edit job ${j.poNumber || ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-blue-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" aria-hidden="true" /></button>
+                      <button aria-label={`Edit job ${j.poNumber || ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-amber-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" aria-hidden="true" /></button>
                       <button aria-label={`Delete job ${j.poNumber || ''}`} onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="hidden sm:flex p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
                     </div>
                   </td>
@@ -4949,11 +4968,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
 
                 {/* Customer Portal Update — human-friendly status for the
                     customer. Appears in a blue callout on their portal. */}
-                <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-3">
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-3">
                   <div className="flex items-start gap-2">
-                    <span className="text-blue-400 text-sm mt-0.5">💬</span>
+                    <span className="text-amber-400 text-sm mt-0.5">💬</span>
                     <div className="flex-1">
-                      <label className="text-xs font-bold text-blue-300 uppercase tracking-wider block">Customer Portal Update</label>
+                      <label className="text-xs font-bold text-amber-300 uppercase tracking-wider block">Customer Portal Update</label>
                       <p className="text-[10px] text-zinc-500 mt-0.5">
                         Written for the customer. Example: "Shipping Friday EOD" or "Running a day behind — targeting Tue next week."
                       </p>
@@ -5028,7 +5047,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     {priceSuggestion.lastTotalHrs !== null && (
                       <div className="bg-black/20 rounded-xl p-2.5 text-center">
                         <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Last Run Time</p>
-                        <p className="text-base font-black text-blue-400">{priceSuggestion.lastTotalHrs.toFixed(1)}h</p>
+                        <p className="text-base font-black text-amber-400">{priceSuggestion.lastTotalHrs.toFixed(1)}h</p>
                       </div>
                     )}
                     {priceSuggestion.avgHrs !== null && priceSuggestion.completedCount > 1 && (
@@ -5058,7 +5077,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       <button
                         type="button"
                         onClick={() => setEditingJob({ ...editingJob, expectedHours: parseFloat(priceSuggestion.lastTotalHrs!.toFixed(1)) })}
-                        className="text-xs font-black bg-blue-600/80 hover:bg-blue-500/80 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all active:scale-95"
+                        className="text-xs font-black bg-amber-600/80 hover:bg-amber-500/80 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all active:scale-95"
                       >
                         ↙ Set {priceSuggestion.lastTotalHrs.toFixed(1)}h budget
                       </button>
@@ -5143,7 +5162,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 <div className="bg-zinc-800/20 border border-white/5 rounded-xl p-3 flex items-center gap-3">
                   <span className="text-lg">🚚</span>
                   <p className="text-[11px] text-zinc-500">
-                    <span className="font-bold text-zinc-400">Shipping details + print packing slip</span> unlock after you hit <span className="font-bold text-blue-400">Create Job →</span>
+                    <span className="font-bold text-zinc-400">Shipping details + print packing slip</span> unlock after you hit <span className="font-bold text-amber-400">Create Job →</span>
                   </p>
                 </div>
               )}
@@ -5324,7 +5343,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setSelectedWorker(null)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${!selectedWorker ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-white/10 text-zinc-300 hover:border-white/30'}`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${!selectedWorker ? 'bg-amber-600 border-amber-500 text-white' : 'bg-zinc-800 border-white/10 text-zinc-300 hover:border-white/30'}`}
                   >
                     Myself ({user.name})
                   </button>
@@ -5380,7 +5399,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-2">Select Operation</label>
                 <div className="grid grid-cols-2 gap-2">
                   {ops.map(op => (
-                    <button key={op} onClick={() => handleAdminStartJob(op)} className="bg-zinc-800 hover:bg-blue-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors">{op}</button>
+                    <button key={op} onClick={() => handleAdminStartJob(op)} className="bg-zinc-800 hover:bg-amber-600 hover:text-white border border-white/5 py-3 px-3 rounded-xl text-sm font-medium text-zinc-300 transition-colors">{op}</button>
                   ))}
                   {ops.length === 0 && <p className="col-span-2 text-center text-sm text-zinc-500">No operations defined. Check Settings.</p>}
                 </div>
@@ -5497,14 +5516,14 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tight"><Users className="w-6 h-6 text-blue-500" /> Team</h2>
+          <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tight"><Users className="w-6 h-6 text-amber-500" /> Team</h2>
           <p className="text-sm text-zinc-500 mt-0.5">{users.length} member{users.length !== 1 ? 's' : ''} · {admins.length} admin · {managers.length} manager{managers.length !== 1 ? 's' : ''} · {workers.length} worker{workers.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowBadges(true)} disabled={users.length === 0} className="bg-zinc-800/80 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 text-sm font-bold transition-all disabled:opacity-40" title="Print QR sign-in badges">
             <QrCode className="w-4 h-4" aria-hidden="true" /> Print Badges
           </button>
-          <button onClick={openNew} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg shadow-blue-900/40 transition-all">
+          <button onClick={openNew} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg shadow-amber-900/40 transition-all">
             <Plus className="w-4 h-4" aria-hidden="true" /> Invite Member
           </button>
         </div>
@@ -5578,14 +5597,14 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
               <div className="px-5 pt-4 shrink-0">
                 <div className="flex items-center gap-1.5">
                   {[1, 2, 3, 4].map(s => (
-                    <div key={s} className={`flex-1 h-1 rounded-full transition-all duration-500 ${s < wizardStep ? 'bg-gradient-to-r from-blue-500 to-indigo-500' : s === wizardStep ? 'bg-blue-500' : 'bg-zinc-800'}`} />
+                    <div key={s} className={`flex-1 h-1 rounded-full transition-all duration-500 ${s < wizardStep ? 'bg-gradient-to-r from-orange-500 to-amber-500' : s === wizardStep ? 'bg-amber-500' : 'bg-zinc-800'}`} />
                   ))}
                 </div>
                 <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider mt-2 text-zinc-600">
-                  <span className={wizardStep >= 1 ? 'text-blue-400' : ''}>Role</span>
-                  <span className={wizardStep >= 2 ? 'text-blue-400' : ''}>Identity</span>
-                  <span className={wizardStep >= 3 ? 'text-blue-400' : ''}>Access</span>
-                  <span className={wizardStep >= 4 ? 'text-blue-400' : ''}>Review</span>
+                  <span className={wizardStep >= 1 ? 'text-amber-400' : ''}>Role</span>
+                  <span className={wizardStep >= 2 ? 'text-amber-400' : ''}>Identity</span>
+                  <span className={wizardStep >= 3 ? 'text-amber-400' : ''}>Access</span>
+                  <span className={wizardStep >= 4 ? 'text-amber-400' : ''}>Review</span>
                 </div>
               </div>
             )}
@@ -5608,7 +5627,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                         key={r}
                         type="button"
                         onClick={() => setEditingUser({ ...editingUser, role: r })}
-                        className={`w-full flex items-start gap-3 p-4 rounded-2xl border text-left transition-all ${active ? 'bg-gradient-to-br from-blue-500/15 to-indigo-500/5 border-blue-500/40 ring-1 ring-blue-500/30' : 'bg-zinc-900/50 border-white/5 hover:border-white/15 hover:bg-zinc-900/80'}`}
+                        className={`w-full flex items-start gap-3 p-4 rounded-2xl border text-left transition-all ${active ? 'bg-gradient-to-br from-amber-500/15 to-orange-500/5 border-amber-500/40 ring-1 ring-amber-500/30' : 'bg-zinc-900/50 border-white/5 hover:border-white/15 hover:bg-zinc-900/80'}`}
                       >
                         <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${meta.accent} flex items-center justify-center shadow-lg shrink-0`}>
                           <Icon className="w-5 h-5 text-white" aria-hidden="true" />
@@ -5616,11 +5635,11 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-white">{meta.label}</span>
-                            {active && <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">SELECTED</span>}
+                            {active && <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">SELECTED</span>}
                           </div>
                           <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{meta.description}</p>
                         </div>
-                        {active && <CheckCircle className="w-5 h-5 text-blue-400 shrink-0" aria-hidden="true" />}
+                        {active && <CheckCircle className="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true" />}
                       </button>
                     );
                   })}
@@ -5708,7 +5727,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">PIN (4+ digits)</label>
-                      <button type="button" onClick={() => setEditingUser({ ...editingUser, pin: randomPin() })} className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold">Generate</button>
+                      <button type="button" onClick={() => setEditingUser({ ...editingUser, pin: randomPin() })} className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold">Generate</button>
                     </div>
                     <input
                       type="text"
@@ -5794,20 +5813,20 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                     const inviteUrl = `${window.location.origin}?u=${encodeURIComponent(editingUser.username || '')}`;
                     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&bgcolor=09090b&color=ffffff&margin=0&data=${encodeURIComponent(inviteUrl)}`;
                     return (
-                      <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/25 rounded-2xl p-4 flex items-center gap-4">
+                      <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/25 rounded-2xl p-4 flex items-center gap-4">
                         <div className="shrink-0 p-2 bg-white rounded-xl">
                           <img src={qrUrl} alt={`QR code for ${editingUser.name}`} className="w-24 h-24 block" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-black text-blue-300 uppercase tracking-widest">Scan to sign in</p>
-                          <p className="text-[11px] text-blue-400/80 mt-1 leading-snug">Have {editingUser.name?.split(' ')[0] || 'them'} scan this with their phone camera to open the app. They'll just need to enter their PIN.</p>
+                          <p className="text-xs font-black text-amber-300 uppercase tracking-widest">Scan to sign in</p>
+                          <p className="text-[11px] text-amber-400/80 mt-1 leading-snug">Have {editingUser.name?.split(' ')[0] || 'them'} scan this with their phone camera to open the app. They'll just need to enter their PIN.</p>
                           <button
                             type="button"
                             onClick={async () => {
                               const text = `${editingUser.name} — sign-in\nUsername: ${editingUser.username}\nPIN: ${editingUser.pin}\nApp: ${window.location.origin}`;
                               try { await navigator.clipboard.writeText(text); setCopiedInvite(true); setTimeout(() => setCopiedInvite(false), 2000); } catch {}
                             }}
-                            className="mt-2 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+                            className="mt-2 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 transition-colors"
                           >
                             <Copy className="w-3 h-3" aria-hidden="true" /> {copiedInvite ? 'Copied!' : 'Copy Credentials'}
                           </button>
@@ -5881,11 +5900,11 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
             {/* Header — hidden in print */}
             <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/40 to-transparent shrink-0 no-print">
               <div>
-                <h3 className="font-black text-white text-base tracking-tight flex items-center gap-2"><QrCode className="w-4 h-4 text-blue-400" aria-hidden="true" /> Sign-In Badges</h3>
+                <h3 className="font-black text-white text-base tracking-tight flex items-center gap-2"><QrCode className="w-4 h-4 text-amber-400" aria-hidden="true" /> Sign-In Badges</h3>
                 <p className="text-[11px] text-zinc-500 mt-0.5">Print, cut, and laminate. Workers scan their badge to sign in instantly.</p>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => window.print()} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-900/30 transition-all">
+                <button onClick={() => window.print()} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-amber-900/30 transition-all">
                   <Printer className="w-4 h-4" aria-hidden="true" /> Print
                 </button>
                 <button aria-label="Close" onClick={() => setShowBadges(false)} className="text-zinc-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10"><X className="w-4 h-4" aria-hidden="true" /></button>
@@ -5970,7 +5989,7 @@ const TvAutoReload: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       <div className="text-6xl animate-pulse">📡</div>
       <h1 className="text-3xl font-black">Reconnecting…</h1>
       <p className="text-zinc-400 text-lg">Display will refresh in <span className="text-white font-bold">{countdown}s</span></p>
-      <button onClick={() => window.location.reload()} className="mt-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-sm">Reload now</button>
+      <button onClick={() => window.location.reload()} className="mt-2 px-6 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl font-bold text-sm">Reload now</button>
     </div>
   );
   return <>{children}</>;
@@ -6336,7 +6355,7 @@ export default function App() {
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
             <div className="flex items-center gap-2 font-black text-white text-sm tracking-tight">
-              <div className="relative w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+              <div className="relative w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/30">
                 <Sparkles className="w-4 h-4 text-white" aria-hidden="true" />
               </div>
               SC DEBURRING

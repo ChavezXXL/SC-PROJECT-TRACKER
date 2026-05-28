@@ -32,7 +32,12 @@ export function computeGoalProgress(
     case 'hours-logged':
       current = logs
         .filter(l => l.startTime >= cutoff && l.endTime)
-        .reduce((a, l) => a + (l.durationMinutes || 0) / 60, 0);
+        .reduce((a, l) => {
+          const mins = l.durationSeconds != null && l.durationSeconds >= 0
+            ? l.durationSeconds / 60
+            : (l.durationMinutes || 0);
+          return a + mins / 60;
+        }, 0);
       break;
     case 'revenue':
       current = jobs
@@ -40,13 +45,15 @@ export function computeGoalProgress(
         .reduce((a, j) => a + (j.quoteAmount || 0), 0);
       break;
     case 'on-time-delivery': {
-      const completed = jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= cutoff && j.dueDate);
+      // Require completedAt to be a real timestamp — some jobs may reach a complete
+      // stage via stage-advance without setting completedAt.
+      const completed = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && j.dueDate);
       if (completed.length === 0) { current = 0; break; }
       const onTime = completed.filter(j => {
         const m = j.dueDate!.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
         if (!m) return false;
         const due = new Date(+m[3], +m[1] - 1, +m[2], 23, 59, 59).getTime();
-        return j.completedAt! <= due + 86400000;
+        return (j.completedAt as number) <= due + 86400000;
       }).length;
       current = Math.round((onTime / completed.length) * 100);
       break;

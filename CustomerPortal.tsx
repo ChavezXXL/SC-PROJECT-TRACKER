@@ -3,6 +3,7 @@ import { Package, Clock, CheckCircle, Truck, AlertTriangle, Search, FileText, Ch
 import type { Job, SystemSettings, JobStage, Quote, QuoteViewEvent } from './types';
 import * as DB from './services/mockDb';
 import { stagesForCustomer } from './utils/stageRouting';
+import { parseDueDate } from './utils/date';
 
 /** Human-friendly "3 days ago" / "2 hrs ago" — for the "last updated" hint. */
 function relativeTime(ts: number): string {
@@ -232,7 +233,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
           <div className="flex items-center gap-3 min-w-0">
             {settings.companyLogo && <img src={settings.companyLogo} className="h-9 sm:h-10 object-contain shrink-0" alt="Logo" />}
             <div className="min-w-0">
-              <h1 className="text-base sm:text-xl font-bold truncate">{settings.companyName || 'SC Deburring'}</h1>
+              <h1 className="text-base sm:text-xl font-bold truncate">{settings.companyName || 'Your Shop'}</h1>
               <p className="text-xs text-zinc-500">Customer Portal</p>
             </div>
           </div>
@@ -254,7 +255,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
           <h2 className="text-2xl font-black text-white mt-1">{customerName}</h2>
           {linkedQuote?.billTo?.contactPerson && <p className="text-sm text-zinc-400 mt-1">{linkedQuote.billTo.contactPerson}</p>}
           <div className="flex gap-4 mt-3">
-            <div className="text-sm"><span className="text-zinc-500">Active Jobs:</span> <span className="text-blue-400 font-bold">{totalActive}</span></div>
+            <div className="text-sm"><span className="text-zinc-500">Active Jobs:</span> <span className="text-amber-400 font-bold">{totalActive}</span></div>
             <div className="text-sm"><span className="text-zinc-500">Completed:</span> <span className="text-emerald-400 font-bold">{totalCompleted}</span></div>
           </div>
         </div>
@@ -262,8 +263,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
         {/* ── Tab switcher (if quote linked) ── */}
         {linkedQuote && (
           <div className="flex gap-1 bg-zinc-900/50 p-1 rounded-lg border border-white/5">
-            <button onClick={() => setTab('quote')} className={`flex-1 px-3 py-2 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${tab === 'quote' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}><FileText className="w-4 h-4" /> Quote {linkedQuote.quoteNumber}</button>
-            <button onClick={() => setTab('jobs')} className={`flex-1 px-3 py-2 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${tab === 'jobs' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}><Package className="w-4 h-4" /> Job Status</button>
+            <button onClick={() => setTab('quote')} className={`flex-1 px-3 py-2 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${tab === 'quote' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}><FileText className="w-4 h-4" /> Quote {linkedQuote.quoteNumber}</button>
+            <button onClick={() => setTab('jobs')} className={`flex-1 px-3 py-2 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${tab === 'jobs' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}><Package className="w-4 h-4" /> Job Status</button>
           </div>
         )}
 
@@ -314,7 +315,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                   );
                 }
                 return (
-                  <div className={`bg-gradient-to-br ${isUrgent ? 'from-orange-500/15 to-red-500/5 border-orange-500/30' : 'from-blue-500/10 to-indigo-500/5 border-blue-500/20'} border rounded-2xl p-5`}>
+                  <div className={`bg-gradient-to-br ${isUrgent ? 'from-orange-500/15 to-red-500/5 border-orange-500/30' : 'from-amber-500/10 to-orange-500/5 border-amber-500/20'} border rounded-2xl p-5`}>
                     {isUrgent && daysLeft !== null && (
                       <div className="flex items-center gap-2 mb-3 px-3 py-1.5 bg-orange-500/15 border border-orange-500/30 rounded-lg">
                         <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 animate-pulse" aria-hidden="true" />
@@ -324,13 +325,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                       </div>
                     )}
                     {!isUrgent && daysLeft !== null && daysLeft <= 30 && (
-                      <p className="text-[11px] font-bold text-blue-400 mb-3 flex items-center gap-1.5">
+                      <p className="text-[11px] font-bold text-amber-400 mb-3 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5" aria-hidden="true" /> Valid for {daysLeft} more days
                       </p>
                     )}
                     <div className="flex items-center justify-between flex-wrap gap-3">
                       <div>
-                        <p className="text-blue-400 font-bold">Quote Ready for Review</p>
+                        <p className="text-amber-400 font-bold">Quote Ready for Review</p>
                         <p className="text-zinc-400 text-xs mt-0.5">Review the details below, then approve or decline.</p>
                       </div>
                       <div className="flex gap-2">
@@ -356,15 +357,15 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                   </div>
                   <p className="text-xs text-zinc-500">Created {new Date(linkedQuote.createdAt).toLocaleDateString()}{linkedQuote.validUntil ? ` · Valid until ${linkedQuote.validUntil}` : ''}</p>
                 </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-bold border ${linkedQuote.status === 'accepted' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : linkedQuote.status === 'declined' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
+                <div className={`px-3 py-1 rounded-full text-xs font-bold border ${linkedQuote.status === 'accepted' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : linkedQuote.status === 'declined' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
                   {linkedQuote.status.toUpperCase()}
                 </div>
               </div>
 
               {/* Scope of Work */}
               {linkedQuote.jobDescription && (
-                <div className="px-5 py-4 border-b border-white/5 bg-blue-500/5">
-                  <p className="text-[10px] text-blue-400 uppercase font-bold tracking-widest mb-1">Scope of Work</p>
+                <div className="px-5 py-4 border-b border-white/5 bg-amber-500/5">
+                  <p className="text-[10px] text-amber-400 uppercase font-bold tracking-widest mb-1">Scope of Work</p>
                   <p className="text-sm text-zinc-300">{linkedQuote.jobDescription}</p>
                 </div>
               )}
@@ -442,7 +443,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Search by PO, part number, or notes…"
-                  className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-10 pr-10 text-white text-sm outline-none focus:ring-2 focus:ring-blue-500/50"
+                  className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-10 pr-10 text-white text-sm outline-none focus:ring-2 focus:ring-amber-500/50"
                   aria-label="Search jobs"
                 />
                 {search && (
@@ -462,7 +463,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
             {search.trim() && customerJobsAll.length > 0 && (
               <p className="text-xs text-zinc-500 -mt-3">
                 {customerJobs.length === 0
-                  ? <>No matches for <strong className="text-zinc-300">"{search}"</strong> · <button onClick={() => setSearch('')} className="text-blue-400 hover:text-blue-300 font-semibold">clear search</button></>
+                  ? <>No matches for <strong className="text-zinc-300">"{search}"</strong> · <button onClick={() => setSearch('')} className="text-amber-400 hover:text-amber-300 font-semibold">clear search</button></>
                   : <>Showing <strong className="text-zinc-300">{customerJobs.length}</strong> of {customerJobsAll.length} job{customerJobsAll.length !== 1 ? 's' : ''}</>}
               </p>
             )}
@@ -488,7 +489,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                       settings.clientContacts?.[job.customer || ''],
                     );
                     const stageIdx = getStageIndex(job, custStages);
-                    const isOverdue = job.dueDate && new Date(job.dueDate).getTime() < Date.now();
+                    const isOverdue = job.dueDate && (parseDueDate(job.dueDate)?.getTime() ?? 0) < Date.now();
                     const portalNote = job.portalNote;
                     return (
                       <div key={job.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 space-y-4">
@@ -518,22 +519,22 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                           const isFresh = Date.now() - portalNote.updatedAt < 86_400_000;
                           return (
                             <div
-                              className={`relative rounded-xl p-4 flex items-start gap-3 bg-gradient-to-br from-blue-500/15 to-blue-500/5 border-2 ${
-                                isFresh ? 'border-blue-400/60 shadow-lg shadow-blue-500/20' : 'border-blue-500/30'
+                              className={`relative rounded-xl p-4 flex items-start gap-3 bg-gradient-to-br from-amber-500/15 to-amber-500/5 border-2 ${
+                                isFresh ? 'border-amber-400/60 shadow-lg shadow-amber-500/20' : 'border-amber-500/30'
                               }`}
                             >
                               {isFresh && (
-                                <span className="absolute -top-2 left-4 bg-blue-500 text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-md">
+                                <span className="absolute -top-2 left-4 bg-amber-500 text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-md">
                                   ● New Update
                                 </span>
                               )}
-                              <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-                                <MessageSquare className="w-4 h-4 text-blue-300" aria-hidden="true" />
+                              <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                                <MessageSquare className="w-4 h-4 text-amber-300" aria-hidden="true" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest mb-1">Latest Update</p>
+                                <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest mb-1">Latest Update</p>
                                 <p className="text-sm text-white font-medium leading-relaxed whitespace-pre-line">{portalNote.text}</p>
-                                <p className="text-[10px] text-blue-400/80 mt-2">Posted {relativeTime(portalNote.updatedAt)}</p>
+                                <p className="text-[10px] text-amber-400/80 mt-2">Posted {relativeTime(portalNote.updatedAt)}</p>
                               </div>
                             </div>
                           );
@@ -576,7 +577,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
             <p className="text-xs text-zinc-500 mb-3">We're here to help.</p>
             <div className="flex flex-wrap items-center justify-center gap-2">
               {settings.companyPhone && (
-                <a href={`tel:${settings.companyPhone}`} className="flex items-center gap-2 text-sm font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 px-4 py-2 rounded-xl transition-all">
+                <a href={`tel:${settings.companyPhone}`} className="flex items-center gap-2 text-sm font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 px-4 py-2 rounded-xl transition-all">
                   <Phone className="w-4 h-4" aria-hidden="true" /> {settings.companyPhone}
                 </a>
               )}

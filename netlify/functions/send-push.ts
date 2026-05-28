@@ -77,7 +77,7 @@ export const handler: Handler = async (event) => {
   }
 
   const payload = JSON.stringify({
-    title: title || 'SC Deburring',
+    title: title || process.env.SHOP_NAME || 'FabTrack IO',
     body: msgBody || '',
     tag,
     url,
