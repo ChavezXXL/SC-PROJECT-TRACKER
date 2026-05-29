@@ -269,6 +269,10 @@ export interface TimeLog {
   notes?: string;
   machineId?: string;
   sessionQty?: number;
+  /** True when this log was synthesized by admin via Settings → Rate Samples
+   *  to seed the rate-learning engine (not a real worker session). Filtered
+   *  out of worker stats / Reports / TV by default. */
+  isSample?: boolean;
   /**
    * Why this log was stopped. Set at clock-out time so admins can audit
    * whether a stop was worker-initiated or forced by the system.
@@ -600,6 +604,24 @@ export interface SystemSettings {
   shopRate?: number;           // $/hr billed to workers
   monthlyOverhead?: number;    // Monthly fixed costs (rent, utilities, insurance, etc.)
   monthlyWorkHours?: number;   // Estimated work hours per month (for overhead calc)
+  // ── Rate Learning ──
+  /** Multiplier applied to rate-based time estimates so they're a
+   *  "comfortable" target rather than a tight one. Default 1.15 (15%
+   *  buffer). Used by the traveler print + auto-apply + over-budget alerts. */
+  rateBuffer?: number;
+  /** Markup multiplier applied to labor cost when suggesting a price-per-part.
+   *  Default 2.0 (= 100% markup, i.e. charge 2× labor cost). Shows up on the
+   *  sample entry "suggested charge" preview. */
+  pricingMarkup?: number;
+  /** When actual logged time exceeds (estimate × buffer), trigger an alert.
+   *  Disabled by default so shops with no rate data don't get false alarms. */
+  overBudgetAlertEnabled?: boolean;
+  // ── EmailJS notification config (browser-side email, no backend) ──
+  emailJsServiceId?: string;
+  emailJsTemplateId?: string;
+  emailJsPublicKey?: string;
+  /** Where over-budget alerts get emailed to. */
+  alertEmail?: string;
   // Shop Info
   companyName?: string;        // Shown in header, print travelers, etc.
   companyLogo?: string;        // URL to logo image
@@ -945,6 +967,13 @@ export interface Sample {
   workEntries?: SampleWorkEntry[];
   activeEntry?: SampleWorkEntry | null;
   totalWorkedMs?: number;
+  // ── Pricing (locked-in quote saved to the sample for future reference) ──
+  /** Charge per piece the admin locked in for this sample. Initially auto-
+   *  suggested from work time × shop rate × markup; can be manually overridden.
+   *  Once saved, persists with the sample so future jobs can reference it. */
+  pricePerPart?: number;
+  /** When the price was last set/updated, for audit / staleness display. */
+  quotedAt?: number;
 }
 
 export interface SmartPasteData {

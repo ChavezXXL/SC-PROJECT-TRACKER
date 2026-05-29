@@ -128,12 +128,16 @@ export function parseJobFields(rawText: string): ScanResult {
   if (rawPart && (PART_BLOCKLIST.has(rawPart.value.toLowerCase()) || rawPart.value.length < 2)) {
     rawPart = null;
   }
+  // Hold a description captured from the line-item row, used as a fallback
+  // for specialInstructions later if no explicit INSTRUCTIONS label exists.
+  let lineItemDescription = '';
   if (!rawPart) {
     // Line-item heuristic: "PARTNO  QTY  Description  $X.XX  $Y.YY"
-    // Looks for an alphanumeric-dash token followed by a small number and a dollar amount
-    const liMatch = text.match(/\b([A-Z0-9]{2,10}-[A-Z0-9]{2,10})[ \t]+(\d{1,5})[ \t]+[A-Za-z][\w\s]{2,30}\$[\d]/i);
+    // Capture the description so we can use it as a fallback for instructions.
+    const liMatch = text.match(/\b([A-Z0-9]{2,10}-[A-Z0-9]{2,10})[ \t]+(\d{1,5})[ \t]+([A-Za-z][\w\s,\.\-\/&'"()]{2,100}?)\$[\d]/i);
     if (liMatch) {
       rawPart = { value: liMatch[1], snippet: liMatch[0].slice(0, 60) };
+      lineItemDescription = (liMatch[3] || '').trim();
       // Also grab quantity from same line-item row if not yet found
       if (!fields.quantity) {
         const n = parseInt(liMatch[2], 10);
@@ -143,6 +147,12 @@ export function parseJobFields(rawText: string): ScanResult {
         }
       }
     }
+  } else {
+    // Even when we already have a labelled part number, look for its line-item
+    // description in the body — useful for "Part #: ABC" then later "ABC 100 Widget $5.00"
+    const partVal = rawPart.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const liMatch = text.match(new RegExp(`\\b${partVal}\\b[ \\t]+\\d{1,5}[ \\t]+([A-Za-z][\\w\\s,\\.\\-\\/&'"()]{2,100}?)\\$[\\d]`, 'i'));
+    if (liMatch) lineItemDescription = (liMatch[1] || '').trim();
   }
   if (rawPart) { fields.partNumber = rawPart.value; sources.partNumber = rawPart.snippet; }
 
@@ -316,6 +326,35 @@ export function parseJobFields(rawText: string): ScanResult {
       fields.specialInstructions = cleaned;
       sources.specialInstructions = cleaned.slice(0, 80);
       break;
+    }
+  }
+
+  // ── Description fallbacks (when no INSTRUCTIONS/NOTES label found) ───────
+  // Many POs put the description ON the line item, not under a separate label.
+  // 1. Use the line-item description we captured during part-number extraction
+  // 2. If still empty, look for "Description: ..." label
+  // 3. Last resort: a 1-3 line paragraph block that's not boilerplate
+  if (!fields.specialInstructions) {
+    if (lineItemDescription && lineItemDescription.length >= 3) {
+      const clean = lineItemDescription
+        .replace(/\s{2,}/g, ' ')
+        .replace(/[\.,;:\-]+$/, '')
+        .trim();
+      if (clean.length >= 3) {
+        fields.specialInstructions = clean;
+        sources.specialInstructions = clean.slice(0, 80);
+      }
+    }
+  }
+  if (!fields.specialInstructions) {
+    // Explicit "Description:" label, sometimes used in lieu of "Notes:"
+    const dm = text.match(/\b(?:Item[ \t]+)?Descr(?:iption)?[ \t]*:[ \t]*([^\n]{3,200})/i);
+    if (dm) {
+      const clean = dm[1].replace(/\s{2,}/g, ' ').replace(/\s+(Page \d.*|Subtotal.*|Total.*|\$[\d,.]+)$/i, '').trim();
+      if (clean.length >= 3) {
+        fields.specialInstructions = clean;
+        sources.specialInstructions = clean.slice(0, 80);
+      }
     }
   }
 

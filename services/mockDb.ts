@@ -1528,6 +1528,43 @@ export async function startSampleWork(
   }
 }
 
+// Bridge: when a sample work session completes, also write a TimeLog with
+// isSample:true so the rate-learning engine reads it. Without this, all
+// sample work is invisible to the rate engine — the admin's whole calibration
+// effort would silently produce no data. Idempotent via a deterministic id.
+async function _bridgeSampleWorkToTimeLog(sample: Sample, entry: SampleWorkEntry, durationSecondsCalc: number): Promise<void> {
+  // Need qty + duration > 0 to be useful for rate learning
+  if (!entry.qty || entry.qty <= 0) return;
+  if (!durationSecondsCalc || durationSecondsCalc <= 0) return;
+  if (!sample.partNumber || !entry.operation) return;
+
+  const log: TimeLog = {
+    id: `sample-tl-${entry.id}`, // deterministic — re-stopping won't duplicate
+    jobId: `sample-${sample.id}`,
+    userId: entry.userId || 'sample',
+    userName: entry.userName || 'Sample Entry',
+    operation: entry.operation,
+    startTime: entry.startTime,
+    endTime: entry.endTime || Date.now(),
+    durationSeconds: durationSecondsCalc,
+    durationMinutes: Math.round((durationSecondsCalc / 60) * 100) / 100,
+    partNumber: sample.partNumber,
+    customer: sample.companyName,
+    status: 'completed',
+    sessionQty: entry.qty,
+    isSample: true,
+    createdAt: entry.startTime,
+    updatedAt: Date.now(),
+    notes: entry.notes,
+  };
+  try {
+    await updateTimeLog(log);
+  } catch (e) {
+    // Don't fail the sample save if rate-learning bridge fails — log it instead
+    console.warn('[bridgeSampleWorkToTimeLog] failed:', e);
+  }
+}
+
 export async function stopSampleWork(sampleId: string, notes?: string): Promise<void> {
   const now = Date.now();
 
@@ -1567,6 +1604,8 @@ export async function stopSampleWork(sampleId: string, notes?: string): Promise<
         totalWorkedMs: newTotalWorked,
         updatedAt: now,
       }));
+      // ── Bridge to rate-learning engine ──
+      await _bridgeSampleWorkToTimeLog(sample, completed, durationSeconds);
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1605,6 +1644,8 @@ export async function stopSampleWork(sampleId: string, notes?: string): Promise<
       updatedAt: now,
     };
     writeLS(LS_SAMPLES, samples);
+    // ── Bridge to rate-learning engine ──
+    await _bridgeSampleWorkToTimeLog(samples[idx], completed, durationSeconds);
   }
 }
 

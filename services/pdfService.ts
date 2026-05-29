@@ -299,10 +299,16 @@ export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
 // Thin wrapper — delegates entirely to travelerPrint.ts which is the single
 // source of truth for traveler design. Both the Jobs-view "Print" button and
 // the modal "Print Traveler" button now produce identical output.
-// The `history` param is kept for call-site compatibility but not used;
-// travelerPrint handles run history internally if needed in future.
-export function printJobTravelerPDF(job: Job, settings: SystemSettings, _history?: PartHistory | null): void {
-  void printTraveler(job, settings, {});
+// `history` is kept for compatibility but no longer the rate source.
+// `rateBreakdown` (when provided) feeds the "Estimated Time by Operation"
+// section on the traveler so the floor sees predicted cycle next to actual.
+export function printJobTravelerPDF(
+  job: Job,
+  settings: SystemSettings,
+  _history?: PartHistory | null,
+  rateBreakdown?: import('./travelerPrint').TravelerOptions['_rateBreakdown']
+): void {
+  void printTraveler(job, settings, { _rateBreakdown: rateBreakdown ?? null });
 }
 
 // ── Invoice PDF ──

@@ -1,5 +1,7 @@
-// FabTrack IO — Service Worker v3
-const CACHE_NAME = 'fabtrack-v3';
+// FabTrack IO — Service Worker
+// __BUILD_HASH__ is replaced at build time by scripts/stamp-sw.mjs so every
+// deploy gets a unique CACHE_NAME → old caches are evicted automatically.
+const CACHE_NAME = 'fabtrack-__BUILD_HASH__';
 const OFFLINE_URL = '/';
 
 // Assets to cache on install
@@ -16,6 +18,7 @@ self.addEventListener('install', event => {
   );
   self.skipWaiting();
 });
+
 
 // ── Activate: remove old caches ───────────────────────────────────
 self.addEventListener('activate', event => {
@@ -143,6 +146,12 @@ self.addEventListener('notificationclick', event => {
 self.addEventListener('message', event => {
   const data = event.data;
   if (!data) return;
+  // Force-activate this SW immediately — the page calls this when a new
+  // version finishes installing so users never get stuck on a stale shell.
+  if (data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
   if (data.type === 'NOTIFY') {
     const { title, body, tag, url, actions, logId, requireInteraction } = data;
     self.registration.showNotification(title, {

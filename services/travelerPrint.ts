@@ -17,6 +17,8 @@
  */
 
 import type { Job, SystemSettings } from '../types';
+import type { RateEstimate } from '../utils/rateLearning';
+import { formatRate } from '../utils/rateLearning';
 import QRCode from 'qrcode';
 
 const TRAVELER_CSS = `
@@ -34,23 +36,30 @@ const TRAVELER_CSS = `
   /* ── ACCENT STRIPE (just the thin top line — no ink-heavy fills) ── */
   .accent { height:4pt; background:#ea580c; margin-bottom:10pt; }
 
-  /* ── HEADER — white bg, black text, thin bottom rule ── */
+  /* ── HEADER (ink-light: white bg, thick bottom border) ── */
   .hdr {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 9pt;
+    background: #fff;
+    color: #111;
+    padding: 9pt 12pt 10pt;
     margin-bottom: 10pt;
-    border-bottom: 1.5pt solid #111;
+    border-bottom: 2.5pt solid #111;
   }
   .hdr-left { display:flex; align-items:center; gap:10pt; }
-  .hdr-logo { max-height:44pt; max-width:150pt; object-fit:contain; }
-  .hdr-co   { font-size:16pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1.1; }
-  .hdr-sub  { font-size:7.5pt; color:#71717a; margin-top:2pt; letter-spacing:0.05em; }
+  .hdr-logo {
+    max-height: 42pt; max-width: 140pt;
+    object-fit: contain;
+    background: transparent;
+    padding: 0;
+  }
+  .hdr-co   { font-size:15pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1.1; }
+  .hdr-sub  { font-size:7.5pt; color:#6b7280; margin-top:2pt; }
   .hdr-right { text-align:right; }
   .hdr-eyebrow { font-size:7pt; font-weight:800; letter-spacing:0.22em; text-transform:uppercase; color:#ea580c; margin-bottom:2pt; }
-  .hdr-doctype  { font-size:18pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1; }
-  .hdr-meta     { font-size:7.5pt; color:#71717a; margin-top:3pt; font-variant-numeric:tabular-nums; }
+  .hdr-doctype  { font-size:19pt; font-weight:900; letter-spacing:-0.01em; color:#111; line-height:1; }
+  .hdr-meta     { font-size:7.5pt; color:#6b7280; margin-top:3pt; font-variant-numeric:tabular-nums; }
 
   /* ── IDENTITY BLOCK ── */
   .id-table { width:100%; border-collapse:collapse; }
@@ -79,6 +88,7 @@ const TRAVELER_CSS = `
     width: 88pt;
     text-align: center;
     vertical-align: middle;
+    background: #fff;
     padding: 8pt 10pt;
   }
   .id-qr-cell img {
@@ -175,13 +185,13 @@ const TRAVELER_CSS = `
   }
   .notes-txt { font-size:10pt; color:#3f3f46; line-height:1.5; white-space:pre-wrap; }
 
-  /* ── SECTION HEADERS — ink-friendly: just a bold rule, no fill ── */
+  /* ── SECTION HEADERS (ink-light: white bg, thick bottom rule) ── */
   .sec-hdr {
-    font-size: 7.5pt; font-weight: 800;
-    letter-spacing: 0.2em; text-transform: uppercase;
-    color: #111;
-    padding: 0 0 4pt 0;
-    margin-bottom: 0;
+    background: #fff; color: #111;
+    font-size: 9pt; font-weight: 900;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    padding: 4pt 0 3pt;
+    margin-top: 4pt; margin-bottom: 0;
     border-bottom: 1.5pt solid #111;
     page-break-after: avoid;
   }
@@ -226,11 +236,12 @@ const TRAVELER_CSS = `
     display:inline-block; border-radius:1.5pt; flex-shrink:0;
   }
 
-  /* ── CERTIFICATE OF CONFORMANCE ── */
+  /* ── CERTIFICATE OF CONFORMANCE (no fill — saves ink) ── */
   .coc {
     font-size: 7pt; color: #71717a; line-height: 1.6;
     padding: 5pt 8pt;
     border: 0.5pt solid #d4d4d8;
+    background: #fff;
     margin-bottom: 8pt;
   }
   .coc strong { color: #374151; }
@@ -252,6 +263,41 @@ const TRAVELER_CSS = `
 
   /* clearfix for float:right photo */
   .cf::after { content:''; display:table; clear:both; }
+
+  /* ── ESTIMATE BY OPERATION (rate-learned) ── */
+  .est-table {
+    width: 100%; border-collapse: collapse; margin-top: 4pt; margin-bottom: 10pt;
+    font-size: 9pt;
+  }
+  .est-table th {
+    background: #f4f4f5; color: #3f3f46;
+    text-align: left; font-weight: 800;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: 7pt;
+    border: 1pt solid #d4d4d8;
+    padding: 4pt 7pt;
+  }
+  .est-table td {
+    border: 1pt solid #d4d4d8;
+    padding: 4pt 7pt;
+    vertical-align: middle;
+    font-variant-numeric: tabular-nums;
+  }
+  .est-table tfoot td {
+    background: #fff7ed;
+    font-weight: 900;
+    color: #9a3412;
+    font-size: 10pt;
+  }
+  .est-op   { font-weight: 800; color: #18181b; }
+  .est-rate { color: #71717a; font-size: 8.5pt; }
+  .est-hrs  { text-align: right; font-weight: 800; color: #1d4ed8; }
+  .est-src  { color: #a1a1aa; font-size: 7.5pt; font-style: italic; }
+  .est-caption {
+    font-size: 7.5pt; color: #71717a;
+    margin-top: 2pt; margin-bottom: 6pt;
+    letter-spacing: 0.02em;
+  }
 `;
 
 export interface TravelerOptions {
@@ -270,6 +316,11 @@ export interface TravelerOptions {
   footerText?: string;
   /** Pre-generated QR data URL (from qrcode lib). If omitted, QR is skipped. */
   _qrDataUrl?: string;
+  /** Operation-level rate breakdown for this job's quantity, computed from
+   *  past TimeLog history. When provided, the traveler renders an
+   *  "Estimated Time by Operation" section above the blank Operation Log
+   *  so the floor sees the predicted cycle next to the actual cycle. */
+  _rateBreakdown?: RateEstimate | null;
 }
 
 function flag(opt: boolean | undefined, fromSettings: boolean | undefined): boolean {
@@ -415,6 +466,44 @@ export function renderTravelerHtml(
         <div class="notes-txt">${escapeHtml(job.info)}</div>
        </div>` : '';
 
+  // ── ESTIMATE BY OPERATION (rate-learned from past runs) ──
+  // Renders only when we have rate data for this part. Shows the floor
+  // what's expected so they have a benchmark next to the blank log below.
+  const rate = options._rateBreakdown;
+  const qty = job.quantity || 0;
+  const estByOpHtml = rate && rate.hasData && qty > 0 ? `
+    <div class="sec-hdr">Estimated Time by Operation</div>
+    <div class="est-caption">
+      Computed from past runs of this part — actual times may vary.
+      Based on ${rate.basedOnRuns} prior run${rate.basedOnRuns === 1 ? '' : 's'}.
+    </div>
+    <table class="est-table">
+      <thead><tr>
+        <th style="width:32%">Operation</th>
+        <th style="width:22%">Learned Rate</th>
+        <th style="width:18%">${qty.toLocaleString()} pcs × rate</th>
+        <th style="width:12%; text-align:right">Est.</th>
+        <th style="width:16%">Sample size</th>
+      </tr></thead>
+      <tbody>
+        ${rate.breakdown.map(r => `
+          <tr>
+            <td class="est-op">${escapeHtml(r.operation)}</td>
+            <td class="est-rate">${escapeHtml(formatRate(r.ratePerPiece))}</td>
+            <td class="est-rate">${qty.toLocaleString()} × ${formatRate(r.ratePerPiece)}</td>
+            <td class="est-hrs">${(r.estimatedMinutes / 60).toFixed(2)}h</td>
+            <td class="est-src">${r.runCount} run${r.runCount === 1 ? '' : 's'} · ${r.sampleCount} session${r.sampleCount === 1 ? '' : 's'}</td>
+          </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3">Total estimated</td>
+          <td class="est-hrs">${rate.totalHours.toFixed(2)}h</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>` : '';
+
   // ── OPERATION LOG ──
   const opRowsHtml = Array.from({ length: opRows }, () =>
     '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'
@@ -554,6 +643,9 @@ export function renderTravelerHtml(
       ${instrHtml}
       ${notesHtml}
     </div>
+
+    <!-- ESTIMATE BY OPERATION (rate-learned) -->
+    ${estByOpHtml}
 
     <!-- OPERATION LOG -->
     ${opLogHtml}

@@ -341,7 +341,9 @@ const StartWorkModal: React.FC<{
   onClose: () => void;
 }> = ({ sample, operations, userName, onStart, onClose }) => {
   const [op, setOp] = useState(operations[0] || 'Deburring');
-  const [qty, setQty] = useState<number>(0);
+  // Pre-fill from the sample's declared qty so admin doesn't have to type
+  // it twice. They can still override for partial sessions.
+  const [qty, setQty] = useState<number>(sample.qty || 0);
   return (
     <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden my-4">
@@ -358,9 +360,14 @@ const StartWorkModal: React.FC<{
             </select>
           </div>
           <div>
-            <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">How Many Samples?</label>
+            <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">Pieces This Session</label>
             <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-green-500 outline-none"
-              value={qty || ''} onChange={e => setQty(Number(e.target.value) || 0)} placeholder="Optional — number of pieces" />
+              value={qty || ''} onChange={e => setQty(Number(e.target.value) || 0)} placeholder="Pieces" />
+            <p className="text-[10px] text-zinc-600 mt-1.5">
+              {sample.qty && qty === sample.qty
+                ? <>Pre-filled from sample qty. Edit if you're only doing some of them this session.</>
+                : <>FabTrack uses time-per-piece to learn cycle rate for this part + operation.</>}
+            </p>
           </div>
           <p className="text-zinc-500 text-xs">Working as <span className="text-white font-bold">{userName}</span></p>
         </div>
@@ -571,6 +578,149 @@ const SampleModal = ({
   );
 };
 
+// ── PRICING CARD (per-sample, inline) ───────────────────────────
+// Auto-computes a suggested charge per piece from completed work
+// entries × shop rate × markup, then lets the admin override and
+// LOCK IN the price on the sample so it persists for future reference.
+// Saves to sample.pricePerPart via DB.saveSample.
+
+function computeSampleMath(sample: Sample, shopRate: number, markup: number) {
+  const entries = (sample.workEntries || []).filter(e =>
+    e.qty && e.qty > 0 && e.durationSeconds && e.durationSeconds > 0 && e.operation
+  );
+  if (entries.length === 0) return null;
+
+  // Group sessions by operation so paused-then-resumed sessions for the
+  // same op don't double-count when summing across operations.
+  const byOp = new Map<string, { minutes: number; qty: number }>();
+  for (const e of entries) {
+    const opKey = (e.operation || '').toLowerCase().trim();
+    if (!opKey) continue;
+    const minutes = (e.durationSeconds || 0) / 60;
+    const cur = byOp.get(opKey) || { minutes: 0, qty: 0 };
+    cur.minutes += minutes;
+    cur.qty += e.qty || 0;
+    byOp.set(opKey, cur);
+  }
+
+  // Total time-per-piece across all operations on this sample
+  let totalMinPerPc = 0;
+  for (const { minutes, qty } of byOp.values()) {
+    if (qty > 0) totalMinPerPc += minutes / qty;
+  }
+  if (totalMinPerPc <= 0) return null;
+
+  const laborPerPc = shopRate > 0 ? (totalMinPerPc / 60) * shopRate : 0;
+  const suggestedPerPc = laborPerPc * (markup || 1);
+  return {
+    minPerPc: totalMinPerPc,
+    operationsCount: byOp.size,
+    laborPerPc,
+    suggestedPerPc,
+  };
+}
+
+const SamplePricingCard: React.FC<{
+  sample: Sample;
+  shopRate: number;
+  markup: number;
+  onSavePrice: (sampleId: string, price: number) => Promise<void>;
+}> = ({ sample, shopRate, markup, onSavePrice }) => {
+  const math = computeSampleMath(sample, shopRate, markup);
+  const saved = sample.pricePerPart;
+  // Default the input to the locked-in price if set, else the suggestion
+  const initialInput = saved != null
+    ? String(saved)
+    : (math ? math.suggestedPerPc.toFixed(2) : '');
+  const [input, setInput] = React.useState<string>(initialInput);
+  const [busy, setBusy] = React.useState(false);
+
+  // Re-sync if upstream sample changes (e.g. another tab edits, or a new work entry recomputes the suggestion)
+  React.useEffect(() => {
+    setInput(saved != null ? String(saved) : (math ? math.suggestedPerPc.toFixed(2) : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved, math?.suggestedPerPc]);
+
+  // Don't render anything if there's nothing to base a quote on
+  if (!math && saved == null) return null;
+
+  const parsed = parseFloat(input);
+  const validInput = !isNaN(parsed) && parsed > 0;
+  const isDirty = validInput && parsed !== saved;
+
+  const save = async () => {
+    if (!validInput || busy) return;
+    setBusy(true);
+    try {
+      await onSavePrice(sample.id, parsed);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-amber-500/8 border border-amber-500/20 rounded-lg p-2.5 space-y-1.5">
+      {/* Computed suggestion line */}
+      {math && (
+        <div className="flex items-center justify-between gap-2 text-[10px] text-amber-300/80">
+          <span>
+            ⏱ <span className="font-mono font-bold">{math.minPerPc.toFixed(2)} min/pc</span>
+            {math.operationsCount > 1 && <span className="text-amber-400/60"> · {math.operationsCount} ops</span>}
+          </span>
+          {shopRate > 0 ? (
+            <span>
+              Sugg: <span className="font-mono font-bold text-amber-200">${math.suggestedPerPc.toFixed(2)}</span>/pc
+            </span>
+          ) : (
+            <span className="text-zinc-500">No shop rate set</span>
+          )}
+        </div>
+      )}
+
+      {/* Locked / editable price input */}
+      <div className="flex items-center gap-1.5">
+        <div className="flex-1 relative">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-xs font-bold pointer-events-none">$</span>
+          <input
+            type="number" step="0.01" min="0"
+            className="w-full bg-zinc-950 border border-amber-500/30 rounded-md pl-6 pr-2 py-1.5 text-white text-xs font-mono font-bold focus:outline-none focus:border-amber-400/60"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && isDirty) save(); }}
+            placeholder="0.00"
+            aria-label="Price per piece"
+          />
+          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-600 text-[10px] pointer-events-none">/pc</span>
+        </div>
+        <button
+          type="button"
+          onClick={save}
+          disabled={!isDirty || busy}
+          className="text-[10px] font-black px-2.5 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors"
+        >
+          {busy ? '…' : isDirty ? 'Save' : '✓'}
+        </button>
+      </div>
+
+      {/* Saved indicator */}
+      {saved != null && validInput && (
+        <div className="flex items-center justify-between text-[10px] gap-2">
+          <span className="text-amber-400/80">
+            ✓ Locked: <span className="font-mono font-bold">${saved.toFixed(2)}/pc</span>
+            {sample.qty && sample.qty > 0 && <span className="text-amber-500/60"> · {sample.qty} pcs = <span className="font-mono">${(saved * sample.qty).toFixed(2)}</span></span>}
+          </span>
+          {sample.quotedAt && (
+            <span className="text-zinc-600">{new Date(sample.quotedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+          )}
+        </div>
+      )}
+      {saved == null && math && (
+        <p className="text-[9px] text-zinc-500 italic">Edit & Save to lock in this price.</p>
+      )}
+    </div>
+  );
+};
+
 // ── MAIN SAMPLES VIEW ───────────────────────────────────────────
 interface SamplesViewProps {
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
@@ -582,6 +732,8 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
   const [search, setSearch] = useState('');
   const [ops, setOps] = useState<string[]>([]);
   const [clients, setClients] = useState<string[]>([]);
+  const [shopRate, setShopRate] = useState<number>(0);
+  const [pricingMarkup, setPricingMarkup] = useState<number>(2.0);
   const [showModal, setShowModal] = useState(false);
   const [editingSample, setEditingSample] = useState<Partial<Sample> | null>(null);
   const [viewPhoto, setViewPhoto] = useState<string | null>(null);
@@ -596,6 +748,8 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
     const unsub2 = DB.subscribeSettings((s) => {
       setOps(s.customOperations || []);
       setClients(s.clients || []);
+      setShopRate(s.shopRate ?? 0);
+      setPricingMarkup(s.pricingMarkup ?? 2.0);
     });
     return () => { unsub1(); unsub2(); };
   }, []);
@@ -673,6 +827,18 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
       addToast('success', 'Entry updated');
     } catch {
       addToast('error', 'Failed to update entry');
+    }
+  };
+
+  const handleSavePrice = async (sampleId: string, price: number) => {
+    const sample = samples.find(s => s.id === sampleId);
+    if (!sample) return;
+    try {
+      await DB.saveSample({ ...sample, pricePerPart: price, quotedAt: Date.now(), updatedAt: Date.now() });
+      addToast('success', `Locked $${price.toFixed(2)}/pc for ${sample.partNumber}`);
+    } catch (e) {
+      console.error('[SamplesView] save price failed:', e);
+      addToast('error', 'Failed to save price.');
     }
   };
 
@@ -815,6 +981,14 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
                                 </span>
                               )}
                             </div>
+
+                            {/* Pricing card — shown when there's enough data or a locked price exists */}
+                            <SamplePricingCard
+                              sample={s}
+                              shopRate={shopRate}
+                              markup={pricingMarkup}
+                              onSavePrice={handleSavePrice}
+                            />
 
                             {/* Active work display */}
                             {isActive && s.activeEntry && (
