@@ -1,5 +1,5 @@
-// SC Deburring Job Tracker - Service Worker v1
-const CACHE_NAME = 'sc-tracker-v2';
+// FabTrack IO — Service Worker v3
+const CACHE_NAME = 'fabtrack-v3';
 const OFFLINE_URL = '/';
 
 // Assets to cache on install
@@ -83,12 +83,12 @@ self.addEventListener('push', event => {
       catch { data = {}; }
     }
   }
-  const title = data.title || 'SC Deburring';
+  const title = data.title || 'FabTrack IO';
   const options = {
     body: data.body || 'You have a new notification',
-    icon: '/icon-192.png',
-    badge: '/icon-72.png',
-    tag: data.tag || 'sc-tracker',
+    icon: '/brand/ftio-icon.png',
+    badge: '/brand/ftio-icon.png',
+    tag: data.tag || 'fabtrack',
     data: { url: data.url || '/', logId: data.logId, action: data.action },
     vibrate: [200, 100, 200],
     requireInteraction: data.requireInteraction || false,
@@ -147,9 +147,9 @@ self.addEventListener('message', event => {
     const { title, body, tag, url, actions, logId, requireInteraction } = data;
     self.registration.showNotification(title, {
       body,
-      icon: '/icon-192.png',
-      badge: '/icon-72.png',
-      tag: tag || 'sc-tracker',
+      icon: '/brand/ftio-icon.png',
+      badge: '/brand/ftio-icon.png',
+      tag: tag || 'fabtrack',
       data: { url: url || '/', logId, action: data.action },
       vibrate: [200, 100, 200],
       requireInteraction: !!requireInteraction,

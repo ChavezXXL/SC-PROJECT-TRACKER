@@ -574,6 +574,11 @@ export interface ShiftAlarm {
   pauseTimers?: boolean;
   /** When true, also auto-clock-out all workers (used for end-of-shift). */
   clockOut?: boolean;
+  /** When true, mark this alarm as a clock-in reminder (used for labeling). */
+  clockIn?: boolean;
+  /** When true, blast a Web Push notification to every subscribed worker device
+   *  at this alarm time — works even when the browser/app is closed. */
+  sendPush?: boolean;
 }
 
 export interface SystemSettings {

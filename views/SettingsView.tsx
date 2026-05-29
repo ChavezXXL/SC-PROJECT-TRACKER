@@ -282,11 +282,12 @@ const DAY_CHIPS: { value: number; label: string }[] = [
 ];
 
 const DEFAULT_ALARMS: ShiftAlarm[] = [
-  { id: 'morning-break',   label: 'Morning Break',    time: '10:00', enabled: false, sound: 'triangle' },
-  { id: 'lunch-start',     label: 'Lunch Starts',     time: '12:00', enabled: true,  sound: 'bell',   pauseTimers: true },
-  { id: 'lunch-end',       label: 'Lunch Ends',       time: '12:30', enabled: true,  sound: 'chime' },
-  { id: 'afternoon-break', label: 'Afternoon Break',  time: '14:30', enabled: false, sound: 'triangle' },
-  { id: 'shift-end',       label: 'Shift Ends',       time: '16:30', enabled: true,  sound: 'horn',   clockOut: true },
+  { id: 'shift-start',     label: 'Clock In Reminder', time: '06:00', enabled: true,  sound: 'bell',     clockIn: true,  sendPush: true },
+  { id: 'morning-break',   label: 'Morning Break',     time: '10:00', enabled: false, sound: 'triangle' },
+  { id: 'lunch-start',     label: 'Lunch Starts',      time: '12:00', enabled: true,  sound: 'bell',     pauseTimers: true },
+  { id: 'lunch-end',       label: 'Lunch Ends',        time: '12:30', enabled: true,  sound: 'chime' },
+  { id: 'afternoon-break', label: 'Afternoon Break',   time: '14:30', enabled: false, sound: 'triangle' },
+  { id: 'shift-end',       label: 'Shift Ends',        time: '16:30', enabled: true,  sound: 'horn',     clockOut: true, sendPush: true },
 ];
 
 const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void; addToast: any }) => {
@@ -473,6 +474,10 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
               <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Also clock everyone out (end of shift)">
                 <input type="checkbox" checked={!!alarm.clockOut} onChange={e => update(idx, { clockOut: e.target.checked })} className="w-3 h-3 rounded accent-red-500" />
                 Clock out
+              </label>
+              <label className="flex items-center gap-1 text-[10px] cursor-pointer font-bold" title="Send a push notification to every worker's phone/device at this time — works even when the app is closed">
+                <input type="checkbox" checked={!!alarm.sendPush} onChange={e => update(idx, { sendPush: e.target.checked })} className="w-3 h-3 rounded accent-emerald-500" />
+                <span className={alarm.sendPush ? 'text-emerald-400' : 'text-zinc-500'}>📲 Push all workers</span>
               </label>
             </div>
 
