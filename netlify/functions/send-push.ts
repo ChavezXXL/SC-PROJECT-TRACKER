@@ -51,7 +51,7 @@ export const handler: Handler = async (event) => {
 
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
-  const subject = process.env.VAPID_SUBJECT || 'mailto:admin@sc-tracker.app';
+  const subject = process.env.VAPID_SUBJECT || 'mailto:hello@fabtrack.io';
   if (!pub || !priv) {
     return {
       statusCode: 500,

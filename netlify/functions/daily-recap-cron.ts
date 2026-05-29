@@ -70,6 +70,16 @@ async function fetchDoc(col: string, id: string, apiKey: string, projectId: stri
   return fsDoc(await res.json());
 }
 
+/** Patch a single string field on an existing Firestore document. */
+async function patchStringField(col: string, id: string, field: string, value: string, apiKey: string, projectId: string): Promise<void> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}/${id}?updateMask.fieldPaths=${field}&key=${apiKey}`;
+  await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { [field]: { stringValue: value } } }),
+  });
+}
+
 // ── Timezone helpers ─────────────────────────────────────────────────
 
 function getTodayBoundsForTz(tz: string): { start: number; end: number } {
@@ -111,13 +121,20 @@ export default async function handler() {
   if (!settings.recapEmail?.trim()) { console.log('[daily-recap-cron] No recapEmail set'); return; }
   if (!settings.recapTime)          { console.log('[daily-recap-cron] No recapTime set'); return; }
 
-  // 3. Time check
+  // 3. Time check + sent-today guard (prevents double-send on Netlify retry)
   const tz = (settings as any).recapTimezone || 'America/Los_Angeles';
   const nowHour = currentHourInTz(tz);
   const configHour = parseInt(settings.recapTime.split(':')[0], 10);
 
   if (nowHour !== configHour) {
     console.log(`[daily-recap-cron] Not time yet (now=${nowHour}h, configured=${configHour}h ${tz})`);
+    return;
+  }
+
+  // Guard: only send once per calendar day (idempotent against retries / jitter)
+  const todayDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); // YYYY-MM-DD
+  if ((settings as any).recapLastSentDate === todayDateStr) {
+    console.log(`[daily-recap-cron] Already sent today (${todayDateStr}) — skipping`);
     return;
   }
 
@@ -179,6 +196,8 @@ export default async function handler() {
       console.error('[daily-recap-cron] Resend error:', result);
     } else {
       console.log(`[daily-recap-cron] ✓ Sent (id=${result.id}) to: ${to.join(', ')}`);
+      // Stamp today's date so retries/jitter won't send a second email
+      await patchStringField('settings', 'system', 'recapLastSentDate', todayDateStr, apiKey, projectId);
     }
   } catch (e: any) {
     console.error('[daily-recap-cron] Resend fetch failed:', e.message);

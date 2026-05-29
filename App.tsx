@@ -1484,7 +1484,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
   const todayLogs = myHistory.filter(l => new Date(l.startTime) >= todayStart);
   const todayMins = todayLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-  const todayHours = todayMins >= 60 ? `${Math.floor(todayMins/60)}h ${todayMins%60}m` : `${todayMins}m`;
+  const todayHours = todayMins >= 60 ? `${Math.floor(todayMins/60)}h ${Math.round(todayMins%60)}m` : `${Math.round(todayMins)}m`;
   const todayJobs = new Set(todayLogs.map(l => l.jobId)).size;
   const greeting = (() => {
     const h = new Date().getHours();
@@ -1581,7 +1581,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center">
               <p className="text-2xl font-bold text-amber-400">
-                {histWeekMins >= 60 ? `${Math.floor(histWeekMins/60)}h ${histWeekMins%60}m` : `${histWeekMins}m`}
+                {histWeekMins >= 60 ? `${Math.floor(histWeekMins/60)}h ${Math.round(histWeekMins%60)}m` : `${Math.round(histWeekMins)}m`}
               </p>
               <p className="text-xs text-zinc-500 mt-1">This Week</p>
             </div>

@@ -469,7 +469,7 @@ export function buildRecapHtml(data: RecapData): string {
             <p style="margin:0;font-size:12px;color:#3f3f46;">
               <strong style="color:#71717a;">FabTrack IO</strong>
               &nbsp;·&nbsp;
-              <a href="https://scprojtrac.netlify.app" style="color:#f59e0b;text-decoration:none;">Open Dashboard</a>
+              <a href="https://app.fabtrack.io" style="color:#f59e0b;text-decoration:none;">Open Dashboard</a>
             </p>
           </td>
         </tr>
@@ -527,7 +527,7 @@ export function buildRecapText(data: RecapData): string {
     }
   }
 
-  lines.push('', 'FabTrack IO · https://scprojtrac.netlify.app');
+  lines.push('', 'FabTrack IO · https://app.fabtrack.io');
   return lines.join('\n');
 }
 

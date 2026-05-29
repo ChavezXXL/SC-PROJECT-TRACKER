@@ -182,11 +182,10 @@ function writeLS<T>(key: string, value: T) {
 function ensureSeedUsers() {
   const users = readLS<User[]>(LS.users, []);
   
+  // Generic demo users only — personal credentials removed for SaaS safety
   const hardcodedAdmins: User[] = [
-    { id: "admin_anthony", name: "Anthony", username: "anthony", pin: "2061", role: "admin", isActive: true },
-    { id: "admin_chavez", name: "Chavez", username: "chavez", pin: "2061", role: "admin", isActive: true },
     { id: "admin1", name: "Shop Manager", username: "admin", pin: "9999", role: "admin", isActive: true },
-    { id: "emp1", name: "John Doe", username: "jdoe", pin: "1234", role: "employee", isActive: true },
+    { id: "emp1", name: "Operator 1", username: "op1", pin: "1234", role: "employee", isActive: true },
   ];
 
   let changed = false;

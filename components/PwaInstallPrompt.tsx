@@ -97,7 +97,7 @@ export const PwaInstallPrompt: React.FC = () => {
             <Bell className="w-5 h-5 text-white" aria-hidden="true" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-black text-white">Install SC Tracker on your phone</p>
+            <p className="text-sm font-black text-white">Install FabTrack IO on your phone</p>
             <p className="text-xs text-white/80 mt-1 leading-relaxed">
               {deferredPrompt
                 ? 'Get timer reminders and clock-in alerts — even when the app is closed.'

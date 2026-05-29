@@ -36,7 +36,7 @@ import { getPartHistory } from './utils/partHistory';
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
-  l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (lMs(l));
+  l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
 
 // ── STAGE HELPERS (mirror App.tsx to keep this file standalone-friendly) ──
 const DEFAULT_STAGES: JobStage[] = [

@@ -6,7 +6,7 @@
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#09090b",
-  "theme_color": "#2563eb",
+  "theme_color": "#f59e0b",
   "categories": ["business", "productivity"],
   "icons": [
     {
@@ -22,7 +22,7 @@
       "purpose": "any maskable"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%230a1628'/><text x='96' y='125' font-size='70' font-weight='900' text-anchor='middle' fill='%232563eb' font-family='Arial Black'>FTIO</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%230a1628'/><text x='96' y='125' font-size='70' font-weight='900' text-anchor='middle' fill='%23f59e0b' font-family='Arial Black'>FTIO</text></svg>",
       "sizes": "192x192",
       "type": "image/svg+xml",
       "purpose": "any"

@@ -590,7 +590,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
 
         {/* ── Footer ── */}
         <div className="text-center pt-4 pb-4">
-          <p className="text-zinc-600 text-xs">Powered by <span className="text-zinc-500 font-bold">{settings.companyName || 'SC Tracker'}</span></p>
+          <p className="text-zinc-600 text-xs">Powered by <span className="text-zinc-500 font-bold">{settings.companyName || 'FabTrack IO'}</span></p>
           <p className="text-zinc-700 text-[10px] mt-1 font-mono truncate max-w-md mx-auto px-2">{canonicalUrl}</p>
         </div>
       </div>
