@@ -26,6 +26,10 @@ dist-ssr
 # Local Netlify folder
 .netlify
 
+# Netlify local build artifacts — never commit these, they break remote deploys
+netlify/functions/manifest.json
+netlify/functions/*.zip
+
 # Claude agent scratch space
 .claude/worktrees/
 .claude/settings.local.json
