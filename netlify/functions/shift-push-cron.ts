@@ -113,8 +113,8 @@ function alarmActiveToday(alarm: ShiftAlarm, tz: string): boolean {
 // ── Main handler ──────────────────────────────────────────────────────
 
 export default async function handler() {
-  const apiKey    = process.env.VITE_FIREBASE_API_KEY;
-  const projectId = process.env.VITE_FIREBASE_PROJECT_ID || 'sc-job-tracker';
+  const apiKey    = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
   const vapidPub  = process.env.VAPID_PUBLIC_KEY;
   const vapidPriv = process.env.VAPID_PRIVATE_KEY;
   const vapidSub  = process.env.VAPID_SUBJECT || 'mailto:hello@fabtrack.io';

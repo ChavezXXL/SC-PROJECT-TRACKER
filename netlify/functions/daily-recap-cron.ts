@@ -104,8 +104,8 @@ function currentHourInTz(tz: string): number {
 export default async function handler() {
   console.log('[daily-recap-cron] tick', new Date().toISOString());
 
-  const apiKey   = process.env.VITE_FIREBASE_API_KEY;
-  const projectId = process.env.VITE_FIREBASE_PROJECT_ID || 'sc-job-tracker';
+  const apiKey    = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
 
   if (!apiKey) {
     console.error('[daily-recap-cron] VITE_FIREBASE_API_KEY not set');

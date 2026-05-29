@@ -81,8 +81,8 @@ export const handler: Handler = async (event) => {
   const fail = (msg: string) => { console.error('[test-recap]', msg); log.push('✗  ' + msg); };
 
   // 1. Check env vars
-  const apiKey    = process.env.VITE_FIREBASE_API_KEY;
-  const projectId = process.env.VITE_FIREBASE_PROJECT_ID || 'sc-job-tracker';
+  const apiKey    = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
   const resendKey = process.env.RESEND_API_KEY;
   const from      = process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>';
 
