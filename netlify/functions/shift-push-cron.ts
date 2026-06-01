@@ -110,6 +110,66 @@ function alarmActiveToday(alarm: ShiftAlarm, tz: string): boolean {
   return alarm.days.includes(isNaN(dayNum) ? dow : dayNum);
 }
 
+// ── Firestore structured query — active logs only ────────────────────
+// Much cheaper than fetching all logs: returns only status='in_progress' docs.
+async function fetchActiveLogs(apiKey: string, projectId: string): Promise<any[]> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery?key=${apiKey}`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: 'logs' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'status' },
+          op: 'EQUAL',
+          value: { stringValue: 'in_progress' },
+        },
+      },
+    },
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return [];
+    const rows: any[] = await res.json();
+    return rows.filter(r => r.document).map(r => fsDoc(r.document));
+  } catch { return []; }
+}
+
+/** Format elapsed ms as "Xh Ym" or "Ym" */
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** Send one push, delete sub on 404/410. Returns true on success. */
+async function sendPush(
+  subDoc: any,
+  payload: string,
+  ttl: number,
+  apiKey: string,
+  projectId: string,
+): Promise<'sent' | 'failed' | 'removed'> {
+  const subscription = subDoc.subscription;
+  if (!subscription?.endpoint) return 'failed';
+  try {
+    await webpush.sendNotification(subscription, payload, { TTL: ttl });
+    return 'sent';
+  } catch (e: any) {
+    const code = e?.statusCode || 0;
+    if (code === 404 || code === 410) {
+      await deleteDoc('push_subscriptions', subDoc.id, apiKey, projectId).catch(() => {});
+      return 'removed';
+    }
+    console.warn(`[shift-push-cron] Push failed for sub ${subDoc.id}: ${e?.message}`);
+    return 'failed';
+  }
+}
+
 // ── Main handler ──────────────────────────────────────────────────────
 
 export default async function handler() {
@@ -128,14 +188,12 @@ export default async function handler() {
   const settings = await fetchDoc('settings', 'system', apiKey, projectId) as SystemSettings | null;
   if (!settings) { console.log('[shift-push-cron] No settings doc'); return; }
 
-  const alarms: ShiftAlarm[] = settings.shiftAlarms || [];
-  if (alarms.length === 0) { console.log('[shift-push-cron] No alarms configured'); return; }
-
-  const tz      = (settings as any).recapTimezone || 'America/Los_Angeles';
+  const tz       = (settings as any).recapTimezone || 'America/Los_Angeles';
   const shopName = settings.companyName || 'FabTrack IO';
-  const nowHHMM = currentHHMM(tz);
+  const nowHHMM  = currentHHMM(tz);
 
   // 2. Find alarms that should fire right now
+  const alarms: ShiftAlarm[] = settings.shiftAlarms || [];
   const toFire = alarms.filter(a =>
     a.enabled &&
     a.sendPush &&
@@ -143,73 +201,106 @@ export default async function handler() {
     alarmActiveToday(a, tz),
   );
 
-  if (toFire.length === 0) {
-    console.log(`[shift-push-cron] No push alarms firing at ${nowHHMM} (${tz})`);
+  // 3. Fetch active timer logs (only in_progress — cheap structured query)
+  const activeLogs = await fetchActiveLogs(apiKey, projectId);
+
+  // Nothing to push at all — bail early
+  if (toFire.length === 0 && activeLogs.length === 0) {
+    console.log(`[shift-push-cron] No alarms firing and no active timers at ${nowHHMM} — done`);
     return;
   }
 
-  console.log(`[shift-push-cron] ${toFire.length} alarm(s) firing at ${nowHHMM}: ${toFire.map(a => a.label).join(', ')}`);
-
-  // 3. Load all push subscriptions from Firestore
-  // Subscriptions are stored under tenants/{tenantId}/push_subscriptions/
-  // We fetch from the top-level collection path used by mockDb: push_subscriptions
+  // 4. Load push subscriptions
   const subDocs = await fetchCollection('push_subscriptions', apiKey, projectId);
   if (subDocs.length === 0) {
-    console.log('[shift-push-cron] No push subscriptions found');
+    console.log('[shift-push-cron] No push subscriptions — nothing to send');
     return;
   }
-  console.log(`[shift-push-cron] Found ${subDocs.length} push subscription(s)`);
+  console.log(`[shift-push-cron] ${subDocs.length} subscription(s) | ${toFire.length} alarm(s) | ${activeLogs.length} active timer(s)`);
 
-  // 4. Configure webpush
+  // 5. Configure webpush
   webpush.setVapidDetails(vapidSub, vapidPub, vapidPriv);
 
-  // 5. For each alarm × each subscription, send push
+  // 6. Shift alarm pushes — broadcast to ALL subscribed devices
   for (const alarm of toFire) {
     const isClockIn  = alarm.clockIn  || alarm.label.toLowerCase().includes('clock in') || alarm.label.toLowerCase().includes('shift start');
     const isClockOut = alarm.clockOut || alarm.label.toLowerCase().includes('clock out') || alarm.label.toLowerCase().includes('shift end');
 
-    const title = isClockIn
-      ? `⏰ Time to Clock In — ${shopName}`
-      : isClockOut
-        ? `🏁 Shift Ending — ${shopName}`
-        : `🔔 ${alarm.label} — ${shopName}`;
-
-    const body = isClockIn
-      ? `Shift starts at ${alarm.time}. Open FabTrack IO and clock in.`
-      : isClockOut
-        ? `Time to wrap up and clock out for the day.`
-        : `${alarm.label} at ${alarm.time}.`;
+    const title = isClockIn  ? `⏰ Time to Clock In — ${shopName}`
+                : isClockOut ? `🏁 Shift Ending — ${shopName}`
+                             : `🔔 ${alarm.label} — ${shopName}`;
+    const body  = isClockIn  ? `Shift starts at ${alarm.time}. Open FabTrack IO and clock in.`
+                : isClockOut ? `Time to wrap up and clock out for the day.`
+                             : `${alarm.label} at ${alarm.time}.`;
 
     const payload = JSON.stringify({
-      title,
-      body,
-      tag:  `shift-alarm-${alarm.id}`,
-      url:  '/',
-      requireInteraction: isClockIn, // clock-in reminder stays until dismissed
+      title, body,
+      tag: `shift-alarm-${alarm.id}`,
+      url: '/',
+      requireInteraction: isClockIn,
     });
 
     let sent = 0, failed = 0, removed = 0;
-
     for (const subDoc of subDocs) {
-      const subscription = subDoc.subscription;
-      if (!subscription?.endpoint) continue;
+      const r = await sendPush(subDoc, payload, 15 * 60, apiKey, projectId);
+      if (r === 'sent') sent++;
+      else if (r === 'removed') removed++;
+      else failed++;
+    }
+    console.log(`[shift-push-cron] alarm "${alarm.label}" → sent:${sent} failed:${failed} removed:${removed}`);
+  }
 
-      try {
-        await webpush.sendNotification(subscription, payload, { TTL: 15 * 60 }); // 15 min TTL
-        sent++;
-      } catch (e: any) {
-        const code = e?.statusCode || 0;
-        if (code === 404 || code === 410) {
-          // Subscription expired — clean it up so we stop trying
-          await deleteDoc('push_subscriptions', subDoc.id, apiKey, projectId).catch(() => {});
-          removed++;
-        } else {
-          console.warn(`[shift-push-cron] Push failed for sub ${subDoc.id}: ${e?.message}`);
-          failed++;
-        }
+  // 7. Timer heartbeat — send live-timer push to each worker with an active log.
+  //    Runs every 5 min regardless of alarms, so the background notification
+  //    stays fresh (like Strava / iPhone timer in the notification tray).
+  //    TTL = 4 min so a stale push never shows up after the next tick.
+  if (activeLogs.length > 0) {
+    // Fetch jobs for labels (only if there are active timers)
+    const allJobs = await fetchCollection('jobs', apiKey, projectId);
+    const jobMap = new Map(allJobs.map((j: any) => [j.id, j]));
+
+    // Build userId → subscriptions map for fast lookup
+    const subsByUser = new Map<string, any[]>();
+    for (const sub of subDocs) {
+      if (!sub.userId) continue;
+      const arr = subsByUser.get(sub.userId) || [];
+      arr.push(sub);
+      subsByUser.set(sub.userId, arr);
+    }
+
+    const now = Date.now();
+    let timerSent = 0;
+
+    for (const log of activeLogs) {
+      if (!log.userId || !log.jobId) continue;
+      const userSubs = subsByUser.get(log.userId);
+      if (!userSubs || userSubs.length === 0) continue;
+
+      const job: any = jobMap.get(log.jobId);
+      const jobLabel = job?.jobIdsDisplay || job?.partNumber || log.jobId;
+      const isPaused = !!log.pausedAt;
+      const elapsedMs = isPaused
+        ? Math.max(0, (log.pausedAt - log.startTime) - (log.totalPausedMs || 0))
+        : Math.max(0, (now - log.startTime) - (log.totalPausedMs || 0));
+
+      const payload = JSON.stringify({
+        title:  isPaused ? `⏸ Paused — ${fmtElapsed(elapsedMs)}` : `⏱ ${fmtElapsed(elapsedMs)} — Running`,
+        body:   `${jobLabel} · ${log.operation || ''}`.trim(),
+        tag:    `live-timer-${log.id}`,
+        logId:  log.id,
+        url:    '/',
+        requireInteraction: false,
+        actions: isPaused
+          ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]
+          : [{ action: 'pause',  title: '⏸ Pause'  }, { action: 'stop', title: '⏹ Stop' }],
+      });
+
+      for (const subDoc of userSubs) {
+        const r = await sendPush(subDoc, payload, 4 * 60, apiKey, projectId);
+        if (r === 'sent') timerSent++;
       }
     }
 
-    console.log(`[shift-push-cron] "${alarm.label}" → sent:${sent} failed:${failed} removed:${removed}`);
+    console.log(`[shift-push-cron] timer heartbeat → ${timerSent} push(es) sent for ${activeLogs.length} active log(s)`);
   }
 }
