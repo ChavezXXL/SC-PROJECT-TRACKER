@@ -19,7 +19,9 @@ import {
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry } from './types';
+import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder } from './types';
+import { JobProfitCard } from './components/JobProfitCard';
+import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
 import { SamplesView } from './SamplesView';
@@ -66,6 +68,7 @@ import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
 import { isDeveloper } from './utils/devMode';
 import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder, showTimerStarted, cancelTimerNotification, watchLiveTimerBadge } from './services/reminders';
+// mediaSession intentionally removed — hijacks music player controls in shop environments
 import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms } from './services/shiftAlarms';
 import { VAPID_KEY, vapidKeyToUint8 } from './utils/vapid';
 
@@ -991,7 +994,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                     onKeyDown={e => {
                       if (e.key === 'Enter' && newNote.trim()) {
                         e.stopPropagation();
-                        DB.addJobNote(job.id, newNote.trim(), user.id, user.name);
+                        DB.addJobNote(job.id, newNote.trim(), user.id, user.name, job.jobIdsDisplay || job.partNumber || job.id);
                         addToast?.('success', 'Note added');
                         setNewNote('');
                       }
@@ -1004,7 +1007,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!newNote.trim()) return;
-                      DB.addJobNote(job.id, newNote.trim(), user.id, user.name);
+                      DB.addJobNote(job.id, newNote.trim(), user.id, user.name, job.jobIdsDisplay || job.partNumber || job.id);
                       addToast?.('success', 'Note added');
                       setNewNote('');
                     }}
@@ -1399,7 +1402,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       const logId = await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
       if (logId) {
         const jobLabel = job?.jobIdsDisplay || job?.partNumber || jobId;
-        showTimerStarted({ id: logId, operation, startTime: Date.now() }, jobLabel);
+        const startTime = Date.now();
+        showTimerStarted({ id: logId, userId: user.id, operation, startTime }, jobLabel);
       }
       // Smart auto-routing: clocking in on "Washing" moves the job to the Washing stage
       if (job) {
@@ -3547,10 +3551,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
   const [workers, setWorkers] = useState<User[]>([]);
+  const [allPOs, setAllPOs] = useState<PurchaseOrder[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<User | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const { prompt: promptInput, PromptHost: JobCompletePromptHost } = usePrompt();
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const [calAdded, setCalAdded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cal_added_jobs') || '[]'); } catch { return []; } });
   const [printed, setPrinted] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('printed_jobs') || '[]'); } catch { return []; } });
@@ -3574,7 +3580,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const u4 = DB.subscribeLogs(l => setAllLogs(l.filter(x => x.endTime)));
     const u5 = DB.subscribeRework(setReworkEntries);
     const u6 = DB.subscribeActiveLogs(setActiveLogs);
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+    const u7 = DB.subscribePurchaseOrders(setAllPOs);
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
   }, []);
 
   // ── All clients — settings list PLUS every unique customer name ever used on a job.
@@ -3606,7 +3613,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       const logId = await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
       if (logId) {
         const jobLabel = startJobModal.jobIdsDisplay || startJobModal.partNumber || startJobModal.id;
-        showTimerStarted({ id: logId, operation, startTime: Date.now() }, jobLabel);
+        showTimerStarted({ id: logId, userId: user.id, operation, startTime: Date.now() }, jobLabel);
       }
       // Smart auto-routing: clocking in on an operation advances the job to the
       // matching stage (e.g. "Washing" → Washing stage). Silent when no match.
@@ -3891,6 +3898,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       pricePerPart: editingJob.pricePerPart || undefined,
       // Time budget — must persist so traveler prints it and over-budget alerts work
       expectedHours: editingJob.expectedHours || undefined,
+      // Material / consumable cost (entered during job lifecycle or at close-out)
+      materialCost: editingJob.materialCost || undefined,
       // Stage
       currentStage: editingJob.currentStage || undefined,
       stageHistory: editingJob.stageHistory || undefined,
@@ -3913,6 +3922,38 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     }
     catch (e) { addToast('error', 'Save Failed'); }
   };
+
+  // ── Complete a job with profit snapshot + optional material cost ──────
+  // Shows a quick dollar prompt for consumables/materials before locking
+  // the profit record. Called from all "Complete Job" buttons so every
+  // completion path captures an accurate, immutable profitSnapshot.
+  const handleCompleteWithSnapshot = useCallback(async (j: Job) => {
+    const stages = getStages(shopSettings);
+    const completedStage = stages.find(s => s.isComplete);
+    const matStr = await promptInput({
+      title: `Complete "${j.poNumber || j.partNumber || 'Job'}"`,
+      message: 'Enter material & consumable cost for this job. Labor is calculated automatically from time logs.',
+      placeholder: '0.00',
+      defaultValue: j.materialCost ? j.materialCost.toFixed(2) : '0',
+      confirmLabel: '✅ Complete Job',
+      cancelLabel: 'Cancel',
+    });
+    if (matStr === null) return; // user cancelled
+    const matCost = parseFloat(matStr) || 0;
+    const jobForSnap: Job = { ...j, materialCost: matCost > 0 ? matCost : j.materialCost };
+    const breakdown = calcJobProfit(jobForSnap, allLogs, workers, shopSettings, allPOs);
+    const snapshot = buildProfitSnapshot(breakdown);
+    if (completedStage) {
+      await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true);
+    }
+    await DB.completeJobWithSnapshot(j.id, matCost, snapshot);
+    // Keep modal in sync if it's open for this job
+    if (editingJob.id === j.id) {
+      setEditingJob(prev => ({ ...prev, status: 'completed', currentStage: completedStage?.id || prev.currentStage, profitSnapshot: snapshot, materialCost: matCost > 0 ? matCost : (j.materialCost ?? 0) }));
+    }
+    const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin!' : breakdown.grade === 'good' ? '🔵 Good job' : breakdown.grade === 'tight' ? '🟡 Tight margin' : '🔴 Loss';
+    addToast('success', `✅ "${j.poNumber}" complete — ${gradeMsg}`);
+  }, [allLogs, workers, shopSettings, allPOs, user, promptInput, editingJob]);
 
   return (
     <div className="space-y-6">
@@ -4626,16 +4667,31 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <span className="truncate italic min-w-0">{j.specialInstructions.length > 60 ? j.specialInstructions.slice(0, 60) + '…' : j.specialInstructions}</span>
                         </div>
                       )}
-                      {j.status === 'completed' && totalMins > 0 && (
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{totalHrs.toFixed(1)}h · ${totalCost.toFixed(0)} cost</span>
-                          {profit !== null && (
-                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${profit >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                              {profit >= 0 ? '+' : '-'}${Math.abs(profit).toFixed(0)} {profit >= 0 ? 'profit' : 'loss'}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      {j.status === 'completed' && (() => {
+                        const snap = j.profitSnapshot;
+                        if (snap) {
+                          const marginColor = snap.marginPct >= 35 ? 'text-emerald-400 bg-emerald-500/10' : snap.marginPct >= 15 ? 'text-blue-400 bg-blue-500/10' : snap.marginPct >= 0 ? 'text-yellow-400 bg-yellow-500/10' : 'text-red-400 bg-red-500/10';
+                          return (
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${marginColor}`}>
+                                {snap.profit >= 0 ? '+' : ''}${Math.abs(snap.profit).toFixed(0)} · {snap.marginPct.toFixed(0)}% margin
+                              </span>
+                              <span className="text-[9px] text-zinc-600">locked</span>
+                            </div>
+                          );
+                        }
+                        if (totalMins > 0) return (
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{totalHrs.toFixed(1)}h · ${totalCost.toFixed(0)} cost</span>
+                            {profit !== null && (
+                              <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${profit >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                {profit >= 0 ? '+' : '-'}${Math.abs(profit).toFixed(0)} profit
+                              </span>
+                            )}
+                          </div>
+                        );
+                        return null;
+                      })()}
                       </div>
                     </div>
                   </td>
@@ -4712,14 +4768,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             {!isAlreadyComplete && completedStage && (
                               <button
                                 aria-label={`Complete job ${j.poNumber || ''}`}
-                                onClick={() => confirm({
-                                title: 'Complete Job',
-                                message: `Mark "${j.poNumber}" as completed?`,
-                                onConfirm: async () => {
-                                  await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true);
-                                  addToast('success', `✅ Job "${j.poNumber}" completed!`);
-                                }
-                              })}
+                                onClick={() => handleCompleteWithSnapshot(j)}
                                 className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors"
                                 title="Complete Job">
                                 <CheckCircle className="w-4 h-4" aria-hidden="true" />
@@ -4855,11 +4904,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {!isJobComplete && completedStage && (
                           <button
                             type="button"
-                            onClick={async () => {
-                              await DB.advanceJobStage(editingJob.id, completedStage.id, user.id, user.name, true);
-                              setEditingJob({ ...editingJob, currentStage: completedStage.id, status: 'completed' });
-                              addToast('success', `✅ Job completed!`);
-                            }}
+                            onClick={() => handleCompleteWithSnapshot(editingJob as Job)}
                             className="text-xs font-bold px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap"
                           >
                             <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> Complete
@@ -5261,6 +5306,34 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </div>
                   <p className="text-[10px] text-zinc-600 mt-1">Time budget. Job row shows red badge if actual exceeds this.</p>
                 </div>
+                {editingJob.id && (
+                  <div>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Material Cost <span className="text-zinc-600 normal-case">(actual spend)</span></label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">$</span>
+                      <input
+                        type="number" step="0.01" min="0"
+                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50"
+                        value={(editingJob as Job).materialCost || ''}
+                        onChange={e => setEditingJob({ ...editingJob, materialCost: Number(e.target.value) || 0 })}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <p className="text-[10px] text-zinc-600 mt-1">Abrasives, media, consumables used. You'll also be prompted at close-out.</p>
+                  </div>
+                )}
+                {editingJob.id && (
+                  <div className="pt-1">
+                    <JobProfitCard
+                      job={editingJob as Job}
+                      allLogs={allLogs}
+                      allUsers={workers}
+                      settings={shopSettings}
+                      allPOs={allPOs}
+                      useSnapshot={!!(editingJob as Job).profitSnapshot}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* ── "What's next" hint for new jobs ── only Shipping needs an existing job ── */}
@@ -5551,6 +5624,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       {/* Rework modal — opened from the row's AlertTriangle button */}
       {reworkModal && <ReworkModal entry={reworkModal} jobs={jobs} user={user} onClose={() => setReworkModal(null)} addToast={addToast} />}
       {PromptHost}
+      {JobCompletePromptHost}
     </div>
   );
 };

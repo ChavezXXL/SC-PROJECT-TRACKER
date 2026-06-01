@@ -26,6 +26,7 @@ function swShow(opts: {
   body: string;
   tag: string;
   logId?: string;
+  userId?: string;
   actions?: { action: string; title: string }[];
   requireInteraction?: boolean;
   url?: string;
@@ -67,7 +68,7 @@ function fmtElapsed(ms: number): string {
 
 /** Call immediately after DB.startTimeLog() succeeds. */
 export function showTimerStarted(
-  log: { id: string; operation: string; startTime: number },
+  log: { id: string; userId: string; operation: string; startTime: number },
   jobLabel: string
 ) {
   swShow({
@@ -75,6 +76,7 @@ export function showTimerStarted(
     body: `${jobLabel} · ${log.operation} · 0:00`,
     tag: `live-timer-${log.id}`,
     logId: log.id,
+    userId: log.userId,
     requireInteraction: true,
     actions: [
       { action: 'pause', title: '⏸ Pause' },
@@ -116,6 +118,7 @@ export function watchLiveTimerBadge(
         body: `${getJobLabel(log.jobId)} · ${log.operation}`,
         tag: `live-timer-${log.id}`,
         logId: log.id,
+        userId: log.userId,
         requireInteraction: true,
         actions: isPaused
           ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]

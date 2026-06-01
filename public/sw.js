@@ -92,7 +92,8 @@ self.addEventListener('push', event => {
     icon: '/brand/ftio-icon.png',
     badge: '/brand/ftio-icon.png',
     tag: data.tag || 'fabtrack',
-    data: { url: data.url || '/', logId: data.logId, action: data.action },
+    // userId stored here so notificationclick can call timer-action without the app open
+    data: { url: data.url || '/', logId: data.logId, userId: data.userId, action: data.action },
     vibrate: [200, 100, 200],
     requireInteraction: data.requireInteraction || false,
     actions: data.actions || [],
@@ -100,34 +101,69 @@ self.addEventListener('push', event => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// ── Notification click: open/focus app + handle action buttons ───
-// Action buttons (Pause / Resume / Stop) can be tapped without opening the app
+// ── Notification click: Pause / Resume / Stop from the lock screen ──
+//
+// TWO paths depending on whether the app is open:
+//
+//   APP OPEN   → postMessage to the app so it can update local state and Firestore
+//   APP CLOSED → call /.netlify/functions/timer-action directly from the SW
+//                (true background action — no app needed at all)
+//
 self.addEventListener('notificationclick', event => {
   const { action } = event;
-  const { url = '/', logId } = event.notification.data || {};
+  const { url = '/', logId, userId } = event.notification.data || {};
   event.notification.close();
 
-  // If an action button was tapped, post a message to any open client
-  // so the main app can dispatch the pause/resume/stop
   if (action && logId) {
     event.waitUntil((async () => {
       const allClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-      // Notify all open clients — message shape matches existing TIMER_ACTION handler
-      for (const c of allClients) {
-        c.postMessage({ type: 'TIMER_ACTION', action, logId });
+
+      if (allClients.length > 0) {
+        // ── App is open: let it handle state + Firestore ──────────────
+        for (const c of allClients) {
+          c.postMessage({ type: 'TIMER_ACTION', action, logId });
+        }
+        if ('focus' in allClients[0]) allClients[0].focus();
+        return;
       }
-      // If no client is open, open the app with the action in the URL
-      if (allClients.length === 0) {
-        const target = `${url}${url.includes('?') ? '&' : '?'}action=${action}&logId=${encodeURIComponent(logId)}`;
-        return clients.openWindow(target);
+
+      // ── App is closed: call backend directly ──────────────────────
+      try {
+        const res = await fetch('/.netlify/functions/timer-action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, logId, userId }),
+        });
+        const result = await res.json().catch(() => ({}));
+
+        if (result.ok) {
+          // Show a brief confirmation — replaces the timer notification
+          await self.registration.showNotification(result.message || '✓ Done', {
+            body: 'Tap to open FabTrack IO',
+            icon: '/brand/ftio-icon.png',
+            badge: '/brand/ftio-icon.png',
+            tag: `timer-confirm-${logId}`,
+            data: { url: '/' },
+            requireInteraction: false,
+          });
+          // If it was a stop, also clear the live-timer notification
+          if (action === 'stop') {
+            const timerNotifs = await self.registration.getNotifications({ tag: `live-timer-${logId}` });
+            timerNotifs.forEach(n => n.close());
+          }
+        } else {
+          // Something went wrong — open the app so they can deal with it
+          await clients.openWindow(`${url}?action=${action}&logId=${encodeURIComponent(logId)}`);
+        }
+      } catch {
+        // Network error / function down — open app as fallback
+        await clients.openWindow(`${url}?action=${action}&logId=${encodeURIComponent(logId)}`);
       }
-      // Focus the first open client
-      if ('focus' in allClients[0]) return allClients[0].focus();
     })());
     return;
   }
 
-  // No action = just open/focus the app
+  // No action button — just open / focus the app
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
       for (const client of clientList) {
@@ -153,13 +189,13 @@ self.addEventListener('message', event => {
     return;
   }
   if (data.type === 'NOTIFY') {
-    const { title, body, tag, url, actions, logId, requireInteraction } = data;
+    const { title, body, tag, url, actions, logId, userId, requireInteraction } = data;
     self.registration.showNotification(title, {
       body,
       icon: '/brand/ftio-icon.png',
       badge: '/brand/ftio-icon.png',
       tag: tag || 'fabtrack',
-      data: { url: url || '/', logId, action: data.action },
+      data: { url: url || '/', logId, userId, action: data.action },
       vibrate: [200, 100, 200],
       requireInteraction: !!requireInteraction,
       actions: actions || [],

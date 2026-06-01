@@ -9,15 +9,17 @@ import {
   PieChart, Pie, Cell, CartesianGrid, Legend, Sector
 } from 'recharts';
 
-import { Job, User, TimeLog, SystemSettings } from '../types';
+import { Job, User, TimeLog, SystemSettings, PurchaseOrder } from '../types';
 import * as DB from '../services/mockDb';
 import { Avatar, useIsMobile } from '../App';
 import { fmtMoneyK } from '../utils/format';
+import { calcJobProfit, GRADE_COLORS, GRADE_LABELS } from '../utils/jobProfit';
 
 export const ReportsView = () => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [allPOs, setAllPOs] = useState<PurchaseOrder[]>([]);
   const [period, setPeriod] = useState<'week' | 'month' | 'custom' | 'all'>('week');
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [customStart, setCustomStart] = useState('');
@@ -30,7 +32,8 @@ export const ReportsView = () => {
     const u2 = DB.subscribeUsers(setUsers);
     const u3 = DB.subscribeJobs(setJobs);
     const u4 = DB.subscribeSettings(setSettings);
-    return () => { u1(); u2(); u3(); u4(); };
+    const u5 = DB.subscribePurchaseOrders(setAllPOs);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
   const now = Date.now();
@@ -559,25 +562,33 @@ export const ReportsView = () => {
         );
       })()}
 
-      {/* Job Profitability */}
+      {/* Job Profitability — uses locked profitSnapshot when available for accuracy */}
       {(() => {
         const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && j.quoteAmount).map(j => {
-          const jLogs = completedLogs.filter(l => l.jobId === j.id);
-          const hrs = jLogs.reduce((a, l) => a + logMins(l), 0) / 60;
-          const cost = hrs * ((shopRate || 0) + ohRate);
-          const profit = (j.quoteAmount || 0) - cost;
-          const margin = j.quoteAmount ? (profit / j.quoteAmount) * 100 : 0;
-          const revenuePerHour = hrs > 0 && j.quoteAmount ? (j.quoteAmount / hrs) : 0;
-          return { ...j, hrs, cost, profit, margin, revenuePerHour };
+          // Prefer locked snapshot (fully accurate: labor + materials + outsourced)
+          // Fall back to calcJobProfit (live calculation using same engine)
+          const snap = j.profitSnapshot;
+          if (snap) {
+            const grade = snap.marginPct >= 35 ? 'great' : snap.marginPct >= 15 ? 'good' : snap.marginPct >= 0 ? 'tight' : 'loss';
+            return { ...j, hrs: snap.laborHours, cost: snap.totalCost, profit: snap.profit, margin: snap.marginPct, revenuePerHour: snap.laborHours > 0 ? snap.revenue / snap.laborHours : 0, grade, isSnapshot: true };
+          }
+          const breakdown = calcJobProfit(j, logs, users, settings, allPOs);
+          return { ...j, hrs: breakdown.laborHours, cost: breakdown.totalCost, profit: breakdown.profit, margin: breakdown.marginPct, revenuePerHour: breakdown.revenuePerHour, grade: breakdown.grade, isSnapshot: false };
         }).sort((a, b) => b.profit - a.profit);
         if (profitableJobs.length === 0) return null;
         const maxMargin = profitableJobs.reduce((m, j) => Math.max(m, Math.abs(j.margin)), 0) || 100;
         const totalProfitSum = profitableJobs.reduce((a, j) => a + j.profit, 0);
         const avgMargin = profitableJobs.reduce((a, j) => a + j.margin, 0) / profitableJobs.length;
+        const snapCount = profitableJobs.filter(j => j.isSnapshot).length;
         return (
           <div>
             <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
-              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Job Profitability</h3>
+              <div>
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Job Profitability</h3>
+                {snapCount > 0 && (
+                  <p className="text-[9px] text-zinc-600 mt-0.5">{snapCount}/{profitableJobs.length} locked · includes labor + materials + outsourcing</p>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${totalProfitSum >= 0 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20'}`}>
                   {totalProfitSum >= 0 ? '+' : ''}${totalProfitSum.toFixed(0)} net
@@ -592,8 +603,8 @@ export const ReportsView = () => {
                 <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
                   <tr>
                     <th className="text-left p-2 sm:p-3">PO / Part</th>
-                    <th className="text-right p-2 sm:p-3 hidden md:table-cell">Quote</th>
-                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Cost</th>
+                    <th className="text-right p-2 sm:p-3 hidden md:table-cell">Revenue</th>
+                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Total Cost</th>
                     <th className="text-right p-2 sm:p-3">Profit</th>
                     <th className="p-2 sm:p-3">Margin</th>
                     <th className="text-right p-2 sm:p-3 hidden lg:table-cell">$/hr</th>
@@ -601,14 +612,16 @@ export const ReportsView = () => {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {profitableJobs.map(j => {
-                    const marginColor = j.margin >= 20 ? '#10b981' : j.margin >= 0 ? '#eab308' : '#ef4444';
+                    const colors = GRADE_COLORS[j.grade as keyof typeof GRADE_COLORS];
                     const barWidth = Math.min(100, (Math.abs(j.margin) / maxMargin) * 100);
+                    const marginHex = j.grade === 'great' ? '#10b981' : j.grade === 'good' ? '#3b82f6' : j.grade === 'tight' ? '#eab308' : '#ef4444';
                     return (
                     <tr key={j.id} className="hover:bg-white/5">
                       <td className="p-2 sm:p-3">
-                        <div className="flex flex-col">
+                        <div className="flex flex-col gap-0.5">
                           <span className="text-white font-bold text-xs sm:text-sm">{j.poNumber}</span>
                           <span className="text-zinc-500 text-[10px] sm:text-xs truncate max-w-[140px] sm:max-w-none">{j.partNumber}</span>
+                          <span className={`text-[9px] font-black ${colors.text}`}>{GRADE_LABELS[j.grade as keyof typeof GRADE_LABELS]}{j.isSnapshot ? ' 🔒' : ' ~'}</span>
                         </div>
                       </td>
                       <td className="p-2 sm:p-3 text-right font-mono text-zinc-300 text-xs sm:text-sm hidden md:table-cell">${(j.quoteAmount || 0).toLocaleString()}</td>
@@ -619,10 +632,10 @@ export const ReportsView = () => {
                           <div className="relative w-14 sm:w-20 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
                             <div
                               className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
-                              style={{ width: `${barWidth}%`, background: marginColor, boxShadow: `0 0 6px ${marginColor}80` }}
+                              style={{ width: `${barWidth}%`, background: marginHex, boxShadow: `0 0 6px ${marginHex}80` }}
                             />
                           </div>
-                          <span className="font-mono text-[11px] sm:text-xs font-bold tabular" style={{ color: marginColor }}>{j.margin.toFixed(0)}%</span>
+                          <span className="font-mono text-[11px] sm:text-xs font-bold tabular" style={{ color: marginHex }}>{j.margin.toFixed(0)}%</span>
                         </div>
                       </td>
                       <td className="p-2 sm:p-3 text-right font-mono text-[11px] text-amber-400 hidden lg:table-cell">

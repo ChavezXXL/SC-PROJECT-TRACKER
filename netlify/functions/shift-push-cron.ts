@@ -1,11 +1,15 @@
 // netlify/functions/shift-push-cron.ts
 // ═════════════════════════════════════════════════════════════════════
-// Runs every 5 minutes. For every ShiftAlarm with sendPush:true that
-// matches the current local shop time, blasts a Web Push notification
-// to every subscribed worker device — works even when the browser is closed.
+// Runs every 5 minutes. Handles four push scenarios:
+//
+//   1. Shift alarm pushes  — broadcast to ALL devices at alarm time
+//   2. Live-timer heartbeat — per-worker elapsed-time push every 5 min
+//   3. Missed clock-in      — remind worker 20 min after shift start;
+//                             send admin a summary of who's missing
+//   4. Long-timer admin alert — admin push when any timer exceeds 5 h
 //
 // Required Netlify env vars:
-//   VITE_FIREBASE_API_KEY
+//   VITE_FIREBASE_API_KEY / FIREBASE_API_KEY
 //   VITE_FIREBASE_PROJECT_ID  (default: sc-job-tracker)
 //   VAPID_PUBLIC_KEY
 //   VAPID_PRIVATE_KEY
@@ -68,6 +72,27 @@ async function fetchCollection(col: string, apiKey: string, projectId: string): 
   return docs;
 }
 
+/** Write a document to push_meta (used to debounce daily alerts). */
+async function setMetaDoc(
+  id: string,
+  data: Record<string, string | number | boolean>,
+  apiKey: string,
+  projectId: string,
+): Promise<void> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/push_meta/${id}?key=${apiKey}`;
+  const fields: any = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof v === 'string')  fields[k] = { stringValue: v };
+    else if (typeof v === 'number') fields[k] = { integerValue: String(Math.round(v)) };
+    else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
+  }
+  await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  }).catch(() => {});
+}
+
 /** Delete a Firestore doc (used to remove stale/expired push subscriptions). */
 async function deleteDoc(col: string, id: string, apiKey: string, projectId: string): Promise<void> {
   const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}/${id}?key=${apiKey}`;
@@ -83,35 +108,48 @@ function currentHHMM(tz: string): string {
   }).format(new Date()).replace(/^24:/, '00:');
 }
 
-/** True if alarmTime (HH:MM) falls within a ±5-min window of now. */
+/** "YYYY-MM-DD" in the given timezone — used as daily dedup key. */
+function todayStr(tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+}
+
+/** True if alarmTime (HH:MM) falls within a ±4-min window of now. */
 function isWithinWindow(alarmTime: string, nowHHMM: string): boolean {
   const [ah, am] = alarmTime.split(':').map(Number);
   const [nh, nm] = nowHHMM.split(':').map(Number);
-  const alarmTotalMins = ah * 60 + am;
-  const nowTotalMins   = nh * 60 + nm;
-  const diff = Math.abs(alarmTotalMins - nowTotalMins);
-  // Wrap-around midnight
-  const diffWrapped = Math.min(diff, 1440 - diff);
-  return diffWrapped <= 4; // within 4 minutes (safe for 5-min cron with jitter)
+  const alarmTotal = ah * 60 + am;
+  const nowTotal   = nh * 60 + nm;
+  const diff = Math.abs(alarmTotal - nowTotal);
+  return Math.min(diff, 1440 - diff) <= 4;
+}
+
+/**
+ * True if now is between graceMinutes and 120 minutes AFTER alarmTime.
+ * Used to find shift-start alarms where the grace period has elapsed.
+ */
+function isAfterGracePeriod(alarmTime: string, nowHHMM: string, graceMinutes: number): boolean {
+  const [ah, am] = alarmTime.split(':').map(Number);
+  const [nh, nm] = nowHHMM.split(':').map(Number);
+  const alarmTotal = ah * 60 + am;
+  const nowTotal   = nh * 60 + nm;
+  let diff = nowTotal - alarmTotal;
+  if (diff < -720) diff += 1440; // wrap past midnight
+  return diff >= graceMinutes && diff < 120;
 }
 
 /** Days of week this alarm should fire (empty = every day). */
 function alarmActiveToday(alarm: ShiftAlarm, tz: string): boolean {
   if (!alarm.days || alarm.days.length === 0) return true;
-  const dow = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())).getDay();
-  // Intl en-CA gives YYYY-MM-DD which Date() parses as UTC midnight — may be off by 1 day.
-  // Use a more direct approach:
-  const dayNum = parseInt(
+  const dow = parseInt(
     new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date())
       .replace(/Sun.*/, '0').replace(/Mon.*/, '1').replace(/Tue.*/, '2')
       .replace(/Wed.*/, '3').replace(/Thu.*/, '4').replace(/Fri.*/, '5').replace(/Sat.*/, '6'),
     10,
   );
-  return alarm.days.includes(isNaN(dayNum) ? dow : dayNum);
+  return alarm.days.includes(isNaN(dow) ? new Date().getDay() : dow);
 }
 
-// ── Firestore structured query — active logs only ────────────────────
-// Much cheaper than fetching all logs: returns only status='in_progress' docs.
+// ── Firestore structured query — active logs + recent notes ──────────
 async function fetchActiveLogs(apiKey: string, projectId: string): Promise<any[]> {
   const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery?key=${apiKey}`;
   const body = {
@@ -138,6 +176,33 @@ async function fetchActiveLogs(apiKey: string, projectId: string): Promise<any[]
   } catch { return []; }
 }
 
+/** Fetch notes with timestamp > sinceMs (for new-note push alerts). */
+async function fetchRecentNotes(sinceMs: number, apiKey: string, projectId: string): Promise<any[]> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery?key=${apiKey}`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: 'notes' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'timestamp' },
+          op: 'GREATER_THAN',
+          value: { integerValue: String(Math.round(sinceMs)) },
+        },
+      },
+    },
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return [];
+    const rows: any[] = await res.json();
+    return rows.filter(r => r.document).map(r => fsDoc(r.document));
+  } catch { return []; }
+}
+
 /** Format elapsed ms as "Xh Ym" or "Ym" */
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -146,7 +211,7 @@ function fmtElapsed(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-/** Send one push, delete sub on 404/410. Returns true on success. */
+/** Send one push, delete sub on 404/410. Returns 'sent' | 'failed' | 'removed'. */
 async function sendPush(
   subDoc: any,
   payload: string,
@@ -191,6 +256,7 @@ export default async function handler() {
   const tz       = (settings as any).recapTimezone || 'America/Los_Angeles';
   const shopName = settings.companyName || 'FabTrack IO';
   const nowHHMM  = currentHHMM(tz);
+  const today    = todayStr(tz);
 
   // 2. Find alarms that should fire right now
   const alarms: ShiftAlarm[] = settings.shiftAlarms || [];
@@ -201,27 +267,45 @@ export default async function handler() {
     alarmActiveToday(a, tz),
   );
 
-  // 3. Fetch active timer logs (only in_progress — cheap structured query)
+  // 3. Clock-in alarms past grace period (20 min after shift start)
+  const clockInAlarmsForCheck = alarms.filter(a =>
+    a.enabled &&
+    (a.clockIn || a.label.toLowerCase().includes('clock in') || a.label.toLowerCase().includes('shift start')) &&
+    alarmActiveToday(a, tz) &&
+    isAfterGracePeriod(a.time, nowHHMM, 20),
+  );
+
+  // 4. Fetch active timer logs (in_progress only)
   const activeLogs = await fetchActiveLogs(apiKey, projectId);
 
   // Nothing to push at all — bail early
-  if (toFire.length === 0 && activeLogs.length === 0) {
-    console.log(`[shift-push-cron] No alarms firing and no active timers at ${nowHHMM} — done`);
+  if (toFire.length === 0 && activeLogs.length === 0 && clockInAlarmsForCheck.length === 0) {
+    console.log(`[shift-push-cron] Nothing to do at ${nowHHMM} — done`);
     return;
   }
 
-  // 4. Load push subscriptions
+  // 5. Load push subscriptions
   const subDocs = await fetchCollection('push_subscriptions', apiKey, projectId);
   if (subDocs.length === 0) {
     console.log('[shift-push-cron] No push subscriptions — nothing to send');
     return;
   }
-  console.log(`[shift-push-cron] ${subDocs.length} subscription(s) | ${toFire.length} alarm(s) | ${activeLogs.length} active timer(s)`);
 
-  // 5. Configure webpush
+  // Build userId → subscriptions map (used across all sections)
+  const subsByUser = new Map<string, any[]>();
+  for (const sub of subDocs) {
+    if (!sub.userId) continue;
+    const arr = subsByUser.get(sub.userId) || [];
+    arr.push(sub);
+    subsByUser.set(sub.userId, arr);
+  }
+
+  console.log(`[shift-push-cron] ${subDocs.length} sub(s) | ${toFire.length} alarm(s) | ${activeLogs.length} active timer(s) | ${clockInAlarmsForCheck.length} clock-in check(s)`);
+
+  // 6. Configure webpush
   webpush.setVapidDetails(vapidSub, vapidPub, vapidPriv);
 
-  // 6. Shift alarm pushes — broadcast to ALL subscribed devices
+  // ── Section A: Shift alarm pushes — broadcast to ALL subscribed devices ──
   for (const alarm of toFire) {
     const isClockIn  = alarm.clockIn  || alarm.label.toLowerCase().includes('clock in') || alarm.label.toLowerCase().includes('shift start');
     const isClockOut = alarm.clockOut || alarm.label.toLowerCase().includes('clock out') || alarm.label.toLowerCase().includes('shift end');
@@ -250,57 +334,270 @@ export default async function handler() {
     console.log(`[shift-push-cron] alarm "${alarm.label}" → sent:${sent} failed:${failed} removed:${removed}`);
   }
 
-  // 7. Timer heartbeat — send live-timer push to each worker with an active log.
-  //    Runs every 5 min regardless of alarms, so the background notification
-  //    stays fresh (like Strava / iPhone timer in the notification tray).
-  //    TTL = 4 min so a stale push never shows up after the next tick.
+  const now = Date.now();
+  // Jobs loaded once, reused by Sections F (over-estimate).
+  let allJobs: any[] = [];
+  let jobMap = new Map<string, any>();
   if (activeLogs.length > 0) {
-    // Fetch jobs for labels (only if there are active timers)
-    const allJobs = await fetchCollection('jobs', apiKey, projectId);
-    const jobMap = new Map(allJobs.map((j: any) => [j.id, j]));
+    allJobs = await fetchCollection('jobs', apiKey, projectId);
+    jobMap  = new Map(allJobs.map((j: any) => [j.id, j]));
+  }
 
-    // Build userId → subscriptions map for fast lookup
-    const subsByUser = new Map<string, any[]>();
-    for (const sub of subDocs) {
-      if (!sub.userId) continue;
-      const arr = subsByUser.get(sub.userId) || [];
-      arr.push(sub);
-      subsByUser.set(sub.userId, arr);
-    }
+  // ── Section C: Missed clock-in — remind worker every 30 min, admin summary ──
+  // Fires up to 6 times (≈ 3 hours) until the worker starts a timer.
+  if (clockInAlarmsForCheck.length > 0) {
+    const allUsers = await fetchCollection('users', apiKey, projectId);
+    const employees = allUsers.filter((u: any) =>
+      u.role === 'employee' || u.role === 'worker' || (!u.role && u.id),
+    );
+    const admins = allUsers.filter((u: any) =>
+      u.role === 'admin' || u.role === 'manager' || u.role === 'owner',
+    );
 
-    const now = Date.now();
-    let timerSent = 0;
+    const activeUserIds = new Set(activeLogs.map(l => l.userId));
 
-    for (const log of activeLogs) {
-      if (!log.userId || !log.jobId) continue;
-      const userSubs = subsByUser.get(log.userId);
-      if (!userSubs || userSubs.length === 0) continue;
+    for (const alarm of clockInAlarmsForCheck) {
+      const metaId = `late-clockin-${alarm.id}-${today}`;
+      const meta = await fetchDoc('push_meta', metaId, apiKey, projectId);
+      const lastSentAt: number = meta?.lastSentAt || 0;
+      const sentCount: number  = meta?.sentCount  || 0;
 
-      const job: any = jobMap.get(log.jobId);
-      const jobLabel = job?.jobIdsDisplay || job?.partNumber || log.jobId;
-      const isPaused = !!log.pausedAt;
-      const elapsedMs = isPaused
-        ? Math.max(0, (log.pausedAt - log.startTime) - (log.totalPausedMs || 0))
-        : Math.max(0, (now - log.startTime) - (log.totalPausedMs || 0));
+      if (sentCount >= 6) continue; // max 6 reminders over ~3 hours, then give up
+      if (sentCount > 0 && (now - lastSentAt) < 30 * 60 * 1000) continue; // wait 30 min between
 
-      const payload = JSON.stringify({
-        title:  isPaused ? `⏸ Paused — ${fmtElapsed(elapsedMs)}` : `⏱ ${fmtElapsed(elapsedMs)} — Running`,
-        body:   `${jobLabel} · ${log.operation || ''}`.trim(),
-        tag:    `live-timer-${log.id}`,
-        logId:  log.id,
-        url:    '/',
-        requireInteraction: false,
-        actions: isPaused
-          ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]
-          : [{ action: 'pause',  title: '⏸ Pause'  }, { action: 'stop', title: '⏹ Stop' }],
-      });
+      const notClockedIn = employees.filter((u: any) => !activeUserIds.has(u.id));
 
-      for (const subDoc of userSubs) {
-        const r = await sendPush(subDoc, payload, 4 * 60, apiKey, projectId);
-        if (r === 'sent') timerSent++;
+      // Write meta first (prevents double-send if cron overlaps)
+      await setMetaDoc(metaId, { lastSentAt: now, sentCount: sentCount + 1 }, apiKey, projectId);
+
+      if (notClockedIn.length === 0) {
+        console.log(`[shift-push-cron] clock-in check "${alarm.label}" — all workers clocked in ✓`);
+        continue;
+      }
+
+      console.log(`[shift-push-cron] clock-in check "${alarm.label}" — ${notClockedIn.length} missing (reminder #${sentCount + 1})`);
+
+      // Remind each missing worker
+      for (const worker of notClockedIn) {
+        const workerSubs = subsByUser.get(worker.id) || [];
+        if (workerSubs.length === 0) continue;
+        const payload = JSON.stringify({
+          title: `⏰ Don't Forget to Clock In`,
+          body:  `Your shift started at ${alarm.time}. Open FabTrack IO and start your timer.`,
+          tag:   `clockin-reminder-${worker.id}`,
+          url:   '/',
+          requireInteraction: true,
+        });
+        for (const subDoc of workerSubs) {
+          await sendPush(subDoc, payload, 30 * 60, apiKey, projectId);
+        }
+        console.log(`[shift-push-cron] reminded worker ${worker.name || worker.id} (reminder #${sentCount + 1})`);
+      }
+
+      // Admin summary push
+      if (admins.length > 0) {
+        const names = notClockedIn
+          .map((u: any) => (u.name || u.email || u.id).split(' ')[0])
+          .join(', ');
+        const adminPayload = JSON.stringify({
+          title: `⚠️ ${notClockedIn.length} Worker${notClockedIn.length > 1 ? 's' : ''} Haven't Clocked In`,
+          body:  `${names} ${notClockedIn.length > 1 ? 'have' : 'has'} not started a timer. Shift was ${alarm.time}.`,
+          tag:   `admin-late-clockin-${alarm.id}`,
+          url:   '/',
+          requireInteraction: true,
+        });
+        for (const admin of admins) {
+          const adminSubs = subsByUser.get(admin.id) || [];
+          for (const subDoc of adminSubs) {
+            await sendPush(subDoc, adminPayload, 30 * 60, apiKey, projectId);
+          }
+        }
+        console.log(`[shift-push-cron] admin notified: ${notClockedIn.length} missing (reminder #${sentCount + 1})`);
       }
     }
+  }
 
-    console.log(`[shift-push-cron] timer heartbeat → ${timerSent} push(es) sent for ${activeLogs.length} active log(s)`);
+  // ── Section D: Admin alert — long-running timers (> 5 hours) ──
+  const LONG_TIMER_MS = 5 * 60 * 60 * 1000;
+  const longRunning = activeLogs.filter(log => {
+    if (log.pausedAt) return false; // ignore paused timers
+    const elapsed = now - log.startTime - (log.totalPausedMs || 0);
+    return elapsed >= LONG_TIMER_MS;
+  });
+
+  if (longRunning.length > 0) {
+    // Lazy-load admins (may already have allUsers from section C — refetch is cheap since it's cached by Firestore)
+    const allUsersForAdmin = await fetchCollection('users', apiKey, projectId);
+    const admins = allUsersForAdmin.filter((u: any) =>
+      u.role === 'admin' || u.role === 'manager' || u.role === 'owner',
+    );
+
+    const allJobs = activeLogs.length > 0
+      ? await fetchCollection('jobs', apiKey, projectId)
+      : [];
+    const jobMap = new Map(allJobs.map((j: any) => [j.id, j]));
+
+    for (const log of longRunning) {
+      const metaId = `long-timer-${log.id}-${today}`;
+      const alreadySent = await fetchDoc('push_meta', metaId, apiKey, projectId);
+      if (alreadySent) continue;
+
+      const elapsed = now - log.startTime - (log.totalPausedMs || 0);
+      const job: any = jobMap.get(log.jobId);
+      const jobLabel = job?.jobIdsDisplay || job?.partNumber || log.jobId;
+
+      await setMetaDoc(metaId, { sentAt: now }, apiKey, projectId);
+
+      const adminPayload = JSON.stringify({
+        title: `⏱ Long Timer — ${fmtElapsed(elapsed)}`,
+        body:  `${log.userName || 'A worker'} has been running on ${jobLabel} for ${fmtElapsed(elapsed)}. Might need attention.`,
+        tag:   `admin-long-timer-${log.id}`,
+        url:   '/',
+        requireInteraction: true,
+      });
+
+      for (const admin of admins) {
+        const adminSubs = subsByUser.get(admin.id) || [];
+        for (const subDoc of adminSubs) {
+          await sendPush(subDoc, adminPayload, 60 * 60, apiKey, projectId);
+        }
+      }
+      console.log(`[shift-push-cron] admin alerted: long timer for ${log.userName || log.id} (${fmtElapsed(elapsed)})`);
+    }
+  }
+
+  // ── Section F: Over-estimate alert — active session exceeds operation estimate ──
+  // Fires once per active log session (deduped). Compares elapsed time to
+  // job.checklist[operation].estimatedMinutes × rateBuffer (default 1.15).
+  // Both admin AND the worker get a push — admin to act, worker as a heads-up.
+  if (activeLogs.length > 0) {
+    const rateBuffer: number = (settings as any).rateBuffer ?? 1.15;
+
+    const estAdmins = await fetchCollection('users', apiKey, projectId)
+      .then(users => users.filter((u: any) =>
+        u.role === 'admin' || u.role === 'manager' || u.role === 'owner',
+      ));
+
+    for (const log of activeLogs) {
+      if (log.pausedAt) continue; // skip paused timers
+
+      const job = jobMap.get(log.jobId) as any;
+      if (!job) continue;
+
+      // Match log.operation to a checklist item with an estimatedMinutes
+      const checklist: any[] = job.checklist || [];
+      const item = checklist.find((c: any) =>
+        (c.label ?? '').toLowerCase().trim() === (log.operation ?? '').toLowerCase().trim(),
+      );
+      if (!item?.estimatedMinutes) continue;
+
+      const elapsed  = now - log.startTime - (log.totalPausedMs || 0);
+      const budgetMs = item.estimatedMinutes * rateBuffer * 60_000;
+      if (elapsed <= budgetMs) continue; // still within estimate
+
+      // Dedup — only fire once per active session
+      const metaId = `over-est-${log.id}`;
+      const alreadySent = await fetchDoc('push_meta', metaId, apiKey, projectId);
+      if (alreadySent) continue;
+      await setMetaDoc(metaId, { sentAt: now }, apiKey, projectId);
+
+      const jobLabel = job.jobIdsDisplay || job.partNumber || log.jobId;
+      const overBy   = fmtElapsed(elapsed - budgetMs);
+      const estLabel = `${item.estimatedMinutes}min`;
+
+      // Admin push
+      const adminPayload = JSON.stringify({
+        title: `🚨 Over Estimate — ${log.operation}`,
+        body:  `${log.userName || 'A worker'} on ${jobLabel} is ${overBy} past the ${estLabel} estimate for ${log.operation}.`,
+        tag:   `admin-over-est-${log.id}`,
+        url:   '/',
+        requireInteraction: true,
+      });
+      for (const admin of estAdmins) {
+        const adminSubs = subsByUser.get(admin.id) || [];
+        for (const subDoc of adminSubs) {
+          await sendPush(subDoc, adminPayload, 60 * 60, apiKey, projectId);
+        }
+      }
+
+      // Worker push (gentler — give them a heads-up, not a reprimand)
+      const workerSubs = subsByUser.get(log.userId) || [];
+      if (workerSubs.length > 0) {
+        const workerPayload = JSON.stringify({
+          title: `⏱ Time Check — ${log.operation}`,
+          body:  `You're ${overBy} past the estimated time on ${jobLabel}. Give your supervisor a heads up.`,
+          tag:   `worker-over-est-${log.id}`,
+          url:   '/',
+          requireInteraction: false,
+        });
+        for (const subDoc of workerSubs) {
+          await sendPush(subDoc, workerPayload, 60 * 60, apiKey, projectId);
+        }
+      }
+
+      console.log(`[shift-push-cron] over-estimate: ${log.userName} on ${jobLabel}/${log.operation} (${fmtElapsed(elapsed)} vs ${estLabel})`);
+    }
+  }
+
+  // ── Section E: New job notes → admin + workers on that job ──
+  // Every 5 min, check for notes posted in the last 6 min. Dedup per note ID.
+  // Notifies: admins always + any worker currently active on the same job.
+  // Never notifies the person who wrote the note (they already know).
+  const NOTES_WINDOW_MS = 6 * 60 * 1000;
+  const recentNotes = await fetchRecentNotes(now - NOTES_WINDOW_MS, apiKey, projectId);
+
+  if (recentNotes.length > 0) {
+    const noteAllUsers = await fetchCollection('users', apiKey, projectId);
+    const noteAdmins   = noteAllUsers.filter((u: any) =>
+      u.role === 'admin' || u.role === 'manager' || u.role === 'owner',
+    );
+
+    for (const note of recentNotes) {
+      // Dedup — only notify once per note
+      const noteMeta = `note-notified-${note.id}`;
+      const alreadyNotified = await fetchDoc('push_meta', noteMeta, apiKey, projectId);
+      if (alreadyNotified) continue;
+      await setMetaDoc(noteMeta, { sentAt: now }, apiKey, projectId);
+
+      const preview = (note.text || '').length > 80
+        ? (note.text as string).slice(0, 77) + '…'
+        : note.text || '';
+
+      const notePayload = JSON.stringify({
+        title: `📝 ${note.userName || 'Someone'} left a note`,
+        body:  `${note.jobLabel || note.jobId}: "${preview}"`,
+        tag:   `job-note-${note.id}`,
+        url:   '/',
+        requireInteraction: false,
+      });
+
+      // Collect everyone to notify — admins + workers active on this job
+      // Exclude the note author so they don't get pinged for their own message
+      const authorId = String(note.userId || '');
+      const recipientIds = new Set<string>();
+
+      // Admins
+      for (const admin of noteAdmins) {
+        if (String(admin.id) !== authorId) recipientIds.add(String(admin.id));
+      }
+
+      // Workers currently clocked into this job
+      for (const log of activeLogs) {
+        if (log.jobId === note.jobId && String(log.userId) !== authorId) {
+          recipientIds.add(String(log.userId));
+        }
+      }
+
+      let notified = 0;
+      for (const uid of recipientIds) {
+        const subs = subsByUser.get(uid) || [];
+        for (const subDoc of subs) {
+          const r = await sendPush(subDoc, notePayload, 60 * 60, apiKey, projectId);
+          if (r === 'sent') notified++;
+        }
+      }
+
+      console.log(`[shift-push-cron] note on ${note.jobLabel || note.jobId} by ${note.userName} → ${notified} notified (${recipientIds.size} recipient(s))`);
+    }
   }
 }

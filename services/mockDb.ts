@@ -239,6 +239,7 @@ const COL = {
   get rework()            { return colPath(getTenantId(), "rework"); },
   get userProgress()      { return colPath(getTenantId(), "userProgress"); },
   get pushSubscriptions() { return colPath(getTenantId(), "push_subscriptions"); },
+  get notes()             { return colPath(getTenantId(), "notes"); },
 };
 
 // --------------------
@@ -360,12 +361,46 @@ export async function completeJob(id: string) {
   }
 }
 
-export async function addJobNote(jobId: string, text: string, userId: string, userName: string) {
+export async function completeJobWithSnapshot(
+  id: string,
+  materialCost: number,
+  snapshot: NonNullable<Job['profitSnapshot']>,
+) {
+  const completedAt = Date.now();
+  const updates: any = { status: 'completed', completedAt, profitSnapshot: snapshot };
+  if (materialCost > 0) updates.materialCost = materialCost;
+  if (dbInstance) {
+    try {
+      await updateDoc(doc(dbInstance, COL.jobs, id), updates);
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === id);
+  if (idx >= 0) {
+    jobs[idx] = { ...jobs[idx], ...updates } as Job;
+    writeLS(LS.jobs, jobs);
+  }
+}
+
+export async function addJobNote(jobId: string, text: string, userId: string, userName: string, jobLabel?: string) {
   const note = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, userId, userName, timestamp: Date.now() };
   if (dbInstance) {
     try {
       await updateDoc(doc(dbInstance, COL.jobs, jobId), { jobNotes: arrayUnion(note) } as any);
       firebaseStatus = { connected: true };
+      // Also write to flat notes collection so the push cron can query recent notes
+      try {
+        await setDoc(doc(dbInstance, COL.notes, note.id), {
+          jobId,
+          jobLabel: jobLabel || jobId,
+          text: note.text,
+          userId: note.userId,
+          userName: note.userName,
+          timestamp: note.timestamp,
+        });
+      } catch { /* non-critical — note is already saved on the job */ }
     } catch (e) { throw handleError(e); }
     return;
   }

@@ -203,6 +203,24 @@ export interface Job {
   attachments?: JobAttachment[];
   // ── Time estimates (Jobs R1 #3) — expected vs actual per stage ──
   stageEstimates?: Record<string, number>;  // { stageId: expectedHours }
+  // ── Profitability ──
+  /** Actual material / consumable cost incurred for this job (metals, abrasives, etc.) */
+  materialCost?: number;
+  /**
+   * Locked profit snapshot written when the job is marked complete.
+   * Immutable after that — changing quoteAmount or worker rates won't alter it.
+   */
+  profitSnapshot?: {
+    revenue:        number;   // quoteAmount at time of completion
+    laborCost:      number;   // actual labor (hours × worker rates + overhead)
+    materialCost:   number;   // job.materialCost at time of completion
+    outsourcedCost: number;   // sum of linked PO totals
+    totalCost:      number;
+    profit:         number;
+    marginPct:      number;   // 0-100
+    laborHours:     number;
+    snappedAt:      number;   // epoch ms
+  };
   // ── Portal note (customer-facing) ──
   // Free-text human-friendly status update that shows on the customer portal.
   // Think "Shipping Friday EOD" or "On track for Tuesday — 2 parts left in QC."
