@@ -535,6 +535,9 @@ export interface DeliveryStop {
   arrivalLon?: number;
   /** Proof-of-delivery photo captured at arrival (base64 data URL). */
   photoUrl?: string;
+  /** When something went wrong at this stop — customer not home, partial delivery, etc. */
+  isException?: boolean;
+  exceptionReason?: string;
 }
 
 export interface Delivery {
@@ -954,6 +957,10 @@ export interface ReworkEntry {
   resolvedBy?: string;
   resolvedByName?: string;
   resolutionNotes?: string;
+  /** Root cause category — what caused this defect */
+  rootCause?: 'operator' | 'material' | 'tooling' | 'setup' | 'design' | 'inspection' | 'unknown';
+  /** Estimated cost of scrap/rework labor ($) */
+  scrapCost?: number;
 }
 
 export interface SampleWorkEntry {

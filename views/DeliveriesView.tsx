@@ -17,7 +17,7 @@ import {
   Truck, Plus, MapPin, Navigation, CheckCircle2, X, StopCircle,
   Trash2, Download, Clock, Users, Package, ArrowUpCircle,
   Building2, Camera, Route, ChevronDown, ChevronUp, Milestone,
-  RotateCcw,
+  RotateCcw, AlertTriangle, DollarSign, Flag, Play, Calendar,
 } from 'lucide-react';
 import type { Delivery, DeliveryStop, StopType, Job, User, SystemSettings, CustomerContact, Vendor } from '../types';
 import * as DB from '../services/mockDb';
@@ -291,12 +291,74 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
       </div>
 
       {/* ── KPI strip ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="Miles This Month" value={formatMiles(milesMonth)} hint={milesMonth > 0 ? `~$${mileageDeductible.toFixed(0)} deductible` : 'Log your first run'} color="text-amber-400" icon={<Truck className="w-4 h-4" />} />
-        <KpiCard label="Runs (30d)" value={String(runs30)} hint={`${completed.length} all-time`} color="text-emerald-400" icon={<CheckCircle2 className="w-4 h-4" />} />
-        <KpiCard label="All-Time Miles" value={formatMiles(totalMilesAll)} hint={`${completed.length} completed`} color="text-blue-400" icon={<Navigation className="w-4 h-4" />} />
-        <KpiCard label="Vendors Served" value={String(new Set(completed.flatMap(d => d.stops.map(s => s.vendorName).filter(Boolean))).size)} hint="heat treat, plating, etc." color="text-purple-400" icon={<Building2 className="w-4 h-4" />} />
-      </div>
+      {(() => {
+        const deliveredValueMonth = completed
+          .filter(d => (d.startedAt || 0) >= monthStart.getTime())
+          .reduce((sum, d) => sum + d.stops.reduce((s2, stop) => {
+            const linkedJobValues = jobs.filter(j => stop.jobIds.includes(j.id)).reduce((a, j) => a + (j.quoteAmount || 0), 0);
+            return s2 + linkedJobValues;
+          }, 0), 0);
+        const exceptionCount = history.reduce((a, d) => a + d.stops.filter(s => s.isException).length, 0);
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <KpiCard label="Miles This Month" value={formatMiles(milesMonth)} hint={milesMonth > 0 ? `~$${mileageDeductible.toFixed(0)} deductible` : 'Log your first run'} color="text-amber-400" icon={<Truck className="w-4 h-4" />} />
+            <KpiCard label="Runs (30d)" value={String(runs30)} hint={`${completed.length} all-time`} color="text-emerald-400" icon={<CheckCircle2 className="w-4 h-4" />} />
+            <KpiCard label="All-Time Miles" value={formatMiles(totalMilesAll)} hint={`${completed.length} completed`} color="text-blue-400" icon={<Navigation className="w-4 h-4" />} />
+            <KpiCard
+              label="Delivered Value"
+              value={deliveredValueMonth > 0 ? `$${deliveredValueMonth >= 1000 ? (deliveredValueMonth/1000).toFixed(1)+'k' : deliveredValueMonth.toFixed(0)}` : '—'}
+              hint="job value delivered this month"
+              color="text-emerald-400"
+              icon={<DollarSign className="w-4 h-4" />}
+            />
+            <KpiCard
+              label="Exceptions"
+              value={exceptionCount > 0 ? String(exceptionCount) : '0'}
+              hint={exceptionCount > 0 ? 'stops flagged all-time' : 'no issues flagged'}
+              color={exceptionCount > 0 ? 'text-red-400' : 'text-zinc-500'}
+              icon={<AlertTriangle className="w-4 h-4" />}
+            />
+          </div>
+        );
+      })()}
+
+      {/* ── Scheduled runs (not yet started) ── */}
+      {(() => {
+        const scheduled = deliveries.filter(d => d.status === 'scheduled');
+        if (scheduled.length === 0) return null;
+        return (
+          <div className="space-y-2">
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Scheduled · {scheduled.length} run{scheduled.length !== 1 ? 's' : ''} queued</p>
+            {scheduled.map(d => {
+              const runValue = d.stops.reduce((s, stop) =>
+                s + jobs.filter(j => stop.jobIds.includes(j.id)).reduce((a, j) => a + (j.quoteAmount || 0), 0), 0);
+              return (
+                <div key={d.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 flex items-center gap-3 hover:border-white/10 transition-all">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+                    <Calendar className="w-5 h-5 text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-white text-sm">{d.runNumber} <span className="text-[10px] font-normal text-blue-400 uppercase tracking-wider ml-1">scheduled</span></p>
+                    <p className="text-[11px] text-zinc-500 truncate">{d.driverName} · {d.stops.length} stop{d.stops.length !== 1 ? 's' : ''}
+                      {runValue > 0 && <span className="text-emerald-400 font-bold ml-1">· ${runValue >= 1000 ? (runValue/1000).toFixed(1)+'k' : runValue.toFixed(0)}</span>}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setEditingId(d.id)}
+                      className="text-[11px] text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg font-bold transition-colors">
+                      Edit
+                    </button>
+                    <button type="button" onClick={() => beginRun(d)}
+                      className="text-[11px] text-emerald-400 hover:text-white bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors">
+                      <Play className="w-3 h-3" /> Start
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* ── Active run ── */}
       {active && (
@@ -312,6 +374,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           }}
           onEditDetails={() => setEditingId(active.id)}
           addToast={addToast}
+          allJobs={jobs}
         />
       )}
 
@@ -383,12 +446,13 @@ const ActiveRunCard: React.FC<{
   delivery: Delivery;
   liveMiles: number;
   jobs: Job[];
+  allJobs: Job[];
   onFinish: () => void;
   onCancel: () => void;
   onUpdateStop: (stopId: string, patch: Partial<DeliveryStop>) => void;
   onEditDetails: () => void;
   addToast: Props['addToast'];
-}> = ({ delivery, liveMiles, jobs, onFinish, onCancel, onUpdateStop, onEditDetails, addToast }) => {
+}> = ({ delivery, liveMiles, jobs, allJobs, onFinish, onCancel, onUpdateStop, onEditDetails, addToast }) => {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const tick = () => setElapsed(delivery.startedAt ? Date.now() - delivery.startedAt : 0);
@@ -402,7 +466,10 @@ const ActiveRunCard: React.FC<{
   const dur = hrs > 0 ? `${hrs}h ${mins - hrs * 60}m` : `${mins}m`;
   const arrived = delivery.stops.filter(s => s.arrivedAt).length;
   const completed = delivery.stops.filter(s => s.completedAt).length;
+  const exceptions = delivery.stops.filter(s => s.isException).length;
   const nextStop = delivery.stops.find(s => !s.arrivedAt);
+  const runValue = delivery.stops.reduce((sum, stop) =>
+    sum + allJobs.filter(j => stop.jobIds.includes(j.id)).reduce((a, j) => a + (j.quoteAmount || 0), 0), 0);
 
   return (
     <div className="bg-gradient-to-br from-emerald-500/10 via-amber-500/5 to-transparent border-2 border-emerald-500/30 rounded-2xl p-4 sm:p-5 animate-fade-in">
@@ -413,11 +480,15 @@ const ActiveRunCard: React.FC<{
             <Truck className="w-5 h-5 text-emerald-400" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-black text-emerald-400 uppercase tracking-widest">● Live Run</p>
+            <p className="text-xs font-black text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+              ● Live Run
+              {exceptions > 0 && <span className="text-red-400 bg-red-500/15 border border-red-500/30 rounded px-1.5 py-0 text-[9px] normal-case tracking-normal">{exceptions} exception{exceptions > 1 ? 's' : ''}</span>}
+            </p>
             <p className="text-lg font-black text-white tracking-tight truncate">{delivery.runNumber} · {delivery.driverName}</p>
-            {nextStop && (
-              <p className="text-[10px] text-zinc-400 truncate">Next: {nextStop.vendorName || nextStop.customerName || nextStop.address}</p>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {nextStop && <p className="text-[10px] text-zinc-400 truncate">Next: {nextStop.vendorName || nextStop.customerName || nextStop.address}</p>}
+              {runValue > 0 && <p className="text-[10px] text-emerald-400 font-bold">${runValue >= 1000 ? (runValue/1000).toFixed(1)+'k' : runValue.toFixed(0)} in parts</p>}
+            </div>
           </div>
         </div>
         <button type="button" onClick={onEditDetails} className="text-[10px] font-bold text-blue-400 hover:text-white shrink-0">Edit details</button>
@@ -495,7 +566,19 @@ const ActiveStopRow: React.FC<{
   const arrived = !!stop.arrivedAt;
   const done = !!stop.completedAt;
   const [showPhoto, setShowPhoto] = useState(false);
+  const [showExceptionPicker, setShowExceptionPicker] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
+
+  const EXCEPTION_REASONS = [
+    'Customer not home / facility closed',
+    'Partial delivery — quantity mismatch',
+    'Parts refused / not accepted',
+    'Damaged in transit',
+    'Wrong address',
+    'Vendor not ready — will reschedule',
+    'Access denied',
+    'Other issue',
+  ];
 
   const markArrived = () => {
     if (arrived) return;
@@ -529,12 +612,24 @@ const ActiveStopRow: React.FC<{
 
   const linkedJobs = jobs.filter(j => stop.jobIds.includes(j.id));
 
+  const isException = stop.isException;
+
   return (
-    <div className={`rounded-xl border transition-all overflow-hidden ${done ? 'bg-emerald-500/5 border-emerald-500/20' : arrived ? `${def.bgClass} ${def.borderClass}` : 'bg-zinc-900/40 border-white/5'}`}>
+    <div className={`rounded-xl border transition-all overflow-hidden ${
+      isException ? 'bg-red-500/8 border-red-500/30' :
+      done ? 'bg-emerald-500/5 border-emerald-500/20' :
+      arrived ? `${def.bgClass} ${def.borderClass}` :
+      'bg-zinc-900/40 border-white/5'
+    }`}>
       <div className="flex items-center gap-2 p-2.5">
         {/* Number / status dot */}
-        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${done ? 'bg-emerald-500 text-white' : arrived ? 'bg-amber-500 text-white' : 'bg-zinc-800 text-zinc-400 border border-white/10'}`}>
-          {done ? '✓' : index + 1}
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
+          isException ? 'bg-red-500 text-white' :
+          done ? 'bg-emerald-500 text-white' :
+          arrived ? 'bg-amber-500 text-white' :
+          'bg-zinc-800 text-zinc-400 border border-white/10'
+        }`}>
+          {isException ? '!' : done ? '✓' : index + 1}
         </span>
 
         {/* Stop info */}
@@ -549,10 +644,22 @@ const ActiveStopRow: React.FC<{
             <p className="text-[10px] text-zinc-500 truncate">{stop.address}</p>
           )}
           {linkedJobs.length > 0 && (
-            <p className="text-[10px] text-zinc-600 truncate">{linkedJobs.map(j => j.poNumber).join(', ')}</p>
+            <p className="text-[10px] text-zinc-600 truncate">
+              {linkedJobs.map(j => j.poNumber).join(', ')}
+              {linkedJobs.some(j => j.quoteAmount) && (
+                <span className="text-emerald-500 ml-1">
+                  · ${linkedJobs.reduce((a,j)=>a+(j.quoteAmount||0),0) >= 1000
+                    ? (linkedJobs.reduce((a,j)=>a+(j.quoteAmount||0),0)/1000).toFixed(1)+'k'
+                    : linkedJobs.reduce((a,j)=>a+(j.quoteAmount||0),0).toFixed(0)}
+                </span>
+              )}
+            </p>
           )}
-          {done && <p className="text-[10px] text-emerald-400">✓ Done {new Date(stop.completedAt!).toLocaleTimeString()}</p>}
-          {arrived && !done && <p className="text-[10px] text-amber-400">Arrived {new Date(stop.arrivedAt!).toLocaleTimeString()}</p>}
+          {isException && stop.exceptionReason && (
+            <p className="text-[10px] text-red-400 font-bold mt-0.5">⚠ {stop.exceptionReason}</p>
+          )}
+          {done && !isException && <p className="text-[10px] text-emerald-400">✓ Done {new Date(stop.completedAt!).toLocaleTimeString()}</p>}
+          {arrived && !done && !isException && <p className="text-[10px] text-amber-400">Arrived {new Date(stop.arrivedAt!).toLocaleTimeString()}</p>}
         </div>
 
         {/* Navigation button */}
@@ -561,14 +668,30 @@ const ActiveStopRow: React.FC<{
           <Navigation className="w-4 h-4" />
         </a>
 
+        {/* Flag exception button (available once arrived) */}
+        {arrived && !done && !isException && (
+          <button type="button" onClick={() => setShowExceptionPicker(v => !v)}
+            title="Flag an issue at this stop"
+            className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg shrink-0 transition-colors">
+            <Flag className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {isException && (
+          <button type="button" onClick={() => onUpdate({ isException: false, exceptionReason: undefined })}
+            title="Clear exception flag"
+            className="text-[10px] font-bold text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 px-2 py-1 rounded-lg transition-colors shrink-0">
+            Clear Flag
+          </button>
+        )}
+
         {/* Arrived / Done buttons */}
-        {!arrived && (
+        {!arrived && !isException && (
           <button type="button" onClick={markArrived}
             className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0">
             Arrived
           </button>
         )}
-        {arrived && !done && (
+        {arrived && !done && !isException && (
           <button type="button" onClick={markDone}
             className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0">
             Done ✓
@@ -576,9 +699,28 @@ const ActiveStopRow: React.FC<{
         )}
       </div>
 
+      {/* Exception reason picker */}
+      {showExceptionPicker && (
+        <div className="border-t border-red-500/20 bg-red-500/5 px-2.5 py-2">
+          <p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1.5">What happened?</p>
+          <div className="flex flex-wrap gap-1.5">
+            {EXCEPTION_REASONS.map(reason => (
+              <button key={reason} type="button"
+                onClick={() => {
+                  onUpdate({ isException: true, exceptionReason: reason, arrivedAt: stop.arrivedAt || Date.now() });
+                  setShowExceptionPicker(false);
+                }}
+                className="text-[10px] font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 px-2 py-1 rounded-lg transition-colors">
+                {reason}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Photo proof area — shows after arrived */}
       {arrived && (
-        <div className="px-2.5 pb-2.5 flex items-center gap-2">
+        <div className="px-2.5 pb-2.5 flex items-center gap-2 flex-wrap">
           <input ref={photoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhoto} />
           {stop.photoUrl ? (
             <div className="flex items-center gap-2">
@@ -651,25 +793,34 @@ const HistoryList: React.FC<{
         const cancelled = d.status === 'cancelled';
         const customerStops = d.stops.filter(s => s.stopType === 'customer-dropoff' || (!s.stopType && s.customerName));
         const vendorStops = d.stops.filter(s => s.stopType === 'vendor-dropoff' || s.stopType === 'vendor-pickup');
+        const exStops = d.stops.filter(s => s.isException);
         const isExpanded = expanded === d.id;
+        const runValue = d.stops.reduce((sum, stop) =>
+          sum + jobs.filter(j => stop.jobIds.includes(j.id)).reduce((a, j) => a + (j.quoteAmount || 0), 0), 0);
+        const irsValue = (d.milesDriven || 0) * ((d.mileageRateCents || IRS_MILEAGE_RATE_CENTS_2025) / 100);
         return (
-          <div key={d.id} className={`group bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden hover:border-white/10 transition-all ${cancelled ? 'opacity-60' : ''}`}>
+          <div key={d.id} className={`group bg-zinc-900/50 border rounded-2xl overflow-hidden hover:border-white/10 transition-all ${cancelled ? 'opacity-60 border-white/5' : exStops.length > 0 ? 'border-red-500/20' : 'border-white/5'}`}>
             {/* Main row */}
             <div className="flex items-center gap-3 p-3 sm:p-4">
-              <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${cancelled ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                {cancelled ? <X className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+              <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${cancelled ? 'bg-red-500/10 text-red-400' : exStops.length > 0 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                {cancelled ? <X className="w-5 h-5" /> : exStops.length > 0 ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
               </div>
 
               <button type="button" onClick={() => onEdit(d)} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-black text-white tabular text-sm sm:text-base">{d.runNumber}</span>
                   {cancelled && <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/25 rounded px-1.5 py-0.5">CANCELLED</span>}
-                  {/* Stop type breakdown badges */}
+                  {exStops.length > 0 && <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/25 rounded px-1.5 py-0.5">{exStops.length} exception{exStops.length > 1 ? 's' : ''}</span>}
                   {customerStops.length > 0 && (
                     <span className="text-[9px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded px-1.5 py-0.5">{customerStops.length} cust</span>
                   )}
                   {vendorStops.length > 0 && (
                     <span className="text-[9px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded px-1.5 py-0.5">{vendorStops.length} vendor</span>
+                  )}
+                  {runValue > 0 && (
+                    <span className="text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded px-1.5 py-0.5">
+                      ${runValue >= 1000 ? (runValue/1000).toFixed(1)+'k' : runValue.toFixed(0)}
+                    </span>
                   )}
                 </div>
                 <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
@@ -677,12 +828,13 @@ const HistoryList: React.FC<{
                 </div>
               </button>
 
-              {/* Miles + expand */}
+              {/* Miles + IRS deduction */}
               <div className="shrink-0 text-right flex flex-col items-end gap-1">
                 <p className="text-sm sm:text-base font-black text-blue-400 tabular">{formatMiles(d.milesDriven || 0)}</p>
                 {d.estimatedMiles && !d.milesDriven && (
                   <p className="text-[10px] text-zinc-600 tabular">~{formatMiles(d.estimatedMiles)} est</p>
                 )}
+                {irsValue > 0 && <p className="text-[10px] text-amber-500/70 tabular">${irsValue.toFixed(2)} deduct</p>}
                 {d.durationMinutes ? (
                   <p className="text-[10px] text-zinc-500 tabular">{d.durationMinutes < 60 ? `${d.durationMinutes}m` : `${(d.durationMinutes / 60).toFixed(1)}h`}</p>
                 ) : null}
@@ -703,27 +855,35 @@ const HistoryList: React.FC<{
             {isExpanded && (
               <div className="border-t border-white/5 px-3 sm:px-4 pb-3 pt-2 space-y-1.5">
                 {d.stops.map((stop, i) => {
-                  const def = stopTypeDef(stop.stopType);
+                  const def2 = stopTypeDef(stop.stopType);
                   const linkedJobs = jobs.filter(j => stop.jobIds.includes(j.id));
+                  const stopValue = linkedJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
                   return (
-                    <div key={stop.id} className={`flex items-start gap-2 rounded-lg p-2 ${def.bgClass}`}>
-                      <span className={`text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full ${stop.completedAt ? 'bg-emerald-500 text-white' : stop.arrivedAt ? 'bg-amber-500 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
-                        {stop.completedAt ? '✓' : i + 1}
+                    <div key={stop.id} className={`flex items-start gap-2 rounded-lg p-2 ${stop.isException ? 'bg-red-500/8 border border-red-500/20' : def2.bgClass}`}>
+                      <span className={`text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full shrink-0 ${
+                        stop.isException ? 'bg-red-500 text-white' :
+                        stop.completedAt ? 'bg-emerald-500 text-white' :
+                        stop.arrivedAt ? 'bg-amber-500 text-white' : 'bg-zinc-800 text-zinc-400'
+                      }`}>
+                        {stop.isException ? '!' : stop.completedAt ? '✓' : i + 1}
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <StopTypeBadge type={stop.stopType} size="xs" />
                           <span className="text-xs font-bold text-white truncate">{stop.vendorName || stop.customerName || stop.address}</span>
+                          {stopValue > 0 && <span className="text-[9px] font-black text-emerald-400">${stopValue >= 1000 ? (stopValue/1000).toFixed(1)+'k' : stopValue.toFixed(0)}</span>}
                         </div>
                         {(stop.vendorName || stop.customerName) && <p className="text-[10px] text-zinc-600 truncate">{stop.address}</p>}
-                        {linkedJobs.length > 0 && <p className="text-[10px] text-zinc-600">{linkedJobs.map(j => `${j.poNumber} · ${j.partNumber}`).join(' · ')}</p>}
+                        {linkedJobs.length > 0 && <p className="text-[10px] text-zinc-600">{linkedJobs.map(j => `${j.poNumber}`).join(', ')}</p>}
+                        {stop.isException && stop.exceptionReason && <p className="text-[10px] text-red-400 font-bold mt-0.5">⚠ {stop.exceptionReason}</p>}
                         {stop.signedBy && <p className="text-[10px] text-zinc-500">Signed: {stop.signedBy}</p>}
+                        {stop.notes && <p className="text-[10px] text-zinc-500 italic">{stop.notes}</p>}
                       </div>
                       {stop.photoUrl && <img src={stop.photoUrl} alt="POD" className="w-8 h-8 rounded object-cover shrink-0" />}
                     </div>
                   );
                 })}
-                {d.notes && <p className="text-[10px] text-zinc-500 italic pt-1">{d.notes}</p>}
+                {d.notes && <p className="text-[10px] text-zinc-500 italic pt-1">Note: {d.notes}</p>}
               </div>
             )}
           </div>

@@ -270,6 +270,45 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
                   const isOverdue = !stage.isComplete && j.dueDate && dateNum(j.dueDate) < todayN;
                   const isDueSoon = !stage.isComplete && !isOverdue && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3N;
                   const next = getNextStage(j, stages);
+
+                  // ── Stage time badge ────────────────────────────────────────
+                  // For non-completed jobs, compute how many days the job has
+                  // been in its current stage. Use the most-recent stageHistory
+                  // entry whose stageId matches currentStage, falling back to
+                  // createdAt when history is absent.
+                  let stageDays: number | null = null;
+                  if (!stage.isComplete) {
+                    let enteredAt: number | undefined;
+                    if (j.stageHistory && j.stageHistory.length > 0 && j.currentStage) {
+                      // Walk backwards — last entry with matching stageId is the most recent entry
+                      const matchingEntries = j.stageHistory.filter(e => e.stageId === j.currentStage);
+                      if (matchingEntries.length > 0) {
+                        enteredAt = matchingEntries[matchingEntries.length - 1].timestamp;
+                      }
+                    }
+                    if (enteredAt === undefined) {
+                      enteredAt = j.createdAt;
+                    }
+                    stageDays = Math.floor((Date.now() - enteredAt) / 86400000);
+                  }
+                  const stageDayLabel = stageDays !== null ? (stageDays === 0 ? '<1d' : `${stageDays}d`) : null;
+                  const stageDayCls =
+                    stageDays === null ? '' :
+                    stageDays > 7  ? 'text-red-400 bg-red-500/10 border-red-500/20' :
+                    stageDays >= 3 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
+                                     'text-zinc-500 bg-zinc-800/60 border-white/5';
+
+                  // ── Profit grade badge ──────────────────────────────────────
+                  // For completed jobs only — show margin% with color coding.
+                  const snap = stage.isComplete ? j.profitSnapshot : undefined;
+                  const marginPct = snap?.marginPct ?? null;
+                  const profitBadgeCls =
+                    marginPct === null ? '' :
+                    marginPct >= 35 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
+                    marginPct >= 15 ? 'text-blue-400 bg-blue-500/10 border-blue-500/20' :
+                    marginPct >= 0  ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' :
+                                      'text-red-400 bg-red-500/10 border-red-500/20';
+
                   return (
                     <div
                       key={j.id}
@@ -286,8 +325,22 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
 
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <p className="font-black text-white text-sm tabular truncate">{j.poNumber}</p>
-                        {isOverdue && <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded shrink-0">LATE</span>}
-                        {isDueSoon && <span className="text-[9px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded shrink-0">SOON</span>}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* Stage time badge — non-completed jobs */}
+                          {stageDayLabel && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${stageDayCls}`}>
+                              {stageDayLabel}
+                            </span>
+                          )}
+                          {/* Profit grade badge — completed jobs with snapshot */}
+                          {marginPct !== null && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${profitBadgeCls}`}>
+                              {Math.round(marginPct)}%
+                            </span>
+                          )}
+                          {isOverdue && <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">LATE</span>}
+                          {isDueSoon && <span className="text-[9px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">SOON</span>}
+                        </div>
                       </div>
 
                       <p className="text-[11px] text-zinc-400 font-semibold truncate mb-0.5">{j.partNumber}</p>

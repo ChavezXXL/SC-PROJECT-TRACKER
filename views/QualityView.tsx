@@ -28,6 +28,16 @@ export const REWORK_REASONS: { value: ReworkReason; label: string; color: string
 ];
 const reworkReasonMeta = (r: ReworkReason) => REWORK_REASONS.find(x => x.value === r) || REWORK_REASONS[REWORK_REASONS.length - 1];
 
+const ROOT_CAUSE_LABELS: Record<NonNullable<import('../types').ReworkEntry['rootCause']>, string> = {
+  operator:   'Operator Error',
+  material:   'Material Defect',
+  tooling:    'Tooling Issue',
+  setup:      'Setup Error',
+  design:     'Design Issue',
+  inspection: 'Inspection Miss',
+  unknown:    'Unknown',
+};
+
 export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: Partial<ReworkEntry>; jobs: Job[]; user: User; onClose: () => void; addToast: any }) => {
   const [form, setForm] = useState<Partial<ReworkEntry>>(entry || { reason: 'finish', quantity: 1, status: 'open' });
   const linkedJob = form.jobId ? jobs.find(j => j.id === form.jobId) : null;
@@ -54,6 +64,8 @@ export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: 
       resolvedBy: form.status === 'resolved' ? (form.resolvedBy || user.id) : undefined,
       resolvedByName: form.status === 'resolved' ? (form.resolvedByName || user.name) : undefined,
       resolutionNotes: form.status === 'resolved' ? form.resolutionNotes : undefined,
+      rootCause: form.rootCause || undefined,
+      scrapCost: form.scrapCost != null && form.scrapCost >= 0 ? form.scrapCost : undefined,
     };
     try { await DB.saveRework(saved); addToast('success', isEdit ? 'Rework entry updated' : 'Rework logged'); onClose(); }
     catch { addToast('error', 'Save failed'); }
@@ -93,11 +105,15 @@ export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: 
               })}
             </div>
           </div>
-          {/* Qty + Status */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Qty + Scrap Cost + Status */}
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Qty Affected</label>
               <input type="number" min={1} value={form.quantity || ''} onChange={e => setForm({ ...form, quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white outline-none font-mono text-lg" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Rework Cost ($)</label>
+              <input type="number" min={0} step={0.01} value={form.scrapCost ?? ''} onChange={e => setForm({ ...form, scrapCost: e.target.value === '' ? undefined : parseFloat(e.target.value) || 0 })} placeholder="0.00" className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white outline-none font-mono text-lg" />
             </div>
             <div>
               <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Status</label>
@@ -107,6 +123,20 @@ export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: 
                 <option value="resolved">Resolved</option>
               </select>
             </div>
+          </div>
+          {/* Root Cause */}
+          <div>
+            <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Root Cause</label>
+            <select value={form.rootCause || ''} onChange={e => setForm({ ...form, rootCause: e.target.value as import('../types').ReworkEntry['rootCause'] || undefined })} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white outline-none">
+              <option value="">— Select root cause —</option>
+              <option value="operator">Operator Error</option>
+              <option value="material">Material Defect</option>
+              <option value="tooling">Tooling Issue</option>
+              <option value="setup">Setup Error</option>
+              <option value="design">Design Issue</option>
+              <option value="inspection">Inspection Miss</option>
+              <option value="unknown">Unknown</option>
+            </select>
           </div>
           {/* Notes */}
           <div>
@@ -173,6 +203,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
   const openCount = entries.filter(e => e.status !== 'resolved').length;
   const resolved30 = entries.filter(e => e.status === 'resolved' && (e.resolvedAt || 0) >= last30).length;
   const totalAffected = entries.filter(e => e.status !== 'resolved').reduce((a, e) => a + (e.quantity || 0), 0);
+  const estScrapCost = entries.filter(e => e.status !== 'resolved').reduce((a, e) => a + (e.scrapCost || 0), 0);
 
   // Top offenders (customers)
   const byCustomer = useMemo(() => {
@@ -308,7 +339,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
       )}
 
       {/* KPI cards */}
-      <div className="stagger grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 overflow-hidden">
           <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Open Issues</p>
           <p className={`text-2xl font-black tabular mt-1 ${openCount > 0 ? 'text-amber-400' : 'text-zinc-500'}`}>{openCount}</p>
@@ -332,6 +363,12 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
           <p className="text-2xl font-black text-white tabular mt-1">{entries.length}</p>
           <p className="text-[10px] text-zinc-600 mt-0.5">All time</p>
           <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-zinc-500/40 to-transparent mt-2" aria-hidden="true" />
+        </div>
+        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 overflow-hidden">
+          <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Est. Scrap Cost</p>
+          <p className={`text-2xl font-black tabular mt-1 ${estScrapCost > 0 ? 'text-amber-400' : 'text-zinc-500'}`}>${estScrapCost.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
+          <p className="text-[10px] text-zinc-600 mt-0.5">Open + in-rework</p>
+          <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-amber-500/50 to-transparent mt-2" aria-hidden="true" />
         </div>
       </div>
 
@@ -455,6 +492,9 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-black text-white">{e.poNumber || 'No PO'}</span>
                       <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border" style={{ background: `${meta.color}15`, color: meta.color, borderColor: `${meta.color}40` }}>{meta.label}</span>
+                      {e.rootCause && (
+                        <span className="text-[10px] font-bold text-zinc-400 bg-zinc-800/80 border border-white/10 px-1.5 py-0.5 rounded">{ROOT_CAUSE_LABELS[e.rootCause]}</span>
+                      )}
                       <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${statusTint}`}>{e.status === 'in-rework' ? 'IN REWORK' : (e.status || 'open').toUpperCase()}</span>
                       <span className="text-[10px] font-mono text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">{e.quantity} pc{e.quantity !== 1 ? 's' : ''}</span>
                     </div>
