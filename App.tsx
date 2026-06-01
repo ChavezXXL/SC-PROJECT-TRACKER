@@ -3923,37 +3923,23 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     catch (e) { addToast('error', 'Save Failed'); }
   };
 
-  // ── Complete a job with profit snapshot + optional material cost ──────
-  // Shows a quick dollar prompt for consumables/materials before locking
-  // the profit record. Called from all "Complete Job" buttons so every
-  // completion path captures an accurate, immutable profitSnapshot.
+  // ── Complete a job — locks a profit snapshot immediately, no prompt needed.
+  // Material costs are already baked into monthly overhead (settings.monthlyOverhead).
   const handleCompleteWithSnapshot = useCallback(async (j: Job) => {
     const stages = getStages(shopSettings);
     const completedStage = stages.find(s => s.isComplete);
-    const matStr = await promptInput({
-      title: `Complete "${j.poNumber || j.partNumber || 'Job'}"`,
-      message: 'Enter material & consumable cost for this job. Labor is calculated automatically from time logs.',
-      placeholder: '0.00',
-      defaultValue: j.materialCost ? j.materialCost.toFixed(2) : '0',
-      confirmLabel: '✅ Complete Job',
-      cancelLabel: 'Cancel',
-    });
-    if (matStr === null) return; // user cancelled
-    const matCost = parseFloat(matStr) || 0;
-    const jobForSnap: Job = { ...j, materialCost: matCost > 0 ? matCost : j.materialCost };
-    const breakdown = calcJobProfit(jobForSnap, allLogs, workers, shopSettings, allPOs);
+    const breakdown = calcJobProfit(j, allLogs, workers, shopSettings, allPOs);
     const snapshot = buildProfitSnapshot(breakdown);
     if (completedStage) {
       await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true);
     }
-    await DB.completeJobWithSnapshot(j.id, matCost, snapshot);
-    // Keep modal in sync if it's open for this job
+    await DB.completeJobWithSnapshot(j.id, j.materialCost ?? 0, snapshot);
     if (editingJob.id === j.id) {
-      setEditingJob(prev => ({ ...prev, status: 'completed', currentStage: completedStage?.id || prev.currentStage, profitSnapshot: snapshot, materialCost: matCost > 0 ? matCost : (j.materialCost ?? 0) }));
+      setEditingJob(prev => ({ ...prev, status: 'completed', currentStage: completedStage?.id || prev.currentStage, profitSnapshot: snapshot }));
     }
     const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin!' : breakdown.grade === 'good' ? '🔵 Good job' : breakdown.grade === 'tight' ? '🟡 Tight margin' : '🔴 Loss';
     addToast('success', `✅ "${j.poNumber}" complete — ${gradeMsg}`);
-  }, [allLogs, workers, shopSettings, allPOs, user, promptInput, editingJob]);
+  }, [allLogs, workers, shopSettings, allPOs, user, editingJob]);
 
   return (
     <div className="space-y-6">
