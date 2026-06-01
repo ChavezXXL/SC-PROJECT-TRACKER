@@ -935,6 +935,16 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
               <p className="text-[10px] text-zinc-600 mt-1">Billable hours per month per worker.</p>
             </div>
           </div>
+          {/* Monthly Revenue Goal */}
+          <div>
+            <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Monthly Revenue Goal</label>
+            <div className="relative max-w-xs">
+              <span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span>
+              <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pl-7 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyRevenueGoal || ''} onChange={e => setSettings({ ...settings, monthlyRevenueGoal: Number(e.target.value) || undefined })} placeholder="e.g. 25000" />
+            </div>
+            <p className="text-[10px] text-zinc-600 mt-1">Shows a progress bar on the Dashboard — how close you are to hitting your monthly target.</p>
+          </div>
+
           {trueCost > 0 && (
             <div className="bg-gradient-to-br from-zinc-800/70 to-zinc-800/30 border border-white/5 rounded-xl p-4">
               <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest mb-3">True Hourly Cost (calculated)</p>

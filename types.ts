@@ -649,6 +649,7 @@ export interface SystemSettings {
   companyWebsite?: string;     // Optional — printed on docs
   companyTaxId?: string;       // EIN / VAT — printed on invoices
   weeklyGoalHours?: number;    // Weekly target hours per worker (default 40)
+  monthlyRevenueGoal?: number; // Monthly revenue target — shown as progress bar on Dashboard
   defaultPriority?: string;    // Default priority for new jobs
   // Display
   theme?: 'dark' | 'light';   // UI theme

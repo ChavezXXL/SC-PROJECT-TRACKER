@@ -2498,6 +2498,180 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         </div>
       </div>
 
+      {/* ── TODAY'S PULSE — what happened today + who's working ── */}
+      {(() => {
+        const now2 = Date.now();
+        const dayStart = new Date(); dayStart.setHours(0,0,0,0);
+        const dayStartMs = dayStart.getTime();
+
+        // Jobs completed today
+        const completedToday = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= dayStartMs)
+          .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+        const revenueToday = completedToday.reduce((s, j) => s + (j.quoteAmount || 0), 0);
+
+        // Jobs completed in the last 7 days (for "recent wins" feed when today is quiet)
+        const week7Start = now2 - 7 * 86400000;
+        const recentWins = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= week7Start)
+          .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
+          .slice(0, 5);
+
+        // Worker pulse — clocked-in workers with their active job + elapsed time
+        const workerPulse = activeLogs.map(log => {
+          const worker = dashWorkers.find(w => w.id === log.userId);
+          const job = jobs.find(j => j.id === log.jobId);
+          const pausedMs = (log.totalPausedMs || 0) + (log.pausedAt ? now2 - log.pausedAt : 0);
+          const elapsedMs = Math.max(0, now2 - log.startTime - pausedMs);
+          const elapsedMin = Math.round(elapsedMs / 60000);
+          const elapsed = elapsedMin >= 60
+            ? `${Math.floor(elapsedMin / 60)}h ${elapsedMin % 60}m`
+            : `${elapsedMin}m`;
+          return {
+            name: worker?.name || log.userName || 'Unknown',
+            job: job?.poNumber || log.jobId,
+            operation: log.operation || '',
+            elapsed,
+            elapsedMin,
+            paused: !!log.pausedAt,
+          };
+        }).sort((a, b) => b.elapsedMin - a.elapsedMin);
+
+        const hasActivity = completedToday.length > 0 || workerPulse.length > 0;
+        if (!hasActivity && recentWins.length === 0) return null;
+
+        const GRADE_DOT: Record<string, string> = {
+          great: 'bg-emerald-400', good: 'bg-blue-400', tight: 'bg-yellow-400', loss: 'bg-red-400',
+        };
+        const getGrade = (j: Job) => {
+          if (j.profitSnapshot) {
+            const m = j.profitSnapshot.marginPct;
+            return m >= 35 ? 'great' : m >= 15 ? 'good' : m >= 0 ? 'tight' : 'loss';
+          }
+          return null;
+        };
+
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+
+            {/* ── Today's completions ── */}
+            <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Today's Wins</p>
+                  {completedToday.length > 0
+                    ? <p className="text-xs text-zinc-400 mt-0.5">{completedToday.length} job{completedToday.length !== 1 ? 's' : ''} · <span className="text-emerald-400 font-bold">{revenueToday >= 1000 ? `$${(revenueToday/1000).toFixed(1)}k` : `$${revenueToday.toFixed(0)}`} revenue</span></p>
+                    : <p className="text-xs text-zinc-600 mt-0.5">No completions yet — let's get one done</p>
+                  }
+                </div>
+                <CheckCircle className={`w-5 h-5 shrink-0 ${completedToday.length > 0 ? 'text-emerald-400' : 'text-zinc-700'}`} />
+              </div>
+
+              {completedToday.length > 0 ? (
+                <div className="space-y-1.5">
+                  {completedToday.slice(0, 5).map(j => {
+                    const grade = getGrade(j);
+                    const minsAgo = Math.round((now2 - (j.completedAt || now2)) / 60000);
+                    const timeAgo = minsAgo < 60 ? `${minsAgo}m ago` : `${Math.floor(minsAgo/60)}h ago`;
+                    return (
+                      <div key={j.id} className="flex items-center justify-between gap-2 py-1 border-b border-white/[0.04] last:border-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {grade && <span className={`w-2 h-2 rounded-full shrink-0 ${GRADE_DOT[grade]}`} />}
+                          <span className="text-sm font-bold text-white truncate">{j.poNumber}</span>
+                          {j.customer && <span className="text-xs text-zinc-500 truncate hidden sm:inline">{j.customer}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {j.quoteAmount && j.quoteAmount > 0 && (
+                            <span className="text-xs font-mono text-emerald-400 font-bold">
+                              ${j.quoteAmount >= 1000 ? (j.quoteAmount/1000).toFixed(1)+'k' : j.quoteAmount.toFixed(0)}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-zinc-600">{timeAgo}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : recentWins.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] text-zinc-600 mb-2">Recent (7 days)</p>
+                  {recentWins.map(j => {
+                    const grade = getGrade(j);
+                    const daysAgo = Math.round((now2 - (j.completedAt || now2)) / 86400000);
+                    return (
+                      <div key={j.id} className="flex items-center justify-between gap-2 py-1 border-b border-white/[0.04] last:border-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {grade && <span className={`w-2 h-2 rounded-full shrink-0 ${GRADE_DOT[grade]}`} />}
+                          <span className="text-sm font-bold text-white truncate">{j.poNumber}</span>
+                          {j.customer && <span className="text-xs text-zinc-500 truncate hidden sm:inline">{j.customer}</span>}
+                        </div>
+                        <span className="text-[10px] text-zinc-600 shrink-0">{daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : `${daysAgo}d ago`}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-4 text-zinc-700 text-xs">No jobs completed this week yet</div>
+              )}
+            </div>
+
+            {/* ── Worker pulse ── */}
+            <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Who's Working</p>
+                  {workerPulse.length > 0
+                    ? <p className="text-xs text-zinc-400 mt-0.5">{workerPulse.length} worker{workerPulse.length !== 1 ? 's' : ''} active right now</p>
+                    : <p className="text-xs text-zinc-600 mt-0.5">Nobody clocked in yet</p>
+                  }
+                </div>
+                <Users className={`w-5 h-5 shrink-0 ${workerPulse.length > 0 ? 'text-emerald-400' : 'text-zinc-700'}`} />
+              </div>
+
+              {workerPulse.length > 0 ? (
+                <div className="space-y-2">
+                  {workerPulse.map((w, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className={`relative w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${w.paused ? 'bg-zinc-700 text-zinc-400' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                        {w.name.charAt(0).toUpperCase()}
+                        {!w.paused && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-zinc-900" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-bold text-white truncate">{w.name}</span>
+                          {w.paused && <span className="text-[9px] font-black text-zinc-500 uppercase tracking-wider">paused</span>}
+                        </div>
+                        <p className="text-[11px] text-zinc-500 truncate">
+                          {w.job}
+                          {w.operation && <span className="text-zinc-600"> · {w.operation}</span>}
+                        </p>
+                      </div>
+                      <span className={`text-xs font-mono font-bold shrink-0 tabular ${w.paused ? 'text-zinc-600' : w.elapsedMin > 240 ? 'text-amber-400' : 'text-zinc-400'}`}>
+                        {w.elapsed}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {/* Show workers available even when none are clocked in */}
+                  {activeWorkers.slice(0, 4).map((w, i) => (
+                    <div key={i} className="flex items-center gap-3 opacity-40">
+                      <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-[11px] font-black text-zinc-500 shrink-0">
+                        {w.name.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="text-sm text-zinc-600 truncate">{w.name}</span>
+                      <span className="text-[10px] text-zinc-700 ml-auto">offline</span>
+                    </div>
+                  ))}
+                  {activeWorkers.length === 0 && (
+                    <div className="text-center py-4 text-zinc-700 text-xs">No workers configured yet</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── WEEKLY CAPACITY FORECAST — ETA engine output ── */}
       {(() => {
         // Only show when we have real data (at least one job with expected hours or part history)
@@ -2799,6 +2973,118 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                 </div>
               </div>
             </div>
+
+            {/* ── Monthly Revenue Goal Progress ── */}
+            {(() => {
+              const goal = shopSettings.monthlyRevenueGoal;
+              if (!goal || goal <= 0) return null;
+              const pct = Math.min(100, (monthTotals.revenue / goal) * 100);
+              // Pace: how many days into the month, projected finish
+              const totalDays = new Date(thisMonthStart.getFullYear(), thisMonthStart.getMonth() + 1, 0).getDate();
+              const daysPassed = new Date().getDate();
+              const daysLeft = totalDays - daysPassed;
+              const paceRevenue = daysPassed > 0 ? (monthTotals.revenue / daysPassed) * totalDays : 0;
+              const onPace = paceRevenue >= goal * 0.9;
+              const aheadPace = paceRevenue >= goal;
+              const barColor = aheadPace ? '#10b981' : onPace ? '#f59e0b' : '#ef4444';
+              const statusText = aheadPace ? '🟢 On track to exceed goal' : onPace ? '🟡 Slightly behind pace' : `🔴 Pacing for ${goal > 0 ? `$${Math.round(paceRevenue).toLocaleString()}` : '$0'} — push harder`;
+              return (
+                <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                  <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Monthly Goal</p>
+                      <p className="text-xs text-zinc-400 mt-0.5">{statusText}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-base font-black tabular" style={{ color: barColor }}>
+                        ${monthTotals.revenue >= 1000 ? (monthTotals.revenue/1000).toFixed(1)+'k' : monthTotals.revenue.toFixed(0)}
+                        <span className="text-zinc-600 font-normal text-xs"> / ${goal >= 1000 ? (goal/1000).toFixed(0)+'k' : goal.toLocaleString()}</span>
+                      </p>
+                      <p className="text-[10px] text-zinc-600">{daysLeft} day{daysLeft !== 1 ? 's' : ''} left</p>
+                    </div>
+                  </div>
+                  <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${barColor}99, ${barColor})`, boxShadow: `0 0 12px ${barColor}60` }}
+                    />
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-zinc-600">
+                    <span>{pct.toFixed(0)}% of goal</span>
+                    <span>{pct >= 100 ? '🎉 Goal hit!' : `$${Math.max(0, goal - monthTotals.revenue) >= 1000 ? ((goal - monthTotals.revenue)/1000).toFixed(1)+'k' : Math.max(0, goal - monthTotals.revenue).toFixed(0)} to go`}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── Worker Leaderboard — hours this week ── */}
+            {dashWorkers.filter(w => w.isActive !== false && w.role !== 'admin').length > 0 && (() => {
+              const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
+              const weekStartMs = weekStart.getTime();
+              type WorkerRow = { id: string; name: string; hrs: number; jobs: number; active: boolean };
+              const leaderboard: WorkerRow[] = dashWorkers
+                .filter(w => w.isActive !== false && w.role !== 'admin')
+                .map(w => {
+                  const weekLogs = allLogs.filter(l => l.userId === w.id && l.startTime >= weekStartMs && !l.isSample);
+                  const runningMs = activeLogs.filter(l => l.userId === w.id).reduce((a, l) => {
+                    const pausedMs2 = (l.totalPausedMs || 0) + (l.pausedAt ? Date.now() - l.pausedAt : 0);
+                    return a + Math.max(0, Date.now() - l.startTime - pausedMs2);
+                  }, 0);
+                  const loggedMins = weekLogs.reduce((a, l) => {
+                    if (l.durationSeconds != null && l.durationSeconds >= 0) return a + l.durationSeconds / 60;
+                    return a + (l.durationMinutes || 0);
+                  }, 0);
+                  const totalHrs = (loggedMins + runningMs / 60000) / 60;
+                  const jobSet = new Set(weekLogs.map(l => l.jobId));
+                  const isActive = activeLogs.some(l => l.userId === w.id);
+                  return { id: w.id, name: w.name, hrs: totalHrs, jobs: jobSet.size, active: isActive };
+                })
+                .sort((a, b) => b.hrs - a.hrs);
+              const maxHrs = leaderboard[0]?.hrs || 1;
+              if (maxHrs < 0.1) return null; // no data yet
+              return (
+                <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Award className="w-4 h-4 text-amber-400" />
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Worker Leaderboard</p>
+                    <span className="text-[10px] text-zinc-600 ml-auto">this week</span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {leaderboard.map((w, i) => {
+                      const barPct2 = maxHrs > 0 ? (w.hrs / maxHrs) * 100 : 0;
+                      const hrsDisplay = w.hrs < 0.1 ? '< 6m' : w.hrs >= 1 ? `${w.hrs.toFixed(1)}h` : `${Math.round(w.hrs * 60)}m`;
+                      return (
+                        <div key={w.id}>
+                          <div className="flex items-center justify-between mb-1 gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[10px] font-black text-zinc-700 w-4 text-center shrink-0">#{i+1}</span>
+                              <div className={`relative w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${w.active ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-500'}`}>
+                                {w.name.charAt(0).toUpperCase()}
+                                {w.active && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 border border-zinc-900" />}
+                              </div>
+                              <span className={`text-sm font-bold truncate ${i === 0 ? 'text-white' : 'text-zinc-400'}`}>{w.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {w.jobs > 0 && <span className="text-[10px] text-zinc-600">{w.jobs} job{w.jobs !== 1 ? 's' : ''}</span>}
+                              <span className={`text-sm font-black tabular ${i === 0 ? 'text-amber-400' : 'text-zinc-500'}`}>{hrsDisplay}</span>
+                            </div>
+                          </div>
+                          <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden ml-10">
+                            <div
+                              className="h-full rounded-full transition-all duration-700"
+                              style={{
+                                width: `${barPct2}%`,
+                                background: i === 0 ? 'linear-gradient(90deg, #f59e0b99, #f59e0b)' : '#3f3f46',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Live Job Budget Tracker — Est. vs Actual */}
             {activeJobsWithCosts.length > 0 && (() => {
