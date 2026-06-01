@@ -3,10 +3,11 @@
 // Extracted from App.tsx as part of the modularization effort. Pure move —
 // zero functional changes.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, CartesianGrid, Legend, Sector
+  PieChart, Pie, Cell, CartesianGrid, Legend, Sector,
+  ComposedChart, Line,
 } from 'recharts';
 
 import { Job, User, TimeLog, SystemSettings, PurchaseOrder } from '../types';
@@ -14,6 +15,20 @@ import * as DB from '../services/mockDb';
 import { Avatar, useIsMobile } from '../App';
 import { fmtMoneyK } from '../utils/format';
 import { calcJobProfit, GRADE_COLORS, GRADE_LABELS } from '../utils/jobProfit';
+
+// ── Small delta badge used on KPI cards ──────────────────────────────────────
+const DeltaBadge = ({ current, prev }: { current: number; prev: number }) => {
+  if (prev === 0 && current === 0) return null;
+  if (prev === 0) return <span className="ml-1 text-[9px] font-black text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">NEW</span>;
+  const pct = ((current - prev) / Math.abs(prev)) * 100;
+  if (Math.abs(pct) < 1) return null;
+  const up = pct > 0;
+  return (
+    <span className={`ml-1 text-[9px] font-black px-1.5 py-0.5 rounded-full ${up ? 'text-emerald-400 bg-emerald-500/10' : 'text-red-400 bg-red-500/10'}`}>
+      {up ? '+' : ''}{pct.toFixed(0)}%
+    </span>
+  );
+};
 
 export const ReportsView = () => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -72,14 +87,48 @@ export const ReportsView = () => {
   const totalHrs = workerStats.reduce((a, w) => a + w.totalHrs, 0);
   const totalCost = workerStats.reduce((a, w) => a + w.cost, 0);
   const totalSessions = workerStats.reduce((a, w) => a + w.sessions, 0);
-  const completedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff);
+  const completedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd));
   const totalRevenue = completedJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+
+  // ── Change 1: Previous-period data for delta badges ──────────────────────
+  const prevCutoff = period === 'week'
+    ? weekAgo - 7 * 86400000
+    : period === 'month'
+    ? monthAgo - 30 * 86400000
+    : cutoff;
+  const showDelta = period === 'week' || period === 'month';
+  const prevCompletedJobs = useMemo(() =>
+    showDelta
+      ? jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > prevCutoff && j.completedAt <= cutoff)
+      : [],
+    [jobs, prevCutoff, cutoff, showDelta]
+  );
+  const prevRevenue = prevCompletedJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+  const prevProfit = prevCompletedJobs.reduce((a, j) => a + (j.profitSnapshot?.profit ?? 0), 0);
+  const currentProfit = completedJobs.reduce((a, j) => a + (j.profitSnapshot?.profit ?? 0), 0);
 
   // Operations breakdown
   const opMap = new Map<string, number>();
   completedLogs.forEach(l => opMap.set(l.operation, (opMap.get(l.operation) || 0) + logMins(l)));
   const opBreakdown = Array.from(opMap.entries()).sort((a, b) => b[1] - a[1]);
   const maxOpMins = opBreakdown.length > 0 ? opBreakdown[0][1] : 1;
+
+  // ── Change 2: 12-week rolling trend data ─────────────────────────────────
+  const trendWeeks = useMemo(() => {
+    return Array.from({ length: 12 }, (_, i) => {
+      const weekEnd = now - i * 7 * 86400000;
+      const weekStart = weekEnd - 7 * 86400000;
+      const wJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= weekStart && j.completedAt < weekEnd);
+      const revenue = wJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
+      const profit = wJobs.reduce((a, j) => {
+        if (j.profitSnapshot) return a + j.profitSnapshot.profit;
+        return a + (j.quoteAmount || 0) * 0.2; // rough estimate if no snapshot
+      }, 0);
+      const label = new Date(weekEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return { label, revenue: Math.round(revenue), profit: Math.round(profit), jobs: wJobs.length };
+    }).reverse();
+  }, [jobs, now]);
+  const trendHasData = trendWeeks.filter(w => w.jobs > 0).length >= 2;
 
   return (
     // Full-width — the sidebar already caps the main area. Previous
@@ -131,14 +180,22 @@ export const ReportsView = () => {
                 <p className="text-xl sm:text-2xl font-black text-white tabular mt-1">{totalSessions}</p>
                 <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-amber-500/40 to-transparent mt-2" aria-hidden="true" />
               </div>
+              {/* Jobs Done — with delta badge */}
               <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 text-center overflow-hidden">
                 <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Jobs Done</p>
-                <p className="text-xl sm:text-2xl font-black text-emerald-400 tabular mt-1">{completedJobs.length}</p>
+                <div className="flex items-center justify-center mt-1 gap-1">
+                  <p className="text-xl sm:text-2xl font-black text-emerald-400 tabular">{completedJobs.length}</p>
+                  {showDelta && <DeltaBadge current={completedJobs.length} prev={prevCompletedJobs.length} />}
+                </div>
                 <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent mt-2" aria-hidden="true" />
               </div>
+              {/* Revenue — with delta badge */}
               <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 text-center overflow-hidden">
                 <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Revenue</p>
-                <p className="text-lg sm:text-2xl font-black text-emerald-400 truncate tabular mt-1">{fmtMoneyK(totalRevenue)}</p>
+                <div className="flex items-center justify-center mt-1 gap-1">
+                  <p className="text-lg sm:text-2xl font-black text-emerald-400 truncate tabular">{fmtMoneyK(totalRevenue)}</p>
+                  {showDelta && <DeltaBadge current={totalRevenue} prev={prevRevenue} />}
+                </div>
                 <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent mt-2" aria-hidden="true" />
               </div>
               <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 text-center overflow-hidden">
@@ -146,9 +203,13 @@ export const ReportsView = () => {
                 <p className="text-lg sm:text-2xl font-black text-orange-400 truncate tabular mt-1">{fmtMoneyK(Math.round(totalCost))}</p>
                 <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-orange-500/50 to-transparent mt-2" aria-hidden="true" />
               </div>
+              {/* Margin — with delta badge */}
               <div className={`card-shine hover-lift-glow border rounded-2xl p-3 sm:p-4 text-center overflow-hidden ${profitMargin >= 20 ? 'bg-emerald-500/10 border-emerald-500/20' : profitMargin >= 0 ? 'bg-zinc-900/50 border-white/5' : 'bg-red-500/10 border-red-500/20'}`}>
                 <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Margin</p>
-                <p className={`text-xl sm:text-2xl font-black tabular mt-1 ${profitMargin >= 20 ? 'text-emerald-400' : profitMargin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{profitMargin.toFixed(0)}%</p>
+                <div className="flex items-center justify-center mt-1 gap-1">
+                  <p className={`text-xl sm:text-2xl font-black tabular ${profitMargin >= 20 ? 'text-emerald-400' : profitMargin >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{profitMargin.toFixed(0)}%</p>
+                  {showDelta && <DeltaBadge current={currentProfit} prev={prevProfit} />}
+                </div>
                 <div className={`h-0.5 rounded-full bg-gradient-to-r from-transparent ${profitMargin >= 20 ? 'via-emerald-500/60' : profitMargin >= 0 ? 'via-yellow-500/60' : 'via-red-500/60'} to-transparent mt-2`} aria-hidden="true" />
               </div>
             </div>
@@ -198,6 +259,46 @@ export const ReportsView = () => {
                   </div>
                 </div>
               </div>
+              );
+            })()}
+
+            {/* Change 5: Grade Distribution strip */}
+            {(() => {
+              const allDoneWithQuote = jobs.filter(j => j.status === 'completed' && j.quoteAmount);
+              if (allDoneWithQuote.length === 0) return null;
+              const grades = { great: 0, good: 0, tight: 0, loss: 0 };
+              allDoneWithQuote.forEach(j => {
+                const m = j.profitSnapshot?.marginPct ?? null;
+                if (m === null) return;
+                if (m >= 35) grades.great++;
+                else if (m >= 15) grades.good++;
+                else if (m >= 0) grades.tight++;
+                else grades.loss++;
+              });
+              const total = grades.great + grades.good + grades.tight + grades.loss;
+              if (total === 0) return null;
+              const pct = (n: number) => ((n / total) * 100).toFixed(0);
+              return (
+                <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Job Grade Mix — All Time</h3>
+                    <span className="text-[10px] text-zinc-600">{total} jobs with snapshots</span>
+                  </div>
+                  <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
+                    {grades.great > 0 && <div className="bg-emerald-500 transition-all" style={{ width: `${pct(grades.great)}%` }} title={`Great: ${grades.great}`} />}
+                    {grades.good > 0 && <div className="bg-blue-500 transition-all" style={{ width: `${pct(grades.good)}%` }} title={`Good: ${grades.good}`} />}
+                    {grades.tight > 0 && <div className="bg-yellow-500 transition-all" style={{ width: `${pct(grades.tight)}%` }} title={`Tight: ${grades.tight}`} />}
+                    {grades.loss > 0 && <div className="bg-red-500 transition-all" style={{ width: `${pct(grades.loss)}%` }} title={`Loss: ${grades.loss}`} />}
+                  </div>
+                  <div className="flex flex-wrap gap-3 mt-2">
+                    {(['great', 'good', 'tight', 'loss'] as const).map(g => {
+                      const colors = { great: 'text-emerald-400', good: 'text-blue-400', tight: 'text-yellow-400', loss: 'text-red-400' };
+                      const labels = { great: 'Great', good: 'Good', tight: 'Tight', loss: 'Loss' };
+                      if (grades[g] === 0) return null;
+                      return <span key={g} className={`text-[10px] font-bold ${colors[g]}`}>{labels[g]}: {grades[g]} ({pct(grades[g])}%)</span>;
+                    })}
+                  </div>
+                </div>
               );
             })()}
           </>
@@ -465,58 +566,114 @@ export const ReportsView = () => {
         );
       })()}
 
-      {/* Customer Breakdown */}
+      {/* Change 2: Revenue & Profit Trend — Last 12 Weeks */}
+      {trendHasData && (
+        <div>
+          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Revenue &amp; Profit Trend — Last 12 Weeks</h3>
+          <p className="text-[10px] text-zinc-600 mb-3">Always shows all-time 12-week rolling window, independent of period filter</p>
+          <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 overflow-hidden">
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={trendWeeks} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="trendRevGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.9} />
+                    <stop offset="100%" stopColor="#10b981" stopOpacity={0.5} />
+                  </linearGradient>
+                  <linearGradient id="trendProfGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.9} />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.5} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <XAxis dataKey="label" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} interval={isMobile ? 2 : 1} />
+                <YAxis tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+                <Tooltip
+                  cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                  content={(props: any) => {
+                    if (!props.active || !props.payload?.length) return null;
+                    const d = props.payload[0]?.payload;
+                    const rev = d?.revenue ?? 0;
+                    const prof = d?.profit ?? 0;
+                    const margin = rev > 0 ? ((prof / rev) * 100).toFixed(0) : '—';
+                    return (
+                      <div style={{ background: 'rgba(9,9,11,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: '14px 18px', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}>
+                        <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 13, marginBottom: 8 }}>Week of {d?.label}</p>
+                        <div style={{ display: 'flex', gap: 16 }}>
+                          <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>REVENUE</p><p style={{ color: '#10b981', fontSize: 16, fontWeight: 900 }}>${rev.toLocaleString()}</p></div>
+                          <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>PROFIT</p><p style={{ color: '#f59e0b', fontSize: 16, fontWeight: 900 }}>${prof.toLocaleString()}</p></div>
+                          <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>MARGIN</p><p style={{ color: '#a78bfa', fontSize: 16, fontWeight: 900 }}>{margin}%</p></div>
+                          <div><p style={{ color: '#71717a', fontSize: 10, fontWeight: 600, letterSpacing: 1, marginBottom: 2 }}>JOBS</p><p style={{ color: '#e4e4e7', fontSize: 16, fontWeight: 900 }}>{d?.jobs}</p></div>
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <Legend formatter={(v: string) => <span style={{ color: '#d4d4d8', fontSize: 11, fontWeight: 600 }}>{v === 'revenue' ? 'Revenue' : 'Profit'}</span>} />
+                <Bar dataKey="revenue" fill="url(#trendRevGrad)" radius={[6, 6, 0, 0]} barSize={isMobile ? 10 : 16} name="revenue" isAnimationActive animationDuration={700} />
+                <Bar dataKey="profit" fill="url(#trendProfGrad)" radius={[6, 6, 0, 0]} barSize={isMobile ? 10 : 16} name="profit" isAnimationActive animationDuration={700} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Change 3: Customer Breakdown — upgraded with profit margin */}
       {(() => {
-        const custMap = new Map<string, { jobs: number; hours: number; revenue: number; cost: number }>();
+        const custMap = new Map<string, { jobs: number; hours: number; revenue: number; cost: number; profit: number }>();
         completedLogs.forEach(l => {
           const j = jobs.find(jj => jj.id === l.jobId);
           const cust = j?.customer || 'Unknown';
-          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0 };
+          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0, profit: 0 };
           cur.hours += logMins(l) / 60;
           custMap.set(cust, cur);
         });
-        jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff).forEach(j => {
+        jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd)).forEach(j => {
           const cust = j.customer || 'Unknown';
-          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0 };
+          const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0, profit: 0 };
           cur.jobs++;
           cur.revenue += j.quoteAmount || 0;
+          cur.profit += j.profitSnapshot?.profit ?? 0;
           custMap.set(cust, cur);
         });
-        const custBreakdown = Array.from(custMap.entries()).sort((a, b) => b[1].hours - a[1].hours);
+        // Sort by revenue descending
+        const custBreakdown = Array.from(custMap.entries()).sort((a, b) => b[1].revenue - a[1].revenue);
         if (custBreakdown.length === 0) return null;
         const maxHours = custBreakdown.reduce((m, [, d]) => Math.max(m, d.hours), 0) || 1;
         const maxRevenue = custBreakdown.reduce((m, [, d]) => Math.max(m, d.revenue), 0) || 1;
-        const totalRevenue = custBreakdown.reduce((a, [, d]) => a + d.revenue, 0);
-        const totalHours = custBreakdown.reduce((a, [, d]) => a + d.hours, 0);
-        const totalJobs = custBreakdown.reduce((a, [, d]) => a + d.jobs, 0);
+        const totalRevenueC = custBreakdown.reduce((a, [, d]) => a + d.revenue, 0);
+        const totalHoursC = custBreakdown.reduce((a, [, d]) => a + d.hours, 0);
+        const totalJobsC = custBreakdown.reduce((a, [, d]) => a + d.jobs, 0);
         return (
           <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden">
             <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
               <div>
                 <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Customer Breakdown</h3>
-                <p className="text-[11px] text-zinc-600 mt-0.5">{custBreakdown.length} customer{custBreakdown.length !== 1 ? 's' : ''} · sorted by hours</p>
+                <p className="text-[11px] text-zinc-600 mt-0.5">{custBreakdown.length} customer{custBreakdown.length !== 1 ? 's' : ''} · sorted by revenue</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full whitespace-nowrap">{totalHours.toFixed(0)}h</span>
-                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full whitespace-nowrap">{fmtMoneyK(totalRevenue)}</span>
+                <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full whitespace-nowrap">{totalHoursC.toFixed(0)}h</span>
+                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full whitespace-nowrap">{fmtMoneyK(totalRevenueC)}</span>
               </div>
             </div>
 
             {/* Column headers */}
-            <div className="hidden sm:grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 px-2 pb-2 border-b border-white/5">
+            <div className="hidden sm:grid grid-cols-[auto_1fr_auto_auto_auto_auto] items-center gap-3 px-2 pb-2 border-b border-white/5">
               <span className="w-4 text-[9px] font-black text-zinc-600 uppercase tracking-widest">#</span>
               <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Customer</span>
               <span className="w-16 text-right text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</span>
               <span className="w-32 text-[9px] font-black text-zinc-600 uppercase tracking-widest">Hours</span>
               <span className="w-32 text-[9px] font-black text-zinc-600 uppercase tracking-widest">Revenue</span>
+              <span className="w-16 text-right text-[9px] font-black text-zinc-600 uppercase tracking-widest">Margin</span>
             </div>
 
             <div className="mt-2 space-y-0.5">
               {custBreakdown.map(([cust, data], i) => {
                 const hrPct = (data.hours / maxHours) * 100;
                 const revPct = maxRevenue > 0 ? (data.revenue / maxRevenue) * 100 : 0;
+                const marginPct = data.revenue > 0 ? (data.profit / data.revenue) * 100 : null;
+                const marginColor = marginPct === null ? 'text-zinc-600' : marginPct >= 35 ? 'text-emerald-400' : marginPct >= 15 ? 'text-blue-400' : marginPct >= 0 ? 'text-yellow-400' : 'text-red-400';
                 return (
-                  <div key={cust} className="grid sm:grid-cols-[auto_1fr_auto_auto_auto] grid-cols-[auto_1fr_auto] items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/[0.03] transition-colors">
+                  <div key={cust} className="grid sm:grid-cols-[auto_1fr_auto_auto_auto_auto] grid-cols-[auto_1fr_auto] items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/[0.03] transition-colors">
                     <span className="w-4 text-center text-[10px] font-black text-zinc-600 tabular">{i+1}</span>
                     <span className="text-sm font-semibold text-zinc-200 truncate">{cust}</span>
                     <span className="w-16 text-right font-mono text-[11px] text-zinc-400 tabular hidden sm:inline">{data.jobs}</span>
@@ -538,6 +695,10 @@ export const ReportsView = () => {
                         {data.revenue > 0 ? fmtMoneyK(data.revenue) : '—'}
                       </span>
                     </div>
+                    {/* Margin column — only on sm+ */}
+                    <span className={`hidden sm:inline w-16 text-right font-mono text-[11px] font-bold tabular ${marginColor}`}>
+                      {marginPct !== null && data.profit !== 0 ? `${marginPct.toFixed(0)}%` : '—'}
+                    </span>
                   </div>
                 );
               })}
@@ -551,12 +712,75 @@ export const ReportsView = () => {
               </div>
               <div>
                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</p>
-                <p className="text-sm font-black text-amber-400 tabular mt-0.5">{totalJobs}</p>
+                <p className="text-sm font-black text-amber-400 tabular mt-0.5">{totalJobsC}</p>
               </div>
               <div>
                 <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Revenue</p>
-                <p className="text-sm font-black text-emerald-400 tabular mt-0.5">{fmtMoneyK(totalRevenue)}</p>
+                <p className="text-sm font-black text-emerald-400 tabular mt-0.5">{fmtMoneyK(totalRevenueC)}</p>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Change 4: Part Number Intelligence */}
+      {(() => {
+        const partMap = new Map<string, { runs: number; totalHrs: number; totalRevenue: number; totalProfit: number; margins: number[] }>();
+        jobs.filter(j => j.status === 'completed' && j.partNumber && j.quoteAmount).forEach(j => {
+          const pn = j.partNumber!;
+          const cur = partMap.get(pn) || { runs: 0, totalHrs: 0, totalRevenue: 0, totalProfit: 0, margins: [] };
+          cur.runs++;
+          cur.totalRevenue += j.quoteAmount || 0;
+          if (j.profitSnapshot) {
+            cur.totalProfit += j.profitSnapshot.profit;
+            cur.totalHrs += j.profitSnapshot.laborHours;
+            cur.margins.push(j.profitSnapshot.marginPct);
+          }
+          partMap.set(pn, cur);
+        });
+        const parts = Array.from(partMap.entries())
+          .filter(([, d]) => d.runs >= 1)
+          .map(([pn, d]) => ({
+            pn,
+            runs: d.runs,
+            avgHrs: d.totalHrs > 0 ? d.totalHrs / d.runs : 0,
+            avgRevenue: d.totalRevenue / d.runs,
+            avgMargin: d.margins.length > 0 ? d.margins.reduce((a, b) => a + b, 0) / d.margins.length : 0,
+            totalRevenue: d.totalRevenue,
+          }))
+          .sort((a, b) => b.totalRevenue - a.totalRevenue)
+          .slice(0, 10);
+        if (parts.length < 2) return null;
+        return (
+          <div>
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Part Number Intelligence</h3>
+            <p className="text-[10px] text-zinc-600 mb-3">All-time · helps you quote faster and spot your most profitable work</p>
+            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-950/50 text-zinc-500 text-xs uppercase">
+                  <tr>
+                    <th className="text-left p-2 sm:p-3">Part #</th>
+                    <th className="text-right p-2 sm:p-3">Runs</th>
+                    <th className="text-right p-2 sm:p-3 hidden sm:table-cell">Avg Hrs</th>
+                    <th className="text-right p-2 sm:p-3">Avg Revenue</th>
+                    <th className="text-right p-2 sm:p-3">Avg Margin</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {parts.map(p => {
+                    const marginColor = p.avgMargin >= 35 ? 'text-emerald-400' : p.avgMargin >= 15 ? 'text-blue-400' : p.avgMargin >= 0 ? 'text-yellow-400' : 'text-red-400';
+                    return (
+                      <tr key={p.pn} className="hover:bg-white/5">
+                        <td className="p-2 sm:p-3 font-mono font-bold text-white text-xs sm:text-sm">{p.pn}</td>
+                        <td className="p-2 sm:p-3 text-right font-mono text-zinc-400">{p.runs}×</td>
+                        <td className="p-2 sm:p-3 text-right font-mono text-zinc-400 hidden sm:table-cell">{p.avgHrs > 0 ? p.avgHrs.toFixed(1) + 'h' : '—'}</td>
+                        <td className="p-2 sm:p-3 text-right font-mono text-zinc-200">${p.avgRevenue.toFixed(0)}</td>
+                        <td className={`p-2 sm:p-3 text-right font-mono font-bold ${marginColor}`}>{p.avgMargin > 0 ? p.avgMargin.toFixed(0) + '%' : '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         );
@@ -564,7 +788,7 @@ export const ReportsView = () => {
 
       {/* Job Profitability — uses locked profitSnapshot when available for accuracy */}
       {(() => {
-        const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && j.quoteAmount).map(j => {
+        const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && j.quoteAmount).map(j => {
           // Prefer locked snapshot (fully accurate: labor + materials + outsourced)
           // Fall back to calcJobProfit (live calculation using same engine)
           const snap = j.profitSnapshot;
@@ -653,7 +877,7 @@ export const ReportsView = () => {
 
       {/* ── Estimated vs Actual ── */}
       {(() => {
-        const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (j.quoteAmount || j.expectedHours)).map(j => {
+        const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && (j.quoteAmount || j.expectedHours)).map(j => {
           const jLogs = completedLogs.filter(l => l.jobId === j.id);
           const actualHrs = jLogs.reduce((a, l) => a + logMins(l), 0) / 60;
           const actualCost = actualHrs * ((shopRate || 0) + ohRate);
@@ -720,18 +944,18 @@ export const ReportsView = () => {
                         return (
                           <div style={{ background: 'rgba(9,9,11,0.96)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: '14px 18px', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}>
                             <p style={{ color: '#f4f4f5', fontWeight: 900, fontSize: 14, marginBottom: 8 }}>{props.label}</p>
-                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>📐 Estimated: <span style={{ color: '#60a5fa', fontWeight: 800 }}>{est}h</span></p>
-                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>⏱ Actual: <span style={{ color: '#fbbf24', fontWeight: 800 }}>{act}h</span></p>
+                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>Estimated: <span style={{ color: '#60a5fa', fontWeight: 800 }}>{est}h</span></p>
+                            <p style={{ color: '#a1a1aa', fontSize: 13, marginBottom: 3 }}>Actual: <span style={{ color: '#fbbf24', fontWeight: 800 }}>{act}h</span></p>
                             {est > 0 && <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 6, marginTop: 6 }}>
                               <p style={{ color: diff > 0 ? '#ef4444' : '#10b981', fontSize: 12, fontWeight: 700 }}>
-                                {diff > 0 ? '⚠ Over by' : '✅ Under by'} {Math.abs(diff).toFixed(1)}h ({est > 0 ? Math.abs(diff / est * 100).toFixed(0) : 0}%)
+                                {diff > 0 ? 'Over by' : 'Under by'} {Math.abs(diff).toFixed(1)}h ({est > 0 ? Math.abs(diff / est * 100).toFixed(0) : 0}%)
                               </p>
                             </div>}
                           </div>
                         );
                       }}
                     />
-                    <Legend formatter={(v: string) => <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600 }}>{v === 'estimated' ? '📐 Estimated' : '⏱ Actual'}</span>} />
+                    <Legend formatter={(v: string) => <span style={{ color: '#d4d4d8', fontSize: 12, fontWeight: 600 }}>{v === 'estimated' ? 'Estimated' : 'Actual'}</span>} />
                     <Bar dataKey="estimated" fill="url(#estGrad)" radius={[8, 8, 0, 0]} barSize={22} name="estimated" isAnimationActive={true} animationDuration={800} animationEasing="ease-out" />
                     <Bar dataKey="actual" fill="url(#actGrad)" radius={[8, 8, 0, 0]} barSize={22} name="actual" isAnimationActive={true} animationDuration={800} animationEasing="ease-out" />
                   </BarChart>
