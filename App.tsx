@@ -65,7 +65,7 @@ import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
 import { isDeveloper } from './utils/devMode';
-import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder } from './services/reminders';
+import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder, showTimerStarted, cancelTimerNotification, watchLiveTimerBadge } from './services/reminders';
 import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms } from './services/shiftAlarms';
 import { VAPID_KEY, vapidKeyToUint8 } from './utils/vapid';
 
@@ -1273,11 +1273,16 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     // Only run reminders after the user has granted notification permission
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     const getActive = () => (activeLog ? [activeLog] : []);
-    const stopLong = watchLongRunningTimers(getActive);
-    const stopMorning = watchClockInReminder(user, getActive);
+    const getJobLabel = (jobId: string) => {
+      const j = jobs.find(jj => jj.id === jobId);
+      return j?.jobIdsDisplay || j?.partNumber || jobId;
+    };
+    const stopLong     = watchLongRunningTimers(getActive);
+    const stopMorning  = watchClockInReminder(user, getActive);
     const stopEndShift = watchEndOfShiftReminder(user, getActive, shopSettingsForReminders);
-    return () => { stopLong(); stopMorning(); stopEndShift(); };
-  }, [activeLog?.id, user.id, shopSettingsForReminders.autoClockOutTime]);
+    const stopBadge    = watchLiveTimerBadge(getActive, getJobLabel);
+    return () => { stopLong(); stopMorning(); stopEndShift(); stopBadge(); };
+  }, [activeLog?.id, activeLog?.pausedAt, user.id, shopSettingsForReminders.autoClockOutTime]);
 
   // Shift Alarms — customizable break / lunch / clock-out alerts.
   // Runs regardless of notification permission (audio bell works without it)
@@ -1371,6 +1376,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       try {
         if (action === 'stop') {
           await DB.stopTimeLog(logId, undefined, undefined, undefined, 'sw:notification');
+          cancelTimerNotification(logId);
           addToast('success', '⏹️ Timer stopped');
         } else if (action === 'pause') {
           await DB.pauseTimeLog(logId, 'manual');
@@ -1390,7 +1396,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const handleStartJob = async (jobId: string, operation: string) => {
     const job = jobs.find(j => j.id === jobId);
     try {
-      await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
+      const logId = await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
+      if (logId) {
+        const jobLabel = job?.jobIdsDisplay || job?.partNumber || jobId;
+        showTimerStarted({ id: logId, operation, startTime: Date.now() }, jobLabel);
+      }
       // Smart auto-routing: clocking in on "Washing" moves the job to the Washing stage
       if (job) {
         const settings = DB.getSettings();
@@ -1418,6 +1428,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     try {
       await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual');
       swPost({ type: 'TIMER_STOP' });
+      cancelTimerNotification(logId);
       addToast('success', 'Job Stopped');
       if (stoppedJobId) {
         setScannedJobId(stoppedJobId);
@@ -3592,7 +3603,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     if (!startJobModal) return;
     const targetWorker = selectedWorker || user;
     try {
-      await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
+      const logId = await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
+      if (logId) {
+        const jobLabel = startJobModal.jobIdsDisplay || startJobModal.partNumber || startJobModal.id;
+        showTimerStarted({ id: logId, operation, startTime: Date.now() }, jobLabel);
+      }
       // Smart auto-routing: clocking in on an operation advances the job to the
       // matching stage (e.g. "Washing" → Washing stage). Silent when no match.
       const stages = getStages(shopSettings);

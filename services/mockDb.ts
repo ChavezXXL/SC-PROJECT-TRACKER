@@ -458,16 +458,16 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
 
 // UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
 export async function startTimeLog(
-    jobId: string, 
-    userId: string, 
-    userName: string, 
-    operation: string, 
+    jobId: string,
+    userId: string,
+    userName: string,
+    operation: string,
     partNumber?: string,
     customer?: string,
-    machineId?: string, 
+    machineId?: string,
     notes?: string,
     jobIdsDisplay?: string
-) {
+): Promise<string> {
   const id = Date.now().toString();
   const startTime = Date.now();
   
@@ -512,7 +512,7 @@ export async function startTimeLog(
     } catch (e) {
         throw handleError(e);
     }
-    return;
+    return id;
   }
 
   const logs = readLS<TimeLog[]>(LS.logs, []);
@@ -525,6 +525,7 @@ export async function startTimeLog(
     jobs[idx] = { ...(jobs[idx] as any), status: "in-progress" } as Job;
     writeLS(LS.jobs, jobs);
   }
+  return id;
 }
 
 export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string, forcedEndTime?: number, stopReason?: string) {

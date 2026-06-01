@@ -54,6 +54,94 @@ function swCancel(tag: string) {
   } catch {}
 }
 
+// ── Live-timer badge (Strava / iPhone-timer style) ────────────────
+// Shows a persistent notification the moment a timer starts, updates
+// elapsed time every 60s while the app is open, and clears it on stop.
+
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** Call immediately after DB.startTimeLog() succeeds. */
+export function showTimerStarted(
+  log: { id: string; operation: string; startTime: number },
+  jobLabel: string
+) {
+  swShow({
+    title: '⏱ Timer Running',
+    body: `${jobLabel} · ${log.operation} · 0:00`,
+    tag: `live-timer-${log.id}`,
+    logId: log.id,
+    requireInteraction: true,
+    actions: [
+      { action: 'pause', title: '⏸ Pause' },
+      { action: 'stop',  title: '⏹ Stop'  },
+    ],
+    url: '/',
+  });
+}
+
+/** Call when a timer stops (manual or forced). */
+export function cancelTimerNotification(logId: string) {
+  swCancel(`live-timer-${logId}`);
+}
+
+/**
+ * Runs every 60 s while the app is open:
+ *  • Replaces the live-timer notification with updated elapsed time
+ *  • Swaps Pause ↔ Resume action when the log is paused
+ *  • Auto-cancels the notification when a log disappears from activeLogs
+ */
+export function watchLiveTimerBadge(
+  getActiveLogs: () => TimeLog[],
+  getJobLabel: (jobId: string) => string
+): () => void {
+  const knownIds = new Set<string>();
+
+  const tick = () => {
+    const logs = getActiveLogs();
+    const now = Date.now();
+
+    logs.forEach(log => {
+      knownIds.add(log.id);
+      const isPaused = !!log.pausedAt;
+      const elapsedMs = isPaused
+        ? (log.pausedAt! - log.startTime - (log.totalPausedMs || 0))
+        : (now - log.startTime - (log.totalPausedMs || 0));
+      swShow({
+        title: isPaused ? `⏸ Paused — ${fmtElapsed(elapsedMs)}` : `⏱ ${fmtElapsed(elapsedMs)} — Running`,
+        body: `${getJobLabel(log.jobId)} · ${log.operation}`,
+        tag: `live-timer-${log.id}`,
+        logId: log.id,
+        requireInteraction: true,
+        actions: isPaused
+          ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]
+          : [{ action: 'pause',  title: '⏸ Pause'  }, { action: 'stop', title: '⏹ Stop' }],
+        url: '/',
+      });
+    });
+
+    // Clean up notifications for logs that ended
+    knownIds.forEach(id => {
+      if (!logs.find(l => l.id === id)) {
+        swCancel(`live-timer-${id}`);
+        knownIds.delete(id);
+      }
+    });
+  };
+
+  const intervalId = window.setInterval(tick, 60_000);
+  tick();
+  return () => {
+    window.clearInterval(intervalId);
+    knownIds.forEach(id => swCancel(`live-timer-${id}`));
+    knownIds.clear();
+  };
+}
+
 // ── Long-running timer watcher ─────────────────────────────────────
 // Checks every minute: if the active log has been running > threshold hours,
 // fire a notification with Pause / Resume action buttons.
