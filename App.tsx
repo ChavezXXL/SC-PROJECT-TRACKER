@@ -130,9 +130,12 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   const [permission, setPermission] = useState<NotificationPermission>(
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
-  const [alerts, setAlerts] = useState<Array<{id:string; type:'overdue'|'due-soon'|'urgent'|'long-timer'|'new-urgent'; title:string; body:string; time:number; read:boolean}>>([]);
+  const [alerts, setAlerts] = useState<Array<{id:string; type:'overdue'|'due-soon'|'urgent'|'long-timer'|'new-urgent'|'clock-in'|'clock-out'; title:string; body:string; time:number; read:boolean}>>([]);
   // Persist notified tags across page refreshes so we don't re-fire on reload
   const notifiedRef = useRef<Set<string>>(loadNotifiedTags());
+  // Track previous active logs to diff clock-in / clock-out events
+  const prevActiveLogsRef = useRef<Map<string, TimeLog>>(new Map());
+  const clockWatchMountedRef = useRef(false);
 
   // Re-check permission if user changes it in browser settings
   useEffect(() => {
@@ -273,6 +276,52 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
     return () => clearInterval(interval);
   }, [jobs, activeLogs, fire, user?.role]);
 
+  // ── Clock-in / Clock-out — diff activeLogs on every change (admin only) ──
+  // First render: snapshot current state silently (workers already on shift when
+  // admin opens the app shouldn't trigger a flood of "clocked in" toasts).
+  // Subsequent renders: fire immediately on any diff so the admin's phone buzzes
+  // the moment a worker starts or stops a timer — no 60-second polling delay.
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+
+    if (!clockWatchMountedRef.current) {
+      prevActiveLogsRef.current = new Map(activeLogs.map(l => [l.id, l]));
+      clockWatchMountedRef.current = true;
+      return;
+    }
+
+    const prev = prevActiveLogsRef.current;
+    const curr = new Map(activeLogs.map(l => [l.id, l]));
+
+    // New entries = someone just clocked in
+    curr.forEach((log, id) => {
+      if (prev.has(id)) return; // was already running
+      const tag = `clockin-${id}`;
+      if (notifiedRef.current.has(tag)) return;
+      notifiedRef.current.add(tag);
+      const job = jobs.find(j => j.id === log.jobId);
+      const jobLabel = job
+        ? [job.partNumber || job.jobIdsDisplay, job.customer].filter(Boolean).join(' · ')
+        : log.partNumber || 'job';
+      fire('clock-in', `🟢 ${log.userName} clocked in`, `${log.operation}  ·  ${jobLabel}`, tag);
+    });
+
+    // Missing entries = someone just clocked out
+    prev.forEach((log, id) => {
+      if (curr.has(id)) return; // still running
+      const tag = `clockout-${id}`;
+      if (notifiedRef.current.has(tag)) return;
+      notifiedRef.current.add(tag);
+      const job = jobs.find(j => j.id === log.jobId);
+      const jobLabel = job
+        ? [job.partNumber || job.jobIdsDisplay, job.customer].filter(Boolean).join(' · ')
+        : log.partNumber || 'job';
+      fire('clock-out', `🔴 ${log.userName} clocked out`, `${log.operation}  ·  ${jobLabel}`, tag);
+    });
+
+    prevActiveLogsRef.current = curr;
+  }, [activeLogs, jobs, fire, user?.role]);
+
   return { permission, requestPermission, alerts, markRead, markAllRead, clearAll };
 };
 
@@ -309,6 +358,8 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
     if (type === 'overdue' || type === 'urgent' || type === 'new-urgent') return { Icon: AlertTriangle, color: '#f87171', tint: 'bg-red-500/10' };
     if (type === 'due-soon') return { Icon: Clock, color: '#fb923c', tint: 'bg-orange-500/10' };
     if (type === 'long-timer') return { Icon: Activity, color: '#facc15', tint: 'bg-yellow-500/10' };
+    if (type === 'clock-in')  return { Icon: Play,          color: '#34d399', tint: 'bg-emerald-500/10' };
+    if (type === 'clock-out') return { Icon: StopCircle,    color: '#f87171', tint: 'bg-red-500/10'     };
     return { Icon: Bell, color: '#60a5fa', tint: 'bg-blue-500/10' };
   };
 
