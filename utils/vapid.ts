@@ -3,7 +3,7 @@
 // the key as a Uint8Array, not the raw base64url string.
 
 export const VAPID_KEY =
-  'BFdk7N8Nnc2xrMgZuECkQEutiO1emvPepXT8k59122AqcI-EPrCZEA32jU4Lfzz47EZBFPj6QFThBURYAsjU6Es';
+  'BFVc1-acJaLfgl4rxEYtQ-qKoeoVYMXiKg3PHYKVXjxE3N6zZZOw9z_lMNyqFuhAztvVoKgFfrdfQCJi3s92zZA';
 
 export function vapidKeyToUint8(base64: string): Uint8Array {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);

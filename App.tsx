@@ -160,12 +160,13 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         userVisibleOnly: true,
         applicationServerKey: vapidKeyToUint8(VAPID_KEY),
       });
-      await DB.savePushSubscription(userId, sub.toJSON());
+      // Store role + name so the server can filter admin-only subscriptions
+      await DB.savePushSubscription(userId, sub.toJSON(), user?.role, user?.name);
       console.log('[Push] ✅ Device registered for background notifications');
     } catch (e) {
       console.warn('[Push] ❌ Subscribe failed:', e);
     }
-  }, []);
+  }, [user?.role, user?.name]);
 
   // Request permission
   const requestPermission = useCallback(async (userId?: string) => {

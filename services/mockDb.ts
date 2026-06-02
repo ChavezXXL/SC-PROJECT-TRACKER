@@ -544,6 +544,11 @@ export async function startTimeLog(
         }
         
         firebaseStatus = { connected: true };
+        // Server-push admin devices so they get a notification even with browser closed
+        notifyAdminsClockEvent(
+          'clock-in', userName, operation,
+          [partNumber, customer].filter(Boolean).join(' · '),
+        ).catch(() => {});
     } catch (e) {
         throw handleError(e);
     }
@@ -603,6 +608,11 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         await updateDoc(ref, sanitize(updates));
         updateUserProgress(existing.userId, existing.jobId, existing.operation, durationSeconds).catch(() => {});
         firebaseStatus = { connected: true };
+        // Server-push admin devices on clock-out
+        notifyAdminsClockEvent(
+          'clock-out', existing.userName, existing.operation,
+          [existing.partNumber, existing.customer].filter(Boolean).join(' · '),
+        ).catch(() => {});
       } catch (e) {
         throw handleError(e);
       }
@@ -1163,17 +1173,44 @@ export async function sweepStaleLogs(): Promise<number> {
 }
 
 // ── Web Push Subscriptions ────────────────────────────────────────
-export async function savePushSubscription(userId: string, subscription: any): Promise<void> {
+// role + name are stored so the server-side notify-clockin function can
+// filter admin subscriptions without having to join the users collection.
+export async function savePushSubscription(
+  userId: string,
+  subscription: any,
+  role?: string,
+  name?: string,
+): Promise<void> {
   const db = dbInstance;
   if (!db) return;
-  // Key by userId + endpoint hash so one user can have multiple devices
   const endpoint: string = subscription.endpoint || '';
   const key = userId + '_' + btoa(endpoint).slice(-20).replace(/[^a-zA-Z0-9]/g, '');
   await setDoc(doc(db, COL.pushSubscriptions, key), {
     userId,
     subscription,
+    role:      role || 'unknown',
+    name:      name || '',
     updatedAt: Date.now(),
   }, { merge: true });
+}
+
+// ── Server-push helper — clock-in / clock-out admin alerts ───────────
+// Calls /.netlify/functions/notify-clockin which delivers a Web Push to
+// every admin device via VAPID, even when their browser is fully closed.
+// Fire-and-forget: never throws — a failed push must not break a clock-in.
+async function notifyAdminsClockEvent(
+  eventType: 'clock-in' | 'clock-out',
+  workerName: string,
+  operation: string,
+  jobLabel: string,
+): Promise<void> {
+  try {
+    await fetch('/.netlify/functions/notify-clockin', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ eventType, workerName, operation, jobLabel }),
+    });
+  } catch { /* silent — notification is best-effort */ }
 }
 
 export function getWorkingElapsedMs(log: TimeLog): number {
