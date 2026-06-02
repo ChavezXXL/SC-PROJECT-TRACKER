@@ -6,6 +6,7 @@ import { SignupPage } from './views/auth/SignupPage';
 import { LoginPage } from './views/auth/LoginPage';
 import { UpgradePage } from './views/billing/UpgradePage';
 import { SuccessPage } from './views/billing/SuccessPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -34,8 +35,10 @@ function Root() {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <Root />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <Root />
+      </AuthProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );

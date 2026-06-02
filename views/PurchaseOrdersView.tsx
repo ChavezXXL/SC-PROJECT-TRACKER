@@ -964,7 +964,7 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
               <Send className="w-3.5 h-3.5" aria-hidden="true" /> Save & Mark Sent
             </button>
           )}
-          <button type="button" onClick={handleSave} className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
+          <button type="button" onClick={() => handleSave()} className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
             {existing ? 'Save Changes' : 'Create Draft'}
           </button>
         </>

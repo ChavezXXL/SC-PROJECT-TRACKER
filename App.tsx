@@ -4925,7 +4925,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     confirmLabel: 'Save view',
                   });
                   if (!name) return;
-                  const v: SavedView = { id: `v_${Date.now()}`, name, search, priority: filterPriority, status: filterStatus, sortBy, tab: activeTab === 'calendar' ? 'active' : activeTab };
+                  const v: SavedView = { id: `v_${Date.now()}`, name, search, priority: filterPriority, status: filterStatus, sortBy, tab: (activeTab as string) === 'calendar' ? 'active' : (activeTab as 'active' | 'completed') };
                   setSavedViews([...savedViews, v]);
                 }}
                 className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1"

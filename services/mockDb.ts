@@ -218,6 +218,63 @@ function localSubscribe<T>(getter: () => T, cb: (v: T) => void) {
   return () => { localSubscribers.delete(notify); clearInterval(i); };
 }
 
+// ── Multicast registry ────────────────────────────────────────────────
+// Problem: App.tsx calls subscribeLogs/subscribeJobs 5-8 times from
+// different components.  Each call created its own Firebase onSnapshot
+// listener → Firestore sends full 500-log payload 8× on every write →
+// React re-renders 8×, heavy memory, freezes on low-end phones.
+//
+// Fix: one Firebase listener per collection, shared across all callers.
+// The last unsubscribe tears the listener down.  Cache key = collection
+// path (already tenant-scoped by COL.*).
+//
+type MCEntry<T> = {
+  cbs:     Set<(v: T) => void>;
+  last:    T | undefined;
+  hasLast: boolean;
+  unsub:   (() => void) | null;
+};
+const _mc = new Map<string, MCEntry<any>>();
+
+function multicast<T>(
+  key:    string,
+  create: (notify: (v: T) => void) => () => void,
+  cb:     (v: T) => void,
+): () => void {
+  let m = _mc.get(key) as MCEntry<T> | undefined;
+  if (!m) {
+    m = { cbs: new Set(), last: undefined, hasLast: false, unsub: null };
+    _mc.set(key, m);
+    m.unsub = create(v => {
+      const e = _mc.get(key) as MCEntry<T>;
+      if (!e) return;
+      e.last = v; e.hasLast = true;
+      e.cbs.forEach(fn => { try { fn(v); } catch {} });
+    });
+  }
+  m.cbs.add(cb);
+  // Deliver cached value immediately so components don't flash empty state
+  if (m.hasLast) {
+    const cached = m.last;
+    queueMicrotask(() => { try { cb(cached as T); } catch {} });
+  }
+  return () => {
+    const e = _mc.get(key) as MCEntry<T> | undefined;
+    if (!e) return;
+    e.cbs.delete(cb);
+    if (e.cbs.size === 0) {
+      e.unsub?.();
+      _mc.delete(key);
+    }
+  };
+}
+
+/** Call on logout / tenant switch to tear down all shared listeners. */
+export function clearMulticastCache() {
+  _mc.forEach(e => e.unsub?.());
+  _mc.clear();
+}
+
 // ── Firestore collection paths ──
 // Uses getters so each access resolves the CURRENT tenant. For the
 // legacy SC Deburring tenant these return the same flat strings the
@@ -247,18 +304,14 @@ const COL = {
 // --------------------
 export function subscribeJobs(cb: (jobs: Job[]) => void) {
   if (dbInstance) {
-    const colRef = collection(dbInstance, COL.jobs);
-    return onSnapshot(colRef, 
-      (snap) => {
-        firebaseStatus = { connected: true };
-        const jobs = snap.docs.map((d) => d.data() as Job);
-        cb(jobs);
-      },
-      (err) => {
-        handleError(err);
-        cb(readLS<Job[]>(LS.jobs, []));
-      }
-    );
+    const key = 'jobs:' + COL.jobs;
+    return multicast<Job[]>(key, notify => {
+      const colRef = collection(dbInstance!, COL.jobs);
+      return onSnapshot(colRef,
+        snap => { firebaseStatus = { connected: true }; notify(snap.docs.map(d => d.data() as Job)); },
+        err  => { handleError(err); notify(readLS<Job[]>(LS.jobs, [])); },
+      );
+    }, cb);
   }
   return localSubscribe(() => readLS<Job[]>(LS.jobs, []), cb);
 }
@@ -470,19 +523,15 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
 // --------------------
 export function subscribeLogs(cb: (logs: TimeLog[]) => void) {
   if (dbInstance) {
-    // Limit to 500 most recent logs to conserve Firebase free-tier reads
-    const q = query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(500));
-    return onSnapshot(q,
-      (snap) => {
-        firebaseStatus = { connected: true };
-        const logs = snap.docs.map((d) => d.data() as TimeLog);
-        cb(logs);
-      },
-      (err) => {
-        handleError(err);
-        cb(readLS<TimeLog[]>(LS.logs, []));
-      }
-    );
+    // ONE shared listener for all callers — multicast fans out to N components
+    const key = 'logs:' + COL.logs;
+    return multicast<TimeLog[]>(key, notify => {
+      const q = query(collection(dbInstance!, COL.logs), orderBy('startTime', 'desc'), limit(500));
+      return onSnapshot(q,
+        snap => { firebaseStatus = { connected: true }; notify(snap.docs.map(d => d.data() as TimeLog)); },
+        err  => { handleError(err); notify(readLS<TimeLog[]>(LS.logs, [])); },
+      );
+    }, cb);
   }
   return localSubscribe(() => readLS<TimeLog[]>(LS.logs, []), cb);
 }

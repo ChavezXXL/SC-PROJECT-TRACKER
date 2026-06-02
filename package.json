@@ -28,6 +28,8 @@
     "@cloudflare/workers-types": "^4.20250410.0",
     "@netlify/functions": "^5.2.2",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",

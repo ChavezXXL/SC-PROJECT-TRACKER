@@ -980,7 +980,7 @@ const DeliveryEditor: React.FC<{
       const existing = clientContacts[s.customerName];
       if (!existing?.address) {
         updatedContacts = updatedContacts || { ...clientContacts };
-        updatedContacts[s.customerName] = { ...(existing || {}), address: s.address };
+        updatedContacts[s.customerName] = { name: s.customerName, ...(existing || {}), address: s.address };
       }
     }
 

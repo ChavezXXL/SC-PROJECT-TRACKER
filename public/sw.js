@@ -45,7 +45,8 @@ self.addEventListener('fetch', event => {
       url.hostname.includes('tailwindcss') ||
       url.hostname.includes('cdn')) return;
 
-  // Cache-first for hashed assets (Vite fingerprints them, so they're immutable)
+  // ── Hashed assets (/assets/*): cache-first — Vite fingerprints every file
+  //    so a cache hit is always the correct version.
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
       caches.match(event.request).then(cached => {
@@ -60,7 +61,38 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Network-first for HTML and other non-hashed resources
+  // ── HTML (index.html / app shell): NEVER cache.
+  //
+  // Caching HTML caused the most common worker black-screen: a new deploy
+  // would roll out new hashed bundles (index-ABC.js → index-XYZ.js) but
+  // the SW kept serving the old index.html that still referenced the old
+  // hash.  The old bundle was gone → 404 → blank screen → workers had to
+  // kill and reopen the app.
+  //
+  // Fix: always fetch HTML from the network.  If offline, show a simple
+  // "You're offline, connect and try again" page instead of a broken app.
+  if (url.pathname === '/' || url.pathname.endsWith('.html')) {
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        return new Response(
+          `<!doctype html><html lang="en"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>FabTrack IO — Offline</title>
+          <style>body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;background:#09090b;font-family:system-ui,sans-serif;color:#fff;text-align:center;padding:24px}h2{font-size:1.4rem;font-weight:900;margin:0 0 8px}p{color:#71717a;font-size:.9rem;margin:0 0 20px}button{background:linear-gradient(135deg,#f97316,#f59e0b);color:#fff;border:none;border-radius:10px;padding:10px 24px;font-size:.95rem;font-weight:700;cursor:pointer}</style>
+          </head><body>
+          <div><div style="font-size:2.5rem;margin-bottom:16px">📡</div>
+          <h2>You're offline</h2>
+          <p>Connect to Wi-Fi or mobile data and try again.</p>
+          <button onclick="window.location.reload()">Retry</button></div>
+          </body></html>`,
+          { headers: { 'Content-Type': 'text/html' } }
+        );
+      })
+    );
+    return;
+  }
+
+  // ── Everything else: network-first, cache as fallback ──
   event.respondWith(
     fetch(event.request)
       .then(response => {

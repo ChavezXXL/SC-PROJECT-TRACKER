@@ -955,7 +955,7 @@ ${settings.companyPhone || ''}`.trim()
                     <p className="text-[10px] text-zinc-500">{q.items.length} item{q.items.length !== 1 ? 's' : ''}{q.markupPct ? ` · ${q.markupPct}% markup` : ''}</p>
                   </div>
                   <div className="relative">
-                    <button aria-label={`Actions for quote ${q.number || q.id}`} aria-expanded={actionMenuId === q.id} aria-haspopup="menu" onClick={() => setActionMenuId(actionMenuId === q.id ? null : q.id)} className="p-2 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition-colors min-w-[36px] min-h-[36px]"><ChevronDown className={`w-4 h-4 transition-transform ${actionMenuId === q.id ? 'rotate-180' : ''}`} aria-hidden="true" /></button>
+                    <button aria-label={`Actions for quote ${q.quoteNumber || q.id}`} aria-expanded={actionMenuId === q.id} aria-haspopup="menu" onClick={() => setActionMenuId(actionMenuId === q.id ? null : q.id)} className="p-2 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition-colors min-w-[36px] min-h-[36px]"><ChevronDown className={`w-4 h-4 transition-transform ${actionMenuId === q.id ? 'rotate-180' : ''}`} aria-hidden="true" /></button>
                     {actionMenuId === q.id && (
                       <div className="absolute right-0 top-full mt-1 bg-zinc-800 border border-white/10 rounded-xl shadow-2xl z-50 min-w-[200px] py-1 animate-fade-in">
                         {q.status === 'draft' && <button onClick={() => openEdit(q)} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Edit2 className="w-3.5 h-3.5" /> Edit Quote</button>}
