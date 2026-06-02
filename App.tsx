@@ -2229,6 +2229,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [dashWorkers, setDashWorkers] = useState<User[]>([]);
   const [reworkEntries, setReworkEntries] = useState<ReworkEntry[]>([]);
   const [dashAllPOs, setDashAllPOs] = useState<PurchaseOrder[]>([]);
+  const [dashQuotes, setDashQuotes] = useState<Quote[]>([]);
   const [hoveredCustIdx, setHoveredCustIdx] = useState<number | null>(null);
   const [attentionDismissed, setAttentionDismissed] = useState<boolean>(() => {
     try { return sessionStorage.getItem('attention_dismissed') === '1'; } catch { return false; }
@@ -2244,7 +2245,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub6 = DB.subscribeUsers(setDashWorkers);
     const unsub7 = DB.subscribeRework(setReworkEntries);
     const unsub8 = DB.subscribePurchaseOrders(setDashAllPOs);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); };
+    const unsub9 = DB.subscribeQuotes(setDashQuotes);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); };
   }, []);
 
   const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
@@ -2300,6 +2302,145 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     () => computeInsights(jobs, allLogs, dashWorkers, shopSettings, dashAllPOs),
     [jobs, allLogs, dashWorkers, shopSettings, dashAllPOs],
   );
+
+  // ── Recent Activity Feed — chronological cross-module event log (72h window)
+  const recentActivity = useMemo(() => {
+    const WINDOW = 72 * 3600 * 1000;
+    const cutoff = Date.now() - WINDOW;
+    type FeedEvent = {
+      id: string; ts: number; type: string;
+      iconEl: React.ReactNode; iconCls: string;
+      text: string; sub?: string;
+      value?: string; valueCls?: string;
+    };
+    const events: FeedEvent[] = [];
+
+    // ── Job completions
+    jobs.filter(j => j.completedAt && j.completedAt > cutoff).forEach(j => {
+      const m = j.profitSnapshot?.marginPct;
+      events.push({
+        id: `jd-${j.id}`, ts: j.completedAt!, type: 'job_done',
+        iconEl: <CheckCircle className="w-3.5 h-3.5" />,
+        iconCls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+        text: `${j.jobIdsDisplay || j.id} complete`,
+        sub: [j.partNumber, j.customer].filter(Boolean).join(' · '),
+        value: m != null ? `${m >= 0 ? '+' : ''}${m.toFixed(0)}% margin` : undefined,
+        valueCls: m != null ? (m >= 25 ? 'text-emerald-400' : m >= 0 ? 'text-amber-400' : 'text-red-400') : undefined,
+      });
+    });
+
+    // ── New jobs (last 24 h only — don't flood with older backlog)
+    const newCutoff = Date.now() - 24 * 3600000;
+    jobs.filter(j => j.createdAt > newCutoff && j.status !== 'completed').forEach(j => {
+      events.push({
+        id: `jn-${j.id}`, ts: j.createdAt, type: 'job_new',
+        iconEl: <Plus className="w-3.5 h-3.5" />,
+        iconCls: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+        text: `New job ${j.jobIdsDisplay || j.id}`,
+        sub: [j.partNumber, j.customer].filter(Boolean).join(' · '),
+        value: j.quoteAmount ? `$${j.quoteAmount.toLocaleString()}` : undefined,
+        valueCls: 'text-zinc-400',
+      });
+    });
+
+    // ── Quote events
+    dashQuotes.forEach(q => {
+      if (q.acceptedAt && q.acceptedAt > cutoff) {
+        events.push({
+          id: `qa-${q.id}`, ts: q.acceptedAt, type: 'quote_accepted',
+          iconEl: <CheckCircle className="w-3.5 h-3.5" />,
+          iconCls: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+          text: `${q.quoteNumber} accepted`,
+          sub: q.customer,
+          value: `$${q.total.toLocaleString()}`,
+          valueCls: 'text-emerald-400',
+        });
+      }
+      if (q.declinedAt && q.declinedAt > cutoff) {
+        events.push({
+          id: `qd-${q.id}`, ts: q.declinedAt, type: 'quote_declined',
+          iconEl: <X className="w-3.5 h-3.5" />,
+          iconCls: 'bg-red-500/15 text-red-400 border-red-500/30',
+          text: `${q.quoteNumber} declined`,
+          sub: [q.customer, q.declineReason?.replace(/-/g, ' ')].filter(Boolean).join(' · '),
+          value: `$${q.total.toLocaleString()}`,
+          valueCls: 'text-red-400/60',
+        });
+      }
+      if (q.sentAt && q.sentAt > cutoff && q.status === 'sent') {
+        events.push({
+          id: `qs-${q.id}`, ts: q.sentAt, type: 'quote_sent',
+          iconEl: <FileText className="w-3.5 h-3.5" />,
+          iconCls: 'bg-zinc-700/50 text-zinc-400 border-white/10',
+          text: `${q.quoteNumber} sent to customer`,
+          sub: q.customer,
+          value: `$${q.total.toLocaleString()}`,
+          valueCls: 'text-zinc-400',
+        });
+      }
+    });
+
+    // ── PO received
+    dashAllPOs.filter(po => po.receivedDate && po.receivedDate > cutoff).forEach(po => {
+      events.push({
+        id: `por-${po.id}`, ts: po.receivedDate!, type: 'po_received',
+        iconEl: <Package className="w-3.5 h-3.5" />,
+        iconCls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+        text: `${po.poNumber} received`,
+        sub: po.vendorName,
+        value: `$${po.total.toLocaleString()}`,
+        valueCls: 'text-zinc-400',
+      });
+    });
+
+    // ── Rework flagged
+    reworkEntries.filter(r => r.createdAt > cutoff).forEach(r => {
+      if (r.resolvedAt && r.resolvedAt > cutoff) {
+        events.push({
+          id: `rr-${r.id}`, ts: r.resolvedAt, type: 'rework_resolved',
+          iconEl: <CheckCircle className="w-3.5 h-3.5" />,
+          iconCls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+          text: 'Rework resolved',
+          sub: [r.partNumber, r.customer].filter(Boolean).join(' · '),
+        });
+      } else {
+        events.push({
+          id: `ro-${r.id}`, ts: r.createdAt, type: 'rework_open',
+          iconEl: <AlertTriangle className="w-3.5 h-3.5" />,
+          iconCls: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+          text: 'Rework flagged',
+          sub: [r.partNumber, r.customer].filter(Boolean).join(' · '),
+          value: r.scrapCost ? `-$${r.scrapCost.toFixed(0)}` : undefined,
+          valueCls: 'text-red-400',
+        });
+      }
+    });
+
+    // ── Recent worker sessions (last 8h, one per worker, ≥20 min)
+    const eightHCutoff = Date.now() - 8 * 3600000;
+    const seenW = new Set<string>();
+    allLogs
+      .filter(l => !l.isSample && l.endTime && l.endTime > eightHCutoff)
+      .sort((a, b) => (b.endTime || 0) - (a.endTime || 0))
+      .forEach(l => {
+        if (seenW.size >= 3 || seenW.has(l.userId)) return;
+        const durMins = l.durationSeconds != null ? l.durationSeconds / 60 : (l.durationMinutes || 0);
+        if (durMins < 20) return;
+        seenW.add(l.userId);
+        const job = jobs.find(j => j.id === l.jobId);
+        events.push({
+          id: `ws-${l.id}`, ts: l.endTime!, type: 'worker_session',
+          iconEl: <Clock className="w-3.5 h-3.5" />,
+          iconCls: 'bg-zinc-700/40 text-zinc-500 border-white/8',
+          text: `${l.userName.split(' ')[0]} clocked out`,
+          sub: [l.operation, job?.partNumber || l.partNumber].filter(Boolean).join(' · '),
+          value: `${(durMins / 60).toFixed(1)}h`,
+          valueCls: 'text-zinc-400',
+        });
+      });
+
+    return events.sort((a, b) => b.ts - a.ts).slice(0, 18);
+  }, [jobs, allLogs, dashQuotes, dashAllPOs, reworkEntries]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -3573,6 +3714,48 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         );
       })()}
+
+      {/* ── RECENT ACTIVITY FEED — cross-module chronological event log ── */}
+      {recentActivity.length > 0 && (
+        <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <div>
+              <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Recent Activity
+              </h3>
+              <p className="text-[11px] text-zinc-600 mt-0.5">Last 72 h across jobs, quotes, POs &amp; quality</p>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-zinc-500">
+              {recentActivity.length} event{recentActivity.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="divide-y divide-white/[0.04]">
+            {recentActivity.map(evt => {
+              const diff = Date.now() - evt.ts;
+              const rel = diff < 60000 ? 'just now'
+                : diff < 3600000 ? `${Math.floor(diff / 60000)}m ago`
+                : diff < 86400000 ? `${Math.floor(diff / 3600000)}h ago`
+                : diff < 172800000 ? 'yesterday'
+                : new Date(evt.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              return (
+                <div key={evt.id} className="flex items-center gap-3 py-2 px-1 hover:bg-white/[0.025] rounded-lg transition-colors">
+                  <div className={`w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 ${evt.iconCls}`}>
+                    {evt.iconEl}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[12px] font-semibold text-white/90 leading-tight truncate">{evt.text}</p>
+                    {evt.sub && <p className="text-[10px] text-zinc-500 truncate leading-tight mt-0.5">{evt.sub}</p>}
+                  </div>
+                  <div className="text-right shrink-0 ml-2">
+                    {evt.value && <p className={`text-[11px] font-black leading-tight ${evt.valueCls || 'text-zinc-400'}`}>{evt.value}</p>}
+                    <p className="text-[10px] text-zinc-600 leading-tight">{rel}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
     </div>
   );
