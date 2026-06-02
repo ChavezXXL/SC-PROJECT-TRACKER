@@ -202,6 +202,9 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   useEffect(() => { try { localStorage.setItem('quotes_view_mode', viewMode); } catch {} }, [viewMode]);
   const [draggingQuoteId, setDraggingQuoteId] = useState<string | null>(null);
   const [hoverStatus, setHoverStatus] = useState<QuoteStatus | null>(null);
+  const [pendingDeclineQuote, setPendingDeclineQuote] = useState<Quote | null>(null);
+  const [selectedDeclineReason, setSelectedDeclineReason] = useState<string>('');
+  const [declineNoteText, setDeclineNoteText] = useState<string>('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Quote | null>(null);
   const [items, setItems] = useState<QuoteLineItem[]>([emptyLine()]);
@@ -562,10 +565,16 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   };
 
   const updateStatus = async (q: Quote, status: QuoteStatus) => {
+    // Intercept declined — show reason picker first
+    if (status === 'declined') {
+      setPendingDeclineQuote(q);
+      setSelectedDeclineReason('');
+      setDeclineNoteText('');
+      return;
+    }
     const updates: Partial<Quote> = { status };
     if (status === 'sent') updates.sentAt = Date.now();
     if (status === 'accepted') updates.acceptedAt = Date.now();
-    if (status === 'declined') updates.declinedAt = Date.now();
     try {
       await DB.saveQuote({ ...q, ...updates } as Quote);
       addToast('success', `Quote marked as ${status}`);
@@ -792,6 +801,40 @@ ${settings.companyPhone || ''}`.trim()
                 <p className="text-2xl font-black text-red-400 tabular mt-1">{fmtMoneyK(lostValue)}</p>
               </div>
             </div>
+
+            {/* Lost Deals Breakdown */}
+            {byStatus.declined.length > 0 && (() => {
+              const DECLINE_LABELS: Record<string, { label: string; color: string }> = {
+                price:       { label: 'Too Expensive',        color: 'bg-red-500/20 border-red-500/40 text-red-300' },
+                competitor:  { label: 'Chose Competitor',     color: 'bg-orange-500/20 border-orange-500/40 text-orange-300' },
+                timeline:    { label: 'Timeline Didn\'t Work', color: 'bg-amber-500/20 border-amber-500/40 text-amber-300' },
+                scope:       { label: 'Scope Changed',        color: 'bg-blue-500/20 border-blue-500/40 text-blue-300' },
+                'no-budget': { label: 'No Budget',            color: 'bg-zinc-700/60 border-white/10 text-zinc-400' },
+                'no-response':{ label: 'No Response',         color: 'bg-zinc-700/60 border-white/10 text-zinc-400' },
+                other:       { label: 'Other',                color: 'bg-zinc-700/60 border-white/10 text-zinc-400' },
+              };
+              const counts: Record<string, number> = {};
+              byStatus.declined.forEach(q => {
+                const key = q.declineReason || 'other';
+                counts[key] = (counts[key] || 0) + 1;
+              });
+              const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+              return (
+                <div className="bg-zinc-900/50 border border-white/5 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest shrink-0">Why deals are lost:</span>
+                  <div className="flex gap-2 flex-wrap">
+                    {sorted.map(([key, count]) => {
+                      const def = DECLINE_LABELS[key] || DECLINE_LABELS.other;
+                      return (
+                        <span key={key} className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold border ${def.color}`}>
+                          {def.label}: {count}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Kanban columns */}
             <div className="flex gap-3 overflow-x-auto pb-3">
@@ -1556,6 +1599,85 @@ ${settings.companyPhone || ''}`.trim()
               </div>
             </div>
           </Overlay>
+        );
+      })()}
+
+      {/* ── Decline Reason Modal ── */}
+      {pendingDeclineQuote && (() => {
+        const DECLINE_OPTIONS: { key: string; label: string }[] = [
+          { key: 'price',        label: 'Too Expensive' },
+          { key: 'competitor',   label: 'Chose Competitor' },
+          { key: 'timeline',     label: "Timeline Didn't Work" },
+          { key: 'scope',        label: 'Scope Changed' },
+          { key: 'no-budget',    label: 'No Budget' },
+          { key: 'no-response',  label: 'No Response' },
+          { key: 'other',        label: 'Other' },
+        ];
+        const confirmDecline = async () => {
+          const q = pendingDeclineQuote;
+          const updates: Partial<Quote> = {
+            status: 'declined',
+            declinedAt: Date.now(),
+            ...(selectedDeclineReason ? { declineReason: selectedDeclineReason as Quote['declineReason'] } : {}),
+            ...(declineNoteText.trim() ? { declineNotes: declineNoteText.trim() } : {}),
+          };
+          try {
+            await DB.saveQuote({ ...q, ...updates } as Quote);
+            addToast('success', 'Quote marked as declined');
+          } catch { addToast('error', 'Failed to update'); }
+          setPendingDeclineQuote(null);
+          setSelectedDeclineReason('');
+          setDeclineNoteText('');
+          setActionMenuId(null);
+        };
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setPendingDeclineQuote(null)}>
+            <div className="bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+              <div>
+                <h3 className="font-bold text-white text-base">Why was this declined?</h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5">{pendingDeclineQuote.quoteNumber} · {pendingDeclineQuote.customer}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {DECLINE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setSelectedDeclineReason(prev => prev === opt.key ? '' : opt.key)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors text-left ${
+                      selectedDeclineReason === opt.key
+                        ? 'bg-red-500/20 border-red-500/40 text-red-300'
+                        : 'bg-zinc-800 border border-white/10 text-zinc-400 hover:text-white hover:border-white/20'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={declineNoteText}
+                onChange={e => setDeclineNoteText(e.target.value)}
+                placeholder="Any details..."
+                className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-white text-sm outline-none"
+              />
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={confirmDecline}
+                  className="flex-1 bg-red-600 hover:bg-red-500 text-white py-2 rounded-xl font-bold text-sm transition-colors"
+                >
+                  Confirm Decline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingDeclineQuote(null)}
+                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-xl font-bold text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         );
       })()}
 

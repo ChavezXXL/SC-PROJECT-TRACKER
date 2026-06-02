@@ -19,7 +19,7 @@ import {
   Package, Plus, Search, Trash2, Edit2, FileText, Paperclip, AlertCircle,
   CheckCircle2, Clock, XCircle, Truck, Printer, Copy, ChevronRight, Store,
   Upload, X, AlertTriangle, Mail, Phone, BarChart2, Send, ArrowRight, Link2,
-  Zap,
+  Zap, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ── Preset line-item descriptions ──
@@ -168,6 +168,82 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
     const c: Record<string, number> = { all: pos.length, overdue: pos.filter(isOverdue).length };
     for (const p of pos) c[p.status] = (c[p.status] || 0) + 1;
     return c;
+  }, [pos]);
+
+  // ── Vendor Performance scores ──
+  const vendorScores = useMemo(() => {
+    const map: Record<string, {
+      totalPOs: number;
+      totalSpend: number;
+      onTimeCount: number;
+      lateCount: number;
+      leadDaysSum: number;
+      leadDaysCount: number;
+    }> = {};
+
+    for (const p of pos) {
+      if (p.status === 'cancelled') continue;
+      const name = p.vendorName;
+      if (!name) continue;
+      if (!map[name]) map[name] = { totalPOs: 0, totalSpend: 0, onTimeCount: 0, lateCount: 0, leadDaysSum: 0, leadDaysCount: 0 };
+      const v = map[name];
+      v.totalPOs += 1;
+
+      const isComplete = p.status === 'received' || p.status === 'closed';
+      if (isComplete) {
+        v.totalSpend += p.total || 0;
+
+        // On-time / late: compare receivedDate vs requiredDate
+        const parseMMDDYYYY = (s: string | number | undefined): Date | null => {
+          if (!s) return null;
+          if (typeof s === 'number') return new Date(s);
+          const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
+          if (!m) return null;
+          return new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
+        };
+        const recv = parseMMDDYYYY(p.receivedDate);
+        const req = parseMMDDYYYY(p.requiredDate);
+        if (recv && req) {
+          if (recv <= req) v.onTimeCount += 1;
+          else v.lateCount += 1;
+        }
+
+        // Lead days: sentAt (first 'sent' status history entry) to receivedDate
+        const sentEntry = (p.statusHistory || []).find(h => h.status === 'sent');
+        if (sentEntry && p.receivedDate) {
+          const sentTs = sentEntry.timestamp;
+          const recvTs = typeof p.receivedDate === 'number'
+            ? p.receivedDate
+            : (() => {
+                const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(p.receivedDate as string);
+                return m ? new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2])).getTime() : null;
+              })();
+          if (recvTs !== null && sentTs) {
+            const days = (recvTs - sentTs) / 86_400_000;
+            if (days >= 0) {
+              v.leadDaysSum += days;
+              v.leadDaysCount += 1;
+            }
+          }
+        }
+      }
+    }
+
+    return Object.entries(map)
+      .filter(([, v]) => v.totalPOs >= 2)
+      .map(([name, v]) => ({
+        name,
+        totalPOs: v.totalPOs,
+        totalSpend: v.totalSpend,
+        onTimeCount: v.onTimeCount,
+        lateCount: v.lateCount,
+        avgLeadDays: v.leadDaysCount > 0 ? Math.round(v.leadDaysSum / v.leadDaysCount) : null,
+        onTimePct: (v.onTimeCount + v.lateCount) > 0
+          ? Math.round(v.onTimeCount / (v.onTimeCount + v.lateCount) * 100)
+          : null,
+      }))
+      .sort((a, b) => b.totalSpend - a.totalSpend)
+      .slice(0, 8);
   }, [pos]);
 
   const handleDelete = async (p: PurchaseOrder) => {
@@ -337,6 +413,9 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
           ))}
         </div>
       )}
+
+      {/* Vendor Performance scorecard */}
+      <VendorPerformancePanel scores={vendorScores} />
 
       {/* Editor modal */}
       {(editing || creating) && (
@@ -1335,6 +1414,121 @@ const AttachmentsEditor: React.FC<{
     )}
   </div>
 );
+
+// ── Vendor Performance Panel ──
+interface VendorScore {
+  name: string;
+  totalPOs: number;
+  totalSpend: number;
+  onTimeCount: number;
+  lateCount: number;
+  avgLeadDays: number | null;
+  onTimePct: number | null;
+}
+
+const VendorPerformancePanel: React.FC<{ scores: VendorScore[] }> = ({ scores }) => {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+      {/* Panel header */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-3 group"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <BarChart2 className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+          <div className="text-left min-w-0">
+            <p className="text-sm font-black text-white leading-tight">Vendor Performance</p>
+            <p className="text-[10px] text-zinc-500 mt-0.5">
+              {scores.length > 0 ? `${scores.length} vendor${scores.length !== 1 ? 's' : ''} tracked` : 'No data yet'}
+            </p>
+          </div>
+        </div>
+        <span className="text-zinc-500 group-hover:text-white transition-colors shrink-0">
+          {open ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-4">
+          {scores.length === 0 ? (
+            <p className="text-xs text-zinc-500 text-center py-4">
+              No vendor data yet — POs with received dates will appear here
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {scores.map(v => {
+                const total = v.onTimeCount + v.lateCount;
+                const onTimeFrac = total > 0 ? v.onTimeCount / total : 0;
+                const lateFrac = total > 0 ? v.lateCount / total : 0;
+                const badgeColor =
+                  v.onTimePct === null
+                    ? 'bg-zinc-800 text-zinc-500 border-white/10'
+                    : v.onTimePct >= 80
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                    : v.onTimePct >= 60
+                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+                    : 'bg-red-500/15 border-red-500/30 text-red-400';
+
+                return (
+                  <div
+                    key={v.name}
+                    className="bg-zinc-950/40 border border-white/5 rounded-xl p-3 space-y-2"
+                  >
+                    {/* Top row: name + on-time badge */}
+                    <div className="flex items-center justify-between gap-2 min-w-0">
+                      <p className="text-sm font-black text-white truncate flex-1 min-w-0">{v.name}</p>
+                      <span className={`shrink-0 text-[9px] font-black border rounded px-1.5 py-0.5 whitespace-nowrap ${badgeColor}`}>
+                        {v.onTimePct !== null ? `${v.onTimePct}% on time` : 'no data'}
+                      </span>
+                    </div>
+
+                    {/* Stats row */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {v.avgLeadDays !== null && (
+                        <span className="text-[10px] text-zinc-500">
+                          <span className="font-bold text-zinc-400">{v.avgLeadDays}d</span> avg lead
+                        </span>
+                      )}
+                      <span className="text-[10px] text-zinc-500">
+                        <span className="font-bold text-emerald-400">
+                          ${v.totalSpend >= 1000
+                            ? `${(v.totalSpend / 1000).toFixed(1)}k`
+                            : v.totalSpend.toFixed(0)}
+                        </span> spend
+                      </span>
+                      <span className="text-[10px] text-zinc-600">{v.totalPOs} PO{v.totalPOs !== 1 ? 's' : ''}</span>
+                    </div>
+
+                    {/* Mini on-time / late bar */}
+                    {total > 0 && (
+                      <div className="flex w-full h-1 rounded-full overflow-hidden bg-zinc-800">
+                        {onTimeFrac > 0 && (
+                          <div
+                            className="bg-emerald-500 h-full rounded-l-full"
+                            style={{ width: `${onTimeFrac * 100}%` }}
+                          />
+                        )}
+                        {lateFrac > 0 && (
+                          <div
+                            className="bg-red-500 h-full rounded-r-full"
+                            style={{ width: `${lateFrac * 100}%` }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ── Empty state ──
 const EmptyState: React.FC<{ hasAny: boolean }> = ({ hasAny }) => (

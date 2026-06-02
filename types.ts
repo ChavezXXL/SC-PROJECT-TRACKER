@@ -120,6 +120,9 @@ export interface Quote {
   sentAt?: number;
   acceptedAt?: number;
   declinedAt?: number;
+  /** Why the customer declined — captured at the time of decline for win/loss analysis. */
+  declineReason?: 'price' | 'competitor' | 'timeline' | 'scope' | 'no-budget' | 'no-response' | 'other';
+  declineNotes?: string;
   linkedJobId?: string;       // Auto-created job when accepted
   createdBy: string;
   createdByName?: string;
