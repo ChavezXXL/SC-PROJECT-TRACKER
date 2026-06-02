@@ -134,8 +134,12 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   // Persist notified tags across page refreshes so we don't re-fire on reload
   const notifiedRef = useRef<Set<string>>(loadNotifiedTags());
   // Track previous active logs to diff clock-in / clock-out events
-  const prevActiveLogsRef = useRef<Map<string, TimeLog>>(new Map());
+  const prevActiveLogsRef   = useRef<Map<string, TimeLog>>(new Map());
   const clockWatchMountedRef = useRef(false);
+  // After mount we give Firebase 5 s to deliver the current snapshot before
+  // we start diffing — prevents a flood of "clocked in" toasts for workers
+  // who were already on the clock when the admin opened the app.
+  const clockWatchReadyRef  = useRef(false);
 
   // Re-check permission if user changes it in browser settings
   useEffect(() => {
@@ -277,16 +281,29 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   }, [jobs, activeLogs, fire, user?.role]);
 
   // ── Clock-in / Clock-out — diff activeLogs on every change (admin only) ──
-  // First render: snapshot current state silently (workers already on shift when
-  // admin opens the app shouldn't trigger a flood of "clocked in" toasts).
-  // Subsequent renders: fire immediately on any diff so the admin's phone buzzes
-  // the moment a worker starts or stops a timer — no 60-second polling delay.
+  //
+  // Grace-period design:
+  //   • On first mount we don't know whether Firebase has delivered its
+  //     initial snapshot yet.  If we diff immediately against an empty prev,
+  //     every currently-running worker looks like a NEW clock-in → Chrome
+  //     asks to block notifications and the admin taps "Block" by accident.
+  //   • Fix: keep updating prevActiveLogsRef silently for the first 5 s after
+  //     mount.  After that, clockWatchReadyRef flips true and any NEW diff
+  //     genuinely means a worker just started/stopped.
   useEffect(() => {
     if (user?.role !== 'admin') return;
 
     if (!clockWatchMountedRef.current) {
-      prevActiveLogsRef.current = new Map(activeLogs.map(l => [l.id, l]));
+      // First call — start the 5-second grace timer.
       clockWatchMountedRef.current = true;
+      prevActiveLogsRef.current = new Map(activeLogs.map(l => [l.id, l]));
+      const t = setTimeout(() => { clockWatchReadyRef.current = true; }, 5000);
+      return () => clearTimeout(t);
+    }
+
+    // Still in grace window — keep snapshot fresh, no firing.
+    if (!clockWatchReadyRef.current) {
+      prevActiveLogsRef.current = new Map(activeLogs.map(l => [l.id, l]));
       return;
     }
 
@@ -295,7 +312,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
 
     // New entries = someone just clocked in
     curr.forEach((log, id) => {
-      if (prev.has(id)) return; // was already running
+      if (prev.has(id)) return;
       const tag = `clockin-${id}`;
       if (notifiedRef.current.has(tag)) return;
       notifiedRef.current.add(tag);
@@ -308,7 +325,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
 
     // Missing entries = someone just clocked out
     prev.forEach((log, id) => {
-      if (curr.has(id)) return; // still running
+      if (curr.has(id)) return;
       const tag = `clockout-${id}`;
       if (notifiedRef.current.has(tag)) return;
       notifiedRef.current.add(tag);
@@ -450,21 +467,40 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
             </div>
 
             {/* Permission banner */}
-            {permission !== 'granted' && (
-              <div className="mx-3 mt-3 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/20 p-3 flex items-center gap-3 shrink-0">
-                <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0">
-                  <BellRing className="w-4 h-4 text-amber-400" aria-hidden="true" />
+            {permission !== 'granted' ? (
+              <div className="mx-3 mt-3 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/20 p-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0">
+                    <BellRing className="w-4 h-4 text-amber-400" aria-hidden="true" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-amber-200 leading-tight">Enable notifications on THIS device</p>
+                    <p className="text-[10px] text-amber-300/60 mt-0.5 leading-snug">Clock-ins, overdue jobs &amp; long timers — works on phone too.</p>
+                  </div>
+                  <button
+                    onClick={() => requestPermission(userId)}
+                    aria-label="Enable notifications"
+                    className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shrink-0 transition-all shadow-lg shadow-amber-900/30"
+                  >
+                    Enable
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-amber-200 leading-tight">Get desktop alerts</p>
-                  <p className="text-[10px] text-amber-300/60 mt-0.5 leading-snug">Overdue jobs &amp; long timers alert even when the tab is closed.</p>
-                </div>
+                <p className="text-[10px] text-amber-300/40 mt-2 leading-snug">📱 To get alerts on your phone: open the app on your phone and tap Enable there too.</p>
+              </div>
+            ) : (
+              <div className="mx-3 mt-3 shrink-0">
                 <button
-                  onClick={() => requestPermission(userId)}
-                  aria-label="Enable desktop notifications"
-                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shrink-0 transition-all shadow-lg shadow-amber-900/30"
+                  onClick={async () => {
+                    try {
+                      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+                      const opts = { body: 'Clock-in alerts are working on this device ✅', icon: '/brand/ftio-icon.png', badge: '/brand/ftio-icon.png', tag: 'test-' + Date.now(), vibrate: [200, 100, 200] } as any;
+                      if (reg) await reg.showNotification('🧪 Test — FabTrack IO', opts);
+                      else new Notification('🧪 Test — FabTrack IO', opts);
+                    } catch { try { new Notification('🧪 Test — FabTrack IO', { body: 'Notifications active ✅' }); } catch {} }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg border border-white/8 bg-white/[0.03] hover:bg-white/[0.06] text-[11px] text-zinc-400 hover:text-white transition-colors"
                 >
-                  Enable
+                  <BellRing className="w-3.5 h-3.5" /> Send test notification to this device
                 </button>
               </div>
             )}
