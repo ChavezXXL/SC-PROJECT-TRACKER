@@ -28,7 +28,9 @@ try {
 }
 
 const projectId  = svc.project_id;
-const bucketName = `${projectId}.appspot.com`;
+// Use the actual Firebase Storage bucket name (NOT the legacy .appspot.com form).
+// The Firebase console shows this under Storage → bucket URL.
+const bucketName = svc.storage_bucket || `${projectId}.firebasestorage.app`;
 
 let rulesSource;
 try {

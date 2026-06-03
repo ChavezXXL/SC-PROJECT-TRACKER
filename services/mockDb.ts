@@ -1412,6 +1412,82 @@ export async function deleteSample(id: string): Promise<void> {
   writeLS(LS_SAMPLES, samples);
 }
 
+// ── localStorage → Firestore photo migration ──────────────────────────
+// Runs once on startup. Finds any samples in phone localStorage that have
+// a base64 photoUrl (saved during the period when dbInstance was null due
+// to the startup bug), uploads them to Firebase Storage, then writes the
+// download URL back to Firestore so all devices can see the photos.
+//
+// Safe to call multiple times — skips samples that already have a proper
+// Storage URL in Firestore, and skips if Firebase is not connected.
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  try {
+    const [header, b64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const bin  = atob(b64);
+    const arr  = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
+export async function migrateLocalPhotosToFirestore(): Promise<void> {
+  if (!dbInstance) return;
+
+  let localSamples: Sample[];
+  try {
+    localSamples = readLS<Sample[]>(LS_SAMPLES, []);
+  } catch {
+    return;
+  }
+
+  const candidates = localSamples.filter(
+    s => s.photoUrl && s.photoUrl.startsWith('data:'),
+  );
+  if (candidates.length === 0) return;
+
+  console.log(`[FabTrack] Migrating ${candidates.length} local photo(s) to Firebase Storage…`);
+
+  for (const local of candidates) {
+    try {
+      // Check Firestore — skip if it already has a real Storage URL
+      const snap = await getDoc(doc(dbInstance!, COL.samples, local.id));
+      const remote = snap.exists() ? (snap.data() as Sample) : null;
+      if (remote?.photoUrl && !remote.photoUrl.startsWith('data:')) {
+        // Firestore already has a proper URL — just scrub the base64 from localStorage
+        const updated = localSamples.map(s =>
+          s.id === local.id ? { ...s, photoUrl: remote.photoUrl } : s,
+        );
+        writeLS(LS_SAMPLES, updated);
+        continue;
+      }
+
+      // Convert base64 → Blob → Firebase Storage
+      const blob = dataUrlToBlob(local.photoUrl!);
+      if (!blob) continue;
+
+      const storageUrl = await uploadSamplePhoto(blob, local.id);
+
+      // Write the Storage URL into Firestore (merge so other fields are preserved)
+      const merged = { ...(remote || local), photoUrl: storageUrl };
+      await setDoc(doc(dbInstance!, COL.samples, local.id), sanitize(merged), { merge: true });
+
+      // Update localStorage cache too so this device shows the img immediately
+      const updated = localSamples.map(s =>
+        s.id === local.id ? { ...s, photoUrl: storageUrl } : s,
+      );
+      writeLS(LS_SAMPLES, updated);
+
+      console.log(`[FabTrack] ✓ Migrated photo for sample ${local.id}`);
+    } catch (e: any) {
+      // Per-sample failure must never crash the whole migration
+      console.warn(`[FabTrack] Photo migration failed for sample ${local.id}:`, e?.message);
+    }
+  }
+}
+
 // ── REWORK ENTRIES ────────────────────────────────────────────────
 const LS_REWORK = "nexus_rework";
 

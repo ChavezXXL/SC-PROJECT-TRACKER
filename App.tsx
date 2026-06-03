@@ -6988,6 +6988,18 @@ export default function App() {
     return () => { unsub1(); unsub2(); };
   }, [user]);
 
+  // ── One-time photo migration ─────────────────────────────────────────
+  // Recovers sample photos that were saved as base64 in localStorage during
+  // the period when dbInstance was incorrectly nulled on startup (now fixed).
+  // Uploads them to Firebase Storage so all devices can see them.
+  // Runs once after login; safe to re-run (no-ops if already migrated).
+  useEffect(() => {
+    if (!user) return;
+    // Small delay to let Firestore connection settle before issuing reads
+    const t = setTimeout(() => DB.migrateLocalPhotosToFirestore(), 3000);
+    return () => clearTimeout(t);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Over-budget alert engine ─────────────────────────────────────────
   // Fires when a job's actual logged time crosses its rate-learned
   // estimate (with buffer applied). Sends in-app toast + EmailJS email.
