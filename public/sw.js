@@ -184,12 +184,14 @@ self.addEventListener('message', event => {
   if (!data) return;
   if (data.type === 'SKIP_WAITING') { self.skipWaiting(); return; }
   if (data.type === 'NOTIFY') {
-    const { title, body, tag, url, actions, logId, userId, requireInteraction } = data;
+    const { title, body, tag, url, actions, logId, userId, requireInteraction, silent } = data;
     self.registration.showNotification(title, {
       body, icon: '/brand/ftio-icon.png', badge: '/brand/ftio-icon.png',
       tag: tag || 'fabtrack',
       data: { url: url || '/', logId, userId, action: data.action },
-      vibrate: [200, 100, 200], requireInteraction: !!requireInteraction,
+      vibrate: silent ? [] : [200, 100, 200],
+      silent: !!silent,
+      requireInteraction: !!requireInteraction,
       actions: actions || [],
     });
   }

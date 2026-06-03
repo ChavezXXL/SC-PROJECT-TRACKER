@@ -29,6 +29,7 @@ function swShow(opts: {
   userId?: string;
   actions?: { action: string; title: string }[];
   requireInteraction?: boolean;
+  silent?: boolean;
   url?: string;
 }) {
   try {
@@ -119,7 +120,8 @@ export function watchLiveTimerBadge(
         tag: `live-timer-${log.id}`,
         logId: log.id,
         userId: log.userId,
-        requireInteraction: true,
+        requireInteraction: false, // don't force dismissal every update
+        silent: true,              // update silently — no sound/vibration/popup
         actions: isPaused
           ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]
           : [{ action: 'pause',  title: '⏸ Pause'  }, { action: 'stop', title: '⏹ Stop' }],
@@ -136,7 +138,7 @@ export function watchLiveTimerBadge(
     });
   };
 
-  const intervalId = window.setInterval(tick, 60_000);
+  const intervalId = window.setInterval(tick, 5 * 60_000); // update every 5 min, not every 1 min
   tick();
   return () => {
     window.clearInterval(intervalId);
