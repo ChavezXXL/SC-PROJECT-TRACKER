@@ -113,7 +113,7 @@ export const handler: Handler = async (event) => {
   // Filter to admin/manager subscriptions only
   const adminSubs = allSubs.filter(s => {
     const role = (s.role || '').toLowerCase();
-    return role === 'admin' || role === 'manager' || role === 'owner' || !role; // fallback: notify all if role not stored
+    return role === 'admin' || role === 'manager' || role === 'owner' || role === 'unknown' || !role; // notify all if role not stored
   });
 
   if (adminSubs.length === 0) {

@@ -154,8 +154,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
   const subscribePush = useCallback(async (userId: string) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
     try {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (!reg) return;
+      const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: vapidKeyToUint8(VAPID_KEY),

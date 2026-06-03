@@ -1237,7 +1237,7 @@ export async function savePushSubscription(
   await setDoc(doc(db, COL.pushSubscriptions, key), {
     userId,
     subscription,
-    role:      role || 'unknown',
+    role:      role || '',
     name:      name || '',
     updatedAt: Date.now(),
   }, { merge: true });
