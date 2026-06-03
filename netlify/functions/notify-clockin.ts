@@ -1,7 +1,8 @@
 // netlify/functions/notify-clockin.ts
 // ═════════════════════════════════════════════════════════════════════
 // Called by the client the INSTANT a worker clocks in or out.
-// Reads ALL admin push subscriptions from Firestore and delivers a
+// Reads ALL admin push subscriptions from Firestore via the Admin SDK
+// (bypasses security rules — server-to-server call) and delivers a
 // Web Push to every admin device — even when their browser is closed.
 //
 // POST body:
@@ -13,13 +14,16 @@
 //   }
 //
 // Required Netlify env vars:
-//   VAPID_PUBLIC_KEY    BFVc1-acJaLfgl4rxEYtQ-... (matches client utils/vapid.ts)
-//   VAPID_PRIVATE_KEY   6dgjDw-u6OhV_4WdRDzFq...  (secret — never in source)
-//   VAPID_SUBJECT       mailto:hello@fabtrack.io   (or your domain)
+//   VAPID_PUBLIC_KEY         BFVc1-acJaLfgl4rxEYtQ-... (matches client utils/vapid.ts)
+//   VAPID_PRIVATE_KEY        6dgjDw-u6OhV_4WdRDzFq...  (secret — never in source)
+//   VAPID_SUBJECT            mailto:hello@fabtrack.io   (or your domain)
+//   FIREBASE_SERVICE_ACCOUNT Full service-account JSON string (from Firebase Console →
+//                            Project Settings → Service Accounts → Generate new key)
 // ═════════════════════════════════════════════════════════════════════
 
 import type { Handler } from '@netlify/functions';
 import webpush from 'web-push';
+import * as admin from 'firebase-admin';
 
 const JSON_H = {
   'Content-Type': 'application/json',
@@ -27,50 +31,32 @@ const JSON_H = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-// ── Firestore REST helpers ────────────────────────────────────────────
+// ── Firebase Admin helpers ────────────────────────────────────────────
 
-function fsVal(v: any): any {
-  if (!v) return null;
-  if ('stringValue'  in v) return v.stringValue;
-  if ('integerValue' in v) return Number(v.integerValue);
-  if ('doubleValue'  in v) return v.doubleValue;
-  if ('booleanValue' in v) return v.booleanValue;
-  if ('nullValue'    in v) return null;
-  if ('mapValue'     in v) {
-    const obj: any = {};
-    for (const [k, vv] of Object.entries(v.mapValue.fields || {})) obj[k] = fsVal(vv);
-    return obj;
+function getFirestore(): admin.firestore.Firestore {
+  if (admin.apps.length === 0) {
+    const svcJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+    if (!svcJson) {
+      throw new Error('FIREBASE_SERVICE_ACCOUNT env var not set — see function header for setup instructions');
+    }
+    admin.initializeApp({
+      credential: admin.credential.cert(JSON.parse(svcJson)),
+    });
   }
-  if ('arrayValue'   in v) return (v.arrayValue.values || []).map(fsVal);
-  return null;
+  return admin.firestore();
 }
 
-function fsDoc(raw: any): any {
-  const parts = (raw.name || '').split('/');
-  const out: any = { id: parts[parts.length - 1] };
-  for (const [k, v] of Object.entries(raw.fields || {})) out[k] = fsVal(v as any);
-  return out;
-}
-
-async function fetchCollection(col: string, apiKey: string, projectId: string): Promise<any[]> {
-  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}`;
-  const docs: any[] = [];
-  let pageToken: string | undefined;
-  do {
-    const url = `${base}?key=${apiKey}&pageSize=300${pageToken ? `&pageToken=${pageToken}` : ''}`;
-    const res  = await fetch(url);
-    if (!res.ok) break;
-    const data: any = await res.json();
-    (data.documents || []).forEach((d: any) => docs.push(fsDoc(d)));
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-  return docs;
+/** Fetch all push subscription docs (Admin SDK bypasses security rules). */
+async function fetchAllSubs(): Promise<any[]> {
+  const db = getFirestore();
+  const snap = await db.collection('push_subscriptions').get();
+  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
 /** Delete a stale push subscription doc. */
-async function deleteSub(id: string, apiKey: string, projectId: string) {
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/push_subscriptions/${id}?key=${apiKey}`;
-  await fetch(url, { method: 'DELETE' }).catch(() => {});
+async function deleteSub(id: string): Promise<void> {
+  const db = getFirestore();
+  await db.collection('push_subscriptions').doc(id).delete().catch(() => {});
 }
 
 // ── Handler ───────────────────────────────────────────────────────────
@@ -104,11 +90,14 @@ export const handler: Handler = async (event) => {
     return { statusCode: 400, headers: JSON_H, body: JSON.stringify({ error: 'eventType and workerName required' }) };
   }
 
-  const apiKey    = process.env.FIREBASE_API_KEY    || process.env.VITE_FIREBASE_API_KEY    || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
-  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || 'sc-job-tracker';
-
-  // Read all push subscriptions (flat collection — SC Deburring legacy path)
-  const allSubs = await fetchCollection('push_subscriptions', apiKey, projectId);
+  // Read all push subscriptions via Admin SDK (bypasses Firestore security rules)
+  let allSubs: any[];
+  try {
+    allSubs = await fetchAllSubs();
+  } catch (e: any) {
+    console.error('[notify-clockin] Failed to fetch subscriptions:', e?.message);
+    return { statusCode: 500, headers: JSON_H, body: JSON.stringify({ error: 'Failed to fetch subscriptions: ' + e?.message }) };
+  }
 
   // Filter to admin/manager subscriptions only
   const adminSubs = allSubs.filter(s => {
@@ -139,12 +128,12 @@ export const handler: Handler = async (event) => {
   for (const sub of adminSubs) {
     if (!sub.subscription?.endpoint) continue;
     try {
-      await webpush.sendNotification(sub.subscription, payload, { TTL: 300 }); // 5-min TTL — stale = don't deliver
+      await webpush.sendNotification(sub.subscription, payload, { TTL: 300 }); // 5-min TTL
       sent++;
     } catch (e: any) {
       const code = e?.statusCode || 0;
       if (code === 404 || code === 410) {
-        await deleteSub(sub.id, apiKey, projectId);
+        await deleteSub(sub.id);
         removed++;
       } else {
         failed++;
