@@ -56,22 +56,19 @@ if (initRes.ok && initRes.db) {
     dbInstance = initRes.db;
     firebaseStatus = { connected: true }; 
     
-    // Execute Health Checks (Read & Write)
+    // Verify Firestore is reachable (read-only probe).
+    // NOTE: We do NOT write to __debug/test here — Firestore security rules deny
+    // unknown collections and would always throw, which used to null out dbInstance
+    // and permanently disable all writes until the page was reloaded.
     (async () => {
         try {
             await validateConnection(dbInstance);
-            await setDoc(doc(dbInstance, "__debug", "test"), {
-                createdAt: Date.now(),
-                source: "diagnostic_test",
-                status: "ok",
-                info: "If this exists, Firestore writes are WORKING."
-            });
             firebaseStatus = { connected: true };
         } catch (e: any) {
-            console.error("â Connection/Diagnostic Check Failed. FORCING OFFLINE MODE.", e);
-            handleError(e);
-            dbInstance = null;
-            firebaseStatus = { connected: false, error: "Offline Mode (Connection Failed)" };
+            // Do NOT set dbInstance = null here. Subscriptions have their own
+            // error + retry handling. Forcing offline mode on a probe failure
+            // permanently breaks cross-device sync until the user reloads.
+            console.warn("[FabTrack] Firestore probe failed — subscriptions will retry automatically.", e);
         }
     })();
 
@@ -218,6 +215,51 @@ function localSubscribe<T>(getter: () => T, cb: (v: T) => void) {
   return () => { localSubscribers.delete(notify); clearInterval(i); };
 }
 
+// ── Auto-retry onSnapshot wrapper ─────────────────────────────────────
+// Firestore permanently kills a listener after the error callback fires.
+// This wrapper re-subscribes with exponential backoff so a brief network
+// glitch (or a Firestore rules hiccup) does not leave the device stranded
+// on stale localStorage data until the user manually refreshes the page.
+function retryingSnapshot(
+  getRef:     () => any,
+  onNext:     (snap: any) => void,
+  onFallback: () => void,
+): () => void {
+  let currentUnsub: (() => void) | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let destroyed = false;
+  let delay = 5_000; // start at 5 s, cap at 60 s
+
+  const attach = () => {
+    if (destroyed) return;
+    try {
+      currentUnsub = onSnapshot(
+        getRef(),
+        (snap: any) => { delay = 5_000; onNext(snap); }, // reset backoff on success
+        (_err: any) => {
+          handleError(_err);
+          onFallback();                                    // serve cached data now
+          retryTimer = setTimeout(() => {
+            delay = Math.min(delay * 2, 60_000);           // exponential cap 60 s
+            attach();
+          }, delay);
+        },
+      );
+    } catch (e) {
+      // getRef() itself threw (e.g. dbInstance became null) — back off and retry
+      onFallback();
+      retryTimer = setTimeout(() => { delay = Math.min(delay * 2, 60_000); attach(); }, delay);
+    }
+  };
+
+  attach();
+  return () => {
+    destroyed = true;
+    currentUnsub?.();
+    if (retryTimer) clearTimeout(retryTimer);
+  };
+}
+
 // ── Multicast registry ────────────────────────────────────────────────
 // Problem: App.tsx calls subscribeLogs/subscribeJobs 5-8 times from
 // different components.  Each call created its own Firebase onSnapshot
@@ -306,10 +348,10 @@ export function subscribeJobs(cb: (jobs: Job[]) => void) {
   if (dbInstance) {
     const key = 'jobs:' + COL.jobs;
     return multicast<Job[]>(key, notify => {
-      const colRef = collection(dbInstance!, COL.jobs);
-      return onSnapshot(colRef,
+      return retryingSnapshot(
+        () => collection(dbInstance!, COL.jobs),
         snap => { firebaseStatus = { connected: true }; notify(snap.docs.map(d => d.data() as Job)); },
-        err  => { handleError(err); notify(readLS<Job[]>(LS.jobs, [])); },
+        () => notify(readLS<Job[]>(LS.jobs, [])),
       );
     }, cb);
   }
@@ -526,10 +568,10 @@ export function subscribeLogs(cb: (logs: TimeLog[]) => void) {
     // ONE shared listener for all callers — multicast fans out to N components
     const key = 'logs:' + COL.logs;
     return multicast<TimeLog[]>(key, notify => {
-      const q = query(collection(dbInstance!, COL.logs), orderBy('startTime', 'desc'), limit(500));
-      return onSnapshot(q,
+      return retryingSnapshot(
+        () => query(collection(dbInstance!, COL.logs), orderBy('startTime', 'desc'), limit(500)),
         snap => { firebaseStatus = { connected: true }; notify(snap.docs.map(d => d.data() as TimeLog)); },
-        err  => { handleError(err); notify(readLS<TimeLog[]>(LS.logs, [])); },
+        () => notify(readLS<TimeLog[]>(LS.logs, [])),
       );
     }, cb);
   }
