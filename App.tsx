@@ -155,6 +155,17 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
     try {
       const reg = await navigator.serviceWorker.ready;
+      // If there's already a subscription, unsubscribe first.
+      // This handles VAPID key rotation — keeping the old sub would cause
+      // pushManager.subscribe() to throw "applicationServerKey does not match".
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        const existingKey = existing.options?.applicationServerKey;
+        const newKey = vapidKeyToUint8(VAPID_KEY);
+        const keysMatch = existingKey && existingKey.byteLength === newKey.byteLength &&
+          new Uint8Array(existingKey as ArrayBuffer).every((b, i) => b === newKey[i]);
+        if (!keysMatch) await existing.unsubscribe();
+      }
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: vapidKeyToUint8(VAPID_KEY),
