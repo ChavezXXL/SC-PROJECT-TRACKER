@@ -25,7 +25,7 @@ import { Overlay } from './components/Overlay';
 import { useConfirm } from './components/useConfirm';
 
 // ── Compress image ──────────────────────────────────────────────
-function compressImage(file: File, maxWidth = 1200): Promise<string> {
+function compressImage(file: File, maxWidth = 1200, quality = 0.85): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -43,7 +43,7 @@ function compressImage(file: File, maxWidth = 1200): Promise<string> {
         const ctx = canvas.getContext('2d');
         if (!ctx) { reject(new Error('Canvas context failed')); return; }
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
+        resolve(canvas.toDataURL('image/jpeg', quality));
       };
       img.onerror = () => reject(new Error('Failed to load image'));
       img.src = event.target?.result as string;
@@ -51,6 +51,16 @@ function compressImage(file: File, maxWidth = 1200): Promise<string> {
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
+}
+
+/** Convert a base64 data-URL to a Blob for Firebase Storage upload. */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, b64] = dataUrl.split(',');
+  const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+  const bytes = atob(b64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -416,21 +426,27 @@ const SampleModal = ({
     if (!file.type.startsWith('image/')) return;
     setPhotoUploading(true);
     try {
-      // Compress for instant preview
-      const dataUrl = await compressImage(file);
-      setPhotoPreview(dataUrl);
+      // Full-res preview for display (1200px, 85% — looks great on screen)
+      const previewUrl = await compressImage(file, 1200, 0.85);
+      setPhotoPreview(previewUrl);
+
+      // Smaller version for storage — keeps Firestore docs tiny if Storage fails
+      // 600px @ 65% → typically 30-80 KB base64, well inside Firestore's 1 MB limit
+      const smallUrl = await compressImage(file, 600, 0.65);
 
       // Generate a stable ID for the storage path
       const tempId = form.id || `sample_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
       try {
-        // Upload original file to Firebase Storage, get permanent URL
-        const storageUrl = await DB.uploadSamplePhoto(file, tempId);
+        // Upload the compressed blob to Firebase Storage (not the raw camera file)
+        const compressedBlob = dataUrlToBlob(smallUrl);
+        const storageUrl = await DB.uploadSamplePhoto(compressedBlob, tempId);
         setForm(f => ({ ...f, photoUrl: storageUrl }));
       } catch (uploadErr) {
         console.warn('Storage upload failed, falling back to base64:', uploadErr);
-        // Fallback: store compressed base64 in Firestore (old behaviour)
-        setForm(f => ({ ...f, photoUrl: dataUrl }));
+        // Fallback: store the small compressed base64 directly in Firestore.
+        // At 600px/65% this is ~30-80 KB — safely under Firestore's 1 MB limit.
+        setForm(f => ({ ...f, photoUrl: smallUrl }));
       }
     } catch {
       // ignore

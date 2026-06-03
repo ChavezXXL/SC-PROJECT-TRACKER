@@ -125,14 +125,18 @@ export function saveFirebaseConfig(cfg: any) {
 // FIREBASE STORAGE - Photo Upload
 // --------------------
 export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Promise<string> {
-  if (!dbInstance) {
-    throw new Error('Firebase not connected — cannot upload photo');
+  // NOTE: We attempt Firebase Storage upload regardless of dbInstance state.
+  // getStorage() uses the Firebase app singleton — it works as long as the
+  // Firebase app was initialised, even if the Firestore dbInstance is null.
+  try {
+    const storage = getStorage();
+    const path = `sample-photos/${sampleId}_${Date.now()}.jpg`;
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, file, { contentType: 'image/jpeg' });
+    return await getDownloadURL(ref);
+  } catch (e) {
+    throw new Error('Storage upload failed: ' + (e as any)?.message);
   }
-  const storage = getStorage();
-  const path = `sample-photos/${sampleId}_${Date.now()}.jpg`;
-  const ref = storageRef(storage, path);
-  await uploadBytes(ref, file, { contentType: 'image/jpeg' });
-  return getDownloadURL(ref);
 }
 
 // --------------------
@@ -1365,18 +1369,14 @@ const LS_SAMPLES = "nexus_samples";
 
 export function subscribeSamples(cb: (samples: Sample[]) => void): () => void {
   if (dbInstance) {
-    const colRef = collection(dbInstance, COL.samples);
-    return onSnapshot(colRef,
-      (snap: any) => {
-        firebaseStatus = { connected: true };
-        const samples = snap.docs.map((d: any) => d.data() as Sample);
-        cb(samples);
-      },
-      (err: any) => {
-        handleError(err);
-        cb(readLS<Sample[]>(LS_SAMPLES, []));
-      }
-    );
+    const key = 'samples:' + COL.samples;
+    return multicast<Sample[]>(key, notify => {
+      return retryingSnapshot(
+        () => collection(dbInstance!, COL.samples),
+        (snap: any) => { firebaseStatus = { connected: true }; notify(snap.docs.map((d: any) => d.data() as Sample)); },
+        () => notify(readLS<Sample[]>(LS_SAMPLES, [])),
+      );
+    }, cb);
   }
   return localSubscribe(() => readLS<Sample[]>(LS_SAMPLES, []), cb);
 }

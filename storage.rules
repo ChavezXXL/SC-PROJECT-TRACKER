@@ -1,0 +1,19 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Sample photos ─────────────────────────────────────────────
+    // Public read so any device can display photos without auth.
+    // Write allowed from any origin — tighten to authenticated users
+    // once Firebase Auth is fully wired up.
+    match /sample-photos/{fileName} {
+      allow read:  if true;
+      allow write: if true;
+    }
+
+    // ── Everything else: deny ─────────────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
