@@ -337,13 +337,14 @@ const StartWorkModal: React.FC<{
   sample: Sample;
   operations: string[];
   userName: string;
-  onStart: (operation: string, qty?: number) => void;
+  onStart: (operation: string, qty?: number) => Promise<void>;
   onClose: () => void;
 }> = ({ sample, operations, userName, onStart, onClose }) => {
   const [op, setOp] = useState(operations[0] || 'Deburring');
   // Pre-fill from the sample's declared qty so admin doesn't have to type
   // it twice. They can still override for partial sessions.
   const [qty, setQty] = useState<number>(sample.qty || 0);
+  const [starting, setStarting] = useState(false);
   return (
     <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden my-4">
@@ -372,10 +373,17 @@ const StartWorkModal: React.FC<{
           <p className="text-zinc-500 text-xs">Working as <span className="text-white font-bold">{userName}</span></p>
         </div>
         <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3">
-          <button onClick={onClose} className="px-6 py-3 text-zinc-400 hover:text-white font-medium">Cancel</button>
-          <button onClick={() => onStart(op, qty > 0 ? qty : undefined)}
-            className="bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2">
-            <Play className="w-4 h-4" /> Start Timer
+          <button onClick={onClose} disabled={starting} className="px-6 py-3 text-zinc-400 hover:text-white font-medium disabled:opacity-40">Cancel</button>
+          <button
+            disabled={starting}
+            onClick={async () => {
+              if (starting) return;
+              setStarting(true);
+              try { await onStart(op, qty > 0 ? qty : undefined); }
+              finally { setStarting(false); }
+            }}
+            className="bg-green-600 hover:bg-green-500 disabled:opacity-60 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2">
+            <Play className="w-4 h-4" /> {starting ? 'Starting…' : 'Start Timer'}
           </button>
         </div>
       </div>
@@ -394,7 +402,7 @@ const SampleModal = ({
   sample: Partial<Sample> | null;
   existingCompanies: string[];
   clients: string[];
-  onSave: (s: Sample) => void;
+  onSave: (s: Sample) => Promise<void>;
   onClose: () => void;
 }) => {
   const [form, setForm] = useState<Partial<Sample>>(sample || {});
@@ -452,8 +460,11 @@ const SampleModal = ({
       activeEntry: (sample as Sample)?.activeEntry,
       totalWorkedMs: (sample as Sample)?.totalWorkedMs,
     };
-    onSave(s);
-    setSaving(false);
+    try {
+      await onSave(s);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1081,7 +1092,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
           sample={startWorkSample}
           operations={ops}
           userName={currentUser?.name || 'Admin'}
-          onStart={(op, qty) => handleStartWork(startWorkSample.id, op, qty)}
+          onStart={(op, qty) => handleStartWork(startWorkSample.id, op, qty) as Promise<void>}
           onClose={() => setStartWorkSample(null)}
         />
       )}
