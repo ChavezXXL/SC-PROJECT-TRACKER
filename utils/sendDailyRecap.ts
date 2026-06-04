@@ -78,6 +78,7 @@ export interface WorkerSummary {
   userId: string;
   name: string;
   totalMins: number;
+  laborCost: number;    // totalMins / 60 * shopRate
   sessions: number;
   operations: string[];
   jobs: string[];
@@ -110,6 +111,9 @@ export interface RecapData {
   completedToday: Job[];
   totalMins: number;
   totalRevenue: number;
+  totalLaborCost: number;   // today's hours × shopRate
+  weekLaborCost: number;    // rolling 7-day hours × shopRate
+  shopRate: number;         // $/hr used for calculation
   openReworkCount: number;
   activeWorkersToday: number;
   jobInsights: JobInsight[];
@@ -138,6 +142,8 @@ export function buildRecapData(opts: RecapOptions): RecapData {
   const completedLogs = opts.logs.filter(l => l.endTime);
   const todayLogs = completedLogs.filter(l => l.endTime! >= start && l.endTime! <= end);
 
+  const shopRate = opts.shopRate && opts.shopRate > 0 ? opts.shopRate : 0;
+
   // ── Worker summaries ────────────────────────────────────────────────
   const workerMap = new Map<string, WorkerSummary>();
   for (const l of todayLogs) {
@@ -146,13 +152,17 @@ export function buildRecapData(opts: RecapOptions): RecapData {
     let w = workerMap.get(l.userId);
     if (!w) {
       const user = opts.users.find(u => u.id === l.userId);
-      w = { userId: l.userId, name: l.userName || user?.name || 'Unknown', totalMins: 0, sessions: 0, operations: [], jobs: [] };
+      w = { userId: l.userId, name: l.userName || user?.name || 'Unknown', totalMins: 0, laborCost: 0, sessions: 0, operations: [], jobs: [] };
       workerMap.set(l.userId, w);
     }
     w.totalMins += mins;
     w.sessions += 1;
     if (l.operation && !w.operations.includes(l.operation)) w.operations.push(l.operation);
     if (l.jobId && !w.jobs.includes(l.jobId)) w.jobs.push(l.jobId);
+  }
+  // Compute per-worker labor cost after all minutes are tallied
+  for (const w of workerMap.values()) {
+    w.laborCost = shopRate > 0 ? (w.totalMins / 60) * shopRate : 0;
   }
   const workerSummaries = [...workerMap.values()].sort((a, b) => b.totalMins - a.totalMins);
 
@@ -162,6 +172,14 @@ export function buildRecapData(opts: RecapOptions): RecapData {
 
   const totalMins = workerSummaries.reduce((a, w) => a + w.totalMins, 0);
   const totalRevenue = completedToday.reduce((a, j) => a + (j.quoteAmount && j.quoteAmount > 0 ? j.quoteAmount : 0), 0);
+  const totalLaborCost = shopRate > 0 ? (totalMins / 60) * shopRate : 0;
+
+  // Rolling 7-day labor cost (uses ALL completed logs, not just today's)
+  const weekStart = start - 6 * 86_400_000;
+  const weekMins = completedLogs
+    .filter(l => l.endTime! >= weekStart && l.endTime! <= end)
+    .reduce((a, l) => a + logMins(l), 0);
+  const weekLaborCost = shopRate > 0 ? (weekMins / 60) * shopRate : 0;
 
   // ── Job insights: compare pace vs history ──────────────────────────
   // Find all unique jobs that had time logged today
@@ -250,6 +268,9 @@ export function buildRecapData(opts: RecapOptions): RecapData {
     completedToday,
     totalMins,
     totalRevenue,
+    totalLaborCost,
+    weekLaborCost,
+    shopRate,
     openReworkCount: opts.openReworkCount ?? 0,
     activeWorkersToday: workerSummaries.length,
     jobInsights,
@@ -271,13 +292,14 @@ function insightBadge(pct: number | null): string {
 }
 
 export function buildRecapHtml(data: RecapData): string {
-  const { shopName, date, workerSummaries, completedToday, totalMins, totalRevenue, openReworkCount, jobInsights } = data;
+  const { shopName, date, workerSummaries, completedToday, totalMins, totalRevenue, totalLaborCost, weekLaborCost, shopRate, openReworkCount, jobInsights } = data;
 
   // ── Worker rows
   const workerRows = workerSummaries.map(w => `
     <tr>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#fff;font-weight:700;">${w.name}</td>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#f59e0b;font-weight:800;text-align:right;white-space:nowrap;">${fmtHours(w.totalMins)}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#f87171;font-weight:800;text-align:right;white-space:nowrap;">${w.laborCost > 0 ? fmtMoney(w.laborCost) : '—'}</td>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#71717a;font-size:13px;">${w.sessions} session${w.sessions !== 1 ? 's' : ''}</td>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;font-size:12px;">${w.operations.slice(0, 3).join(', ')}</td>
     </tr>
@@ -398,6 +420,26 @@ export function buildRecapHtml(data: RecapData): string {
           </td>
         </tr>
 
+        <!-- Labor Cost Today -->
+        ${totalLaborCost > 0 ? `
+        <tr>
+          <td style="padding:14px 28px;border-bottom:1px solid #27272a;background:#1a0a0a;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <p style="margin:0 0 1px;color:#fca5a5;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Labor Cost Today</p>
+                  <p style="margin:0;color:#71717a;font-size:11px;">@ ${fmtMoney(shopRate)}/hr · ${fmtHours(totalMins)} logged</p>
+                </td>
+                <td style="text-align:right;">
+                  <p style="margin:0 0 1px;font-size:22px;font-weight:900;color:#f87171;letter-spacing:-0.02em;">${fmtMoney(totalLaborCost)}</p>
+                  ${weekLaborCost > 0 ? `<p style="margin:0;font-size:11px;color:#71717a;">7-day total: ${fmtMoney(weekLaborCost)}</p>` : ''}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        ` : ''}
+
         <!-- Revenue -->
         ${totalRevenue > 0 ? `
         <tr>
@@ -434,6 +476,7 @@ export function buildRecapHtml(data: RecapData): string {
               <thead><tr style="background:#27272a;">
                 <th style="padding:7px 16px;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#71717a;">Worker</th>
                 <th style="padding:7px 16px;text-align:right;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#71717a;">Time</th>
+                <th style="padding:7px 16px;text-align:right;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#71717a;">Cost</th>
                 <th style="padding:7px 16px;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#71717a;">Sessions</th>
                 <th style="padding:7px 16px;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#71717a;">Operations</th>
               </tr></thead>
@@ -484,13 +527,14 @@ export function buildRecapHtml(data: RecapData): string {
 // ── Plain text fallback ───────────────────────────────────────────────
 
 export function buildRecapText(data: RecapData): string {
-  const { shopName, date, workerSummaries, completedToday, totalMins, totalRevenue, openReworkCount, jobInsights } = data;
+  const { shopName, date, workerSummaries, completedToday, totalMins, totalRevenue, totalLaborCost, weekLaborCost, shopRate, openReworkCount, jobInsights } = data;
   const lines: string[] = [
     `DAILY RECAP — ${shopName}`,
     formatDate(date),
     '═'.repeat(44),
     '',
     `Total hours: ${fmtHours(totalMins)}  |  Workers: ${data.activeWorkersToday}  |  Jobs done: ${completedToday.length}  |  Rework: ${openReworkCount}`,
+    ...(totalLaborCost > 0 ? [`Labor cost today: ${fmtMoney(totalLaborCost)} @ ${fmtMoney(shopRate)}/hr${weekLaborCost > 0 ? `  |  7-day: ${fmtMoney(weekLaborCost)}` : ''}`] : []),
     ...(totalRevenue > 0 ? [`Revenue: ${fmtMoney(totalRevenue)}`] : []),
     '',
   ];
@@ -517,7 +561,8 @@ export function buildRecapText(data: RecapData): string {
 
   lines.push('── WORKERS ──');
   for (const w of workerSummaries) {
-    lines.push(`  ${w.name}: ${fmtHours(w.totalMins)} (${w.sessions} session${w.sessions !== 1 ? 's' : ''}) — ${w.operations.slice(0, 3).join(', ')}`);
+    const cost = w.laborCost > 0 ? `  ${fmtMoney(w.laborCost)}` : '';
+    lines.push(`  ${w.name}: ${fmtHours(w.totalMins)}${cost} (${w.sessions} session${w.sessions !== 1 ? 's' : ''}) — ${w.operations.slice(0, 3).join(', ')}`);
   }
 
   if (completedToday.length > 0) {
