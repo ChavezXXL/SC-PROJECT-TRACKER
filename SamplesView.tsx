@@ -258,6 +258,33 @@ const WorkHistoryModal: React.FC<{
                 </div>
               </div>
 
+              {/* Per-operation breakdown — cycle time for EACH operation */}
+              {(() => {
+                const rows = computeOpBreakdown(sample);
+                if (rows.length === 0) return null;
+                const sumMinPerPc = totalMinPerPc(rows);
+                return (
+                  <div className="bg-zinc-950/50 border border-white/5 rounded-xl p-3 space-y-2 mb-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Per-Operation</p>
+                      {sumMinPerPc > 0 && (
+                        <span className="text-[10px] font-bold text-amber-400">{sumMinPerPc.toFixed(2)} min/pc total</span>
+                      )}
+                    </div>
+                    {rows.map(r => (
+                      <div key={r.operation} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-blue-300 font-bold truncate">{r.operation}</span>
+                        <span className="flex items-center gap-3 font-mono text-zinc-400 shrink-0">
+                          <span className="text-white font-bold">{formatDurationShort(r.totalSeconds)}</span>
+                          {r.totalQty > 0 && <span className="text-zinc-500">{r.totalQty} pc</span>}
+                          <span className="text-amber-400 font-bold w-20 text-right">{r.minPerPc != null ? `${r.minPerPc.toFixed(2)} min/pc` : '—'}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
               {/* Entries */}
               {entries.map(e => (
                 <div key={e.id} className="bg-zinc-950/50 border border-white/5 rounded-xl p-4 space-y-2">
@@ -347,10 +374,11 @@ const StartWorkModal: React.FC<{
   sample: Sample;
   operations: string[];
   userName: string;
+  initialOperation?: string;
   onStart: (operation: string, qty?: number) => Promise<void>;
   onClose: () => void;
-}> = ({ sample, operations, userName, onStart, onClose }) => {
-  const [op, setOp] = useState(operations[0] || 'Deburring');
+}> = ({ sample, operations, userName, initialOperation, onStart, onClose }) => {
+  const [op, setOp] = useState(initialOperation || operations[0] || 'Deburring');
   // Pre-fill from the sample's declared qty so admin doesn't have to type
   // it twice. They can still override for partial sessions.
   const [qty, setQty] = useState<number>(sample.qty || 0);
@@ -406,12 +434,14 @@ const SampleModal = ({
   sample,
   existingCompanies,
   clients,
+  operations,
   onSave,
   onClose,
 }: {
   sample: Partial<Sample> | null;
   existingCompanies: string[];
   clients: string[];
+  operations: string[];
   onSave: (s: Sample) => Promise<void>;
   onClose: () => void;
 }) => {
@@ -468,6 +498,7 @@ const SampleModal = ({
       difficulty: (form.difficulty as any) || 'medium',
       notes: form.notes?.trim() || '',
       ...(form.qty ? { qty: form.qty } : {}),
+      ...(form.plannedOperations && form.plannedOperations.length ? { plannedOperations: form.plannedOperations } : {}),
       createdAt: form.createdAt || now,
       updatedAt: now,
       createdBy: form.createdBy || 'admin',
@@ -586,6 +617,33 @@ const SampleModal = ({
                 value={form.qty || ''} onChange={e => setForm({ ...form, qty: Number(e.target.value) || undefined })} placeholder="How many" />
             </div>
           </div>
+          {/* Operations checklist — which operations this sample should run through */}
+          <div>
+            <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">Operations to Run</label>
+            <p className="text-[10px] text-zinc-600 mb-2">Pick the operations this part needs. You'll time each one, and FabTrack tracks what's done vs. left.</p>
+            {operations.length === 0 ? (
+              <p className="text-xs text-zinc-500">No operations configured — add them in <span className="text-purple-400 font-bold">Settings → Operations</span>.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {operations.map(o => {
+                  const selected = (form.plannedOperations || []).includes(o);
+                  return (
+                    <button
+                      key={o}
+                      type="button"
+                      onClick={() => setForm(f => {
+                        const cur = f.plannedOperations || [];
+                        return { ...f, plannedOperations: selected ? cur.filter(x => x !== o) : [...cur, o] };
+                      })}
+                      className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-colors ${selected ? 'bg-blue-500/15 border-blue-500/40 text-blue-300' : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10'}`}
+                    >
+                      {selected ? '✓ ' : ''}{o}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           {/* Notes */}
           <div>
             <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">Notes / Special Instructions</label>
@@ -645,6 +703,44 @@ function computeSampleMath(sample: Sample, shopRate: number, markup: number) {
     laborPerPc,
     suggestedPerPc,
   };
+}
+
+// ── Per-operation breakdown ─────────────────────────────────────
+// Groups a sample's completed work entries by operation so the owner
+// sees cycle time PER operation (deburr 2.1 min/pc, polish 1.4 min/pc…),
+// not just one lumped total. This is the "idea per operation" view.
+interface OpBreakdownRow {
+  operation: string;
+  totalSeconds: number;
+  totalQty: number;
+  sessions: number;
+  minPerPc: number | null; // null when no piece count was logged
+}
+
+function computeOpBreakdown(sample: Sample): OpBreakdownRow[] {
+  const byOp = new Map<string, { totalSeconds: number; totalQty: number; sessions: number }>();
+  for (const e of sample.workEntries || []) {
+    if (!e.operation || !e.durationSeconds || e.durationSeconds <= 0) continue;
+    const cur = byOp.get(e.operation) || { totalSeconds: 0, totalQty: 0, sessions: 0 };
+    cur.totalSeconds += e.durationSeconds;
+    cur.totalQty += e.qty || 0;
+    cur.sessions += 1;
+    byOp.set(e.operation, cur);
+  }
+  return Array.from(byOp.entries())
+    .map(([operation, v]) => ({
+      operation,
+      totalSeconds: v.totalSeconds,
+      totalQty: v.totalQty,
+      sessions: v.sessions,
+      minPerPc: v.totalQty > 0 ? (v.totalSeconds / 60) / v.totalQty : null,
+    }))
+    .sort((a, b) => b.totalSeconds - a.totalSeconds);
+}
+
+/** Total minutes-per-piece across all timed operations (sum of each op's min/pc). */
+function totalMinPerPc(rows: OpBreakdownRow[]): number {
+  return rows.reduce((a, r) => a + (r.minPerPc || 0), 0);
 }
 
 const SamplePricingCard: React.FC<{
@@ -767,6 +863,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
   const { confirm: confirmDialog, ConfirmHost } = useConfirm();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [startWorkSample, setStartWorkSample] = useState<Sample | null>(null);
+  const [nextOp, setNextOp] = useState<string | null>(null); // guided flow: preselect next operation
   const [histSample, setHistSample] = useState<Sample | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
 
@@ -827,9 +924,28 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
 
   const handleStopWork = async (sampleId: string) => {
     setStopping(sampleId);
+    // Snapshot before the stop so we can work out the next pending operation.
+    const sample = samples.find(s => s.id === sampleId);
+    const stoppedOp = sample?.activeEntry?.operation;
     try {
       await DB.stopSampleWork(sampleId);
       addToast('success', 'Work session saved');
+      // Guided multi-op flow: if this sample has a planned operations checklist
+      // and there's still a pending one, jump straight into it.
+      if (sample?.plannedOperations?.length) {
+        const done = new Set(
+          (sample.workEntries || [])
+            .filter(e => e.durationSeconds && e.durationSeconds > 0)
+            .map(e => e.operation)
+        );
+        if (stoppedOp) done.add(stoppedOp);
+        const next = sample.plannedOperations.find(op => !done.has(op));
+        if (next) {
+          setNextOp(next);
+          setStartWorkSample(sample);
+          addToast('info', `Next operation: ${next}`);
+        }
+      }
     } catch {
       addToast('error', 'Failed to stop');
     } finally {
@@ -1009,6 +1125,66 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
                               )}
                             </div>
 
+                            {/* Operations checklist + per-operation cycle times */}
+                            {(() => {
+                              const rows = computeOpBreakdown(s);
+                              const doneOps = new Set(rows.map(r => r.operation));
+                              const planned = s.plannedOperations || [];
+                              const activeOp = s.activeEntry?.operation;
+                              if (planned.length === 0 && rows.length === 0) return null;
+                              const minPerPcByOp = new Map(rows.map(r => [r.operation, r.minPerPc]));
+                              // Untracked operations that were timed but aren't in the plan
+                              const extraOps = rows.map(r => r.operation).filter(o => !planned.includes(o));
+                              const renderRow = (op: string) => {
+                                const done = doneOps.has(op);
+                                const isActiveOp = activeOp === op && isActive;
+                                const mpp = minPerPcByOp.get(op);
+                                return (
+                                  <div key={op} className="flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="flex items-center gap-1.5 min-w-0">
+                                      <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-black shrink-0 ${isActiveOp ? 'bg-green-500 text-black animate-pulse' : done ? 'bg-emerald-500/80 text-black' : 'bg-zinc-700 text-zinc-400'}`}>
+                                        {isActiveOp ? '▶' : done ? '✓' : ''}
+                                      </span>
+                                      <span className={`truncate ${done ? 'text-zinc-300' : 'text-zinc-500'}`}>{op}</span>
+                                    </span>
+                                    <span className="font-mono text-amber-400 shrink-0">
+                                      {mpp != null ? `${mpp.toFixed(2)} min/pc` : done ? '—' : <span className="text-zinc-600">pending</span>}
+                                    </span>
+                                  </div>
+                                );
+                              };
+                              return (
+                                <div className="bg-zinc-950/40 border border-white/5 rounded-lg p-2.5 space-y-1.5">
+                                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">
+                                    Operations {planned.length > 0 && <span className="text-zinc-600">· {planned.filter(o => doneOps.has(o)).length}/{planned.length} done</span>}
+                                  </p>
+                                  {planned.map(renderRow)}
+                                  {extraOps.map(renderRow)}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Sample-based estimate readout */}
+                            {(() => {
+                              const rows = computeOpBreakdown(s);
+                              const sumMinPerPc = totalMinPerPc(rows);
+                              if (sumMinPerPc <= 0) return null;
+                              const qty = s.qty && s.qty > 0 ? s.qty : null;
+                              const hoursForQty = qty ? (sumMinPerPc * qty) / 60 : null;
+                              return (
+                                <div className="bg-purple-500/8 border border-purple-500/20 rounded-lg p-2.5 flex items-center justify-between gap-2 text-[10px]">
+                                  <span className="text-purple-300/80">
+                                    📐 Est. <span className="font-mono font-bold text-purple-200">{sumMinPerPc.toFixed(2)} min/pc</span> across {rows.length} op{rows.length !== 1 ? 's' : ''}
+                                  </span>
+                                  {hoursForQty != null && (
+                                    <span className="text-purple-300/80">
+                                      {qty} pc ≈ <span className="font-mono font-bold text-purple-200">{hoursForQty.toFixed(1)}h</span>
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
                             {/* Pricing card — shown when there's enough data or a locked price exists */}
                             <SamplePricingCard
                               sample={s}
@@ -1059,7 +1235,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
 
                             <div className="flex gap-2 pt-1">
                               {!isActive && (
-                                <button onClick={() => setStartWorkSample(s)}
+                                <button onClick={() => { setNextOp(null); setStartWorkSample(s); }}
                                   className="flex-1 text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-lg hover:bg-green-500/20 font-bold flex items-center justify-center gap-1 transition-colors">
                                   <Play className="w-3 h-3" /> Work on this
                                 </button>
@@ -1099,6 +1275,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
           sample={editingSample}
           existingCompanies={existingCompanies}
           clients={clients}
+          operations={ops}
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditingSample(null); }}
         />
@@ -1108,8 +1285,9 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
           sample={startWorkSample}
           operations={ops}
           userName={currentUser?.name || 'Admin'}
+          initialOperation={nextOp || undefined}
           onStart={(op, qty) => handleStartWork(startWorkSample.id, op, qty) as Promise<void>}
-          onClose={() => setStartWorkSample(null)}
+          onClose={() => { setStartWorkSample(null); setNextOp(null); }}
         />
       )}
       {histSample && (

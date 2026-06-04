@@ -14,12 +14,12 @@ import {
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
   Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
-  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan, DollarSign, TrendingUp, TrendingDown, Award
+  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan, DollarSign, TrendingUp, TrendingDown, Award, Beaker
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder } from './types';
+import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample } from './types';
 import { JobProfitCard } from './components/JobProfitCard';
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
@@ -53,6 +53,7 @@ import { TrialBanner } from './components/TrialBanner';
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins, parseDueDate } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
+import { getSampleEstimateForPart, suggestHoursFromSample } from './utils/sampleEstimate';
 import { enrichJobForPrint, getRateBreakdownForJob } from './utils/jobMemory';
 import { findOverBudgetJobs, getAlertedJobIds, markJobAlerted } from './utils/overBudget';
 import { sendOverBudgetEmail } from './services/emailNotify';
@@ -4255,6 +4256,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [allPOs, setAllPOs] = useState<PurchaseOrder[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<User | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
+  const [samples, setSamples] = useState<Sample[]>([]);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const { prompt: promptInput, PromptHost: JobCompletePromptHost } = usePrompt();
@@ -4282,7 +4284,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const u5 = DB.subscribeRework(setReworkEntries);
     const u6 = DB.subscribeActiveLogs(setActiveLogs);
     const u7 = DB.subscribePurchaseOrders(setAllPOs);
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
+    const u8 = DB.subscribeSamples(setSamples);
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); };
   }, []);
 
   // ── All clients — settings list PLUS every unique customer name ever used on a job.
@@ -5740,6 +5743,49 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           </span>
                         </div>
                         <span className="text-[10px] font-bold text-emerald-400 shrink-0">Apply →</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Sample-Based Estimate Banner — when we've timed this part as a sample.
+                  Complements the Part History banner: history reflects real prior jobs,
+                  this reflects timed sample operations. Shows even when no full job has run. */}
+              {editingJob.partNumber && (() => {
+                const est = getSampleEstimateForPart(editingJob.partNumber, samples);
+                if (!est) return null;
+                const qty = editingJob.quantity || 0;
+                const suggestedHrs = qty > 0 ? suggestHoursFromSample(est, qty) : 0;
+                return (
+                  <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/5 border border-cyan-500/25 rounded-2xl p-4 sm:p-5 space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center shrink-0">
+                          <Beaker className="w-5 h-5 text-cyan-400" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-cyan-400 uppercase tracking-widest">Timed as a sample</p>
+                          <p className="text-sm text-white font-bold truncate">
+                            {est.minPerPc.toFixed(2)} min/pc · {est.operations} operation{est.operations === 1 ? '' : 's'} timed
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    {qty > 0 && suggestedHrs > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingJob({ ...editingJob, expectedHours: suggestedHrs })}
+                        className="w-full flex items-center justify-between gap-2 bg-cyan-500/10 hover:bg-cyan-500/15 border border-cyan-500/25 rounded-lg p-3 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-lg">🧪</span>
+                          <span className="text-sm text-white text-left">
+                            Sample budget: <strong className="text-cyan-400 font-black tabular">{suggestedHrs}h</strong>
+                            <span className="text-zinc-500 text-xs"> for {qty} units</span>
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-bold text-cyan-400 shrink-0">Apply →</span>
                       </button>
                     )}
                   </div>

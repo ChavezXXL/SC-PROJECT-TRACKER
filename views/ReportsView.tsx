@@ -15,6 +15,7 @@ import * as DB from '../services/mockDb';
 import { Avatar, useIsMobile } from '../App';
 import { fmtMoneyK } from '../utils/format';
 import { calcJobProfit, GRADE_COLORS, GRADE_LABELS } from '../utils/jobProfit';
+import { getPartHistory } from '../utils/partHistory';
 
 // ── Small delta badge used on KPI cards ──────────────────────────────────────
 const DeltaBadge = ({ current, prev }: { current: number; prev: number }) => {
@@ -40,6 +41,8 @@ export const ReportsView = () => {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [hoveredOpIdx, setHoveredOpIdx] = useState<number | null>(null);
+  const [partQuery, setPartQuery] = useState('');
+  const [selectedPart, setSelectedPart] = useState<string | null>(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -781,6 +784,136 @@ export const ReportsView = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Part History Lookup — search any part, see every past run + who ran it ── */}
+      {(() => {
+        // Distinct completed part numbers, most-run first (for the suggestion list)
+        const partCounts = new Map<string, number>();
+        jobs.forEach(j => {
+          if (j.status === 'completed' && j.partNumber?.trim()) {
+            const k = j.partNumber.trim();
+            partCounts.set(k, (partCounts.get(k) || 0) + 1);
+          }
+        });
+        const allParts = Array.from(partCounts.entries())
+          .map(([pn, runs]) => ({ pn, runs }))
+          .sort((a, b) => b.runs - a.runs);
+        if (allParts.length === 0) return null;
+
+        const q = partQuery.trim().toLowerCase();
+        const matches = q
+          ? allParts.filter(p => p.pn.toLowerCase().includes(q)).slice(0, 8)
+          : allParts.slice(0, 8); // show busiest parts before any typing
+
+        const hist = selectedPart ? getPartHistory(selectedPart, jobs, logs) : null;
+
+        const fmtDate = (ms?: number) => ms ? new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) : '—';
+
+        return (
+          <div>
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Part History Lookup</h3>
+            <p className="text-[10px] text-zinc-600 mb-3">Search any part you've run before — see every past run, how long it took, and who ran it.</p>
+
+            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 sm:p-5 space-y-4">
+              {/* Search box */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={partQuery}
+                  onChange={e => setPartQuery(e.target.value)}
+                  placeholder={`Search part # (${allParts.length} parts on record)`}
+                  aria-label="Search part number"
+                  className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm font-mono placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none"
+                />
+              </div>
+
+              {/* Suggestion chips */}
+              <div className="flex flex-wrap gap-1.5">
+                {matches.map(p => (
+                  <button
+                    key={p.pn}
+                    type="button"
+                    onClick={() => { setSelectedPart(p.pn); }}
+                    className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg border transition-colors ${selectedPart === p.pn ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-white/5 border-white/10 text-zinc-300 hover:bg-white/10'}`}
+                  >
+                    {p.pn} <span className="text-zinc-500 font-normal">· {p.runs}×</span>
+                  </button>
+                ))}
+                {matches.length === 0 && <span className="text-xs text-zinc-600 py-1">No matching part on record.</span>}
+              </div>
+
+              {/* Selected part history */}
+              {hist && (
+                <div className="border-t border-white/5 pt-4 space-y-4">
+                  {/* KPI strip */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    <div className="bg-zinc-950/60 rounded-xl p-3 text-center">
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Runs</p>
+                      <p className="text-lg font-black text-white tabular mt-0.5">{hist.totalRuns}</p>
+                    </div>
+                    <div className="bg-zinc-950/60 rounded-xl p-3 text-center">
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Avg / Job</p>
+                      <p className="text-lg font-black text-amber-400 tabular mt-0.5">{hist.avgJobHours.toFixed(1)}h</p>
+                    </div>
+                    <div className="bg-zinc-950/60 rounded-xl p-3 text-center">
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Hrs / Unit</p>
+                      <p className="text-lg font-black text-blue-400 tabular mt-0.5">{hist.avgHoursPerUnit.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-zinc-950/60 rounded-xl p-3 text-center">
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">On-Time</p>
+                      <p className={`text-lg font-black tabular mt-0.5 ${hist.onTimeRate >= 80 ? 'text-emerald-400' : hist.onTimeRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{hist.onTimeRate}%</p>
+                    </div>
+                    <div className="bg-zinc-950/60 rounded-xl p-3 text-center col-span-2 sm:col-span-1">
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-widest">Fastest</p>
+                      <p className="text-xs font-bold text-emerald-300 truncate mt-1" title={hist.bestWorker ? `${hist.bestWorker.name} · ${hist.bestWorker.avgHoursPerUnit.toFixed(2)} h/unit` : ''}>
+                        {hist.bestWorker ? hist.bestWorker.name : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Per-run table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-950/50 text-zinc-500 text-[10px] uppercase">
+                        <tr>
+                          <th className="text-left p-2">Completed</th>
+                          <th className="text-left p-2">PO</th>
+                          <th className="text-right p-2">Qty</th>
+                          <th className="text-left p-2">Ran By</th>
+                          <th className="text-right p-2">Hours</th>
+                          <th className="text-right p-2 hidden sm:table-cell">Hrs/Unit</th>
+                          <th className="text-center p-2">On-Time</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {hist.runs.map(r => (
+                          <tr key={r.jobId} className="hover:bg-white/5">
+                            <td className="p-2 text-zinc-400 text-xs font-mono">{fmtDate(r.completedAt)}</td>
+                            <td className="p-2 text-white font-bold text-xs">{r.poNumber}</td>
+                            <td className="p-2 text-right font-mono text-zinc-400">{r.quantity}</td>
+                            <td className="p-2 text-zinc-300 text-xs">{r.primaryWorker || '—'}</td>
+                            <td className="p-2 text-right font-mono text-amber-400 font-bold">{r.totalHours.toFixed(1)}h</td>
+                            <td className="p-2 text-right font-mono text-blue-400 hidden sm:table-cell">{r.hoursPerUnit > 0 ? r.hoursPerUnit.toFixed(2) : '—'}</td>
+                            <td className="p-2 text-center">
+                              {r.onTime
+                                ? <span className="text-[10px] font-black text-emerald-400">ON TIME</span>
+                                : <span className="text-[10px] font-black text-red-400">LATE</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {selectedPart && !hist && (
+                <p className="text-xs text-zinc-500 border-t border-white/5 pt-4">No completed runs found for that part yet.</p>
+              )}
             </div>
           </div>
         );

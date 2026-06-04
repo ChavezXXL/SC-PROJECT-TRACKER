@@ -992,6 +992,10 @@ export interface Sample {
   createdAt: number;
   updatedAt: number;
   createdBy: string;
+  /** Operations this sample should be run through, in order (the checklist).
+   *  An operation is considered "done" once it has a completed work entry.
+   *  Drives the per-operation checklist + the guided next-operation flow. */
+  plannedOperations?: string[];
   // Work tracking
   workEntries?: SampleWorkEntry[];
   activeEntry?: SampleWorkEntry | null;
