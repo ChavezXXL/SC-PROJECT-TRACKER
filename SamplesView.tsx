@@ -884,7 +884,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
       const updated = samples.find(s => s.id === histSample.id);
       if (updated) setHistSample(updated);
     }
-  }, [samples]);
+  }, [samples, histSample]);
 
   const handleSave = async (sample: Sample) => {
     try {

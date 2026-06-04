@@ -54,7 +54,7 @@ export const ReportsView = () => {
     return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
-  const now = Date.now();
+  const now = useMemo(() => Date.now(), []); // stable reference — avoids re-running memos every render
   const weekAgo = now - 7 * 86400000;
   const monthAgo = now - 30 * 86400000;
   const customCutoffStart = customStart ? new Date(customStart).getTime() : 0;
