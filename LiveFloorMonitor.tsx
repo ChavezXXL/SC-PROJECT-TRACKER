@@ -1943,6 +1943,37 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const runningCount = activeLogs.filter(l => !l.pausedAt).length;
   const pausedCount = activeLogs.filter(l => !!l.pausedAt).length;
 
+  // ── Live burn rate ───────────────────────────────────────────────────
+  // Shows how much labor is costing right now + today's total spend.
+  // Only shown when shopRate is configured in Settings → Operations.
+  const shopRate = settings.shopRate && settings.shopRate > 0 ? settings.shopRate : 0;
+
+  const todayLaborCost = React.useMemo(() => {
+    if (!shopRate) return 0;
+    const midnight = new Date(); midnight.setHours(0,0,0,0);
+    const todayStart = midnight.getTime();
+    const todayEnd = todayStart + 86_400_000;
+    // Completed logs today
+    const completedMins = allLogs
+      .filter(l => l.endTime && l.endTime >= todayStart && l.endTime < todayEnd)
+      .reduce((a, l) => {
+        const s = l.durationSeconds != null ? l.durationSeconds / 60 : (l.durationMinutes || 0);
+        return a + s;
+      }, 0);
+    // Currently running (elapsed so far today, from midnight or startTime whichever is later)
+    const runningMins = activeLogs
+      .filter(l => !l.pausedAt)
+      .reduce((a, l) => {
+        const elapsed = (Date.now() - Math.max(l.startTime, todayStart) - (l.totalPausedMs || 0)) / 60000;
+        return a + Math.max(0, elapsed);
+      }, 0);
+    return (completedMins + runningMins) / 60 * shopRate;
+  }, [allLogs, activeLogs, shopRate]);
+
+  // Current burn rate = active (non-paused) sessions × shopRate
+  // Each running session represents one worker-hour being consumed per hour.
+  const currentBurnRate = shopRate * runningCount; // $/hr right now
+
   const now = new Date();
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const inLunch = settings.autoLunchPauseEnabled && hhmm >= (settings.lunchStart || '12:00') && hhmm < (settings.lunchEnd || '12:30');
@@ -2416,13 +2447,26 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         )}
 
         {settings.tvShowStats !== false && (
-          <div className="flex items-center justify-center gap-6 px-4 py-2">
+          <div className="flex items-center justify-center gap-6 px-4 py-2 flex-wrap">
             <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5 text-emerald-400" /><span className="text-white font-bold text-sm">{workerCount}</span><span className="text-white/30 text-xs">workers</span></div>
             <div className="w-px h-4 bg-white/10" />
             <div className="flex items-center gap-2"><Activity className="w-3.5 h-3.5 text-amber-400" /><span className="text-white font-bold text-sm">{runningCount}</span><span className="text-white/30 text-xs">running</span></div>
             {pausedCount > 0 && (<><div className="w-px h-4 bg-white/10" /><div className="flex items-center gap-2"><Pause className="w-3.5 h-3.5 text-yellow-400" /><span className="text-yellow-400 font-bold text-sm">{pausedCount}</span><span className="text-white/30 text-xs">paused</span></div></>)}
             <div className="w-px h-4 bg-white/10" />
             <div className="flex items-center gap-2"><Briefcase className="w-3.5 h-3.5 text-purple-400" /><span className="text-white font-bold text-sm">{openJobs.length}</span><span className="text-white/30 text-xs">open jobs</span></div>
+            {shopRate > 0 && (<>
+              <div className="w-px h-4 bg-white/10" />
+              {/* Burn rate — how much labor is costing right now + today's total */}
+              <div className="flex items-center gap-2" title={`Burning $${currentBurnRate.toFixed(2)}/hr · Today total: $${todayLaborCost.toFixed(2)}`}>
+                <span className={`text-xs font-black tracking-wide ${currentBurnRate > 0 ? 'text-red-400 animate-pulse' : 'text-white/30'}`}>💰</span>
+                <div className="flex flex-col leading-none">
+                  <span className={`font-black text-sm tabular-nums ${currentBurnRate > 0 ? 'text-red-400' : 'text-white/40'}`}>
+                    ${currentBurnRate.toFixed(0)}<span className="text-[10px] font-normal text-white/30">/hr</span>
+                  </span>
+                  {todayLaborCost > 0 && <span className="text-[10px] text-white/30 tabular-nums">${todayLaborCost.toFixed(0)} today</span>}
+                </div>
+              </div>
+            </>)}
           </div>
         )}
 

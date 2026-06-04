@@ -727,6 +727,26 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
   const isMounted = useRef(true);
   useEffect(() => () => { isMounted.current = false; }, []);
 
+  // ── Pace warning ────────────────────────────────────────────────────
+  // Re-evaluate every 30 s so the banner appears as soon as the worker
+  // passes (or approaches) the job estimate — without waiting for a re-render.
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    const calc = () => {
+      if (log.pausedAt) { setElapsedMs(log.pausedAt - log.startTime - (log.totalPausedMs || 0)); return; }
+      setElapsedMs(Date.now() - log.startTime - (log.totalPausedMs || 0));
+    };
+    calc();
+    const id = setInterval(calc, 30_000);
+    return () => clearInterval(id);
+  }, [log.startTime, log.pausedAt, log.totalPausedMs]);
+
+  const estMs   = job?.expectedHours ? job.expectedHours * 3_600_000 : 0;
+  const pctUsed = estMs > 0 ? elapsedMs / estMs : 0;
+  const isOverEst    = estMs > 0 && pctUsed >= 1;
+  const isApproaching = estMs > 0 && pctUsed >= 0.75 && !isOverEst;
+  const minsRemaining = estMs > 0 ? Math.max(0, Math.round((estMs - elapsedMs) / 60000)) : 0;
+
   // Drive the UI purely from the log state. The subscription updates log within
   // ~100-500ms after pause/resume, which is fast enough for perceived-instant feedback.
   const isPaused = !!log.pausedAt;
@@ -775,9 +795,30 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
           <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-1">PO Number</p>
           <h2 className="text-4xl md:text-5xl font-black text-white mb-1">{job ? job.poNumber : 'Unknown'}</h2>
           <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job ? job.jobIdsDisplay : ''}</span></p>
-          <div className="text-xl text-amber-400 font-medium mb-8 flex items-center gap-2">
+          <div className="text-xl text-amber-400 font-medium mb-4 flex items-center gap-2">
             <span className="px-3 py-1 bg-amber-500/10 rounded-lg border border-amber-500/20">{log.operation}</span>
           </div>
+
+          {/* Pace warning banner — shown only when job has an estimate */}
+          {isOverEst && (
+            <div className="mb-4 w-full max-w-sm bg-red-500/15 border border-red-500/40 rounded-xl px-4 py-3 flex items-start gap-3 animate-pulse">
+              <span className="text-red-400 text-lg mt-0.5">⚠</span>
+              <div>
+                <p className="text-red-400 font-black text-sm uppercase tracking-wide">Over Estimate</p>
+                <p className="text-red-300/70 text-xs mt-0.5">You've exceeded the {job!.expectedHours}h budget on this job. Let your supervisor know.</p>
+              </div>
+            </div>
+          )}
+          {isApproaching && (
+            <div className="mb-4 w-full max-w-sm bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-start gap-3">
+              <span className="text-amber-400 text-lg mt-0.5">⏱</span>
+              <div>
+                <p className="text-amber-400 font-bold text-sm">Approaching Estimate</p>
+                <p className="text-amber-300/60 text-xs mt-0.5">{minsRemaining} min remaining of {job!.expectedHours}h budget. Pick up the pace.</p>
+              </div>
+            </div>
+          )}
+
           <div className="bg-black/40 rounded-2xl p-6 border border-white/10 mb-6 w-full max-w-sm flex items-center justify-between">
             <div>
               <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">{isPaused ? 'Paused' : 'Elapsed Time'}</p>

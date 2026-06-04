@@ -414,6 +414,47 @@ export default async function handler() {
         }
         console.log(`[shift-push-cron] admin notified: ${notClockedIn.length} missing (reminder #${sentCount + 1})`);
       }
+
+      // ── Escalation email after 3rd reminder (≈ 90 min late) ──────────
+      // Pushes can be missed (phone off, notifications blocked). Email is a
+      // harder-to-ignore fallback that lands in the owner's inbox directly.
+      if (sentCount + 1 >= 3 && notClockedIn.length > 0) {
+        const resendKey  = process.env.RESEND_API_KEY;
+        const resendFrom = process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>';
+        const toEmail    = (settings as any)?.recapEmail || (settings as any)?.alertEmail || (settings as any)?.companyEmail;
+
+        if (resendKey && toEmail) {
+          const nameList = notClockedIn.map((u: any) => u.name || u.id).join(', ');
+          const minutesLate = Math.round((now - (alarm as any).__alarmTs) / 60000) || 90;
+          const emailBody = `
+            <div style="font-family:sans-serif;background:#09090b;color:#fff;padding:32px;border-radius:12px;max-width:480px;">
+              <h2 style="color:#f87171;margin:0 0 8px;">🚨 Workers Still Not Clocked In</h2>
+              <p style="color:#a1a1aa;margin:0 0 16px;">Shift started at <strong style="color:#fff;">${alarm.time}</strong> — approximately ${minutesLate} minutes ago.</p>
+              <div style="background:#1c1c1e;border-left:4px solid #f87171;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:20px;">
+                <p style="margin:0;font-size:18px;font-weight:800;color:#f87171;">${notClockedIn.length} worker${notClockedIn.length > 1 ? 's' : ''} missing</p>
+                <p style="margin:4px 0 0;color:#e4e4e7;">${nameList}</p>
+              </div>
+              <p style="color:#71717a;font-size:13px;margin:0;">This is reminder #${sentCount + 1}. They have been notified ${sentCount + 1} time${sentCount + 1 > 1 ? 's' : ''} via push.</p>
+              <p style="color:#52525b;font-size:12px;margin:12px 0 0;">— FabTrack IO</p>
+            </div>`;
+
+          try {
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: resendFrom,
+                to: [toEmail],
+                subject: `🚨 ${notClockedIn.length} Worker${notClockedIn.length > 1 ? 's' : ''} Still Not Clocked In — ${alarm.time} Shift`,
+                html: emailBody,
+              }),
+            });
+            console.log(`[shift-push-cron] escalation email sent to ${toEmail} (${notClockedIn.length} missing)`);
+          } catch (e: any) {
+            console.warn('[shift-push-cron] escalation email failed:', e?.message);
+          }
+        }
+      }
     }
   }
 
