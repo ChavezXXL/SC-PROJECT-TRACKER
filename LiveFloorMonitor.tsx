@@ -249,11 +249,17 @@ const WorkerCard: React.FC<{
   const initials = (log.userName || '??').split(' ').map(w => w[0] || '').join('').toUpperCase().slice(0, 2) || '??';
   const isPaused = !!log.pausedAt;
   const minsElapsed = Math.floor(DB.getWorkingElapsedMs(log) / 60000);
+  // Over-estimate: this running session has passed the job's expected-hours budget.
+  const estMins = job?.expectedHours ? Math.round(job.expectedHours * 60) : 0;
+  const isOverEstimate = !isPaused && estMins > 0 && minsElapsed > estMins;
+  // Generic long-timer fallback (used when a job has no estimate set).
   const isLong = minsElapsed > 240;
+  // Either condition gives the card its red "needs attention" treatment.
+  const isHot = isOverEstimate || isLong;
 
   if (compact) {
     return (
-      <div className={`flex items-center justify-between p-4 border-b border-white/5 ${isPaused ? 'bg-yellow-500/5' : isLong ? 'bg-red-500/5' : ''}`}>
+      <div className={`flex items-center justify-between p-4 border-b border-white/5 ${isPaused ? 'bg-yellow-500/5' : isHot ? 'bg-red-500/5' : ''}`}>
         <div className="flex items-center gap-3">
           <div className="relative">
             <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-black text-white/80">{initials}</div>
@@ -264,6 +270,7 @@ const WorkerCard: React.FC<{
             <div className="flex items-center gap-1.5">
               <p className="text-white/40 text-xs truncate">{log.operation} {job ? `— PO ${job.poNumber} · Qty ${job.quantity}${job.customer ? ` · ${job.customer}` : ''}` : ''}</p>
               {isPaused && <span className="text-[9px] font-black text-yellow-400 bg-yellow-500/10 px-1 py-0.5 rounded">PAUSED</span>}
+              {isOverEstimate && <span className="text-[9px] font-black text-red-400 bg-red-500/10 px-1 py-0.5 rounded animate-pulse" title={`Budget ${job!.expectedHours}h · now ${(minsElapsed / 60).toFixed(1)}h`}>OVER EST</span>}
             </div>
           </div>
         </div>
@@ -285,7 +292,7 @@ const WorkerCard: React.FC<{
   }
 
   return (
-    <div className={`rounded-2xl border overflow-hidden transition-all ${isPaused ? 'border-yellow-500/30 bg-yellow-500/5' : isLong ? 'border-red-500/30 bg-red-500/5 shadow-lg shadow-red-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
+    <div className={`rounded-2xl border overflow-hidden transition-all ${isPaused ? 'border-yellow-500/30 bg-yellow-500/5' : isHot ? 'border-red-500/30 bg-red-500/5 shadow-lg shadow-red-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
       <div className="p-5">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -298,7 +305,8 @@ const WorkerCard: React.FC<{
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md">{log.operation}</span>
                 {isPaused && <span className="text-[10px] font-black text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">PAUSED</span>}
-                {isLong && !isPaused && <span className="text-[10px] font-black text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded animate-pulse">{Math.floor(minsElapsed / 60)}h+</span>}
+                {isOverEstimate && <span className="text-[10px] font-black text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded animate-pulse" title={`Budget ${job!.expectedHours}h · now ${(minsElapsed / 60).toFixed(1)}h`}>OVER EST · {job!.expectedHours}h</span>}
+                {isLong && !isOverEstimate && !isPaused && <span className="text-[10px] font-black text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded animate-pulse">{Math.floor(minsElapsed / 60)}h+</span>}
               </div>
             </div>
           </div>
@@ -1537,6 +1545,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // view and someone had to walk over and re-click "TV Mode".
   const [tvMode, setTvMode] = useState(() => !!standalone);
   const prevLogIdsRef = useRef<Set<string>>(new Set());
+  // Logs we've already alerted on for passing their estimate — fire once per
+  // session so the owner gets a single ping, not one every tick.
+  const firedOverEstRef = useRef<Set<string>>(new Set());
 
   const isAdmin = !standalone && user?.role === 'admin';
 
@@ -1858,6 +1869,35 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       if (!currentIds.has(id)) fireNotification('Timer stopped', 'A worker finished their operation.', `stop-${id}`);
     });
     prevLogIdsRef.current = currentIds;
+  }, [activeLogs, jobs]);
+
+  // Over-estimate watcher — the moment a running timer passes its job's
+  // expected-hours budget, alert the owner once (local notification on this
+  // floor device + server push to admin phones) so they can check in.
+  // Ticks every minute because elapsed time grows even when activeLogs is unchanged.
+  useEffect(() => {
+    const check = () => {
+      activeLogs.forEach(log => {
+        if (log.pausedAt) return;
+        const job = jobs.find(j => j.id === log.jobId);
+        if (!job?.expectedHours) return;
+        const estMins = job.expectedHours * 60;
+        const elapsedMins = DB.getWorkingElapsedMs(log) / 60000;
+        if (elapsedMins > estMins && !firedOverEstRef.current.has(log.id)) {
+          firedOverEstRef.current.add(log.id);
+          const detail = `${log.operation} on PO ${job.poNumber} passed its ${job.expectedHours}h budget (now ${(elapsedMins / 60).toFixed(1)}h). Check in with them.`;
+          fireNotification(`⚠ Over estimate — ${log.userName}`, detail, `over-est-${log.id}`);
+          // Best-effort server push so the owner is alerted even off the floor screen.
+          DB.notifyAdminsOverEstimate(log.userName, log.operation, `PO ${job.poNumber}${job.customer ? ` · ${job.customer}` : ''}`, detail);
+        }
+      });
+      // Forget logs that have stopped so a re-clock-in can alert again.
+      const ids = new Set(activeLogs.map(l => l.id));
+      firedOverEstRef.current.forEach(id => { if (!ids.has(id)) firedOverEstRef.current.delete(id); });
+    };
+    check();
+    const i = window.setInterval(check, 60_000);
+    return () => window.clearInterval(i);
   }, [activeLogs, jobs]);
 
   const fireNotification = (title: string, body: string, tag: string) => {

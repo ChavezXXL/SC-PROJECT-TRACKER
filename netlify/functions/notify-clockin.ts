@@ -7,10 +7,11 @@
 //
 // POST body:
 //   {
-//     eventType:  'clock-in' | 'clock-out'
+//     eventType:  'clock-in' | 'clock-out' | 'over-estimate'
 //     workerName: string
 //     operation:  string
 //     jobLabel:   string   // partNumber · customer
+//     detail?:    string   // over-estimate: full sentence used as the push body
 //   }
 //
 // Required Netlify env vars:
@@ -82,8 +83,8 @@ export const handler: Handler = async (event) => {
   try { body = JSON.parse(event.body || '{}'); }
   catch { return { statusCode: 400, headers: JSON_H, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-  const { eventType, workerName, operation, jobLabel } = body as {
-    eventType?: string; workerName?: string; operation?: string; jobLabel?: string;
+  const { eventType, workerName, operation, jobLabel, detail: detailIn } = body as {
+    eventType?: string; workerName?: string; operation?: string; jobLabel?: string; detail?: string;
   };
 
   if (!eventType || !workerName) {
@@ -112,16 +113,27 @@ export const handler: Handler = async (event) => {
 
   webpush.setVapidDetails(vapidSubj, vapidPub, vapidPriv);
 
+  const isOverEst = eventType === 'over-estimate';
   const isIn   = eventType === 'clock-in';
-  const title  = isIn ? `🟢 ${workerName} clocked in` : `🔴 ${workerName} clocked out`;
-  const detail = [operation, jobLabel].filter(Boolean).join('  ·  ');
+
+  let title: string;
+  let pushBody: string;
+  if (isOverEst) {
+    title    = `⚠️ Over estimate — ${workerName}`;
+    pushBody = detailIn || [operation, jobLabel].filter(Boolean).join('  ·  ') || 'A job passed its time budget';
+  } else {
+    title    = isIn ? `🟢 ${workerName} clocked in` : `🔴 ${workerName} clocked out`;
+    const detail = [operation, jobLabel].filter(Boolean).join('  ·  ');
+    pushBody = detail || (isIn ? 'Timer started' : 'Timer stopped');
+  }
+
   const payload = JSON.stringify({
     title,
-    body: detail || (isIn ? 'Timer started' : 'Timer stopped'),
+    body: pushBody,
     tag:  `${eventType}-${workerName}-${Date.now()}`,
     url:  '/',
     icon: '/brand/ftio-icon.png',
-    requireInteraction: false,
+    requireInteraction: isOverEst, // keep the over-estimate alert on screen until the owner acts
   });
 
   let sent = 0, failed = 0, removed = 0;

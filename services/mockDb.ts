@@ -1308,6 +1308,25 @@ async function notifyAdminsClockEvent(
   } catch { /* silent — notification is best-effort */ }
 }
 
+// ── Server-push helper — over-estimate alert ─────────────────────────
+// Fires when a running timer passes its job's expected-hours budget so the
+// owner can step in. Reuses the notify-clockin function (admin fan-out) with
+// the 'over-estimate' event type. Fire-and-forget — never throws.
+export async function notifyAdminsOverEstimate(
+  workerName: string,
+  operation: string,
+  jobLabel: string,
+  detail: string,
+): Promise<void> {
+  try {
+    await fetch('/.netlify/functions/notify-clockin', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ eventType: 'over-estimate', workerName, operation, jobLabel, detail }),
+    });
+  } catch { /* silent — notification is best-effort */ }
+}
+
 export function getWorkingElapsedMs(log: TimeLog): number {
   const end = log.endTime || Date.now();
   const wall = end - log.startTime;
