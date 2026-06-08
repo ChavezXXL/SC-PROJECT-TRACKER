@@ -4543,6 +4543,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           patch.expectedHours = parseFloat(suggestedHrs.toFixed(1));
           filled.push(`Est. ${patch.expectedHours}h`);
         }
+      } else {
+        // Last fallback: sample-based estimate — uses timed sample operations
+        // when no prior full job exists for this part yet.
+        const sampleEst = getSampleEstimateForPart(editingJob.partNumber, samples);
+        if (sampleEst) {
+          const qty = editingJob.quantity || 0;
+          const suggestedHrs = suggestHoursFromSample(sampleEst, qty);
+          if (suggestedHrs > 0) {
+            patch.expectedHours = suggestedHrs;
+            const opNames = sampleEst.breakdown.map(b => b.operation).join(', ');
+            filled.push(`Est. ${suggestedHrs}h from sample (${sampleEst.breakdown.length} ops: ${opNames})`);
+          }
+        }
       }
     }
     // Price/instructions still need customer+part match (priceSuggestion)
@@ -5790,44 +5803,82 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 );
               })()}
 
-              {/* Sample-Based Estimate Banner — when we've timed this part as a sample.
-                  Complements the Part History banner: history reflects real prior jobs,
-                  this reflects timed sample operations. Shows even when no full job has run. */}
+              {/* Sample-Based Estimate Banner — shows timed operations + per-op breakdown.
+                  Auto-applies estimate when part # + qty are entered and no job history exists. */}
               {editingJob.partNumber && (() => {
                 const est = getSampleEstimateForPart(editingJob.partNumber, samples);
                 if (!est) return null;
                 const qty = editingJob.quantity || 0;
                 const suggestedHrs = qty > 0 ? suggestHoursFromSample(est, qty) : 0;
+                const alreadyApplied = editingJob.expectedHours === suggestedHrs && suggestedHrs > 0;
                 return (
                   <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/5 border border-cyan-500/25 rounded-2xl p-4 sm:p-5 space-y-3">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center shrink-0">
-                          <Beaker className="w-5 h-5 text-cyan-400" aria-hidden="true" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-black text-cyan-400 uppercase tracking-widest">Timed as a sample</p>
-                          <p className="text-sm text-white font-bold truncate">
-                            {est.minPerPc.toFixed(2)} min/pc · {est.operations} operation{est.operations === 1 ? '' : 's'} timed
-                          </p>
-                        </div>
+                    {/* Header */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-cyan-500/20 flex items-center justify-center shrink-0">
+                        <Beaker className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-cyan-400 uppercase tracking-widest">Sample on File — {est.sample.partNumber}</p>
+                        <p className="text-xs text-zinc-400 mt-0.5">{est.minPerPc.toFixed(2)} min/pc total · {est.breakdown.length} operation{est.breakdown.length === 1 ? '' : 's'}</p>
                       </div>
                     </div>
+
+                    {/* Per-operation breakdown */}
+                    <div className="rounded-xl overflow-hidden border border-cyan-500/15">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-cyan-500/10">
+                            <th className="text-left px-3 py-2 text-cyan-400/70 font-bold uppercase tracking-wide">Operation</th>
+                            <th className="text-right px-3 py-2 text-cyan-400/70 font-bold uppercase tracking-wide">Min/pc</th>
+                            <th className="text-right px-3 py-2 text-cyan-400/70 font-bold uppercase tracking-wide">Sample qty</th>
+                            {qty > 0 && <th className="text-right px-3 py-2 text-cyan-400/70 font-bold uppercase tracking-wide">Est @ {qty.toLocaleString()} pcs</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {est.breakdown.map((op, i) => {
+                            const opHrs = qty > 0 ? Math.round((op.minPerPc * qty / 60) * 10) / 10 : null;
+                            return (
+                              <tr key={op.operation} className={i % 2 === 0 ? 'bg-black/20' : 'bg-black/10'}>
+                                <td className="px-3 py-2 text-white font-medium">{op.operation}</td>
+                                <td className="px-3 py-2 text-amber-400 font-bold tabular-nums text-right">{op.minPerPc.toFixed(2)}</td>
+                                <td className="px-3 py-2 text-zinc-400 tabular-nums text-right">{op.qty} pcs</td>
+                                {qty > 0 && <td className="px-3 py-2 text-cyan-300 font-bold tabular-nums text-right">{opHrs}h</td>}
+                              </tr>
+                            );
+                          })}
+                          {qty > 0 && est.breakdown.length > 1 && (
+                            <tr className="border-t border-cyan-500/20 bg-cyan-500/5">
+                              <td className="px-3 py-2 text-cyan-400 font-black">TOTAL</td>
+                              <td className="px-3 py-2 text-amber-400 font-black tabular-nums text-right">{est.minPerPc.toFixed(2)}</td>
+                              <td />
+                              <td className="px-3 py-2 text-cyan-400 font-black tabular-nums text-right">{suggestedHrs}h</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Apply button */}
                     {qty > 0 && suggestedHrs > 0 && (
                       <button
                         type="button"
                         onClick={() => setEditingJob({ ...editingJob, expectedHours: suggestedHrs })}
-                        className="w-full flex items-center justify-between gap-2 bg-cyan-500/10 hover:bg-cyan-500/15 border border-cyan-500/25 rounded-lg p-3 transition-colors"
+                        className={`w-full flex items-center justify-between gap-2 border rounded-xl p-3 transition-colors ${alreadyApplied ? 'bg-cyan-500/20 border-cyan-400/40 cursor-default' : 'bg-cyan-500/10 hover:bg-cyan-500/20 border-cyan-500/25'}`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-lg">🧪</span>
-                          <span className="text-sm text-white text-left">
-                            Sample budget: <strong className="text-cyan-400 font-black tabular">{suggestedHrs}h</strong>
-                            <span className="text-zinc-500 text-xs"> for {qty} units</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{alreadyApplied ? '✅' : '🧪'}</span>
+                          <span className="text-sm text-white font-bold">
+                            {alreadyApplied ? 'Applied — ' : 'Apply sample estimate: '}
+                            <strong className="text-cyan-400">{suggestedHrs}h</strong>
+                            <span className="text-zinc-500 text-xs font-normal"> for {qty.toLocaleString()} pcs</span>
                           </span>
                         </div>
-                        <span className="text-[10px] font-bold text-cyan-400 shrink-0">Apply →</span>
+                        {!alreadyApplied && <span className="text-[10px] font-bold text-cyan-400 shrink-0">Apply →</span>}
                       </button>
+                    )}
+                    {qty === 0 && (
+                      <p className="text-xs text-zinc-500 text-center py-1">Enter a quantity to see the estimated hours</p>
                     )}
                   </div>
                 );

@@ -34,10 +34,40 @@ export function sampleMinPerPiece(sample: Sample): number {
   return total;
 }
 
+/** Per-operation breakdown for displaying inside the job modal. */
+export interface SampleOpBreakdown {
+  operation: string;
+  minPerPc: number;   // minutes per piece for this operation
+  totalSec: number;   // raw seconds timed across all sessions for this op
+  qty: number;        // pieces timed
+}
+
 export interface SampleEstimate {
   sample: Sample;
-  minPerPc: number;   // total time-per-piece across all timed operations
-  operations: number; // how many distinct operations contributed
+  minPerPc: number;          // total time-per-piece across all timed operations
+  operations: number;        // how many distinct operations contributed
+  breakdown: SampleOpBreakdown[]; // per-operation detail, sorted by minPerPc desc
+}
+
+/** Build the per-operation breakdown from a single sample. */
+export function getSampleOpBreakdown(sample: Sample): SampleOpBreakdown[] {
+  const byOp = new Map<string, { sec: number; qty: number }>();
+  for (const e of sample.workEntries || []) {
+    if (!e.operation || !e.durationSeconds || e.durationSeconds <= 0 || !e.qty || e.qty <= 0) continue;
+    const cur = byOp.get(e.operation) || { sec: 0, qty: 0 };
+    cur.sec += e.durationSeconds;
+    cur.qty += e.qty;
+    byOp.set(e.operation, cur);
+  }
+  return [...byOp.entries()]
+    .filter(([, { qty }]) => qty > 0)
+    .map(([operation, { sec, qty }]) => ({
+      operation,
+      minPerPc: (sec / 60) / qty,
+      totalSec: sec,
+      qty,
+    }))
+    .sort((a, b) => b.minPerPc - a.minPerPc);
 }
 
 /**
@@ -53,12 +83,9 @@ export function getSampleEstimateForPart(partNumber: string, samples: Sample[]):
     if (s.partNumber?.trim().toLowerCase() !== pn) continue;
     const minPerPc = sampleMinPerPiece(s);
     if (minPerPc <= 0) continue;
-    const operations = new Set(
-      (s.workEntries || [])
-        .filter(e => e.qty && e.qty > 0 && e.durationSeconds && e.durationSeconds > 0)
-        .map(e => e.operation)
-    ).size;
-    if (!best || minPerPc > best.minPerPc) best = { sample: s, minPerPc, operations };
+    const breakdown = getSampleOpBreakdown(s);
+    const operations = breakdown.length;
+    if (!best || minPerPc > best.minPerPc) best = { sample: s, minPerPc, operations, breakdown };
   }
   return best;
 }
