@@ -53,7 +53,7 @@ import { TrialBanner } from './components/TrialBanner';
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins, parseDueDate } from './utils/date';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
-import { getSampleEstimateForPart, suggestHoursFromSample } from './utils/sampleEstimate';
+import { getSampleEstimateForPart, suggestHoursFromSample, getAggregatedSampleEstimate, suggestHoursFromAggregated } from './utils/sampleEstimate';
 import { enrichJobForPrint, getRateBreakdownForJob } from './utils/jobMemory';
 import { findOverBudgetJobs, getAlertedJobIds, markJobAlerted } from './utils/overBudget';
 import { sendOverBudgetEmail } from './services/emailNotify';
@@ -4544,16 +4544,23 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           filled.push(`Est. ${patch.expectedHours}h`);
         }
       } else {
-        // Last fallback: sample-based estimate — uses timed sample operations
-        // when no prior full job exists for this part yet.
-        const sampleEst = getSampleEstimateForPart(editingJob.partNumber, samples);
-        if (sampleEst) {
+        // Last fallback: aggregated sample estimate — averages ALL samples for
+        // this part, weighted by piece count, with rateBuffer applied.
+        const aggEst = getAggregatedSampleEstimate(
+          editingJob.partNumber,
+          samples,
+          shopSettings.rateBuffer ?? 1.0,
+        );
+        if (aggEst) {
           const qty = editingJob.quantity || 0;
-          const suggestedHrs = suggestHoursFromSample(sampleEst, qty);
+          const suggestedHrs = suggestHoursFromAggregated(aggEst, qty);
           if (suggestedHrs > 0) {
             patch.expectedHours = suggestedHrs;
-            const opNames = sampleEst.breakdown.map(b => b.operation).join(', ');
-            filled.push(`Est. ${suggestedHrs}h from sample (${sampleEst.breakdown.length} ops: ${opNames})`);
+            const opNames = aggEst.breakdown.map(b => b.operation).join(', ');
+            const src = aggEst.sampleCount > 1
+              ? `${aggEst.sampleCount} samples avg`
+              : '1 sample';
+            filled.push(`Est. ${suggestedHrs}h from ${src} (${aggEst.breakdown.length} ops: ${opNames})`);
           }
         }
       }
@@ -5803,25 +5810,37 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 );
               })()}
 
-              {/* Sample-Based Estimate Banner — shows timed operations + per-op breakdown.
-                  Auto-applies estimate when part # + qty are entered and no job history exists. */}
+              {/* Sample-Based Estimate Banner — aggregates ALL samples for this part,
+                  shows per-op breakdown with confidence level, auto-applies on qty entry. */}
               {editingJob.partNumber && (() => {
-                const est = getSampleEstimateForPart(editingJob.partNumber, samples);
+                const est = getAggregatedSampleEstimate(
+                  editingJob.partNumber,
+                  samples,
+                  shopSettings.rateBuffer ?? 1.0,
+                );
                 if (!est) return null;
                 const qty = editingJob.quantity || 0;
-                const suggestedHrs = qty > 0 ? suggestHoursFromSample(est, qty) : 0;
+                const suggestedHrs = qty > 0 ? suggestHoursFromAggregated(est, qty) : 0;
                 const alreadyApplied = editingJob.expectedHours === suggestedHrs && suggestedHrs > 0;
+                const confidenceLabel = est.confidence === 'high' ? '🟢 High confidence' : est.confidence === 'medium' ? '🟡 Medium confidence' : '🔴 Low confidence — run more samples';
+                const confidenceColor = est.confidence === 'high' ? 'text-emerald-400' : est.confidence === 'medium' ? 'text-amber-400' : 'text-red-400';
                 return (
                   <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/5 border border-cyan-500/25 rounded-2xl p-4 sm:p-5 space-y-3">
                     {/* Header */}
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-cyan-500/20 flex items-center justify-center shrink-0">
-                        <Beaker className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-cyan-500/20 flex items-center justify-center shrink-0">
+                          <Beaker className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-cyan-400 uppercase tracking-widest">Sample Data — {editingJob.partNumber}</p>
+                          <p className="text-xs text-zinc-400 mt-0.5">
+                            {est.sampleCount} sample{est.sampleCount !== 1 ? 's' : ''} · {est.totalPieces} pcs timed · {est.rawMinPerPc.toFixed(2)} min/pc raw
+                            {est.rateBuffer !== 1.0 && <span className="text-amber-400/70"> → {est.minPerPc.toFixed(2)} buffered ({((est.rateBuffer - 1) * 100).toFixed(0)}%)</span>}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs font-black text-cyan-400 uppercase tracking-widest">Sample on File — {est.sample.partNumber}</p>
-                        <p className="text-xs text-zinc-400 mt-0.5">{est.minPerPc.toFixed(2)} min/pc total · {est.breakdown.length} operation{est.breakdown.length === 1 ? '' : 's'}</p>
-                      </div>
+                      <span className={`text-[10px] font-bold shrink-0 ${confidenceColor}`}>{confidenceLabel}</span>
                     </div>
 
                     {/* Per-operation breakdown */}

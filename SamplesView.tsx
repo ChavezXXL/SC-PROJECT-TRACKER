@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { getPreviousOpRate } from './utils/sampleEstimate';
 import {
   Camera,
   ChevronDown,
@@ -372,17 +373,26 @@ const WorkHistoryModal: React.FC<{
 // ── Start Work Modal ────────────────────────────────────────────
 const StartWorkModal: React.FC<{
   sample: Sample;
+  allSamples: Sample[];   // all samples so we can look up previous rates
   operations: string[];
   userName: string;
   initialOperation?: string;
   onStart: (operation: string, qty?: number) => Promise<void>;
   onClose: () => void;
-}> = ({ sample, operations, userName, initialOperation, onStart, onClose }) => {
+}> = ({ sample, allSamples, operations, userName, initialOperation, onStart, onClose }) => {
   const [op, setOp] = useState(initialOperation || operations[0] || 'Deburring');
-  // Pre-fill from the sample's declared qty so admin doesn't have to type
-  // it twice. They can still override for partial sessions.
   const [qty, setQty] = useState<number>(sample.qty || 0);
   const [starting, setStarting] = useState(false);
+
+  // Previous rate for the selected operation across ALL samples for this part
+  const prevRate = useMemo(
+    () => getPreviousOpRate(sample.partNumber, op, allSamples),
+    [sample.partNumber, op, allSamples],
+  );
+
+  // Expected total time for this session based on previous rate
+  const expectedMins = prevRate && qty > 0 ? prevRate.minPerPc * qty : null;
+
   return (
     <Overlay open onClose={onClose} ariaLabel="Start work" zIndex={100} backdrop="bg-zinc-950">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden my-4">
@@ -397,16 +407,37 @@ const StartWorkModal: React.FC<{
               value={op} onChange={e => setOp(e.target.value)}>
               {operations.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
+            {/* Show previous rate for this operation */}
+            {prevRate && (
+              <div className="mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 flex items-center justify-between">
+                <span className="text-[11px] text-amber-400/80">Previous rate for <strong className="text-amber-300">{op}</strong></span>
+                <span className="text-[11px] font-black text-amber-400 tabular-nums">
+                  {prevRate.minPerPc.toFixed(2)} min/pc
+                  <span className="text-amber-400/50 font-normal"> ({prevRate.totalPieces} pcs, {prevRate.sessionCount} session{prevRate.sessionCount !== 1 ? 's' : ''})</span>
+                </span>
+              </div>
+            )}
+            {!prevRate && (
+              <p className="text-[10px] text-zinc-600 mt-1.5">No previous timing for this operation — this will be the first data point.</p>
+            )}
           </div>
           <div>
             <label className="text-xs font-bold text-zinc-400 uppercase mb-1 block">Pieces This Session</label>
             <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:ring-2 focus:ring-green-500 outline-none"
               value={qty || ''} onChange={e => setQty(Number(e.target.value) || 0)} placeholder="Pieces" />
-            <p className="text-[10px] text-zinc-600 mt-1.5">
-              {sample.qty && qty === sample.qty
-                ? <>Pre-filled from sample qty. Edit if you're only doing some of them this session.</>
-                : <>FabTrack uses time-per-piece to learn cycle rate for this part + operation.</>}
-            </p>
+            {/* Expected time based on previous rate */}
+            {expectedMins && expectedMins > 0 ? (
+              <div className="mt-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-[11px] flex items-center justify-between">
+                <span className="text-blue-400/70">Expected time for {qty} pcs</span>
+                <span className="text-blue-300 font-black tabular-nums">
+                  {expectedMins >= 60
+                    ? `${Math.floor(expectedMins / 60)}h ${Math.round(expectedMins % 60)}m`
+                    : `${Math.round(expectedMins)} min`}
+                </span>
+              </div>
+            ) : qty > 0 && !prevRate ? (
+              <p className="text-[10px] text-zinc-600 mt-1.5">FabTrack will learn this part's cycle rate after this session.</p>
+            ) : null}
           </div>
           <p className="text-zinc-500 text-xs">Working as <span className="text-white font-bold">{userName}</span></p>
         </div>
@@ -844,6 +875,124 @@ const SamplePricingCard: React.FC<{
   );
 };
 
+// ── Active timer card with live pace vs previous rate ────────────────
+const ActiveTimerCard: React.FC<{
+  sample: Sample;
+  allSamples: Sample[];
+  isPaused: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  onStop: () => void;
+  isStopping: boolean;
+}> = ({ sample, allSamples, isPaused, onPause, onResume, onStop, isStopping }) => {
+  const entry = sample.activeEntry!;
+
+  // Live elapsed time, recalculates every 10 s
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    const calc = () => {
+      if (entry.pausedAt) {
+        setElapsedMs(entry.pausedAt - entry.startTime - (entry.totalPausedMs || 0));
+      } else {
+        setElapsedMs(Date.now() - entry.startTime - (entry.totalPausedMs || 0));
+      }
+    };
+    calc();
+    const id = setInterval(calc, 10_000);
+    return () => clearInterval(id);
+  }, [entry.startTime, entry.pausedAt, entry.totalPausedMs]);
+
+  // Current pace: elapsed minutes / qty this session
+  const currentMinPerPc = entry.qty && entry.qty > 0
+    ? (elapsedMs / 60000) / entry.qty
+    : null;
+
+  // Previous rate for this operation across all samples
+  const prevRate = useMemo(
+    () => getPreviousOpRate(sample.partNumber, entry.operation, allSamples),
+    [sample.partNumber, entry.operation, allSamples],
+  );
+
+  // Pace status vs previous rate
+  let paceStatus: 'on-pace' | 'slow' | 'fast' | 'no-data' = 'no-data';
+  let pacePct = 0;
+  if (currentMinPerPc && prevRate) {
+    pacePct = ((currentMinPerPc - prevRate.minPerPc) / prevRate.minPerPc) * 100;
+    paceStatus = Math.abs(pacePct) < 10 ? 'on-pace' : pacePct > 0 ? 'slow' : 'fast';
+  }
+
+  const paceColor = paceStatus === 'on-pace' ? 'text-emerald-400' : paceStatus === 'slow' ? 'text-red-400' : paceStatus === 'fast' ? 'text-blue-400' : 'text-zinc-500';
+  const paceLabel = paceStatus === 'on-pace' ? '≈ On Pace' : paceStatus === 'slow' ? `▲ ${Math.round(pacePct)}% slower` : paceStatus === 'fast' ? `▼ ${Math.round(Math.abs(pacePct))}% faster` : '';
+
+  return (
+    <div className={`rounded-lg p-3 space-y-2 ${isPaused ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-green-500/10 border border-green-500/20'}`}>
+      {/* Top row: worker / qty / operation */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-zinc-300">{entry.userName}</span>
+          {entry.qty && entry.qty > 0 && (
+            <span className="text-[10px] text-purple-400 font-bold">{entry.qty} pcs</span>
+          )}
+        </div>
+        <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">{entry.operation}</span>
+      </div>
+
+      {/* Timer */}
+      <div className={`text-center text-xl ${isPaused ? 'text-yellow-400' : 'text-green-400'}`}>
+        <LiveTimer startTime={entry.startTime} pausedAt={entry.pausedAt} totalPausedMs={entry.totalPausedMs} />
+      </div>
+
+      {/* Live pace vs previous rate */}
+      {entry.qty && entry.qty > 0 && (
+        <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+          <div className="bg-black/30 rounded-lg p-2 text-center">
+            <div className="text-zinc-500 mb-0.5">Current pace</div>
+            <div className="text-white font-black tabular-nums">
+              {currentMinPerPc ? `${currentMinPerPc.toFixed(2)} min/pc` : '—'}
+            </div>
+          </div>
+          <div className="bg-black/30 rounded-lg p-2 text-center">
+            <div className="text-zinc-500 mb-0.5">Target</div>
+            <div className={`font-black tabular-nums ${prevRate ? 'text-amber-400' : 'text-zinc-600'}`}>
+              {prevRate ? `${prevRate.minPerPc.toFixed(2)} min/pc` : 'No data yet'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pace badge */}
+      {paceStatus !== 'no-data' && (
+        <div className={`text-center text-[11px] font-black ${paceColor}`}>
+          {paceStatus === 'on-pace' ? '✓' : paceStatus === 'slow' ? '⚠' : '⚡'} {paceLabel} vs {prevRate!.totalPieces} pcs of history
+        </div>
+      )}
+
+      <div className="text-center text-[10px] text-zinc-500">
+        Started {fmtTime(entry.startTime)}
+      </div>
+
+      {/* Controls */}
+      <div className="flex gap-2">
+        {isPaused ? (
+          <button onClick={onResume}
+            className="flex-1 text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-lg hover:bg-green-500/20 font-bold flex items-center justify-center gap-1">
+            <Play className="w-3 h-3" /> Resume
+          </button>
+        ) : (
+          <button onClick={onPause}
+            className="flex-1 text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1.5 rounded-lg hover:bg-yellow-500/20 font-bold flex items-center justify-center gap-1">
+            <Pause className="w-3 h-3" /> Pause
+          </button>
+        )}
+        <button onClick={onStop} disabled={isStopping}
+          className="flex-1 text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 font-bold flex items-center justify-center gap-1 disabled:opacity-50">
+          <Square className="w-3 h-3" /> {isStopping ? 'Stopping...' : 'Stop'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ── MAIN SAMPLES VIEW ───────────────────────────────────────────
 interface SamplesViewProps {
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
@@ -1195,6 +1344,17 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
 
                             {/* Active work display */}
                             {isActive && s.activeEntry && (
+                              <ActiveTimerCard
+                                sample={s}
+                                allSamples={samples}
+                                isPaused={isPaused}
+                                onPause={() => handlePause(s.id)}
+                                onResume={() => handleResume(s.id)}
+                                onStop={() => handleStopWork(s.id)}
+                                isStopping={isStopping}
+                              />
+                            )}
+                            {isActive && s.activeEntry && false && ( // dead code — replaced by ActiveTimerCard above
                               <div className={`rounded-lg p-3 space-y-2 ${isPaused ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-green-500/10 border border-green-500/20'}`}>
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
@@ -1283,6 +1443,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
       {startWorkSample && (
         <StartWorkModal
           sample={startWorkSample}
+          allSamples={samples}
           operations={ops}
           userName={currentUser?.name || 'Admin'}
           initialOperation={nextOp || undefined}
