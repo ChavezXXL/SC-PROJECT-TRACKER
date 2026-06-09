@@ -4329,6 +4329,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); };
   }, []);
 
+  // ── Live clock — forces re-render every 30 s so active-job elapsed times stay fresh.
+  const [, setLiveTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setLiveTick(t => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── All clients — settings list PLUS every unique customer name ever used on a job.
   // This is the fix for "clients not showing in dropdown" — historically entered
   // customer names that weren't explicitly added to Settings → Clients were invisible.
@@ -5247,6 +5254,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               }, 0);
               const overheadCost = totalHrs * overheadRate;
               const totalCost = laborCost + overheadCost;
+
+              // ── Live elapsed from currently-open logs (ticks every 30 s) ──────────
+              const jobActiveLogs = activeLogs.filter(l => l.jobId === j.id);
+              const nowMs = Date.now();
+              const activeElapsedMins = jobActiveLogs.reduce((acc, l) => {
+                const elapsed = ((l.pausedAt ?? nowMs) - l.startTime - (l.totalPausedMs || 0));
+                return acc + Math.max(0, elapsed) / 60_000;
+              }, 0);
+              const liveTotalMins = totalMins + activeElapsedMins;
+              const liveTotalHrs  = liveTotalMins / 60;
+              const activeLaborCost = jobActiveLogs.reduce((acc, l) => {
+                const wk = workers.find(w => w.id === l.userId);
+                const r  = wk?.hourlyRate || fallbackRate;
+                const elapsed = Math.max(0, (l.pausedAt ?? nowMs) - l.startTime - (l.totalPausedMs || 0));
+                return acc + (elapsed / 3_600_000) * r;
+              }, 0);
+              const liveTotalCost = totalCost + activeLaborCost;
+              const isLive = jobActiveLogs.length > 0 && j.status !== 'completed';
+
               const hasQuote = (j.quoteAmount || 0) > 0;
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
@@ -5344,6 +5370,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             {l.userName.split(' ')[0]}
                           </span>
                         ))}
+                        {/* Live elapsed time + running cost — shown whenever ≥1 worker is clocked in */}
+                        {isLive && (() => {
+                          const h = Math.floor(liveTotalMins / 60);
+                          const m = Math.floor(liveTotalMins % 60);
+                          const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                          return (
+                            <span
+                              className="flex items-center gap-1 text-[10px] font-bold text-orange-300 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded-full"
+                              title={`Live: ${timeStr} elapsed · $${liveTotalCost.toFixed(2)} running cost`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse shrink-0" />
+                              {timeStr}{liveTotalCost > 0 ? ` · $${liveTotalCost.toFixed(0)}` : ''}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
                       {/* Below sm (< 640px): Qty + Customer + Part Details columns are
@@ -5379,17 +5420,17 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                               📎 {j.attachments!.length}
                             </span>
                           )}
-                          {(j.expectedHours || 0) > 0 && totalHrs > 0 && (() => {
-                            const ratio = totalHrs / j.expectedHours!;
+                          {(j.expectedHours || 0) > 0 && liveTotalHrs > 0 && (() => {
+                            const ratio = liveTotalHrs / j.expectedHours!;
                             const state = ratio > 1.1 ? 'over' : ratio > 0.9 ? 'near' : 'under';
                             const cls = state === 'over' ? 'text-red-400 bg-red-500/10 border-red-500/20' : state === 'near' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
                             return (
-                              <span className={`text-[9px] font-bold border px-1.5 py-0.5 rounded tabular ${cls}`} title={`Budget: ${j.expectedHours}h · Actual: ${totalHrs.toFixed(1)}h`}>
-                                ⏱ {totalHrs.toFixed(1)}/{j.expectedHours}h
+                              <span className={`text-[9px] font-bold border px-1.5 py-0.5 rounded tabular ${cls}`} title={`Budget: ${j.expectedHours}h · ${isLive ? 'Live' : 'Actual'}: ${liveTotalHrs.toFixed(1)}h`}>
+                                ⏱ {liveTotalHrs.toFixed(1)}/{j.expectedHours}h{isLive ? ' 🔴' : ''}
                               </span>
                             );
                           })()}
-                          {(j.expectedHours || 0) > 0 && totalHrs === 0 && (
+                          {(j.expectedHours || 0) > 0 && liveTotalHrs === 0 && (
                             <span className="text-[9px] font-bold text-zinc-500 bg-zinc-800/60 border border-white/5 px-1.5 py-0.5 rounded tabular" title={`Budgeted ${j.expectedHours}h`}>
                               ⏱ {j.expectedHours}h budget
                             </span>
