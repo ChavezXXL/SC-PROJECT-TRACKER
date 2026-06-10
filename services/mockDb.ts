@@ -124,6 +124,17 @@ export function saveFirebaseConfig(cfg: any) {
 // --------------------
 // FIREBASE STORAGE - Photo Upload
 // --------------------
+/** Race a promise against a hard timeout — Firebase Storage retries with
+ *  exponential backoff for MINUTES on flaky networks, which left the sample
+ *  modal stuck on "Uploading Photo…" with Save disabled. Fail fast instead;
+ *  callers fall back to base64 and the save goes through normally. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms)),
+  ]);
+}
+
 export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Promise<string> {
   // NOTE: We attempt Firebase Storage upload regardless of dbInstance state.
   // getStorage() uses the Firebase app singleton — it works as long as the
@@ -132,8 +143,8 @@ export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Pr
     const storage = getStorage();
     const path = `sample-photos/${sampleId}_${Date.now()}.jpg`;
     const ref = storageRef(storage, path);
-    await uploadBytes(ref, file, { contentType: 'image/jpeg' });
-    return await getDownloadURL(ref);
+    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 15_000, 'Storage upload');
+    return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
   } catch (e) {
     throw new Error('Storage upload failed: ' + (e as any)?.message);
   }

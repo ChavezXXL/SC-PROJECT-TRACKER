@@ -34,7 +34,16 @@ export function initFirebaseFromLocalStorage() {
       try {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.apiKey) {
-          config = parsed;
+          // Same project as the baked-in default → the default ALWAYS wins.
+          // A stale saved copy (e.g. old "appspot.com" storageBucket) breaks
+          // Storage uploads on that one device — the classic "works on my
+          // phone, fails on the other admin's" bug. Heal the stored copy too.
+          if (parsed.projectId === defaultConfig.projectId) {
+            config = defaultConfig;
+            try { localStorage.setItem(STORAGE_KEY_FB, JSON.stringify(defaultConfig)); } catch {}
+          } else {
+            config = parsed;
+          }
         }
       } catch {}
     }

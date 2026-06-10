@@ -18,6 +18,7 @@ import {
   Clock,
   History,
   ArrowRight,
+  AlertTriangle,
 } from 'lucide-react';
 
 import { Sample, SampleWorkEntry } from './types';
@@ -480,12 +481,14 @@ const SampleModal = ({
   const [photoPreview, setPhotoPreview] = useState<string>(sample?.photoUrl || '');
   const [saving, setSaving] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoError, setPhotoError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
   const handlePhoto = async (file: File) => {
-    if (!file.type.startsWith('image/')) return;
+    if (!file.type.startsWith('image/')) { setPhotoError('That file is not an image — pick a photo.'); return; }
     setPhotoUploading(true);
+    setPhotoError('');
     try {
       // Full-res preview for display (1200px, 85% — looks great on screen)
       const previewUrl = await compressImage(file, 1200, 0.85);
@@ -507,10 +510,15 @@ const SampleModal = ({
         console.warn('Storage upload failed, falling back to base64:', uploadErr);
         // Fallback: store the small compressed base64 directly in Firestore.
         // At 600px/65% this is ~30-80 KB — safely under Firestore's 1 MB limit.
+        // The photo still saves and syncs — no user-facing failure.
         setForm(f => ({ ...f, photoUrl: smallUrl }));
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      // compressImage failed — unreadable/corrupt image (some HEIC variants,
+      // zero-byte camera captures). Tell the user instead of silently doing nothing.
+      console.warn('Photo processing failed:', e);
+      setPhotoPreview('');
+      setPhotoError("Couldn't read that photo — retake it or choose a different image.");
     } finally {
       setPhotoUploading(false);
     }
@@ -585,8 +593,13 @@ const SampleModal = ({
                 </button>
               </div>
             )}
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => e.target.files?.[0] && handlePhoto(e.target.files[0])} />
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && handlePhoto(e.target.files[0])} />
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handlePhoto(f); e.target.value = ''; }} />
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handlePhoto(f); e.target.value = ''; }} />
+            {photoError && (
+              <p className="text-[11px] text-red-400 font-semibold mt-1.5 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> {photoError}
+              </p>
+            )}
           </div>
           {/* Company Name */}
           <div>
@@ -1041,8 +1054,10 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
       addToast('success', 'Sample saved');
       setShowModal(false);
       setEditingSample(null);
-    } catch {
-      addToast('error', 'Failed to save sample');
+    } catch (e: any) {
+      // Surface the real reason — "Failed to save sample" alone makes
+      // remote debugging (e.g. the other admin's device) impossible.
+      addToast('error', `Failed to save sample${e?.message ? ` — ${e.message}` : ''}`);
     }
   };
 
