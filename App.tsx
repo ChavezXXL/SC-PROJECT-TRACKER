@@ -4477,6 +4477,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+  // Which job row has its inline time-breakdown panel open (⏱ chip click)
+  const [timeBreakdownJobId, setTimeBreakdownJobId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const { prompt: promptInput, PromptHost: JobCompletePromptHost } = usePrompt();
   const modalBodyRef = useRef<HTMLDivElement>(null);
@@ -5594,7 +5596,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {user.role === 'admin' && j.customer ? <> · {j.customer}</> : null}
                       </span>
                       {/* Jobs R1 badges: checklist progress + attachments + time budget */}
-                      {((j.checklist?.length || 0) > 0 || (j.attachments?.length || 0) > 0 || (j.expectedHours || 0) > 0) && (
+                      {((j.checklist?.length || 0) > 0 || (j.attachments?.length || 0) > 0 || (j.expectedHours || 0) > 0 || liveTotalHrs > 0) && (
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                           {(j.checklist?.length || 0) > 0 && (() => {
                             const total = j.checklist!.length;
@@ -5611,14 +5613,22 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                               📎 {j.attachments!.length}
                             </span>
                           )}
-                          {(j.expectedHours || 0) > 0 && liveTotalHrs > 0 && (() => {
-                            const ratio = liveTotalHrs / j.expectedHours!;
-                            const state = ratio > 1.1 ? 'over' : ratio > 0.9 ? 'near' : 'under';
-                            const cls = state === 'over' ? 'text-red-400 bg-red-500/10 border-red-500/20' : state === 'near' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+                          {liveTotalHrs > 0 && (() => {
+                            // Clickable ⏱ chip — expands an inline per-op / per-worker
+                            // time breakdown so you never have to dig through Logs.
+                            const hasBudget = (j.expectedHours || 0) > 0;
+                            const ratio = hasBudget ? liveTotalHrs / j.expectedHours! : 0;
+                            const state = !hasBudget ? 'plain' : ratio > 1.1 ? 'over' : ratio > 0.9 ? 'near' : 'under';
+                            const cls = state === 'over' ? 'text-red-400 bg-red-500/10 border-red-500/20' : state === 'near' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : state === 'under' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20';
+                            const isOpen = timeBreakdownJobId === j.id;
                             return (
-                              <span className={`text-[9px] font-bold border px-1.5 py-0.5 rounded tabular ${cls}`} title={`Budget: ${j.expectedHours}h · ${isLive ? 'Live' : 'Actual'}: ${liveTotalHrs.toFixed(1)}h`}>
-                                ⏱ {liveTotalHrs.toFixed(1)}/{j.expectedHours}h{isLive ? ' 🔴' : ''}
-                              </span>
+                              <button
+                                onClick={e => { e.stopPropagation(); setTimeBreakdownJobId(isOpen ? null : j.id); }}
+                                className={`text-[9px] font-bold border px-1.5 py-0.5 rounded tabular cursor-pointer hover:brightness-125 transition-all ${cls}`}
+                                title={`${hasBudget ? `Budget: ${j.expectedHours}h · ` : ''}${isLive ? 'Live' : 'Actual'}: ${liveTotalHrs.toFixed(1)}h — click for breakdown`}
+                              >
+                                ⏱ {liveTotalHrs.toFixed(1)}{hasBudget ? `/${j.expectedHours}h` : 'h'}{isLive ? ' 🔴' : ''} {isOpen ? '▴' : '▾'}
+                              </button>
                             );
                           })()}
                           {(j.expectedHours || 0) > 0 && liveTotalHrs === 0 && (
@@ -5628,6 +5638,70 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           )}
                         </div>
                       )}
+                      {/* ── Inline time breakdown — per operation + per worker, live included ── */}
+                      {timeBreakdownJobId === j.id && (() => {
+                        const fmtT = (mins: number) => {
+                          const h = Math.floor(mins / 60), m = Math.round(mins % 60);
+                          return h > 0 ? `${h}h ${m}m` : `${m}m`;
+                        };
+                        // Pool completed + live sessions by operation and by worker
+                        const byOp = new Map<string, { mins: number; live: boolean }>();
+                        const byWorker = new Map<string, { mins: number; live: boolean }>();
+                        const addTo = (map: Map<string, { mins: number; live: boolean }>, key: string, mins: number, live: boolean) => {
+                          const e = map.get(key) || { mins: 0, live: false };
+                          e.mins += mins; e.live = e.live || live;
+                          map.set(key, e);
+                        };
+                        jobLogs.forEach(l => {
+                          const m = logMins2(l);
+                          if (m <= 0) return;
+                          addTo(byOp, l.operation || 'No operation', m, false);
+                          addTo(byWorker, l.userName || 'Unknown', m, false);
+                        });
+                        jobActiveLogs.forEach(l => {
+                          const m = Math.max(0, ((l.pausedAt ?? nowMs) - l.startTime - (l.totalPausedMs || 0))) / 60_000;
+                          addTo(byOp, l.operation || 'No operation', m, true);
+                          addTo(byWorker, l.userName || 'Unknown', m, true);
+                        });
+                        const ops = [...byOp.entries()].sort((a, b) => b[1].mins - a[1].mins);
+                        const wks = [...byWorker.entries()].sort((a, b) => b[1].mins - a[1].mins);
+                        const sessions = jobLogs.length + jobActiveLogs.length;
+                        return (
+                          <div
+                            className="mt-1.5 bg-zinc-900/90 border border-cyan-500/20 rounded-xl p-3 max-w-[340px] space-y-2.5"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest">Time Worked</span>
+                              <span className="text-[10px] font-mono text-zinc-500 tabular">{fmtT(liveTotalMins)} · {sessions} session{sessions !== 1 ? 's' : ''}</span>
+                            </div>
+                            <div>
+                              <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider mb-1">By Operation</p>
+                              {ops.map(([op, v]) => (
+                                <div key={op} className="flex items-center justify-between gap-3 py-0.5">
+                                  <span className="text-[11px] text-zinc-300 truncate flex items-center gap-1.5">
+                                    {v.live && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />}
+                                    {op}
+                                  </span>
+                                  <span className="text-[11px] font-bold text-white font-mono tabular shrink-0">{fmtT(v.mins)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="pt-2 border-t border-white/5">
+                              <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider mb-1">By Worker</p>
+                              {wks.map(([name, v]) => (
+                                <div key={name} className="flex items-center justify-between gap-3 py-0.5">
+                                  <span className="text-[11px] text-zinc-300 truncate flex items-center gap-1.5">
+                                    {v.live && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />}
+                                    {name}
+                                  </span>
+                                  <span className="text-[11px] font-bold text-white font-mono tabular shrink-0">{fmtT(v.mins)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {/* Inline notes preview — shows most recent non-empty note with count badge */}
                       {j.jobNotes && j.jobNotes.length > 0 && (() => {
                         const latest = [...j.jobNotes].filter(n => n && n.text?.trim()).sort((a, b) => b.timestamp - a.timestamp)[0];
