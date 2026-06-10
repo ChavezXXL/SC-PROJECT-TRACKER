@@ -6,10 +6,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Columns3, Search, ArrowRight, GripVertical, Settings as SettingsIcon } from 'lucide-react';
 
-import { Job, SystemSettings } from '../types';
+import { Job, SystemSettings, TimeLog, User, PurchaseOrder } from '../types';
 import * as DB from '../services/mockDb';
 import { dateNum, todayFmt } from '../utils/date';
 import { uniqueCustomers } from '../utils/customers';
+import { calcJobProfit, buildProfitSnapshot } from '../utils/jobProfit';
 import { getStages, getJobStage, getNextStage, useIsMobile } from '../App';
 
 // --- ADMIN: JOB FLOW BOARD (Kanban) ---
@@ -22,12 +23,19 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
   const [completedWindow, setCompletedWindow] = useState<'7' | '30' | '90' | 'all'>('7');
   const [filterCustomer, setFilterCustomer] = useState<string>('all');
   const [filterPriority, setFilterPriority] = useState<string>('all');
+  // Needed to lock a profit snapshot when a job is dragged into a completed column
+  const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
+  const [workers, setWorkers] = useState<User[]>([]);
+  const [allPOs, setAllPOs] = useState<PurchaseOrder[]>([]);
   const isMobile = useIsMobile();
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
     const u2 = DB.subscribeSettings(setShopSettings);
-    return () => { u1(); u2(); };
+    const u3 = DB.subscribeLogs(l => setAllLogs(l.filter(x => x.endTime)));
+    const u4 = DB.subscribeUsers(setWorkers);
+    const u5 = DB.subscribePurchaseOrders(setAllPOs);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
   const stages = getStages(shopSettings);
@@ -107,6 +115,19 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
     if (current.id === target.id) return;
     try {
       await DB.advanceJobStage(jobId, target.id, user.id, user.name, !!target.isComplete);
+      // Auto-lock a profit snapshot when dragged into a completed column —
+      // mirrors handleCompleteWithSnapshot in JobsView so board-completed jobs
+      // get the same margin grade instead of silently skipping it.
+      if (target.isComplete && !job.profitSnapshot) {
+        try {
+          const breakdown = calcJobProfit(job, allLogs, workers, shopSettings, allPOs);
+          const snapshot = buildProfitSnapshot(breakdown);
+          await DB.completeJobWithSnapshot(job.id, job.materialCost ?? 0, snapshot);
+          const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin' : breakdown.grade === 'good' ? '🔵 Good' : breakdown.grade === 'tight' ? '🟡 Tight' : '🔴 Loss';
+          addToast('success', `${job.poNumber} → ${target.label} — ${gradeMsg}`);
+          return;
+        } catch { /* stage move already succeeded — snapshot is best-effort */ }
+      }
       addToast('success', `${job.poNumber} → ${target.label}`);
     } catch {
       addToast('error', 'Failed to move job');

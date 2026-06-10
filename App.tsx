@@ -127,11 +127,11 @@ const saveNotifiedTags = (set: Set<string>) => {
   } catch {}
 };
 
-const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
+const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any, fullLogs: TimeLog[] = []) => {
   const [permission, setPermission] = useState<NotificationPermission>(
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
-  const [alerts, setAlerts] = useState<Array<{id:string; type:'overdue'|'due-soon'|'urgent'|'long-timer'|'new-urgent'|'clock-in'|'clock-out'; title:string; body:string; time:number; read:boolean}>>([]);
+  const [alerts, setAlerts] = useState<Array<{id:string; type:'overdue'|'due-soon'|'urgent'|'long-timer'|'new-urgent'|'clock-in'|'clock-out'|'over-budget'|'dead-job'; title:string; body:string; time:number; read:boolean}>>([]);
   // Persist notified tags across page refreshes so we don't re-fire on reload
   const notifiedRef = useRef<Set<string>>(loadNotifiedTags());
   // Track previous active logs to diff clock-in / clock-out events
@@ -283,6 +283,70 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
         });
       }
 
+      // ── Budget watch — push alert at 90% and 100% of expectedHours ──────
+      // Only fires while a worker is actually clocked in (live hours include
+      // the running session). Admin only — workers see the on-screen banner.
+      if (user?.role === 'admin') {
+        const nowMs = Date.now();
+        const logMins = (l: TimeLog) => l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
+        const completedMins = new Map<string, number>();
+        fullLogs.forEach(l => {
+          if (!l.endTime || l.isSample) return;
+          completedMins.set(l.jobId, (completedMins.get(l.jobId) || 0) + logMins(l));
+        });
+        activeJobs.filter(j => (j.expectedHours || 0) > 0).forEach(j => {
+          const live = activeLogs.filter(l => l.jobId === j.id);
+          if (live.length === 0) return; // nobody on it — nothing burning
+          const liveMins = live.reduce((a, l) => a + Math.max(0, ((l.pausedAt ?? nowMs) - l.startTime - (l.totalPausedMs || 0))) / 60000, 0);
+          const totalHrs = ((completedMins.get(j.id) || 0) + liveMins) / 60;
+          const pct = totalHrs / j.expectedHours!;
+          if (pct >= 1) {
+            const tag = `budget100-${j.id}`;
+            if (!notifiedRef.current.has(tag)) {
+              addTag(tag);
+              fire('over-budget', '🔴 Job Over Budget', `PO ${j.poNumber} — ${totalHrs.toFixed(1)}h of ${j.expectedHours}h used, worker still clocked in`, tag);
+            }
+          } else if (pct >= 0.9) {
+            const tag = `budget90-${j.id}`;
+            if (!notifiedRef.current.has(tag)) {
+              addTag(tag);
+              const minsLeft = Math.max(0, Math.round((j.expectedHours! - totalHrs) * 60));
+              fire('over-budget', '⚠️ Approaching Budget', `PO ${j.poNumber} — 90% of ${j.expectedHours}h used, ~${minsLeft} min left`, tag);
+            }
+          }
+        });
+      }
+
+      // ── Dead job watch — started, then went silent for 4+ work hours ────
+      // Catches forgotten/blocked jobs: status in-progress, has prior logged
+      // work, nobody clocked in, and the last session ended over 4h ago.
+      // Only fires during working hours (7am–6pm, Mon–Sat), once per day.
+      if (user?.role === 'admin') {
+        const now = new Date();
+        const hr = now.getHours();
+        const dow = now.getDay(); // 0 = Sunday
+        if (hr >= 7 && hr < 18 && dow !== 0) {
+          const lastEnd = new Map<string, number>();
+          fullLogs.forEach(l => {
+            if (!l.endTime || l.isSample) return;
+            if (l.endTime > (lastEnd.get(l.jobId) || 0)) lastEnd.set(l.jobId, l.endTime);
+          });
+          const liveJobIds = new Set(activeLogs.map(l => l.jobId));
+          activeJobs.filter(j => j.status === 'in-progress').forEach(j => {
+            if (liveJobIds.has(j.id)) return;          // someone's on it
+            const last = lastEnd.get(j.id);
+            if (!last) return;                          // never started — not "dead"
+            if (Date.now() - last < 4 * 3600000) return;
+            const tag = `deadjob-${j.id}-${today}`;
+            if (!notifiedRef.current.has(tag)) {
+              addTag(tag);
+              const hrsAgo = ((Date.now() - last) / 3600000).toFixed(1);
+              fire('dead-job', '💀 Job Stalled', `PO ${j.poNumber} — in progress but no work logged for ${hrsAgo}h`, tag);
+            }
+          });
+        }
+      }
+
       // Persist to localStorage so page refreshes don't re-fire
       if (changed) saveNotifiedTags(notifiedRef.current);
     };
@@ -290,7 +354,7 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any) => {
     check(); // run immediately
     const interval = setInterval(check, 60000);
     return () => clearInterval(interval);
-  }, [jobs, activeLogs, fire, user?.role]);
+  }, [jobs, activeLogs, fullLogs, fire, user?.role]);
 
   // ── Clock-in / Clock-out — diff activeLogs on every change (admin only) ──
   //
@@ -389,6 +453,8 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
     if (type === 'long-timer') return { Icon: Activity, color: '#facc15', tint: 'bg-yellow-500/10' };
     if (type === 'clock-in')  return { Icon: Play,          color: '#34d399', tint: 'bg-emerald-500/10' };
     if (type === 'clock-out') return { Icon: StopCircle,    color: '#f87171', tint: 'bg-red-500/10'     };
+    if (type === 'over-budget') return { Icon: DollarSign,  color: '#f87171', tint: 'bg-red-500/10'     };
+    if (type === 'dead-job')    return { Icon: AlertTriangle, color: '#a1a1aa', tint: 'bg-zinc-500/10'  };
     return { Icon: Bell, color: '#60a5fa', tint: 'bg-blue-500/10' };
   };
 
@@ -7169,7 +7235,7 @@ export default function App() {
   const [allFullLogs, setAllFullLogs] = useState<TimeLog[]>([]);
   // Command palette — global Cmd+K / Ctrl+K
   const [paletteOpen, setPaletteOpen] = useCommandPalette();
-  const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user);
+  const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user, allFullLogs);
 
   // Subscribe globally for notification checks + settings
   useEffect(() => {
