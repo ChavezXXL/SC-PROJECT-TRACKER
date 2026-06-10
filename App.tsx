@@ -2509,6 +2509,32 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     [jobs, allLogs, dashWorkers, shopSettings, dashAllPOs],
   );
 
+  // ── Today's Attack Plan — ranked "run these in this order" queue ──────────
+  // Risk level first (critical → at-risk → watch), then earliest due date,
+  // then priority. The answer to "what should the floor be doing right now?"
+  const attackPlan = useMemo(() => {
+    const open = jobs.filter(j => j.status !== 'completed' && j.status !== 'hold');
+    const etaMap = new Map<string, ReturnType<typeof computeJobETA>>();
+    for (const job of open) {
+      const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+      etaMap.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
+    }
+    const riskScore: Record<string, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
+    const prioScore: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+    const ranked = open
+      .map(j => ({ job: j, eta: etaMap.get(j.id)! }))
+      .sort((a, b) => {
+        const r = (riskScore[a.eta.riskLevel] ?? 4) - (riskScore[b.eta.riskLevel] ?? 4);
+        if (r !== 0) return r;
+        const ad = a.job.dueDate ? dateNum(a.job.dueDate) : 99991231;
+        const bd = b.job.dueDate ? dateNum(b.job.dueDate) : 99991231;
+        if (ad !== bd) return ad - bd;
+        return (prioScore[a.job.priority || 'normal'] ?? 2) - (prioScore[b.job.priority || 'normal'] ?? 2);
+      });
+    const totalRemaining = [...etaMap.values()].reduce((a, e) => a + (e.remainingHours ?? 0), 0);
+    return { ranked: ranked.slice(0, 6), totalCount: open.length, totalRemaining };
+  }, [jobs, allLogs, activeLogs]);
+
   // ── Recent Activity Feed — chronological cross-module event log (72h window)
   const recentActivity = useMemo(() => {
     const WINDOW = 72 * 3600 * 1000;
@@ -2794,6 +2820,67 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         );
       })()}
+
+      {/* ⚡ TODAY'S ATTACK PLAN — ranked run-order for the floor */}
+      {attackPlan.ranked.length > 0 && (
+        <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-orange-500/15 border border-orange-500/30 flex items-center justify-center shrink-0">
+                <Zap className="w-4 h-4 text-orange-400" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-black text-white tracking-tight">Today's Attack Plan</p>
+                <p className="text-[11px] text-zinc-500 truncate">
+                  Run these in this order · {attackPlan.totalCount} open job{attackPlan.totalCount !== 1 ? 's' : ''}
+                  {attackPlan.totalRemaining > 0 && <> · ~{attackPlan.totalRemaining.toFixed(0)}h of estimated work queued</>}
+                </p>
+              </div>
+            </div>
+            <button onClick={() => setView('admin-jobs')} className="shrink-0 text-[11px] font-bold text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
+              All jobs <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="divide-y divide-white/5">
+            {attackPlan.ranked.map(({ job: j, eta }, i) => {
+              const c = RISK_COLORS[eta.riskLevel];
+              const liveNames = activeLogs.filter(l => l.jobId === j.id).map(l => l.userName.split(' ')[0]);
+              return (
+                <button
+                  key={j.id}
+                  onClick={() => setView('admin-jobs')}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-white/[0.03] transition-colors text-left"
+                >
+                  <span className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[12px] font-black tabular ${i === 0 ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40' : 'bg-zinc-800/80 text-zinc-400 border border-white/5'}`}>
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[13px] font-black text-white truncate">{j.poNumber}</span>
+                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${c.bg} ${c.border} ${c.text}`}>{c.label.toUpperCase()}</span>
+                      {liveNames.length > 0 && (
+                        <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          {liveNames.join(', ')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-500 truncate mt-0.5">
+                      {j.partNumber}{j.customer ? ` · ${j.customer}` : ''} — {eta.riskReason}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    {eta.remainingHours !== null && (
+                      <p className="text-[12px] font-black text-white tabular">{eta.remainingHours.toFixed(1)}h<span className="text-zinc-600 font-bold text-[10px]"> left</span></p>
+                    )}
+                    {j.dueDate && <p className="text-[10px] text-zinc-500 font-mono tabular">{j.dueDate.slice(0, 5)}</p>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4">
         {/* Live Activity */}
@@ -5441,13 +5528,26 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           const h = Math.floor(liveTotalMins / 60);
                           const m = Math.floor(liveTotalMins % 60);
                           const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                          // Wall-clock finish prediction: remaining estimate ÷ workers on it.
+                          // Paused workers don't burn the clock, so count running ones only.
+                          let finishStr = '';
+                          if ((j.expectedHours || 0) > 0) {
+                            const remainHrs = j.expectedHours! - liveTotalHrs;
+                            if (remainHrs > 0) {
+                              const runningCount = Math.max(1, jobActiveLogs.filter(l => !l.pausedAt).length);
+                              const finishAt = new Date(nowMs + (remainHrs / runningCount) * 3_600_000);
+                              const sameDay = finishAt.getDate() === new Date(nowMs).getDate();
+                              const t = finishAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                              finishStr = sameDay ? ` → ~${t}` : ` → ${finishAt.toLocaleDateString([], { month: 'numeric', day: 'numeric' })} ${t}`;
+                            }
+                          }
                           return (
                             <span
                               className="flex items-center gap-1 text-[10px] font-bold text-orange-300 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded-full"
-                              title={`Live: ${timeStr} elapsed · $${liveTotalCost.toFixed(2)} running cost`}
+                              title={`Live: ${timeStr} elapsed · $${liveTotalCost.toFixed(2)} running cost${finishStr ? ` · estimated finish${finishStr.replace(' → ', ': ')}` : ''}`}
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse shrink-0" />
-                              {timeStr}{liveTotalCost > 0 ? ` · $${liveTotalCost.toFixed(0)}` : ''}
+                              {timeStr}{liveTotalCost > 0 ? ` · $${liveTotalCost.toFixed(0)}` : ''}{finishStr}
                             </span>
                           );
                         })()}
