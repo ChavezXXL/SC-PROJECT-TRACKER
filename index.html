@@ -18,10 +18,9 @@
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-        <!-- Tesseract.js — self-hosted browser bundle, no Vite bundling issues -->
-        <script src="/tesseract.min.js"></script>
-        <!-- PDF.js — renders PDF pages to canvas for OCR, and extracts embedded text -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+        <!-- Tesseract.js + PDF.js are now lazy-loaded by services/poScanner.ts
+             on first scan — they were ~400KB of parse-blocking JS on every
+             page load for a feature used a few times a week. -->
         <script src="https://cdn.tailwindcss.com"></script>
         <script>
                 tailwind.config = {
@@ -472,9 +471,11 @@
         </style>
         <!-- Import map removed — Vite handles module resolution -->
         <link rel="stylesheet" href="/index.css">
-        <!-- Google Calendar Integration -->
-        <script src="https://apis.google.com/js/api.js"></script>
-        <script src="https://accounts.google.com/gsi/client"></script>
+        <!-- Google Calendar Integration — async: only needed when the user
+             clicks "Add to Calendar", and __requestCalendarAccess already
+             guards against the libs not being ready yet. -->
+        <script src="https://apis.google.com/js/api.js" async defer></script>
+        <script src="https://accounts.google.com/gsi/client" async defer></script>
         <script>
                 window.__GCAL_CLIENT_ID = '29160179130-j9ifloafat4v2u50f9m15niis85dot58.apps.googleusercontent.com';
                 window.__gcalTokenClient = null;

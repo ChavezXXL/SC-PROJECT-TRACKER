@@ -19,6 +19,40 @@ export interface ScanResult {
   fieldSources: Record<string, string>; // field → matched text snippet
 }
 
+// ── Lazy script loading ───────────────────────────────────────────────────────
+// Tesseract.js + PDF.js used to be parse-blocking <script> tags in index.html —
+// ~400KB of JS delaying EVERY app start for a feature used a few times a week.
+// Now injected on first scan only; cached for the rest of the session.
+
+const scriptPromises = new Map<string, Promise<void>>();
+
+function loadScript(src: string): Promise<void> {
+  let p = scriptPromises.get(src);
+  if (!p) {
+    p = new Promise<void>((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => {
+        scriptPromises.delete(src); // allow retry on next scan
+        reject(new Error(`Failed to load ${src} — check your connection and try again.`));
+      };
+      document.head.appendChild(s);
+    });
+    scriptPromises.set(src, p);
+  }
+  return p;
+}
+
+/** Make sure window.Tesseract and window.pdfjsLib exist before scanning. */
+async function ensureOcrLibs(): Promise<void> {
+  const tasks: Promise<void>[] = [];
+  if (!(window as any).Tesseract) tasks.push(loadScript('/tesseract.min.js'));
+  if (!(window as any).pdfjsLib) tasks.push(loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'));
+  if (tasks.length) await Promise.all(tasks);
+}
+
 // ── Field extraction helpers ──────────────────────────────────────────────────
 
 /** Normalise a date string to YYYY-MM-DD or return undefined */
@@ -524,6 +558,10 @@ export async function scanDocument(
   file: File,
   onProgress?: (pct: number, status: string) => void,
 ): Promise<ScanResult> {
+  // Load the OCR libs on demand — first scan pays ~1s, every page load saves it.
+  onProgress?.(2, 'Loading scanner…');
+  await ensureOcrLibs();
+
   const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
   if (isPdf) {

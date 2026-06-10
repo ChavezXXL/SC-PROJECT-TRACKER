@@ -1,4 +1,7 @@
-import { getFirestore, Firestore, collection, getDocs, query, limit } from "firebase/firestore";
+import {
+  getFirestore, Firestore, collection, getDocs, query, limit,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+} from "firebase/firestore";
 import * as firebaseApp from "firebase/app";
 
 const STORAGE_KEY_FB = 'nexus_firebase_config';
@@ -60,8 +63,22 @@ export function initFirebaseFromLocalStorage() {
     }
 
     try {
-      cachedDb = getFirestore(app);
-      console.log("Firebase Firestore Client Retrieved");
+      // Persistent IndexedDB cache — THE startup-speed fix. Snapshots resolve
+      // instantly from disk while the server sync happens in the background,
+      // instead of every launch waiting on the network for the full dataset.
+      // Multi-tab manager keeps the cache consistent across open tabs/PWA.
+      try {
+        cachedDb = initializeFirestore(app, {
+          localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+        });
+        console.log("Firebase Firestore Client Retrieved (persistent cache)");
+      } catch {
+        // Already initialized (HMR/double-init) or persistence unavailable
+        // (private browsing, ancient browser) → fall back to the default
+        // memory-cache instance. Everything still works, just network-bound.
+        cachedDb = getFirestore(app);
+        console.log("Firebase Firestore Client Retrieved (memory cache)");
+      }
       return { ok: true, db: cachedDb };
     } catch (innerErr) {
       console.warn("Firestore init failed.", innerErr.message);
