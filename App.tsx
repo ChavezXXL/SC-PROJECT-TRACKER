@@ -14,13 +14,14 @@ import {
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
   Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
   Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
-  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan, DollarSign, TrendingUp, TrendingDown, Award, Beaker
+  PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan, DollarSign, TrendingUp, TrendingDown, Award, Beaker, PhoneCall
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample } from './types';
 import { JobProfitCard } from './components/JobProfitCard';
+import { CanWeTakeIt } from './components/CanWeTakeIt';
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
@@ -2436,6 +2437,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [reworkEntries, setReworkEntries] = useState<ReworkEntry[]>([]);
   const [dashAllPOs, setDashAllPOs] = useState<PurchaseOrder[]>([]);
   const [dashQuotes, setDashQuotes] = useState<Quote[]>([]);
+  const [dashSamples, setDashSamples] = useState<Sample[]>([]);
+  const [showCanWeTakeIt, setShowCanWeTakeIt] = useState(false);
   const [hoveredCustIdx, setHoveredCustIdx] = useState<number | null>(null);
   const [attentionDismissed, setAttentionDismissed] = useState<boolean>(() => {
     try { return sessionStorage.getItem('attention_dismissed') === '1'; } catch { return false; }
@@ -2452,7 +2455,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub7 = DB.subscribeRework(setReworkEntries);
     const unsub8 = DB.subscribePurchaseOrders(setDashAllPOs);
     const unsub9 = DB.subscribeQuotes(setDashQuotes);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); };
+    const unsub10 = DB.subscribeSamples(setDashSamples);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); };
   }, []);
 
   const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
@@ -2682,11 +2686,32 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <h1 className="text-3xl font-black text-white flex items-center gap-2.5 tracking-tight"><LayoutDashboard className="w-7 h-7 text-amber-500" aria-hidden="true" /> <span>Overview</span></h1>
           <p className="text-zinc-500 text-sm mt-1">Real-time shop floor status &amp; financials</p>
         </div>
-        <div className="text-right hidden sm:block">
-          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Today</p>
-          <p className="text-sm text-zinc-300 font-semibold">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowCanWeTakeIt(true)}
+            title="Customer on the phone? Check if a new job fits the schedule."
+            className="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm transition-all"
+          >
+            <PhoneCall className="w-4 h-4" aria-hidden="true" /> Can We Take It?
+          </button>
+          <div className="text-right hidden sm:block">
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Today</p>
+            <p className="text-sm text-zinc-300 font-semibold">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+          </div>
         </div>
       </div>
+
+      {showCanWeTakeIt && (
+        <CanWeTakeIt
+          jobs={jobs}
+          allLogs={allLogs.filter(l => l.endTime)}
+          activeLogs={activeLogs}
+          workers={dashWorkers}
+          settings={shopSettings}
+          samples={dashSamples}
+          onClose={() => setShowCanWeTakeIt(false)}
+        />
+      )}
 
       {myActiveLog && (
         <ActiveJobPanel job={myActiveJob || null} log={myActiveLog}

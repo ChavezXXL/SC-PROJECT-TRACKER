@@ -749,6 +749,9 @@ export interface SystemSettings {
   recapEmailEnabled?: boolean;    // master switch (default false)
   recapTime?: string;             // HH:MM 24h — auto-send time each day, e.g. "17:00"
   recapTimezone?: string;         // IANA tz string, e.g. "America/Los_Angeles"
+  // ── Daily rhythm pushes (daily-briefing-cron) ──
+  briefingTime?: string;          // HH:MM — morning briefing push to admins (default "06:55")
+  scorecardTime?: string;         // HH:MM — end-of-day worker scorecard push (default: clock-out alarm or "15:30")
 }
 
 // ── QUOTE HELPERS ──
