@@ -20,7 +20,15 @@
 
 import type { TimeLog, User, SystemSettings } from '../types';
 
-/** Post a message to the active Service Worker — shows a notification. */
+/** Show a notification through the Service Worker registration.
+ *
+ *  IMPORTANT: uses `serviceWorker.ready` (the registration), NOT
+ *  `serviceWorker.controller`. After a hard refresh the page loads
+ *  UNCONTROLLED — controller is null until the next navigation — which
+ *  made notifications silently vanish "sometimes". The registration is
+ *  always available once the SW is installed, controller or not.
+ *  (The old `new Notification()` fallback also throws "Illegal
+ *  constructor" on Android Chrome, so failures were double-swallowed.) */
 function swShow(opts: {
   title: string;
   body: string;
@@ -34,24 +42,34 @@ function swShow(opts: {
 }) {
   try {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ type: 'NOTIFY', ...opts });
-    } else {
-      // Fallback: plain Notification (no action buttons)
-      new Notification(opts.title, {
-        body: opts.body,
-        icon: '/icon-192.png',
-        tag: opts.tag,
-      });
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.showNotification(opts.title, {
+          body: opts.body,
+          icon: '/brand/ftio-icon.png',
+          badge: '/brand/ftio-icon.png',
+          tag: opts.tag,
+          data: { url: opts.url || '/', logId: opts.logId, userId: opts.userId },
+          vibrate: opts.silent ? [] : [200, 100, 200],
+          silent: !!opts.silent,
+          requireInteraction: !!opts.requireInteraction,
+          actions: opts.actions || [],
+        } as any).catch(() => {});
+      }).catch(() => {});
+      return;
     }
+    // No SW support at all (very old browser) — basic notification, no actions
+    new Notification(opts.title, { body: opts.body, icon: '/brand/ftio-icon.png', tag: opts.tag });
   } catch {}
 }
 
 /** Cancel a notification by tag. */
 function swCancel(tag: string) {
   try {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ type: 'CANCEL_NOTIFICATION', tag });
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then(reg =>
+        reg.getNotifications({ tag }).then(list => list.forEach(n => n.close()))
+      ).catch(() => {});
     }
   } catch {}
 }
@@ -72,6 +90,10 @@ export function showTimerStarted(
   log: { id: string; userId: string; operation: string; startTime: number },
   jobLabel: string
 ) {
+  // User just tapped Start while LOOKING at the app — they know the timer is
+  // running, no need to notify. The persistent badge appears automatically
+  // the moment they background the app (watchLiveTimerBadge visibilitychange).
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
   swShow({
     title: '⏱ Timer Running',
     body: `${jobLabel} · ${log.operation} · 0:00`,
@@ -104,32 +126,44 @@ export function watchLiveTimerBadge(
 ): () => void {
   const knownIds = new Set<string>();
 
-  const tick = () => {
+  const tick = (force = false) => {
     const logs = getActiveLogs();
     const now = Date.now();
 
-    logs.forEach(log => {
-      knownIds.add(log.id);
-      const isPaused = !!log.pausedAt;
-      const elapsedMs = isPaused
-        ? (log.pausedAt! - log.startTime - (log.totalPausedMs || 0))
-        : (now - log.startTime - (log.totalPausedMs || 0));
-      swShow({
-        title: isPaused ? `⏸ Paused — ${fmtElapsed(elapsedMs)}` : `⏱ ${fmtElapsed(elapsedMs)} — Running`,
-        body: `${getJobLabel(log.jobId)} · ${log.operation}`,
-        tag: `live-timer-${log.id}`,
-        logId: log.id,
-        userId: log.userId,
-        requireInteraction: false, // don't force dismissal every update
-        silent: true,              // update silently — no sound/vibration/popup
-        actions: isPaused
-          ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]
-          : [{ action: 'pause',  title: '⏸ Pause'  }, { action: 'stop', title: '⏹ Stop' }],
-        url: '/',
-      });
-    });
+    // ── While the app is VISIBLE on screen, never re-show the badge ──
+    // The user can see the timer in the UI — re-notifying is pure noise
+    // (and iOS ignores `silent`, so every update bannered + buzzed).
+    // Updates only happen when the app is backgrounded/locked, where the
+    // notification is the only way to see the running timer.
+    const appVisible = typeof document !== 'undefined' && document.visibilityState === 'visible';
 
-    // Clean up notifications for logs that ended
+    if (!appVisible || force) {
+      logs.forEach(log => {
+        knownIds.add(log.id);
+        const isPaused = !!log.pausedAt;
+        const elapsedMs = isPaused
+          ? (log.pausedAt! - log.startTime - (log.totalPausedMs || 0))
+          : (now - log.startTime - (log.totalPausedMs || 0));
+        swShow({
+          title: isPaused ? `⏸ Paused — ${fmtElapsed(elapsedMs)}` : `⏱ ${fmtElapsed(elapsedMs)} — Running`,
+          body: `${getJobLabel(log.jobId)} · ${log.operation}`,
+          tag: `live-timer-${log.id}`,
+          logId: log.id,
+          userId: log.userId,
+          requireInteraction: false, // don't force dismissal every update
+          silent: true,              // update silently — no sound/vibration/popup
+          actions: isPaused
+            ? [{ action: 'resume', title: '▶ Resume' }, { action: 'stop', title: '⏹ Stop' }]
+            : [{ action: 'pause',  title: '⏸ Pause'  }, { action: 'stop', title: '⏹ Stop' }],
+          url: '/',
+        });
+      });
+    } else {
+      // Still track ids while visible so cleanup below works
+      logs.forEach(log => knownIds.add(log.id));
+    }
+
+    // Clean up notifications for logs that ended — runs in every state
     knownIds.forEach(id => {
       if (!logs.find(l => l.id === id)) {
         swCancel(`live-timer-${id}`);
@@ -138,10 +172,16 @@ export function watchLiveTimerBadge(
     });
   };
 
-  const intervalId = window.setInterval(tick, 5 * 60_000); // update every 5 min, not every 1 min
-  tick();
+  const intervalId = window.setInterval(() => tick(), 5 * 60_000); // every 5 min, background only
+  // When the user backgrounds the app, refresh the badge immediately so the
+  // notification shows current elapsed time the moment they leave.
+  const onVis = () => { if (document.visibilityState === 'hidden') tick(true); };
+  document.addEventListener('visibilitychange', onVis);
+  tick(); // initial: no-op while visible, shows badge if mounted in background
+
   return () => {
     window.clearInterval(intervalId);
+    document.removeEventListener('visibilitychange', onVis);
     knownIds.forEach(id => swCancel(`live-timer-${id}`));
     knownIds.clear();
   };
