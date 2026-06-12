@@ -4040,6 +4040,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   // typed in the last 1.5s), and another device's update mid-edit silently
   // discards the user's in-progress changes.
   const dirtyRef = useRef(false);
+  // Honest save indicator — driven by the REAL save promise, not a blind timer.
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveStateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSaveState = (s: 'saved' | 'error') => {
+    setSaveState(s);
+    if (saveStateTimer.current) clearTimeout(saveStateTimer.current);
+    saveStateTimer.current = setTimeout(() => setSaveState('idle'), s === 'error' ? 4000 : 1800);
+  };
 
   useEffect(() => {
     const unsub = DB.subscribeSettings((s) => {
@@ -4052,7 +4060,12 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     return () => { unsub(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
-  const handleSave = () => { dirtyRef.current = false; DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
+  const handleSave = () => {
+    setSaveState('saving');
+    DB.saveSettings(settings)
+      .then(() => { dirtyRef.current = false; flashSaveState('saved'); addToast('success', 'Settings Updated'); })
+      .catch(() => { flashSaveState('error'); addToast('error', 'Save failed — check connection'); });
+  };
 
   // Autosave: save settings 1.5s after any change
   const settingsJson = JSON.stringify(settings);
@@ -4061,7 +4074,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     if (settingsJson === initialSettingsRef.current) return; // skip initial render
     dirtyRef.current = true;
     const timer = setTimeout(() => {
-      DB.saveSettings(settings).then(() => { dirtyRef.current = false; }).catch(() => { /* stay dirty — retry on next edit */ });
+      setSaveState('saving');
+      DB.saveSettings(settings)
+        .then(() => { dirtyRef.current = false; flashSaveState('saved'); })
+        .catch(() => { flashSaveState('error'); /* stay dirty — retry on next edit */ });
     }, 1500);
     return () => clearTimeout(timer);
   }, [settingsJson]);
@@ -4144,27 +4160,33 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     }
   }, [settings, tvAllLogs, tvJobs]);
 
-  // Autosave indicator — pulses briefly after each change
-  const [savedFlash, setSavedFlash] = useState(false);
-  useEffect(() => {
-    if (settingsJson === initialSettingsRef.current) return;
-    const t = setTimeout(() => {
-      setSavedFlash(true);
-      const off = setTimeout(() => setSavedFlash(false), 1800);
-      return () => clearTimeout(off);
-    }, 1600);
-    return () => clearTimeout(t);
-  }, [settingsJson]);
-
   return (
     <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0 pb-6 md:pb-0">
+      {/* Floating save indicator — fixed position so it NEVER shifts layout
+          (the old inline version grew the sticky mobile tab bar on every save,
+          making the page jump while typing). Visible on every screen size,
+          and honest: reflects the actual Firestore write, including failure. */}
+      {saveState !== 'idle' && (
+        <div
+          role="status"
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 rounded-full border shadow-2xl backdrop-blur-xl text-xs font-black animate-fade-in pointer-events-none ${
+            saveState === 'saving' ? 'bg-zinc-900/95 border-white/15 text-zinc-300' :
+            saveState === 'saved'  ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-300' :
+                                     'bg-red-950/95 border-red-500/40 text-red-300'
+          }`}
+        >
+          {saveState === 'saving' && <><span className="w-3 h-3 rounded-full border-2 border-zinc-500 border-t-white animate-spin" aria-hidden="true" /> Saving…</>}
+          {saveState === 'saved' && <><CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> Saved</>}
+          {saveState === 'error' && <><AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> Couldn't save — check connection</>}
+        </div>
+      )}
       {/* ── LEFT SIDEBAR — Apple Settings style, grouped nav ── */}
       <aside className="w-52 xl:w-60 flex-shrink-0 hidden md:block">
         <div className="sticky top-4">
           {/* Header */}
           <div className="flex items-center justify-between px-2 mb-4">
             <p className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.12em]">Settings</p>
-            {savedFlash && (
+            {saveState === 'saved' && (
               <span className="text-[10px] font-black text-emerald-400 flex items-center gap-1 animate-fade-in">
                 <CheckCircle className="w-3 h-3" aria-hidden="true" /> Saved
               </span>
@@ -4187,11 +4209,11 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                         className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm transition-all text-left relative
                           ${idx > 0 ? 'border-t border-white/[0.04]' : ''}
                           ${active
-                            ? 'bg-amber-500/12 text-white font-semibold'
+                            ? 'bg-amber-500/15 text-white font-bold'
                             : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
                           }`}
                       >
-                        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-amber-500 rounded-r-full" aria-hidden="true" />}
+                        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-amber-500 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]" aria-hidden="true" />}
                         <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-amber-500 text-white' : 'bg-zinc-800 text-zinc-500'}`}>
                           <item.icon className="w-3.5 h-3.5" aria-hidden="true" />
                         </span>
@@ -4236,9 +4258,6 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               </button>
             ))}
           </div>
-          {savedFlash && (
-            <p className="text-[10px] font-black text-emerald-400 mt-2 flex items-center gap-1"><CheckCircle className="w-3 h-3" aria-hidden="true" /> Saved</p>
-          )}
         </div>
 
       {/* ── SHOP PROFILE — company info that prints on quotes, travelers,
@@ -5189,10 +5208,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   { key: 'tvShowRevenue', label: 'Show $ / Revenue', desc: '💰 Dollar amounts on stats + goal slides (off by default)', def: false },
                   { key: 'tvShowCustomerNames', label: 'Show Customer Names', desc: '🏢 Customer names on job cards + Top Customer', def: true },
                 ].map(o => (
-                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
+                  <div key={o.key} className="flex items-center justify-between py-1">
                     <div className="flex-1 min-w-0 pr-3"><p className="text-xs font-bold text-white">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5 leading-snug">{o.desc}</p></div>
-                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-4 h-4 rounded accent-blue-500 shrink-0" />
-                  </label>
+                    <Toggle checked={(settings as any)[o.key] ?? o.def} onChange={v => setSettings({ ...settings, [o.key]: v })} />
+                  </div>
                 ))}
               </div>
             </details>
@@ -5212,10 +5231,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   { key: 'tvShowElapsedBar', label: 'Progress Bar', desc: 'Time elapsed bar', def: true },
                   { key: 'tvAutoScroll', label: 'Auto-Scroll', desc: 'Scroll when many workers', def: false },
                 ].map(o => (
-                  <label key={o.key} className="flex items-center justify-between cursor-pointer py-1">
-                    <div><p className="text-xs text-white">{o.label}</p><p className="text-[9px] text-zinc-600">{o.desc}</p></div>
-                    <input type="checkbox" checked={(settings as any)[o.key] ?? o.def} onChange={e => setSettings({ ...settings, [o.key]: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
-                  </label>
+                  <div key={o.key} className="flex items-center justify-between py-1">
+                    <div className="flex-1 min-w-0 pr-3"><p className="text-xs text-white">{o.label}</p><p className="text-[9px] text-zinc-600">{o.desc}</p></div>
+                    <Toggle checked={(settings as any)[o.key] ?? o.def} onChange={v => setSettings({ ...settings, [o.key]: v })} />
+                  </div>
                 ))}
                 <div className="flex items-center justify-between py-1">
                   <p className="text-xs text-white">Card Size</p>
@@ -5238,10 +5257,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Slideshow</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
               <div className="px-4 pb-4 space-y-3">
-                <label className="flex items-center justify-between cursor-pointer py-1">
+                <div className="flex items-center justify-between py-1">
                   <div><p className="text-xs text-white">Enable Slideshow</p><p className="text-[9px] text-zinc-600">Rotate between views</p></div>
-                  <input type="checkbox" checked={settings.tvSlideshowEnabled || false} onChange={e => setSettings({ ...settings, tvSlideshowEnabled: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
-                </label>
+                  <Toggle checked={settings.tvSlideshowEnabled || false} onChange={v => setSettings({ ...settings, tvSlideshowEnabled: v })} />
+                </div>
                 <div className="flex items-center justify-between py-1">
                   <p className="text-xs text-white">Duration</p>
                   <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvSlideDuration || 15} onChange={e => setSettings({ ...settings, tvSlideDuration: Number(e.target.value) })}>
