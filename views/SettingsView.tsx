@@ -2273,6 +2273,7 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
 
 // ── TV Slides Editor ─ full-featured editor for rotating slideshow
 const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: string; color: string }> = {
+  'attack-plan': { label: 'Attack Plan', desc: 'Ranked "run these in this order" — risk first, then due date', icon: '⚡', color: 'bg-orange-500/15 border-orange-500/30 text-orange-400' },
   workers:     { label: 'Live Workers + Jobs', desc: 'Running timers + auto-scroll jobs belt (the default view)', icon: '👷', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
   jobs:        { label: 'Open Jobs (full-screen)', desc: 'All open jobs on one screen, auto-scrolling', icon: '📋', color: 'bg-purple-500/15 border-purple-500/30 text-purple-400' },
   leaderboard: { label: 'Leaderboard', desc: 'Ranked workers by hours/jobs', icon: '🏆', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
@@ -4033,23 +4034,34 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   const [tvJobs, setTvJobs] = useState<Job[]>([]);
   const [tvAllLogs, setTvAllLogs] = useState<TimeLog[]>([]);
 
+  // Dirty flag — true while local edits haven't been written to Firestore yet.
+  // The settings subscription must NOT overwrite local state during that window:
+  // our own save echoes back through the snapshot (clobbering whatever the user
+  // typed in the last 1.5s), and another device's update mid-edit silently
+  // discards the user's in-progress changes.
+  const dirtyRef = useRef(false);
+
   useEffect(() => {
-    const unsub = DB.subscribeSettings((s) => setSettings(s));
+    const unsub = DB.subscribeSettings((s) => {
+      if (dirtyRef.current) return; // local edits pending — don't clobber them
+      setSettings(s);
+    });
     const unsub2 = DB.subscribeActiveLogs(setTvActiveLogs);
     const unsub3 = DB.subscribeJobs(setTvJobs);
     const unsub4 = DB.subscribeLogs(setTvAllLogs);
     return () => { unsub(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
-  const handleSave = () => { DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
+  const handleSave = () => { dirtyRef.current = false; DB.saveSettings(settings); addToast('success', 'Settings Updated'); };
 
   // Autosave: save settings 1.5s after any change
   const settingsJson = JSON.stringify(settings);
   const initialSettingsRef = useRef(settingsJson);
   useEffect(() => {
     if (settingsJson === initialSettingsRef.current) return; // skip initial render
+    dirtyRef.current = true;
     const timer = setTimeout(() => {
-      DB.saveSettings(settings);
+      DB.saveSettings(settings).then(() => { dirtyRef.current = false; }).catch(() => { /* stay dirty — retry on next edit */ });
     }, 1500);
     return () => clearTimeout(timer);
   }, [settingsJson]);
@@ -5327,43 +5339,60 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   onChange={v => setSettings({ ...settings, recapEmailEnabled: v })}
                 />
               </div>
-              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
-                <div className="shrink-0">
+              <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.04]">
+                <div className="sm:shrink-0">
                   <p className="text-sm font-semibold text-white">Primary Email</p>
                   <p className="text-xs text-zinc-500 mt-0.5">Main recipient for the daily summary</p>
                 </div>
                 <input
                   type="email"
                   placeholder="you@example.com"
-                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-52 focus:outline-none focus:border-amber-500/40 ml-4"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-full sm:w-52 focus:outline-none focus:border-amber-500/40"
                   value={settings.recapEmail || ''}
                   onChange={e => setSettings({ ...settings, recapEmail: e.target.value })}
                 />
               </div>
-              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
-                <div className="shrink-0">
+              <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.04]">
+                <div className="sm:shrink-0">
                   <p className="text-sm font-semibold text-white">Also Send To</p>
                   <p className="text-xs text-zinc-500 mt-0.5">Comma-separated additional addresses</p>
                 </div>
                 <input
                   type="text"
                   placeholder="other@example.com, ..."
-                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-52 focus:outline-none focus:border-amber-500/40 ml-4"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-full sm:w-52 focus:outline-none focus:border-amber-500/40"
                   value={settings.recapEmailCC || ''}
                   onChange={e => setSettings({ ...settings, recapEmailCC: e.target.value })}
                 />
               </div>
-              <div className="px-4 py-3.5 flex items-center justify-between border-t border-white/[0.04]">
+              <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-white/[0.04]">
                 <div>
                   <p className="text-sm font-semibold text-white">Auto-Send Time</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">Recap fires automatically each day at this time (Pacific)</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Recap fires automatically each day at this time</p>
                 </div>
                 <input
                   type="time"
-                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-36 focus:outline-none focus:border-amber-500/40 ml-4"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-full sm:w-36 focus:outline-none focus:border-amber-500/40"
                   value={settings.recapTime || ''}
                   onChange={e => setSettings({ ...settings, recapTime: e.target.value })}
                 />
+              </div>
+              <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-white/[0.04]">
+                <div>
+                  <p className="text-sm font-semibold text-white">Timezone</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Used for the recap, briefing &amp; scorecard send times</p>
+                </div>
+                <select
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-full sm:w-52 focus:outline-none focus:border-amber-500/40 cursor-pointer"
+                  value={settings.recapTimezone || 'America/Los_Angeles'}
+                  onChange={e => setSettings({ ...settings, recapTimezone: e.target.value })}
+                >
+                  <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                  <option value="America/Phoenix">Arizona (Phoenix)</option>
+                  <option value="America/Denver">Mountain (Denver)</option>
+                  <option value="America/Chicago">Central (Chicago)</option>
+                  <option value="America/New_York">Eastern (New York)</option>
+                </select>
               </div>
               <div className="px-4 py-3.5 flex items-center justify-between border-t border-white/[0.04]">
                 <div>
@@ -5391,6 +5420,37 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               Requires <code className="font-mono text-zinc-500 bg-zinc-800/60 px-1 py-0.5 rounded text-[10px]">RESEND_API_KEY</code> in Netlify environment variables.
               Free tier: 100 emails/day — <span className="text-zinc-500">resend.com</span>
             </p>
+          </div>
+
+          {/* Daily Push Notifications — morning briefing + worker scorecards */}
+          <div>
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Daily Push Notifications</p>
+            <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+              <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.04]">
+                <div>
+                  <p className="text-sm font-semibold text-white">☀️ Morning Briefing</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Push to admins: due today, overdue, yesterday's labor cost. Mon–Sat.</p>
+                </div>
+                <input
+                  type="time"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-full sm:w-36 focus:outline-none focus:border-amber-500/40"
+                  value={settings.briefingTime || '06:55'}
+                  onChange={e => setSettings({ ...settings, briefingTime: e.target.value })}
+                />
+              </div>
+              <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-white">🏁 Worker Scorecards</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Each worker gets their hours · pieces · jobs at end of shift. Blank = clock-out alarm time.</p>
+                </div>
+                <input
+                  type="time"
+                  className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-full sm:w-36 focus:outline-none focus:border-amber-500/40"
+                  value={settings.scorecardTime || ''}
+                  onChange={e => setSettings({ ...settings, scorecardTime: e.target.value })}
+                />
+              </div>
+            </div>
           </div>
 
           {/* ═══ Rate Learning ═══ */}

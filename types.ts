@@ -867,6 +867,7 @@ export interface EnabledFeatures {
 
 export type TvSlideType =
   | 'today'          // Today's scorecard — jobs done, hours, pipeline $, overdue
+  | 'attack-plan'    // Ranked "run these in this order" queue for the floor
   | 'at-risk'        // Jobs predicted to miss their due date
   | 'workers'        // Currently running workers (default left column)
   | 'jobs'           // All open jobs belt (default right column)

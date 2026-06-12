@@ -853,7 +853,7 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
         <div className="mt-5 bg-zinc-900/50 border border-white/5 rounded-3xl p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Hours by Day</p>
-            <p className="text-[10px] text-white/30">Peak: {Math.max(...daily.map(d => d.hours)).toFixed(1)}h · Avg: {(totalH / 7).toFixed(1)}h/day</p>
+            <p className="text-[10px] text-white/30">Peak: {Math.max(0, ...daily.map(d => d.hours)).toFixed(1)}h · Avg: {(totalH / 7).toFixed(1)}h/day</p>
           </div>
           <div className="flex items-end justify-around gap-3 h-44">
             {daily.map((d) => {
@@ -1102,6 +1102,143 @@ const TvAtRiskSlide: React.FC<{
               })}
             </React.Fragment>
           ))}
+        </div>
+        <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
+        <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
+      </div>
+    </div>
+  );
+};
+
+// ── ATTACK PLAN slide — ranked "run these in this order" for the floor ──
+// Same ranking as the admin dashboard's Attack Plan: risk level first
+// (critical → at-risk → watch → on-track), then earliest due date, then
+// priority. #1 glows orange — that's the job that should never sit idle.
+const TvAttackPlanSlide: React.FC<{
+  jobs: Job[];
+  allLogs: TimeLog[];
+  activeLogs: TimeLog[];
+  speed?: 'slow' | 'normal' | 'fast' | 'off';
+}> = ({ jobs, allLogs, activeLogs, speed = 'normal' }) => {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const riskScore: Record<JobRiskLevel, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
+  const prioScore: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const dueNum = (d?: string) => {
+    const m = (d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : 99991231;
+  };
+
+  const ranked = jobs
+    .filter(j => j.status !== 'completed' && j.status !== 'hold')
+    .map(job => {
+      const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+      const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
+      return { job, eta };
+    })
+    .sort((a, b) => {
+      const r = (riskScore[a.eta.riskLevel] ?? 4) - (riskScore[b.eta.riskLevel] ?? 4);
+      if (r !== 0) return r;
+      const d = dueNum(a.job.dueDate) - dueNum(b.job.dueDate);
+      if (d !== 0) return d;
+      return (prioScore[a.job.priority || 'normal'] ?? 2) - (prioScore[b.job.priority || 'normal'] ?? 2);
+    })
+    .slice(0, 10);
+
+  const handlers = useTvAutoScroll(scrollRef, (speed ?? 'normal') as 'slow' | 'normal' | 'fast' | 'off', ranked.length);
+
+  if (ranked.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center p-12">
+        <div className="w-24 h-24 mx-auto rounded-3xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center mb-6">
+          <span className="text-5xl">🏁</span>
+        </div>
+        <h2 className="text-4xl font-black text-white">Board Is Clear</h2>
+        <p className="text-zinc-400 text-xl mt-3">No open jobs — time to go get more work.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 px-[clamp(1rem,2.5vw,3rem)] pt-[clamp(0.75rem,1.5vw,1.5rem)] pb-3 border-b border-white/5">
+        <p className="font-black text-orange-400/80 uppercase tracking-[0.3em] flex items-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
+          ⚡ Run These In This Order
+        </p>
+        <div className="flex items-center justify-between mt-1 flex-wrap gap-2">
+          <h2 className="font-black text-white" style={{ fontSize: 'clamp(1.5rem, 3.5vw, 2.75rem)' }}>Today's Attack Plan</h2>
+          <p className="text-white/40 font-bold" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 1rem)' }}>
+            Top {ranked.length} of {jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').length} open
+          </p>
+        </div>
+      </div>
+
+      {/* Ranked list */}
+      <div className="flex-1 min-h-0 relative">
+        <div
+          ref={scrollRef}
+          {...handlers}
+          className="absolute inset-0 overflow-y-auto px-[clamp(1rem,2.5vw,3rem)] py-3 space-y-3"
+          style={{ scrollBehavior: 'auto' }}
+        >
+          {ranked.map(({ job, eta }, i) => {
+            const c = RISK_COLORS[eta.riskLevel];
+            const liveNames = activeLogs.filter(l => l.jobId === job.id).map(l => (l.userName || '').split(' ')[0]).filter(Boolean);
+            const isTop = i === 0;
+            return (
+              <div
+                key={job.id}
+                className={`rounded-2xl border-2 flex items-center gap-4 ${isTop ? 'bg-orange-500/10 border-orange-500/50 shadow-lg shadow-orange-900/30' : `${c.bg} ${c.border}`}`}
+                style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}
+              >
+                {/* Rank number */}
+                <div
+                  className={`shrink-0 rounded-2xl flex items-center justify-center font-black tabular border-2 ${isTop ? 'bg-orange-500 text-black border-orange-400 animate-pulse' : 'bg-zinc-900/80 text-white/70 border-white/10'}`}
+                  style={{ width: 'clamp(2.5rem, 4vw, 4rem)', height: 'clamp(2.5rem, 4vw, 4rem)', fontSize: 'clamp(1.1rem, 2vw, 1.75rem)' }}
+                >
+                  {i + 1}
+                </div>
+
+                {/* Job info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="font-black text-white truncate" style={{ fontSize: 'clamp(1rem, 2vw, 1.5rem)' }}>
+                      {job.poNumber} {job.partNumber ? `· ${job.partNumber}` : ''}
+                    </p>
+                    <span className={`shrink-0 px-2.5 py-0.5 rounded-lg border font-black uppercase ${c.bg} ${c.border} ${c.text}`} style={{ fontSize: 'clamp(0.55rem, 0.8vw, 0.7rem)' }}>
+                      {c.label}
+                    </span>
+                    {liveNames.length > 0 && (
+                      <span className="shrink-0 flex items-center gap-1.5 text-emerald-400 font-black" style={{ fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        {liveNames.join(', ')}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-white/50 truncate mt-0.5" style={{ fontSize: 'clamp(0.65rem, 0.95vw, 0.85rem)' }}>
+                    {[job.customer, eta.riskReason].filter(Boolean).join(' — ')}
+                  </p>
+                </div>
+
+                {/* Hours remaining */}
+                {eta.remainingHours !== null && (
+                  <div className="shrink-0 text-right">
+                    <p className="font-black text-white/40 uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.6rem)' }}>Left</p>
+                    <p className="font-black text-white tabular" style={{ fontSize: 'clamp(1rem, 2vw, 1.6rem)' }}>{eta.remainingHours.toFixed(1)}h</p>
+                  </div>
+                )}
+
+                {/* Due */}
+                <div className="shrink-0 text-right">
+                  <p className="font-black text-white/40 uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.6rem)' }}>Due</p>
+                  <p className={`font-black tabular ${eta.isOverdue ? 'text-red-400' : 'text-white/80'}`} style={{ fontSize: 'clamp(0.85rem, 1.5vw, 1.25rem)' }}>
+                    {job.dueDate ? job.dueDate.slice(0, 5) : '—'}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
         </div>
         <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
         <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
@@ -1477,7 +1614,7 @@ const TvJobsBelt: React.FC<{ jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'n
                 {jobs.map(j => {
                   const stage = getJobStage(j, stages);
                   const stageIdx = stages.findIndex(s => s.id === stage.id);
-                  const progressPct = stages.length > 1 ? Math.round((stageIdx / (stages.length - 1)) * 100) : 0;
+                  const progressPct = stages.length > 1 ? Math.min(100, Math.max(0, Math.round((stageIdx / (stages.length - 1)) * 100))) : 0;
                   const { dueText, daysLeft, overdue, urgency } = formatDueForTv(j.dueDate);
                   const dueColor = urgency === 'late' ? 'text-red-400' : urgency === 'today' ? 'text-orange-300' : urgency === 'soon' ? 'text-orange-400' : 'text-white/60';
                   const dueTint = urgency === 'late' ? 'bg-red-500/10 border-red-500/25' : urgency === 'today' ? 'bg-orange-500/10 border-orange-500/25' : urgency === 'soon' ? 'bg-orange-500/10 border-orange-500/20' : 'bg-white/[0.03] border-white/5';
@@ -1985,6 +2122,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // Users can customize in Settings → TV Display → Slides.
   const DEFAULT_TV_SLIDES: TvSlide[] = [
     { id: 'default-today', type: 'today', enabled: true },                             // Today's scorecard — FIRST
+    { id: 'default-attack-plan', type: 'attack-plan', enabled: true },                 // Ranked run order for the floor
     { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
     { id: 'default-at-risk', type: 'at-risk', enabled: true },                         // Jobs predicted to be late
     { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
@@ -2051,8 +2189,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       }, 400);
     }, effectiveDur * 1000);
     return () => clearTimeout(t);
+    // configuredTvSlides (memoized on settings.tvSlides) is in deps so per-slide
+    // duration changes from Settings take effect mid-rotation, not next reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tvMode, tvPaused, tvSlideIdx, configuredTvSlides.length, settings.tvSlideDuration, jobs.length, sorted.length]);
+  }, [tvMode, tvPaused, tvSlideIdx, configuredTvSlides, settings.tvSlideDuration, jobs.length, sorted.length]);
 
   // Reset slide index when entering TV mode
   useEffect(() => { if (tvMode) { setTvSlideIdx(0); setTvFade(true); } }, [tvMode]);
@@ -2154,6 +2294,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       switch (slide.type) {
         case 'today':
           return <TvTodaySlide jobs={jobs} allLogs={allLogs} openJobs={openJobs} activeLogs={activeLogs} showRevenue={settings.tvShowRevenue === true} />;
+        case 'attack-plan':
+          return <TvAttackPlanSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} />;
         case 'at-risk':
           return <TvAtRiskSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} />;
         case 'workers':
@@ -2210,6 +2352,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const slideLabel = (slide: TvSlide): string => {
       switch (slide.type) {
         case 'today': return "Today's Score";
+        case 'attack-plan': return 'Attack Plan';
         case 'at-risk': return 'At-Risk Jobs';
         case 'workers': return 'Live Workers';
         case 'jobs': return 'Open Jobs';
