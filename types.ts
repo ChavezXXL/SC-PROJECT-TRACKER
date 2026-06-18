@@ -287,6 +287,10 @@ export interface TimeLog {
   pauseReason?: string;
   // Existing fields
   isAutoClosed?: boolean;
+  /** Set by finalizeDuration() when the stored duration had to be clamped
+   *  (endTime<startTime, paused>wall, or >14h). Surfaced by the Timekeeping
+   *  Health brain so a corrupt record is visible instead of silently wrong. */
+  durationAnomaly?: boolean;
   notes?: string;
   machineId?: string;
   sessionQty?: number;

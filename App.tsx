@@ -22,6 +22,7 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample } from './types';
 import { JobProfitCard } from './components/JobProfitCard';
 import { CanWeTakeIt } from './components/CanWeTakeIt';
+import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
@@ -2845,6 +2846,15 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         );
       })()}
+
+      {/* 🛡 TIMEKEEPING HEALTH — payroll-data watchdog (only shows issues or "all clear") */}
+      <TimekeepingHealthPanel
+        logs={allLogs}
+        jobs={jobs}
+        users={dashWorkers}
+        settings={shopSettings}
+        onView={() => setView('admin-logs')}
+      />
 
       {/* ⚡ TODAY'S ATTACK PLAN — ranked run-order for the floor */}
       {attackPlan.ranked.length > 0 && (

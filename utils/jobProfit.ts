@@ -53,7 +53,9 @@ export function calcJobProfit(
 ): JobProfitBreakdown {
   const shopRate   = settings.shopRate        ?? 0;
   const ohMonthly  = settings.monthlyOverhead ?? 0;
-  const ohHours    = settings.monthlyWorkHours ?? 160;
+  // Floor the divisor at 1 so a 0 / blank / NaN monthlyWorkHours can't make
+  // ohPerHour Infinity and turn labor cost / margin into Infinity/NaN.
+  const ohHours    = Math.max(1, Number(settings.monthlyWorkHours) || 160);
   const ohPerHour  = ohMonthly > 0 ? ohMonthly / ohHours : 0;
 
   // Build userId → rate map
@@ -66,7 +68,12 @@ export function calcJobProfit(
   const jobLogs = allLogs.filter(l => l.jobId === job.id && !l.isSample);
   const workerHours = new Map<string, { name: string; minutes: number }>();
   for (const log of jobLogs) {
-    const mins = log.durationMinutes ?? 0;
+    // Seconds-first (matches shopIntelligence, partHistory, sendDailyRecap) so
+    // labor cost here agrees with every other report instead of compounding the
+    // per-session round-up that durationMinutes-only produced.
+    const mins = log.durationSeconds != null && log.durationSeconds >= 0
+      ? log.durationSeconds / 60
+      : (log.durationMinutes || 0);
     if (mins <= 0) continue;
     const existing = workerHours.get(log.userId) ?? { name: log.userName || log.userId, minutes: 0 };
     existing.minutes += mins;

@@ -11,6 +11,7 @@ import {
   setDoc,
   updateDoc,
   arrayUnion,
+  where,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -440,6 +441,14 @@ export async function renameCustomer(oldNames: string[], newName: string): Promi
 export async function deleteJob(id: string) {
   if (dbInstance) {
       try {
+        // Cascade-delete this job's time logs FIRST — otherwise they become
+        // orphans pointing at a job that no longer exists, silently corrupting
+        // labor-cost and worker-hour reports. (Previously only the localStorage
+        // branch cascaded; Firestore left orphans behind.)
+        try {
+          const snap = await getDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', id)));
+          await Promise.all(snap.docs.map((d: any) => deleteDoc(d.ref)));
+        } catch (e) { console.warn('deleteJob: log cascade failed', e); }
         await deleteDoc(doc(dbInstance, COL.jobs, id));
         firebaseStatus = { connected: true };
       } catch (e) {
@@ -599,6 +608,24 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
 }
 
 // UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
+/** All currently-open (not-yet-stopped) logs for a worker. Single-field
+ *  query (auto-indexed); falls back to a full scan, then localStorage. */
+async function getOpenLogsForUser(userId: string): Promise<TimeLog[]> {
+  if (dbInstance) {
+    try {
+      const q = query(collection(dbInstance, COL.logs), where('userId', '==', userId));
+      const snap = await getDocs(q);
+      return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => !l.endTime);
+    } catch {
+      try {
+        const snap = await getDocs(collection(dbInstance, COL.logs));
+        return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => l.userId === userId && !l.endTime);
+      } catch { return []; }
+    }
+  }
+  return readLS<TimeLog[]>(LS.logs, []).filter((l) => l.userId === userId && !l.endTime);
+}
+
 export async function startTimeLog(
     jobId: string,
     userId: string,
@@ -610,9 +637,31 @@ export async function startTimeLog(
     notes?: string,
     jobIdsDisplay?: string
 ): Promise<string> {
-  const id = Date.now().toString();
+  // ── Validate + trim required fields — a blank operation breaks rate learning
+  // and PR tracking; a blank user/job corrupts payroll attribution.
+  jobId = (jobId || '').trim();
+  userId = (userId || '').trim();
+  userName = (userName || '').trim();
+  operation = (operation || '').trim();
+  if (!jobId || !userId || !userName || !operation) {
+    throw new Error('Cannot clock in: job, worker, and operation are all required.');
+  }
+
+  // ── One active timer per worker. If this worker already has an open log
+  // (forgot to stop, or started on another device), close it FIRST so the
+  // same wall-clock minutes are never billed to two jobs at once.
+  try {
+    const existingOpen = await getOpenLogsForUser(userId);
+    for (const open of existingOpen) {
+      try { await stopTimeLog(open.id, undefined, undefined, undefined, 'auto:switched-job'); } catch { /* best effort */ }
+    }
+  } catch { /* if the lookup fails, fall through — better to clock in than block */ }
+
+  // Collision-proof id (Date.now() alone collides on same-ms / shared-tablet
+  // clock-ins and silently merge-overwrites a session).
+  const id = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
   const startTime = Date.now();
-  
+
   // Construct log object carefully
   const log: TimeLog = {
     id, 
@@ -639,9 +688,11 @@ export async function startTimeLog(
 
   if (dbInstance) {
     try {
-        // Sanitize ensures no undefined values are sent to Firestore
+        // Sanitize ensures no undefined values are sent to Firestore.
+        // No merge: a fresh clock-in is always a create — merging would let a
+        // (now near-impossible) id clash silently fuse two workers' sessions.
         const cleanLog = sanitize(log);
-        await setDoc(doc(dbInstance, COL.logs, id), cleanLog, { merge: true });
+        await setDoc(doc(dbInstance, COL.logs, id), cleanLog);
         
         // Update job status safely
         try {
@@ -675,6 +726,37 @@ export async function startTimeLog(
   return id;
 }
 
+/** Hard ceiling on a single session's working time — matches the 14h safety
+ *  sweep. Stops a corrupt startTime (e.g. epoch 0) or runaway timer from
+ *  recording absurd hours that would dominate payroll + rate learning. */
+const MAX_SESSION_MS = 14 * 3600000;
+
+/**
+ * Compute finalized duration fields for a log being stopped — the SINGLE
+ * source of truth so the Firestore + localStorage branches can never diverge.
+ * Guards (each fixes a real payroll-corruption bug found in audit):
+ *   • pause delta only counts if the pause began before endTime (no negative
+ *     delta inflating working time when a forced cutoff predates the pause)
+ *   • totalPausedMs clamped to [0, wall] (corrupt pause can't 0-floor or inflate)
+ *   • workingMs clamped to [0, MAX_SESSION_MS] (no absurd multi-day durations)
+ */
+function finalizeDuration(
+  log: { startTime: number; pausedAt?: number | null; totalPausedMs?: number },
+  endTime: number,
+): { totalPausedMs: number; durationSeconds: number; durationMinutes: number; anomaly: boolean } {
+  const startTime = log.startTime || 0;
+  let totalPausedMs = log.totalPausedMs || 0;
+  if (log.pausedAt && log.pausedAt < endTime) totalPausedMs += endTime - log.pausedAt;
+  const wallMs = endTime - startTime;
+  // endTime before startTime (clock skew / bad edit) → anomaly, clamp to 0
+  const anomaly = wallMs < 0 || totalPausedMs < 0 || totalPausedMs > Math.max(0, wallMs) || wallMs - totalPausedMs > MAX_SESSION_MS;
+  totalPausedMs = Math.min(Math.max(0, totalPausedMs), Math.max(0, wallMs));
+  const workingMs = Math.min(Math.max(0, wallMs - totalPausedMs), MAX_SESSION_MS);
+  const durationSeconds = Math.floor(workingMs / 1000);
+  const durationMinutes = Math.round(durationSeconds / 60); // 61s → 1 min, not 2
+  return { totalPausedMs, durationSeconds, durationMinutes, anomaly };
+}
+
 export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string, forcedEndTime?: number, stopReason?: string) {
   const endTime = forcedEndTime ?? Date.now();
 
@@ -685,30 +767,24 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         if (!snap.exists()) throw new Error("Log not found.");
 
         const existing = snap.data() as TimeLog;
+        // Already finalized — second clock-out (manual + sweep + cron racing,
+        // or a double-tap) must be a no-op, never overwrite a correct record.
+        if (existing.endTime) return;
 
-        // Finalize any active pause
-        let totalPausedMs = existing.totalPausedMs || 0;
-        if (existing.pausedAt) {
-          totalPausedMs += endTime - existing.pausedAt;
-        }
-
-        const wallMs = endTime - existing.startTime;
-        const workingMs = Math.max(0, wallMs - totalPausedMs);
-        const durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-        // Math.round prevents systematic over-counting: a 61s log = 1 min, not 2
-        const durationMinutes = Math.round(durationSeconds / 60);
+        const { totalPausedMs, durationSeconds, durationMinutes, anomaly } = finalizeDuration(existing, endTime);
 
         const updates: any = {
             endTime,
             durationMinutes,
             durationSeconds,
             status: 'completed',
-            updatedAt: endTime,
+            updatedAt: Date.now(),
             pausedAt: null,
             totalPausedMs,
             pauseReason: null,
             stopReason: stopReason ?? 'manual',
         };
+        if (anomaly) updates.durationAnomaly = true; // surfaced by the health brain
         if (sessionQty !== undefined) updates.sessionQty = sessionQty;
         if (notes !== undefined) updates.notes = notes;
 
@@ -730,25 +806,20 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
   const idx = logs.findIndex((l) => l.id === logId);
   if (idx >= 0) {
     const l = logs[idx];
-    let totalPausedMs = l.totalPausedMs || 0;
-    if (l.pausedAt) {
-      totalPausedMs += endTime - l.pausedAt;
-    }
-    const wallMs = endTime - l.startTime;
-    const workingMs = Math.max(0, wallMs - totalPausedMs);
-    const durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-    const durationMinutes = Math.round(durationSeconds / 60);
+    if (l.endTime) return; // already completed — no-op
+    const { totalPausedMs, durationSeconds, durationMinutes, anomaly } = finalizeDuration(l, endTime);
     logs[idx] = {
         ...l,
         endTime,
         durationMinutes,
         durationSeconds,
         status: 'completed',
-        updatedAt: endTime,
+        updatedAt: Date.now(),
         pausedAt: null,
         totalPausedMs,
         pauseReason: undefined,
         stopReason: stopReason ?? 'manual',
+        ...(anomaly ? { durationAnomaly: true } : {}),
         ...(sessionQty !== undefined ? { sessionQty } : {}),
         ...(notes !== undefined ? { notes } : {})
     } as TimeLog;
@@ -1176,6 +1247,19 @@ export async function stopAllActive(reason: string = 'admin:force-stop'): Promis
       resolve(active.length);
     });
   });
+}
+
+// ── Cron heartbeat ──────────────────────────────────────────────
+// The server cron stamps push_meta/cron-heartbeat every run. The Timekeeping
+// Health brain reads this to prove the 24/7 auto-clock-out engine is alive.
+export async function getCronHeartbeatMs(): Promise<number | null> {
+  if (!dbInstance) return null;
+  try {
+    const snap = await getDoc(doc(dbInstance, 'push_meta', 'cron-heartbeat'));
+    if (!snap.exists()) return null;
+    const v = (snap.data() as any).lastRunMs;
+    return typeof v === 'number' ? v : null;
+  } catch { return null; }
 }
 
 // ── Auto Clock-Out Sweep ────────────────────────────────────────

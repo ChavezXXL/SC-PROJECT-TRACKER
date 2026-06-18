@@ -321,6 +321,11 @@ export default async function handler() {
     return;
   }
 
+  // ── Heartbeat FIRST — before settings read and every early return — so the
+  // Timekeeping Health brain can prove this 24/7 engine is alive. If this stops
+  // updating, the dashboard surfaces "auto clock-out engine is down".
+  await setMetaDoc('cron-heartbeat', { lastRunMs: Date.now() }, apiKey, projectId).catch(() => {});
+
   // 1. Read shop settings
   const settings = await fetchDoc('settings', 'system', apiKey, projectId) as SystemSettings | null;
   if (!settings) { console.log('[shift-push-cron] No settings doc'); return; }
