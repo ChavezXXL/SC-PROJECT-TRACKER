@@ -791,11 +791,16 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         await updateDoc(ref, sanitize(updates));
         updateUserProgress(existing.userId, existing.jobId, existing.operation, durationSeconds).catch(() => {});
         firebaseStatus = { connected: true };
-        // Server-push admin devices on clock-out
-        notifyAdminsClockEvent(
-          'clock-out', existing.userName, existing.operation,
-          [existing.partNumber, existing.customer].filter(Boolean).join(' · '),
-        ).catch(() => {});
+        // Server-push admin devices on clock-out — but ONLY for real worker
+        // clock-outs. Routine system stops (auto clock-out, 14h sweep, lunch
+        // alarm, admin force-stop, job-switch) must NOT buzz the admin's phone.
+        const routine = /^(sweep:|alarm:|admin:|auto:)/.test(updates.stopReason || '');
+        if (!routine) {
+          notifyAdminsClockEvent(
+            'clock-out', existing.userName, existing.operation,
+            [existing.partNumber, existing.customer].filter(Boolean).join(' · '),
+          ).catch(() => {});
+        }
       } catch (e) {
         throw handleError(e);
       }
@@ -1187,11 +1192,14 @@ export async function pauseAllActive(reason: string): Promise<number> {
   });
 }
 
-export async function resumeAllPaused(): Promise<number> {
+/** Resume paused timers. When `reason` is given, ONLY resume logs paused with
+ *  that exact pauseReason — so the lunch-end auto-resume never force-resumes a
+ *  worker's own manual pause (machine down, personal break). */
+export async function resumeAllPaused(reason?: string): Promise<number> {
   return new Promise((resolve) => {
     const unsub = subscribeLogs(async (all) => {
       unsub();
-      const paused = all.filter(l => !l.endTime && l.pausedAt);
+      const paused = all.filter(l => !l.endTime && l.pausedAt && (!reason || l.pauseReason === reason));
       for (const l of paused) {
         try { await resumeTimeLog(l.id); } catch {}
       }
@@ -1326,6 +1334,13 @@ export async function sweepStaleLogs(): Promise<number> {
 
     let stopped = 0;
     for (const log of activeLogs) {
+      // ── Corrupt log with no usable startTime — force-close so it can't live
+      // forever and block the worker. finalizeDuration clamps the result to 0.
+      if (!Number.isFinite(log.startTime) || !log.startTime) {
+        try { await stopTimeLog(log.id, undefined, undefined, nowMs, 'sweep:corrupt-no-starttime'); stopped++; } catch {}
+        continue;
+      }
+
       // ── 14-hour safety net — ALWAYS runs, regardless of settings.
       // Clears orphaned logs from crashed sessions / closed browsers / forgotten
       // clock-ins. Without this, workers are permanently blocked from clocking in.
@@ -1339,9 +1354,12 @@ export async function sweepStaleLogs(): Promise<number> {
         // Day gate — alarm restricted to specific weekdays only fires on them.
         if (c.days && c.days.length > 0 && !c.days.includes(todayDow)) continue;
         let cutoffMs = shopLocalTimeMs(log.startTime, tz, c.h, c.m);
-        // Overnight shift: early-morning cutoff for an evening clock-in lands
-        // before the clock-in → roll to the next morning.
-        if (cutoffMs <= log.startTime) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
+        // Overnight shift: an early-morning (AM) cutoff for an evening clock-in
+        // lands before the clock-in → roll to the next morning. Only roll for
+        // genuine AM cutoffs; a PM cutoff already passed (e.g. clock back in at
+        // 6pm after a 5:30pm cutoff) must NOT roll a full day — let the safety
+        // net / next cutoff handle it instead of running ~14h.
+        if (cutoffMs <= log.startTime && c.h < 12) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
         if (log.startTime < cutoffMs && nowMs > cutoffMs) {
           if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
         }

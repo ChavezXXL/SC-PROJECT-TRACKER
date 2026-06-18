@@ -604,6 +604,10 @@ export interface ShiftAlarm {
   days?: number[];
   /** When true, also pause all running timers at this moment (for lunch/breaks). */
   pauseTimers?: boolean;
+  /** When true, RESUME timers that were auto-paused for lunch (the lunch-end
+   *  counterpart to pauseTimers). Without this a pauseTimers alarm strands
+   *  timers paused all afternoon. */
+  resumeTimers?: boolean;
   /** When true, also auto-clock-out all workers (used for end-of-shift). */
   clockOut?: boolean;
   /** When true, mark this alarm as a clock-in reminder (used for labeling). */

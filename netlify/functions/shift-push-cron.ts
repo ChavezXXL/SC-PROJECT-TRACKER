@@ -352,10 +352,14 @@ export default async function handler() {
     // matches the client sweep so the user only configures one place.
     // alarmActiveToday gates the alarm's days[] so a Mon–Fri clock-out alarm
     // does NOT force a clock-out on a Saturday overtime shift.
-    for (const a of (settings.shiftAlarms || []) as any[]) {
-      if (!a?.clockOut || a.enabled === false || !alarmActiveToday(a, tz)) continue;
-      const mm = (a.time || '').match(/^(\d{1,2}):(\d{2})$/);
-      if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
+    // Alarm-driven cutoffs only count when the master Break & Shift Alarms
+    // switch is on. (The dedicated autoClockOutEnabled path above is independent.)
+    if (settings.shiftAlarmsEnabled !== false) {
+      for (const a of (settings.shiftAlarms || []) as any[]) {
+        if (!a?.clockOut || a.enabled === false || !alarmActiveToday(a, tz)) continue;
+        const mm = (a.time || '').match(/^(\d{1,2}):(\d{2})$/);
+        if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
+      }
     }
 
     const SAFETY_MS = 14 * 3600 * 1000;
@@ -364,17 +368,28 @@ export default async function handler() {
 
     let stopped = 0;
     for (const log of openLogs) {
-      if (!log.startTime) continue;
+      // Corrupt log with no usable startTime — force-close it so it can't live
+      // forever (the safety-net check below would NaN-skip it otherwise).
+      if (typeof log.startTime !== 'number' || !log.startTime) {
+        const ok0 = await patchDoc('logs', log.id, {
+          endTime: nowMs, durationMinutes: 0, durationSeconds: 0, status: 'completed',
+          updatedAt: nowMs, pausedAt: null, stopReason: 'sweep:corrupt-no-starttime',
+          isAutoClosed: true, durationAnomaly: true,
+        }, apiKey, projectId);
+        if (ok0) stopped++;
+        continue;
+      }
 
       // Earliest qualifying cutoff for this log (shop timezone), so a timer is
       // closed at the right wall-clock time even across midnight.
       let stopAt: number | null = null;
       for (const c of cutoffs) {
         let cutoffMs = shopLocalTimeMs(log.startTime, tz, c.h, c.m);
-        // Overnight shift: an early-morning cutoff for an evening clock-in lands
-        // BEFORE the clock-in on the same calendar day → roll to the next
-        // morning so the timer closes at the configured time, not 14h later.
-        if (cutoffMs <= log.startTime) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
+        // Overnight shift: an early-morning (AM) cutoff for an evening clock-in
+        // lands BEFORE the clock-in → roll to the next morning. Only for genuine
+        // AM cutoffs: a PM cutoff already passed (clock back in 6pm after a
+        // 5:30pm cutoff) must NOT roll ~24h — let the safety net handle it.
+        if (cutoffMs <= log.startTime && c.h < 12) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
         if (log.startTime < cutoffMs && nowMs > cutoffMs) {
           if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
         }
@@ -421,8 +436,10 @@ export default async function handler() {
     return;
   }
 
-  // 2. Find alarms that should fire right now
-  const alarms: ShiftAlarm[] = settings.shiftAlarms || [];
+  // 2. Find alarms that should fire right now. The master Break & Shift Alarms
+  // switch gates ALL alarm-driven pushes (matches the client watcher).
+  const alarmsOn = settings.shiftAlarmsEnabled !== false;
+  const alarms: ShiftAlarm[] = alarmsOn ? (settings.shiftAlarms || []) : [];
   const toFire = alarms.filter(a =>
     a.enabled &&
     a.sendPush &&
@@ -430,10 +447,12 @@ export default async function handler() {
     alarmActiveToday(a, tz),
   );
 
-  // 3. Clock-in alarms past grace period (20 min after shift start)
+  // 3. Clock-in reminder alarms past grace period (20 min after shift start).
+  // Requires the EXPLICIT clockIn flag — naming an alarm "shift start" must not
+  // silently turn it into a late-nag enforcement alarm.
   const clockInAlarmsForCheck = alarms.filter(a =>
     a.enabled &&
-    (a.clockIn || a.label.toLowerCase().includes('clock in') || a.label.toLowerCase().includes('shift start')) &&
+    a.clockIn === true &&
     alarmActiveToday(a, tz) &&
     isAfterGracePeriod(a.time, nowHHMM, 20),
   );
@@ -470,7 +489,14 @@ export default async function handler() {
 
   // ── Section A: Shift alarm pushes — broadcast to ALL subscribed devices ──
   for (const alarm of toFire) {
-    const isClockIn  = alarm.clockIn  || alarm.label.toLowerCase().includes('clock in') || alarm.label.toLowerCase().includes('shift start');
+    // Once-per-day dedup: the cron runs every 5 min with a ±4-min window, so an
+    // alarm can match two ticks. Without this, workers' phones buzz twice.
+    const metaId = `shift-alarm-${alarm.id}-${today}`;
+    const already = await fetchDoc('push_meta', metaId, apiKey, projectId);
+    if (already) continue;
+    await setMetaDoc(metaId, { sentAt: Date.now() }, apiKey, projectId);
+
+    const isClockIn  = alarm.clockIn === true;
     const isClockOut = alarm.clockOut || alarm.label.toLowerCase().includes('clock out') || alarm.label.toLowerCase().includes('shift end');
 
     const title = isClockIn  ? `⏰ Time to Clock In — ${shopName}`

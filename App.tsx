@@ -129,6 +129,10 @@ const saveNotifiedTags = (set: Set<string>) => {
   } catch {}
 };
 
+// Drops a double-tap on Start: a second clock-in for the same worker while the
+// first is still in flight is ignored, so they can't open two timers at once.
+const _startInFlight = new Set<string>();
+
 const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any, fullLogs: TimeLog[] = []) => {
   const [permission, setPermission] = useState<NotificationPermission>(
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
@@ -1568,6 +1572,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         if (alarm.pauseTimers && currentLog && !currentLog.pausedAt) {
           try { await DB.pauseTimeLog(currentLog.id, `Auto-pause: ${alarm.label}`); } catch {}
         }
+        // Lunch-end resume — the counterpart to pauseTimers, so afternoon hours
+        // don't silently freeze. Never resume a worker's OWN manual pause.
+        if (alarm.resumeTimers && currentLog && currentLog.pausedAt && currentLog.pauseReason !== 'manual') {
+          try { await DB.resumeTimeLog(currentLog.id); } catch {}
+        }
         if (alarm.clockOut && currentLog) {
           try { await DB.stopTimeLog(currentLog.id, undefined, undefined, undefined, 'alarm:shift-end'); } catch {}
         }
@@ -1607,6 +1616,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   }, [addToast]);
 
   const handleStartJob = async (jobId: string, operation: string) => {
+    if (_startInFlight.has(user.id)) return;   // drop double-tap
+    _startInFlight.add(user.id);
     const job = jobs.find(j => j.id === jobId);
     try {
       const logId = await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
@@ -1629,8 +1640,10 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       }
       addToast('success', 'Timer Started');
       setShouldScrollToTimer(true);
-    } catch (e) {
-      addToast('error', 'Failed to start timer');
+    } catch (e: any) {
+      addToast('error', e?.message || 'Failed to start timer');
+    } finally {
+      _startInFlight.delete(user.id);
     }
   };
 
@@ -4551,6 +4564,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const handleAdminStartJob = async (operation: string) => {
     if (!startJobModal) return;
     const targetWorker = selectedWorker || user;
+    if (_startInFlight.has(targetWorker.id)) return;   // drop double-tap
+    _startInFlight.add(targetWorker.id);
     try {
       const logId = await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
       if (logId) {
@@ -4572,7 +4587,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       setSelectedWorker(null);
       setSelectedMachine(null);
     } catch (e: any) {
-      addToast('error', 'Failed to start: ' + e.message);
+      addToast('error', 'Failed to start: ' + (e?.message || 'unknown'));
+    } finally {
+      _startInFlight.delete(targetWorker.id);
     }
   };
 

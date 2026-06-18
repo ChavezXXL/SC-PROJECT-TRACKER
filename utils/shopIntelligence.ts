@@ -117,8 +117,12 @@ export function computeInsights(
   // ─── 2. REPEAT LOSS parts ──────────────────────────────────
   // Part numbers with ≥2 completed runs where avg margin is negative
   const completedJobs = jobs.filter(j => j.status === 'completed');
+  // Margin maps include ONLY quoted jobs — a quote-less job has revenue 0 and a
+  // synthetic -100% margin that would falsely drag parts/customers into "loses
+  // money" alerts. Unquoted jobs are surfaced separately by the quote_gap insight.
+  const quotedCompleted = completedJobs.filter(j => (j.quoteAmount ?? 0) > 0);
   const byPart = new Map<string, Job[]>();
-  for (const j of completedJobs) {
+  for (const j of quotedCompleted) {
     const pn = (j.partNumber || '').trim().toLowerCase();
     if (!pn) continue;
     if (!byPart.has(pn)) byPart.set(pn, []);
@@ -151,7 +155,7 @@ export function computeInsights(
   // ─── 3. CUSTOMER RISK ─────────────────────────────────────
   // Customers with ≥3 completed jobs where average margin is consistently poor
   const byCust = new Map<string, Job[]>();
-  for (const j of completedJobs) {
+  for (const j of quotedCompleted) {
     const c = (j.customer || '').trim();
     if (!c) continue;
     if (!byCust.has(c)) byCust.set(c, []);

@@ -71,38 +71,53 @@ export function computeOperationRates(
   const relevant = logs.filter(l =>
     (l.partNumber || '').trim().toLowerCase() === part &&
     !!l.operation &&
+    (l as any).durationAnomaly !== true &&   // never learn from a clamped/corrupt log
     typeof l.durationMinutes === 'number' && l.durationMinutes > 0 &&
     typeof l.sessionQty === 'number' && l.sessionQty > 0
   );
 
-  // Bucket by lowercased operation so "Polish" / "polish" / "POLISH" merge.
-  // We remember the most recent display casing for friendly output.
-  type Acc = { totalMins: number; totalQty: number; runIds: Set<string>; sampleCount: number; displayName: string };
+  // Bucket by lowercased operation. Keep each session's per-piece rate so we can
+  // drop outliers (a mistyped sessionQty — 3 instead of 300 — would otherwise
+  // poison the learned rate for the whole part).
+  type Sess = { mins: number; qty: number; rate: number; jobId: string };
+  type Acc = { sessions: Sess[]; displayName: string };
   const byOp = new Map<string, Acc>();
 
   for (const l of relevant) {
     const key = l.operation.trim().toLowerCase();
     if (!key) continue;
-    const e = byOp.get(key) || { totalMins: 0, totalQty: 0, runIds: new Set<string>(), sampleCount: 0, displayName: l.operation.trim() };
-    e.totalMins += l.durationMinutes!;
-    e.totalQty += l.sessionQty!;
-    e.runIds.add(l.jobId);
-    e.sampleCount += 1;
-    // Prefer Title Case or whatever the latest entry used (most likely current convention)
+    const e = byOp.get(key) || { sessions: [], displayName: l.operation.trim() };
+    e.sessions.push({ mins: l.durationMinutes!, qty: l.sessionQty!, rate: l.durationMinutes! / l.sessionQty!, jobId: l.jobId });
     e.displayName = l.operation.trim();
     byOp.set(key, e);
   }
 
+  const median = (xs: number[]): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+
   const rates = new Map<string, OperationRate>();
   for (const [, e] of byOp.entries()) {
-    if (e.totalQty <= 0) continue;
+    let sessions = e.sessions;
+    // With ≥4 samples, drop any session whose per-piece rate is wildly off the
+    // median (>4× or <¼×) — that's a data-entry error, not a real cycle time.
+    if (sessions.length >= 4) {
+      const med = median(sessions.map(s => s.rate));
+      if (med > 0) sessions = sessions.filter(s => s.rate <= med * 4 && s.rate >= med / 4);
+    }
+    if (sessions.length === 0) continue;
+    const totalMins = sessions.reduce((a, s) => a + s.mins, 0);
+    const totalQty  = sessions.reduce((a, s) => a + s.qty, 0);
+    if (totalQty <= 0) continue;
     rates.set(e.displayName, {
       operation: e.displayName,
-      ratePerPiece: e.totalMins / e.totalQty,
-      totalPieces: e.totalQty,
-      totalMinutes: e.totalMins,
-      runCount: e.runIds.size,
-      sampleCount: e.sampleCount,
+      ratePerPiece: totalMins / totalQty,
+      totalPieces: totalQty,
+      totalMinutes: totalMins,
+      runCount: new Set(sessions.map(s => s.jobId)).size,
+      sampleCount: sessions.length,
     });
   }
   return rates;

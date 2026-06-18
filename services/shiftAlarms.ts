@@ -11,8 +11,20 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import type { ShiftAlarm, ShiftAlarmSound, SystemSettings } from '../types';
+import { shopLocalTimeMs, shopDayOfWeek } from '../utils/timezone';
 
 const LS_FIRED = 'sc_alarms_fired'; // map: { alarmId: 'YYYY-MM-DD' }
+
+const shopTz = (s: SystemSettings): string => (s as any).recapTimezone || 'America/Los_Angeles';
+
+/** Parse "HH:MM" → [h,m], or null if blank/invalid. Null means the alarm is
+ *  inactive (prevents a cleared/empty time field firing at midnight). */
+function parseTime(t?: string): [number, number] | null {
+  if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return null;
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m) || h > 23 || m > 59) return null;
+  return [h, m];
+}
 
 function todayKey(): string {
   const d = new Date();
@@ -26,21 +38,6 @@ function loadFired(): Record<string, string> {
 
 function saveFired(map: Record<string, string>) {
   try { localStorage.setItem(LS_FIRED, JSON.stringify(map)); } catch {}
-}
-
-/** Compare current time vs. alarm's HH:MM. Returns true within a 1-minute window. */
-function shouldFireNow(alarm: ShiftAlarm): boolean {
-  if (!alarm.enabled) return false;
-  const now = new Date();
-  if (alarm.days && alarm.days.length > 0 && !alarm.days.includes(now.getDay())) return false;
-  const [h, m] = (alarm.time || '00:00').split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return false;
-  const target = new Date(now);
-  target.setHours(h, m, 0, 0);
-  const diffMs = now.getTime() - target.getTime();
-  // Fire window: target time → 60s past. This keeps us firing only once even
-  // if the poll tick isn't perfectly aligned with HH:MM:00.
-  return diffMs >= 0 && diffMs < 60_000;
 }
 
 // ── Audio ─────────────────────────────────────────────────────────────
@@ -95,33 +92,62 @@ function getAudioElement(url: string): HTMLAudioElement {
  */
 function tryPlayFile(url: string, durationSec?: number): Promise<boolean> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v: boolean) => { if (!settled) { settled = true; resolve(v); } };
     try {
       const audio = getAudioElement(url);
       audio.currentTime = 0;
       audio.loop = !!durationSec && durationSec > 0;
       const p = audio.play();
-      if (!p || typeof p.then !== 'function') { resolve(true); return; }
+      if (!p || typeof p.then !== 'function') { finish(true); return; }
+      // Time out after 2s if play() never resolves (slow CDN) so the synth
+      // fallback can ring. Cleared on success so we never double-sound.
+      const timer = setTimeout(() => finish(false), 2000);
       p.then(() => {
-        resolve(true);
-        // Stop after the configured duration — stops the loop cleanly.
+        // If the timeout already fired the synth fallback, mute this late file
+        // so the real recording doesn't play ON TOP of the synthesized one.
+        if (settled) { try { audio.pause(); audio.loop = false; audio.currentTime = 0; } catch {} return; }
+        clearTimeout(timer);
+        finish(true);
         if (durationSec && durationSec > 0) {
           setTimeout(() => { try { audio.pause(); audio.loop = false; audio.currentTime = 0; } catch {} }, durationSec * 1000);
         }
-      }).catch(() => resolve(false));
-      // Belt-and-suspenders: if the `play()` promise never resolves (e.g. stuck
-      // in a "loading" state because the CDN is slow), time out after 2s and
-      // fall back to synthesis so the shop floor still hears something.
-      setTimeout(() => resolve(false), 2000);
+      }).catch(() => { clearTimeout(timer); finish(false); });
     } catch {
-      resolve(false);
+      finish(false);
     }
   });
 }
 
-/** Preload CDN sounds in the background so first-play latency is near zero. */
+// Browser autoplay policy blocks ALL audio until the user has interacted with
+// the page at least once. On an always-on shop TV nobody clicks, so the bell
+// is silent. We "arm" audio on the very first user gesture anywhere — resume
+// the AudioContext and play a muted blip — so later alarms can actually sound.
+let audioArmed = false;
+export function armShopAudio() {
+  if (audioArmed) return;
+  audioArmed = true;
+  try { getAudioCtx(); } catch {}
+  try {
+    const a = getAudioElement(SOUND_URLS.bell);
+    const prev = a.volume; a.volume = 0;
+    const p = a.play();
+    if (p && typeof p.then === 'function') p.then(() => { try { a.pause(); a.currentTime = 0; a.volume = prev; } catch {} }).catch(() => { a.volume = prev; });
+    else a.volume = prev;
+  } catch {}
+}
+export function isShopAudioArmed() { return audioArmed; }
+
+/** Preload CDN sounds in the background so first-play latency is near zero,
+ *  and install the one-time audio-arm gesture listener. */
 export function preloadAlarmSounds() {
   for (const url of Object.values(SOUND_URLS)) {
     try { getAudioElement(url).load(); } catch {}
+  }
+  if (typeof window !== 'undefined' && !audioArmed) {
+    const arm = () => armShopAudio();
+    ['pointerdown', 'keydown', 'touchstart'].forEach(ev =>
+      window.addEventListener(ev, arm, { once: true, passive: true } as any));
   }
 }
 
@@ -422,7 +448,7 @@ export function getActiveAlarms(settings: SystemSettings): ShiftAlarm[] {
   const legacy: ShiftAlarm[] = [];
   if (settings.autoLunchPauseEnabled) {
     if (settings.lunchStart) legacy.push({ id: 'legacy-lunch-start', label: 'Lunch starts', time: settings.lunchStart, enabled: true, sound: 'bell', pauseTimers: true });
-    if (settings.lunchEnd)   legacy.push({ id: 'legacy-lunch-end',   label: 'Back to work', time: settings.lunchEnd,   enabled: true, sound: 'chime' });
+    if (settings.lunchEnd)   legacy.push({ id: 'legacy-lunch-end',   label: 'Back to work', time: settings.lunchEnd,   enabled: true, sound: 'chime', resumeTimers: true });
   }
   if (settings.autoClockOutEnabled && settings.autoClockOutTime) {
     legacy.push({ id: 'legacy-clockout', label: 'Shift ends — clock out', time: settings.autoClockOutTime, enabled: true, sound: 'bell', clockOut: true });
@@ -442,15 +468,16 @@ export function getActiveAlarms(settings: SystemSettings): ShiftAlarm[] {
  * the alarm time hit" case — when the user reopens the PWA, they see the
  * notification they would've gotten had the app been open.
  */
-function shouldFireNowOrRecently(alarm: ShiftAlarm, lookbackMs: number): boolean {
+function shouldFireNowOrRecently(alarm: ShiftAlarm, lookbackMs: number, tz: string): boolean {
   if (!alarm.enabled) return false;
-  const now = new Date();
-  if (alarm.days && alarm.days.length > 0 && !alarm.days.includes(now.getDay())) return false;
-  const [h, m] = (alarm.time || '00:00').split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return false;
-  const target = new Date(now);
-  target.setHours(h, m, 0, 0);
-  const diffMs = now.getTime() - target.getTime();
+  const hm = parseTime(alarm.time);
+  if (!hm) return false;                       // blank/invalid time → never fires
+  const nowMs = Date.now();
+  // Day-of-week + target instant both in SHOP timezone, so the bell agrees with
+  // the server push/clock-out regardless of the device's own timezone.
+  if (alarm.days && alarm.days.length > 0 && !alarm.days.includes(shopDayOfWeek(tz, nowMs))) return false;
+  const target = shopLocalTimeMs(nowMs, tz, hm[0], hm[1]);
+  const diffMs = nowMs - target;
   return diffMs >= 0 && diffMs < lookbackMs;
 }
 
@@ -472,6 +499,7 @@ export function watchShiftAlarms(
   const tick = (lookbackMs: number = 60_000) => {
     const isCatchup = lookbackMs > 60_000;
     const settings = getSettings();
+    const tz = shopTz(settings);
     const alarms = getActiveAlarms(settings);
     if (alarms.length === 0) return;
     const fired = loadFired();
@@ -479,7 +507,7 @@ export function watchShiftAlarms(
     let changed = false;
     for (const alarm of alarms) {
       if (fired[alarm.id] === today) continue;
-      if (!shouldFireNowOrRecently(alarm, lookbackMs)) continue;
+      if (!shouldFireNowOrRecently(alarm, lookbackMs, tz)) continue;
       fired[alarm.id] = today;
       changed = true;
       onFire(alarm, isCatchup);
@@ -529,22 +557,21 @@ declare global {
   interface Window { TimestampTrigger?: any }
 }
 
-function nextOccurrence(alarm: ShiftAlarm): number | null {
+function nextOccurrence(alarm: ShiftAlarm, tz: string): number | null {
   if (!alarm.enabled) return null;
-  const [h, m] = (alarm.time || '00:00').split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return null;
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(h, m, 0, 0);
-  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
-  // Respect day-of-week filter by rolling forward up to 7 days
+  const hm = parseTime(alarm.time);
+  if (!hm) return null;
+  const nowMs = Date.now();
+  let cand = shopLocalTimeMs(nowMs, tz, hm[0], hm[1]);
+  if (cand <= nowMs) cand = shopLocalTimeMs(nowMs + 86400000, tz, hm[0], hm[1]);
+  // Respect day-of-week filter (shop tz) by rolling forward up to 7 days
   if (alarm.days && alarm.days.length > 0) {
     for (let i = 0; i < 8; i++) {
-      if (alarm.days.includes(next.getDay())) break;
-      next.setDate(next.getDate() + 1);
+      if (alarm.days.includes(shopDayOfWeek(tz, cand))) break;
+      cand = shopLocalTimeMs(cand + 86400000, tz, hm[0], hm[1]);
     }
   }
-  return next.getTime();
+  return cand;
 }
 
 export async function scheduleUpcomingAlarms(settings: SystemSettings): Promise<{ scheduled: number; supported: boolean }> {
@@ -566,9 +593,10 @@ export async function scheduleUpcomingAlarms(settings: SystemSettings): Promise<
   } catch {}
 
   const alarms = getActiveAlarms(settings);
+  const tz = shopTz(settings);
   let scheduled = 0;
   for (const alarm of alarms) {
-    const fireAt = nextOccurrence(alarm);
+    const fireAt = nextOccurrence(alarm, tz);
     if (!fireAt) continue;
     try {
       const trigger = new window.TimestampTrigger(fireAt);

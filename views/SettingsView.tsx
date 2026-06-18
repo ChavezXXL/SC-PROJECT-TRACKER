@@ -285,19 +285,23 @@ const DAY_CHIPS: { value: number; label: string }[] = [
 ];
 
 const DEFAULT_ALARMS: ShiftAlarm[] = [
+  // sendPush:true on every alarm so closed-app phones (especially iOS) still get
+  // the alert via server push, not just the in-app bell.
   { id: 'shift-start',     label: 'Clock In Reminder', time: '06:00', enabled: true,  sound: 'bell',     clockIn: true,  sendPush: true },
-  { id: 'morning-break',   label: 'Morning Break',     time: '10:00', enabled: false, sound: 'triangle' },
-  { id: 'lunch-start',     label: 'Lunch Starts',      time: '12:00', enabled: true,  sound: 'bell',     pauseTimers: true },
-  { id: 'lunch-end',       label: 'Lunch Ends',        time: '12:30', enabled: true,  sound: 'chime' },
-  { id: 'afternoon-break', label: 'Afternoon Break',   time: '14:30', enabled: false, sound: 'triangle' },
+  { id: 'morning-break',   label: 'Morning Break',     time: '10:00', enabled: false, sound: 'triangle', sendPush: true },
+  { id: 'lunch-start',     label: 'Lunch Starts',      time: '12:00', enabled: true,  sound: 'bell',     pauseTimers: true, sendPush: true },
+  { id: 'lunch-end',       label: 'Lunch Ends',        time: '12:30', enabled: true,  sound: 'chime',    resumeTimers: true, sendPush: true },
+  { id: 'afternoon-break', label: 'Afternoon Break',   time: '14:30', enabled: false, sound: 'triangle', sendPush: true },
   { id: 'shift-end',       label: 'Shift Ends',        time: '16:30', enabled: true,  sound: 'horn',     clockOut: true, sendPush: true },
 ];
 
 const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void; addToast: any }) => {
   const { confirm: askConfirm, ConfirmHost } = useConfirm();
-  const alarms: ShiftAlarm[] = settings.shiftAlarms && settings.shiftAlarms.length > 0
+  // `!== undefined` (not `.length > 0`): an admin who deletes every alarm should
+  // see an empty list, not have the legacy defaults silently resurrected.
+  const alarms: ShiftAlarm[] = settings.shiftAlarms !== undefined
     ? settings.shiftAlarms
-    : getActiveAlarms(settings); // fall back to legacy fields on first load
+    : getActiveAlarms(settings); // fall back to legacy fields on first load only
 
   const update = (idx: number, patch: Partial<ShiftAlarm>) => {
     const next = [...alarms];
@@ -317,6 +321,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
       time: '15:00',
       enabled: true,
       sound: 'bell',
+      sendPush: true,
     };
     setSettings({ ...settings, shiftAlarms: [...alarms, newAlarm] });
   };
@@ -470,11 +475,15 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
                 );
               })}
               <span className="w-px h-3 bg-white/10" />
-              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Also pause all running timers when this alarm fires">
+              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Pause all running timers when this alarm fires (lunch start)">
                 <input type="checkbox" checked={!!alarm.pauseTimers} onChange={e => update(idx, { pauseTimers: e.target.checked })} className="w-3 h-3 rounded accent-amber-500" />
                 Pause timers
               </label>
-              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Also clock everyone out (end of shift)">
+              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Resume timers that were auto-paused for lunch (lunch end). Pair this with a 'Pause timers' alarm.">
+                <input type="checkbox" checked={!!alarm.resumeTimers} onChange={e => update(idx, { resumeTimers: e.target.checked })} className="w-3 h-3 rounded accent-blue-500" />
+                Resume timers
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Auto-clocks out all running workers at this time (handled server-side every few minutes; each open device also ends its own timer immediately)">
                 <input type="checkbox" checked={!!alarm.clockOut} onChange={e => update(idx, { clockOut: e.target.checked })} className="w-3 h-3 rounded accent-red-500" />
                 Clock out
               </label>

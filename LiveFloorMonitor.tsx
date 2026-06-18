@@ -386,9 +386,14 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
         });
       }
 
-      if (!inLunch && hhmm >= lunchEnd && ssGet(SS_PAUSED + today) && !ssGet(SS_RESUMED + today)) {
+      // Resume after lunch — driven off SHARED log state, NOT the per-tab
+      // SS_PAUSED flag. Previously this only ran if THIS tab recorded the pause,
+      // so a refreshed/closed tab (or a different device) left every timer
+      // frozen all afternoon. resumeAllPaused('auto-lunch') only revives timers
+      // we auto-paused, never a worker's own manual pause.
+      if (!inLunch && hhmm >= lunchEnd && !ssGet(SS_RESUMED + today)) {
         ssSet(SS_RESUMED + today);
-        DB.resumeAllPaused().then((count) => {
+        DB.resumeAllPaused('auto-lunch').then((count) => {
           if (count > 0) addToast('success', `Auto-resumed ${count} timer${count > 1 ? 's' : ''} after lunch`);
         });
       }
@@ -2024,8 +2029,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           firedOverEstRef.current.add(log.id);
           const detail = `${log.operation} on PO ${job.poNumber} passed its ${job.expectedHours}h budget (now ${(elapsedMins / 60).toFixed(1)}h). Check in with them.`;
           fireNotification(`⚠ Over estimate — ${log.userName}`, detail, `over-est-${log.id}`);
-          // Best-effort server push so the owner is alerted even off the floor screen.
-          DB.notifyAdminsOverEstimate(log.userName, log.operation, `PO ${job.poNumber}${job.customer ? ` · ${job.customer}` : ''}`, detail);
+          // NOTE: the server cron (shift-push-cron Section F) owns the admin PUSH
+          // for over-estimate so the owner isn't double-pushed. This stays a
+          // local floor-screen banner only.
         }
       });
       // Forget logs that have stopped so a re-clock-in can alert again.
