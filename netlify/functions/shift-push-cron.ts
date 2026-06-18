@@ -19,6 +19,7 @@
 import type { Config } from '@netlify/functions';
 import webpush from 'web-push';
 import type { ShiftAlarm, SystemSettings } from '../../types';
+import { shopLocalTimeMs } from '../../utils/timezone';
 
 export const config: Config = {
   schedule: '*/5 * * * *',   // every 5 minutes
@@ -99,6 +100,38 @@ async function deleteDoc(col: string, id: string, apiKey: string, projectId: str
   await fetch(url, { method: 'DELETE' });
 }
 
+/**
+ * Update specific fields on a Firestore doc, leaving all others intact.
+ * Uses updateMask so this is a true partial update (never clobbers the rest
+ * of the log document). Values: string | number | boolean | null.
+ */
+async function patchDoc(
+  col: string,
+  id: string,
+  data: Record<string, string | number | boolean | null>,
+  apiKey: string,
+  projectId: string,
+): Promise<boolean> {
+  const fields: any = {};
+  const maskParams: string[] = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (v === null) fields[k] = { nullValue: null };
+    else if (typeof v === 'string')  fields[k] = { stringValue: v };
+    else if (typeof v === 'number')  fields[k] = { integerValue: String(Math.round(v)) };
+    else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
+    maskParams.push(`updateMask.fieldPaths=${encodeURIComponent(k)}`);
+  }
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}/${id}?key=${apiKey}&${maskParams.join('&')}`;
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 // ── Time helpers ──────────────────────────────────────────────────────
 
 /** Current hour:minute in a given IANA timezone, formatted as "HH:MM". */
@@ -112,6 +145,9 @@ function currentHHMM(tz: string): string {
 function todayStr(tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 }
+
+// Shop-timezone cutoff math lives in utils/timezone.ts (shared with the client
+// sweep so both compute the identical wall-clock cutoff). Imported above.
 
 /** True if alarmTime (HH:MM) falls within a ±4-min window of now. */
 function isWithinWindow(alarmTime: string, nowHHMM: string): boolean {
@@ -173,6 +209,38 @@ async function fetchActiveLogs(apiKey: string, projectId: string): Promise<any[]
     if (!res.ok) return [];
     const rows: any[] = await res.json();
     return rows.filter(r => r.document).map(r => fsDoc(r.document));
+  } catch { return []; }
+}
+
+/**
+ * Every open timer — status in {in_progress, paused}. Used by the auto
+ * clock-out sweep, which must close paused timers too (a worker who paused
+ * and went home should still be clocked out at the cutoff).
+ */
+async function fetchOpenLogs(apiKey: string, projectId: string): Promise<any[]> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery?key=${apiKey}`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: 'logs' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'status' },
+          op: 'IN',
+          value: { arrayValue: { values: [{ stringValue: 'in_progress' }, { stringValue: 'paused' }] } },
+        },
+      },
+    },
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return [];
+    const rows: any[] = await res.json();
+    // Defensive: never touch a log that already has an endTime.
+    return rows.filter(r => r.document).map(r => fsDoc(r.document)).filter((l: any) => !l.endTime);
   } catch { return []; }
 }
 
@@ -244,8 +312,12 @@ export default async function handler() {
   const vapidPriv = process.env.VAPID_PRIVATE_KEY;
   const vapidSub  = process.env.VAPID_SUBJECT || 'mailto:hello@fabtrack.io';
 
-  if (!apiKey || !vapidPub || !vapidPriv) {
-    console.log('[shift-push-cron] Missing env vars — skipping');
+  // Auto-clock-out only needs Firestore (apiKey). Push needs VAPID too — but
+  // VAPID is gated separately LOWER DOWN so a shop that never set up push still
+  // gets reliable auto-clock-out. (apiKey has a hardcoded fallback above, so
+  // this guard effectively never trips; kept for completeness.)
+  if (!apiKey) {
+    console.log('[shift-push-cron] Missing Firebase API key — skipping');
     return;
   }
 
@@ -257,6 +329,92 @@ export default async function handler() {
   const shopName = settings.companyName || 'FabTrack IO';
   const nowHHMM  = currentHHMM(tz);
   const today    = todayStr(tz);
+
+  // ── Section 0: AUTO CLOCK-OUT (server-side — the reliable path) ────────
+  // The client sweep (sweepStaleLogs) only runs while a browser tab is open.
+  // When the shop closes and everyone shuts the app, nothing clocks workers
+  // out — they stay "running" until someone reopens the app or the 14h safety
+  // net trips the next day. THAT is the "not clocking out at the time I set"
+  // bug. This runs every 5 min regardless of any open tab, so timers end at
+  // the configured cutoff for real. Field-for-field identical to stopTimeLog.
+  try {
+    const cutoffs: { h: number; m: number }[] = [];
+    if (settings.autoClockOutEnabled) {
+      const mm = (settings.autoClockOutTime || '17:30').match(/^(\d{1,2}):(\d{2})$/);
+      if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
+    }
+    // Any "Shift Ends" style alarm flagged as a clock-out alarm also counts —
+    // matches the client sweep so the user only configures one place.
+    // alarmActiveToday gates the alarm's days[] so a Mon–Fri clock-out alarm
+    // does NOT force a clock-out on a Saturday overtime shift.
+    for (const a of (settings.shiftAlarms || []) as any[]) {
+      if (!a?.clockOut || a.enabled === false || !alarmActiveToday(a, tz)) continue;
+      const mm = (a.time || '').match(/^(\d{1,2}):(\d{2})$/);
+      if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
+    }
+
+    const SAFETY_MS = 14 * 3600 * 1000;
+    const nowMs = Date.now();
+    const openLogs = await fetchOpenLogs(apiKey, projectId);
+
+    let stopped = 0;
+    for (const log of openLogs) {
+      if (!log.startTime) continue;
+
+      // Earliest qualifying cutoff for this log (shop timezone), so a timer is
+      // closed at the right wall-clock time even across midnight.
+      let stopAt: number | null = null;
+      for (const c of cutoffs) {
+        let cutoffMs = shopLocalTimeMs(log.startTime, tz, c.h, c.m);
+        // Overnight shift: an early-morning cutoff for an evening clock-in lands
+        // BEFORE the clock-in on the same calendar day → roll to the next
+        // morning so the timer closes at the configured time, not 14h later.
+        if (cutoffMs <= log.startTime) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
+        if (log.startTime < cutoffMs && nowMs > cutoffMs) {
+          if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
+        }
+      }
+
+      // 14h safety net — always on, even with no cutoffs configured.
+      const forced = (nowMs - log.startTime) > SAFETY_MS;
+      const reason = stopAt !== null ? 'sweep:auto-clockout' : (forced ? 'sweep:14h-safety' : '');
+      if (!reason) continue;
+      const endTime = stopAt !== null ? stopAt : log.startTime + SAFETY_MS;
+
+      // Finalize an active pause (only if it began before the cutoff — a pause
+      // started after the cutoff doesn't reduce pre-cutoff work). Then compute
+      // working duration exactly like stopTimeLog so records are consistent.
+      let totalPausedMs = log.totalPausedMs || 0;
+      if (log.pausedAt && log.pausedAt < endTime) totalPausedMs += endTime - log.pausedAt;
+      const workingMs = Math.max(0, (endTime - log.startTime) - totalPausedMs);
+      const durationSeconds = Math.floor(workingMs / 1000);
+      const durationMinutes = Math.round(durationSeconds / 60);
+
+      const ok = await patchDoc('logs', log.id, {
+        endTime,
+        durationMinutes,
+        durationSeconds,
+        status: 'completed',
+        updatedAt: nowMs,
+        pausedAt: null,
+        totalPausedMs,
+        pauseReason: null,
+        stopReason: reason,
+        isAutoClosed: true,
+      }, apiKey, projectId);
+      if (ok) stopped++;
+    }
+    if (stopped > 0) console.log(`[shift-push-cron] auto clock-out: ended ${stopped} timer(s) — ${nowHHMM} ${tz}`);
+  } catch (e: any) {
+    console.warn('[shift-push-cron] auto clock-out failed:', e?.message);
+  }
+
+  // ── Push gate ── everything below sends Web Push, which needs VAPID keys.
+  // Auto-clock-out above does NOT, so it already ran regardless.
+  if (!vapidPub || !vapidPriv) {
+    console.log('[shift-push-cron] No VAPID keys — auto clock-out done, skipping push sections');
+    return;
+  }
 
   // 2. Find alarms that should fire right now
   const alarms: ShiftAlarm[] = settings.shiftAlarms || [];
