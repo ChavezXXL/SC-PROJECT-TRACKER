@@ -7,7 +7,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Calendar, Plus, Download, RefreshCw, Search, Filter,
-  CheckCircle, Briefcase, Edit2, X, Trash2, Clock,
+  CheckCircle, Briefcase, Edit2, X, Trash2, Clock, AlertTriangle, Wrench,
 } from 'lucide-react';
 
 import { Job, User, TimeLog, SystemSettings } from '../types';
@@ -15,7 +15,12 @@ import * as DB from '../services/mockDb';
 import { fmt, toDateTimeLocal, formatDuration, getLogDurationMins } from '../utils/date';
 import { Overlay } from '../components/Overlay';
 import { resolveJobStage } from '../utils/stageRouting';
+import { shopLocalTimeMs } from '../utils/timezone';
 import { getStages } from '../App';
+
+const HOUR_MS = 3600000;
+const logWorkingMins = (l: TimeLog): number =>
+  l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
 
 export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg: any) => void }) => {
   const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -76,6 +81,85 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   }, [refreshKey]);
 
   const stages = useMemo(() => settings ? getStages(settings) : [], [settings]);
+
+  // ── Bad-time-entry repair ─────────────────────────────────────────────
+  // Finds corrupt durations already in the database (the 81h-type records
+  // created before the duration cap existed — usually a forgotten clock-out
+  // that ran for days while nothing closed it) and lets the admin fix them
+  // all in one place instead of hunting row by row.
+  const [showRepair, setShowRepair] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairEnds, setRepairEnds] = useState<Record<string, string>>({});
+
+  const maxShiftH = ((settings as any)?.maxShiftHours as number) || 14;
+
+  /** Best-guess corrected end: the shop's configured clock-out time on the
+   *  entry's start-day; falls back to start + 8h (a typical shift). */
+  const suggestEnd = useMemo(() => (log: TimeLog): number => {
+    const tz = (settings as any)?.recapTimezone || 'America/Los_Angeles';
+    const co = settings?.autoClockOutTime;
+    if (co && /^(\d{1,2}):(\d{2})$/.test(co)) {
+      const [h, m] = co.split(':').map(Number);
+      const cutoff = shopLocalTimeMs(log.startTime, tz, h, m);
+      if (cutoff > log.startTime && cutoff - log.startTime <= maxShiftH * HOUR_MS) return cutoff;
+    }
+    return log.startTime + 8 * HOUR_MS;
+  }, [settings, maxShiftH]);
+
+  // Every completed log whose recorded time is impossible/absurd, worst first.
+  const badLogs = useMemo(() => {
+    return logs
+      .filter(l => l.endTime != null && (
+        logWorkingMins(l) / 60 > maxShiftH ||      // longer than a max shift
+        (l.endTime as number) < l.startTime ||     // end before start
+        (l as any).durationAnomaly === true        // flagged by finalizeDuration
+      ))
+      .sort((a, b) => logWorkingMins(b) - logWorkingMins(a));
+  }, [logs, maxShiftH]);
+
+  const openRepair = () => {
+    // Pre-fill each row's end with the smart suggestion (admin can override).
+    const seed: Record<string, string> = {};
+    badLogs.forEach(l => { seed[l.id] = toDateTimeLocal(suggestEnd(l)); });
+    setRepairEnds(seed);
+    setShowRepair(true);
+  };
+
+  const applyRepair = async (log: TimeLog, endStr: string): Promise<boolean> => {
+    const endTs = endStr ? new Date(endStr).getTime() : NaN;
+    if (Number.isNaN(endTs) || endTs < log.startTime) {
+      addToast('error', `Skipped ${log.userName}: end must be after start`);
+      return false;
+    }
+    const durSeconds = Math.max(0, Math.floor((endTs - log.startTime) / 1000));
+    try {
+      await DB.updateTimeLog({
+        ...log,
+        endTime: endTs,
+        durationSeconds: durSeconds,
+        durationMinutes: Math.round(durSeconds / 60),
+        status: 'completed',
+        durationAnomaly: false,
+        updatedAt: Date.now(),
+      } as TimeLog);
+      return true;
+    } catch {
+      addToast('error', `Failed to fix ${log.userName}'s entry`);
+      return false;
+    }
+  };
+
+  const fixAll = async () => {
+    setRepairBusy(true);
+    let fixed = 0;
+    for (const l of badLogs) {
+      const ok = await applyRepair(l, repairEnds[l.id]);
+      if (ok) fixed++;
+    }
+    setRepairBusy(false);
+    addToast('success', `Fixed ${fixed} time ${fixed === 1 ? 'entry' : 'entries'}`);
+    if (fixed === badLogs.length) setShowRepair(false);
+  };
 
   // jobId → job lookup
   const jobMap = useMemo(() => {
@@ -622,6 +706,29 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         </div>
       </div>
 
+      {/* Bad-time-entry alert — corrupt durations already in the database */}
+      {badLogs.length > 0 && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-red-400" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-black text-white">{badLogs.length} time {badLogs.length === 1 ? 'entry looks' : 'entries look'} wrong</p>
+              <p className="text-[12px] text-red-200/80 mt-0.5">
+                Recorded longer than {maxShiftH}h (or end before start) — almost always a forgotten clock-out. They inflate hours &amp; payroll. Fix them in one place.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={openRepair}
+            className="shrink-0 bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors"
+          >
+            <Wrench className="w-4 h-4" aria-hidden="true" /> Review &amp; Fix
+          </button>
+        </div>
+      )}
+
       {/* Filter Bar */}
       <div className="bg-zinc-900 border border-white/10 rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-4 no-print">
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-2 sm:gap-3">
@@ -818,7 +925,19 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                           : <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Live</span>
                         }
                       </td>
-                      <td className="p-3 text-right pr-6 font-mono text-zinc-300 font-bold">{formatDuration(getLogDurationMins(log) ?? log.durationMinutes)}</td>
+                      {(() => {
+                        const isBad = log.endTime != null && (
+                          logWorkingMins(log) / 60 > maxShiftH ||
+                          (log.endTime as number) < log.startTime ||
+                          (log as any).durationAnomaly === true
+                        );
+                        return (
+                          <td className={`p-3 text-right pr-6 font-mono font-bold ${isBad ? 'text-red-400' : 'text-zinc-300'}`}>
+                            {isBad && <AlertTriangle className="w-3 h-3 inline mr-1 mb-0.5" aria-hidden="true" />}
+                            {formatDuration(getLogDurationMins(log) ?? log.durationMinutes)}
+                          </td>
+                        );
+                      })()}
                       <td className="p-3 text-right pr-6 no-print opacity-0 group-hover/row:opacity-100 transition-opacity">
                         <button aria-label="Edit log entry" onClick={() => handleEditLog(log)} className="text-zinc-500 hover:text-white p-1.5 rounded hover:bg-white/10 transition-colors" title="Edit log"><Edit2 className="w-3 h-3" aria-hidden="true" /></button>
                       </td>
@@ -935,6 +1054,96 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                 </button>
               </div>
             </div>
+          </div>
+        </Overlay>
+      )}
+
+      {/* ── Repair Bad Time Entries Modal ─────────────────────────── */}
+      {showRepair && (
+        <Overlay open onClose={() => !repairBusy && setShowRepair(false)} ariaLabel="Fix bad time entries" zIndex={210}>
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
+            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
+              <div>
+                <h3 className="font-bold text-white flex items-center gap-2"><Wrench className="w-4 h-4 text-red-400" /> Fix Bad Time Entries</h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5">Set the real clock-out time for each. Pre-filled with your shop's clock-out time that day — adjust if you know better.</p>
+              </div>
+              <button aria-label="Close" onClick={() => !repairBusy && setShowRepair(false)} className="p-2 rounded-lg hover:bg-white/5"><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-4 space-y-2">
+              {badLogs.length === 0 && (
+                <div className="py-10 text-center text-emerald-400 font-bold flex flex-col items-center gap-2">
+                  <CheckCircle className="w-8 h-8" /> All clear — no bad entries left.
+                </div>
+              )}
+              {badLogs.map(log => {
+                const job = jobMap[log.jobId];
+                const curH = (logWorkingMins(log) / 60);
+                return (
+                  <div key={log.id} className="bg-zinc-950/60 border border-white/10 rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white truncate">
+                          {log.userName} <span className="text-zinc-500 font-normal">· {log.operation}</span>
+                        </p>
+                        <p className="text-[11px] text-zinc-500 truncate">
+                          {(job?.poNumber || log.jobIdsDisplay || log.jobId)} · started {new Date(log.startTime).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-black text-red-400 bg-red-500/10 border border-red-500/25 px-2 py-0.5 rounded-full">
+                        now: {(log.endTime as number) < log.startTime ? 'end before start' : `${curH.toFixed(1)}h`}
+                      </span>
+                    </div>
+                    <div className="flex items-end gap-2 mt-2.5 flex-wrap">
+                      <div className="flex-1 min-w-[180px]">
+                        <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Corrected clock-out</label>
+                        <input
+                          type="datetime-local"
+                          step="60"
+                          value={repairEnds[log.id] || ''}
+                          onChange={e => setRepairEnds(prev => ({ ...prev, [log.id]: e.target.value }))}
+                          className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm"
+                        />
+                      </div>
+                      <button
+                        disabled={repairBusy}
+                        onClick={async () => { if (await applyRepair(log, repairEnds[log.id])) addToast('success', 'Entry fixed'); }}
+                        className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-bold"
+                      >
+                        Fix
+                      </button>
+                      <button
+                        disabled={repairBusy}
+                        onClick={() => {
+                          const del = async () => { try { await DB.deleteTimeLog(log.id); addToast('success', 'Entry deleted'); } catch { addToast('error', 'Delete failed'); } };
+                          confirm ? confirm({ title: 'Delete entry', message: `Delete ${log.userName}'s ${curH.toFixed(0)}h entry entirely?`, onConfirm: del }) : del();
+                        }}
+                        className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 disabled:opacity-50 text-zinc-400 text-sm font-bold"
+                        title="Delete this entry"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {badLogs.length > 0 && (
+              <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex items-center justify-between gap-3 sticky bottom-0">
+                <p className="text-[11px] text-zinc-500">{badLogs.length} to fix</p>
+                <div className="flex gap-2">
+                  <button onClick={() => !repairBusy && setShowRepair(false)} className="px-4 py-2 text-zinc-400 hover:text-white text-sm font-bold">Close</button>
+                  <button
+                    onClick={fixAll}
+                    disabled={repairBusy}
+                    className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-60 text-white px-5 py-2 rounded-xl font-bold text-sm flex items-center gap-2 min-w-[150px] justify-center"
+                  >
+                    {repairBusy ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Fixing…</> : <>Fix all with suggested times</>}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </Overlay>
       )}
