@@ -26,7 +26,7 @@ interface QuotesViewProps {
     initialStageId?: string;
     /** Optional list of process names derived from quote items — shown in job notes. */
     processRouting?: string[];
-  }) => Promise<void>;
+  }) => Promise<string | void>;
 }
 
 const STATUS_STYLES: Record<QuoteStatus, { bg: string; text: string; label: string }> = {
@@ -311,8 +311,10 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     const next = items.map((item, i) => i === idx ? { ...item, [field]: value } : item);
     const current = next[idx];
     const effectiveUnit = resolveTierPrice(current.qty, current.priceTiers, current.unitPrice);
-    // If a tier was applied, sync unitPrice to it so the display matches the math
-    if (current.priceTiers && current.priceTiers.length > 0 && field === 'qty') {
+    // ALWAYS sync unitPrice to the active tier price (not only when qty changed)
+    // so the saved/printed/emailed line total can never fall back to the stale
+    // base price after editing description/unit — that billed the wrong rate.
+    if (current.priceTiers && current.priceTiers.length > 0) {
       next[idx] = { ...current, unitPrice: effectiveUnit, total: current.qty * effectiveUnit };
     } else {
       next[idx] = { ...current, total: current.qty * effectiveUnit };
@@ -473,8 +475,19 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   const handleSave = async () => {
     if (!billTo.name) { addToast('error', 'Customer name is required'); return; }
     if (items.every(i => !i.description)) { addToast('error', 'Add at least one line item'); return; }
-    const { subtotal, discountAmt, taxAmt, total } = calcTotals();
-    const validItems = items.filter(i => i.description.trim()).map(i => ({ ...i, total: i.qty * i.unitPrice }));
+    // Resolve the EFFECTIVE (tier-aware) price per line, then derive every total
+    // from it — so the saved subtotal/total, the line items, the PDF, and the
+    // email all bill the same active quantity-break price.
+    const validItems = items.filter(i => i.description.trim()).map(i => {
+      const ep = resolveTierPrice(i.qty, i.priceTiers, i.unitPrice);
+      return { ...i, unitPrice: ep, total: i.qty * ep };
+    });
+    const subtotal = validItems.reduce((a, i) => a + i.total, 0);
+    const afterMarkup = subtotal * (1 + form.markupPct / 100);
+    const discountAmt = afterMarkup * (form.discountPct / 100);
+    const afterDiscount = afterMarkup - discountAmt;
+    const taxAmt = afterDiscount * (form.taxRate / 100);
+    const total = afterDiscount + taxAmt;
 
     // ── Revision history (Round 2 #11) ──
     // If this is an EDIT of a quote that was already sent/accepted/declined, snapshot
@@ -578,7 +591,9 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     try {
       await DB.saveQuote({ ...q, ...updates } as Quote);
       addToast('success', `Quote marked as ${status}`);
-      if (status === 'accepted') {
+      // Only spawn a job on the FIRST accept — re-accepting (Send-tab link, or
+      // dragging a card back through the pipeline) must not create a duplicate.
+      if (status === 'accepted' && !q.acceptedAt && !q.linkedJobId) {
         // Build a rich job description from the quote — processes detected + line items
         const matchedProcesses: ProcessTemplate[] = [];
         q.items.forEach(item => {
@@ -603,18 +618,24 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
           if (matchingStage) initialStageId = matchingStage.id;
         }
 
-        await onJobCreate({
+        const newJobId = await onJobCreate({
           poNumber: q.quoteNumber,
           partNumber: q.items[0]?.description?.slice(0, 60) || 'See quote',
           customer: q.customer,
           quantity: q.items.reduce((a, i) => a + i.qty, 0),
-          dueDate: normDate(q.validUntil) || '',
+          // Leave the production due date blank — validUntil is the OFFER expiry,
+          // not a delivery date. The admin sets the real due date on the job.
+          dueDate: '',
           info,
           quoteAmount: q.total,
           linkedQuoteId: q.id,
           initialStageId,
           processRouting: matchedProcesses.map(p => p.name),
         });
+        // Record the spawned job on the quote so we never create a second one.
+        if (typeof newJobId === 'string') {
+          try { await DB.saveQuote({ ...q, ...updates, linkedJobId: newJobId } as Quote); } catch {}
+        }
         addToast('success', matchedProcesses.length > 0
           ? `Job created — routing: ${matchedProcesses.map(p => p.name).join(' → ')}`
           : 'Job auto-created from accepted quote');

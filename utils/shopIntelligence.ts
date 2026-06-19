@@ -19,6 +19,7 @@
 
 import type { Job, TimeLog, User, SystemSettings, PurchaseOrder } from '../types';
 import { calcJobProfit } from './jobProfit';
+import { customerKey } from './customers';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -85,7 +86,10 @@ export function computeInsights(
   const insights: ShopInsight[] = [];
   const now = Date.now();
   const shopRate = settings.shopRate ?? 0;
-  const ohPerHour = (settings.monthlyOverhead ?? 0) / Math.max(1, settings.monthlyWorkHours ?? 160);
+  // NaN-safe (matches jobProfit): a corrupt monthlyWorkHours must not turn every
+  // labor-cost insight into NaN, which silently suppresses all loss warnings.
+  const ohMonthly = Number(settings.monthlyOverhead) || 0;
+  const ohPerHour = ohMonthly > 0 ? ohMonthly / Math.max(1, Number(settings.monthlyWorkHours) || 160) : 0;
 
   // ─── 1. UNDERQUOTED open jobs ──────────────────────────────
   // Jobs where labor already burned through more than the quote
@@ -154,15 +158,20 @@ export function computeInsights(
 
   // ─── 3. CUSTOMER RISK ─────────────────────────────────────
   // Customers with ≥3 completed jobs where average margin is consistently poor
+  // Key by normalized customer (case/whitespace-insensitive) so "Acme" and
+  // "acme" don't split a customer below the insight threshold. Display name
+  // comes from the first job's original casing.
   const byCust = new Map<string, Job[]>();
   for (const j of quotedCompleted) {
     const c = (j.customer || '').trim();
     if (!c) continue;
-    if (!byCust.has(c)) byCust.set(c, []);
-    byCust.get(c)!.push(j);
+    const key = customerKey(c) || c.toLowerCase();
+    if (!byCust.has(key)) byCust.set(key, []);
+    byCust.get(key)!.push(j);
   }
-  byCust.forEach((custJobs, customer) => {
+  byCust.forEach((custJobs, custKey) => {
     if (custJobs.length < 3) return;
+    const customer = custJobs[0].customer || custKey; // display name, original casing
     const margins = custJobs.map(j => {
       if (j.profitSnapshot) return j.profitSnapshot.marginPct;
       const b = calcJobProfit(j, allLogs, users, settings, allPOs);
@@ -173,7 +182,7 @@ export function computeInsights(
     if (avgMargin < 10 && tightOrLoss / margins.length >= 0.7) {
       const revenue = custJobs.reduce((a, j) => a + (j.quoteAmount ?? 0), 0);
       insights.push({
-        id: `customer_risk_${customer.replace(/\W+/g, '_')}`,
+        id: `customer_risk_${custKey.replace(/\W+/g, '_')}`,
         type: 'customer_risk',
         severity: avgMargin < 0 ? 'critical' : 'warning',
         title: `${customer} is a low-margin customer`,
@@ -246,8 +255,9 @@ export function computeInsights(
   // The customer generating the best margins — positive reinforcement
   if (completedJobs.length >= 5) {
     let bestCust: { name: string; profit: number; margin: number; runs: number } | null = null;
-    byCust.forEach((custJobs, customer) => {
+    byCust.forEach((custJobs) => {
       if (custJobs.length < 2) return;
+      const customer = custJobs[0].customer || ''; // display name, original casing
       const profits = custJobs.map(j => {
         if (j.profitSnapshot) return { profit: j.profitSnapshot.profit, margin: j.profitSnapshot.marginPct };
         const b = calcJobProfit(j, allLogs, users, settings, allPOs);

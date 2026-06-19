@@ -577,7 +577,10 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         const sheetId = createData.sheets[0].properties.sheetId;
 
         // ── Write values ──────────────────────────────────────────
-        const writeRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Work%20Logs!A1?valueInputOption=USER_ENTERED`, {
+        // RAW (not USER_ENTERED): a part/customer/PO value starting with = + - @
+        // must stay literal text, never be evaluated as a Sheets formula (CSV
+        // injection). All our numbers are already plain integers.
+        const writeRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Work%20Logs!A1?valueInputOption=RAW`, {
           method: 'PUT',
           headers: { 'Authorization': `Bearer ${sheetsToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ values: rows }),

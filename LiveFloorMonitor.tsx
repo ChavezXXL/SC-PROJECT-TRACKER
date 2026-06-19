@@ -789,7 +789,9 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
   // On-time count
   const onTimeCount = completedThisWeek.filter(j => {
     const d = parseDueDate(j.dueDate);
-    return d && j.completedAt && j.completedAt <= d.getTime() + 86400000;
+    if (!d || !j.completedAt) return false;
+    d.setHours(23, 59, 59, 999); // end-of-day on the due date (no extra grace)
+    return j.completedAt <= d.getTime();
   }).length;
   const onTimePct = completedCount > 0 ? Math.round((onTimeCount / completedCount) * 100) : 0;
   // Top customer — uses shared helper that normalizes case/whitespace

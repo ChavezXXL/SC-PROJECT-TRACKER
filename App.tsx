@@ -4879,15 +4879,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       expectedHours: editingJob.expectedHours || undefined,
       // Material / consumable cost (entered during job lifecycle or at close-out)
       materialCost: editingJob.materialCost || undefined,
-      // Stage
-      currentStage: editingJob.currentStage || undefined,
-      stageHistory: editingJob.stageHistory || undefined,
       // Portal note — only persist when text is non-empty so we don't
       // bloat the doc with empty shells on every save.
       portalNote: editingJob.portalNote?.text?.trim()
         ? { ...editingJob.portalNote, updatedAt: Date.now(), updatedBy: user?.name }
         : undefined,
     };
+    // Stage fields are owned EXCLUSIVELY by DB.advanceJobStage (which uses
+    // arrayUnion). Never write them from the modal save — the editingJob
+    // snapshot is stale, so writing it would revert a stage advanced (by a
+    // worker clock-in / board drag) while the modal was open and erase history.
+    delete (job as any).currentStage;
+    delete (job as any).stageHistory;
     try {
       const isNew = !editingJob.id;
       await DB.saveJob(job);
@@ -4907,7 +4910,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const handleCompleteWithSnapshot = useCallback(async (j: Job) => {
     const stages = getStages(shopSettings);
     const completedStage = stages.find(s => s.isComplete);
-    const breakdown = calcJobProfit(j, allLogs, workers, shopSettings, allPOs);
+    // Compute the LOCKED snapshot from the COMPLETE log set, not the live
+    // subscription (capped at 500) — an old/long job would otherwise lock an
+    // understated cost / overstated margin permanently.
+    let jobLogs = allLogs.filter(l => l.jobId === j.id);
+    try { jobLogs = await DB.getLogsForJob(j.id); } catch { /* fall back to capped set */ }
+    const breakdown = calcJobProfit(j, jobLogs, workers, shopSettings, allPOs);
     const snapshot = buildProfitSnapshot(breakdown);
     if (completedStage) {
       await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true);
@@ -5960,8 +5968,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           onChange={async (e) => {
                             const targetStage = stages.find(s => s.id === e.target.value);
                             if (!targetStage || targetStage.id === currentStage.id) return;
-                            await DB.advanceJobStage(editingJob.id, targetStage.id, user.id, user.name, targetStage.isComplete);
-                            setEditingJob({ ...editingJob, currentStage: targetStage.id, status: targetStage.isComplete ? 'completed' : targetStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                            if (targetStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
+                            await DB.advanceJobStage(editingJob.id, targetStage.id, user.id, user.name, false);
+                            setEditingJob(p => ({ ...p, currentStage: targetStage.id, status: targetStage.id === 'in-progress' ? 'in-progress' : (p as Job).status, stageHistory: [...((p as Job).stageHistory || []), { stageId: targetStage.id, timestamp: Date.now(), userId: user.id, userName: user.name }] }));
                             addToast('success', `Moved to ${targetStage.label}`);
                           }}
                           className="text-xs font-bold px-3 py-2 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors min-w-0 w-full"
@@ -5973,8 +5982,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <button
                             type="button"
                             onClick={async () => {
-                              await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, nextStage.isComplete);
-                              setEditingJob({ ...editingJob, currentStage: nextStage.id, status: nextStage.isComplete ? 'completed' : nextStage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                              if (nextStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
+                              await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, false);
+                              setEditingJob(p => ({ ...p, currentStage: nextStage.id, status: nextStage.id === 'in-progress' ? 'in-progress' : (p as Job).status, stageHistory: [...((p as Job).stageHistory || []), { stageId: nextStage.id, timestamp: Date.now(), userId: user.id, userName: user.name }] }));
                               addToast('success', `Advanced to ${nextStage.label}`);
                             }}
                             className="text-xs font-bold px-3 py-2 rounded-lg transition-colors hover:brightness-110 flex items-center justify-center gap-1.5 whitespace-nowrap"
@@ -6004,8 +6014,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         return (
                           <button key={stage.id} className="flex-1 flex flex-col items-center gap-1 cursor-pointer group" onClick={async () => {
                             if (stage.id === currentStage.id) return;
-                            await DB.advanceJobStage(editingJob.id, stage.id, user.id, user.name, stage.isComplete);
-                            setEditingJob({ ...editingJob, currentStage: stage.id, status: stage.isComplete ? 'completed' : stage.id === 'in-progress' ? 'in-progress' : (editingJob as Job).status });
+                            if (stage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
+                            await DB.advanceJobStage(editingJob.id, stage.id, user.id, user.name, false);
+                            setEditingJob(p => ({ ...p, currentStage: stage.id, status: stage.id === 'in-progress' ? 'in-progress' : (p as Job).status, stageHistory: [...((p as Job).stageHistory || []), { stageId: stage.id, timestamp: Date.now(), userId: user.id, userName: user.name }] }));
                             addToast('success', `Moved to ${stage.label}`);
                           }}>
                             <div className={`h-3 w-full rounded-full transition-all group-hover:scale-y-125 ${isCurrent ? 'ring-2 ring-white/40 ring-offset-1 ring-offset-zinc-900' : ''}`}
@@ -7832,7 +7843,7 @@ export default function App() {
             </FeatureGate>
           )}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
-            const jobId = `JOB-${Date.now()}`;
+            const jobId = `JOB-${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             await DB.saveJob({
               id: jobId,
               jobIdsDisplay: `J-${jobId.slice(-6)}`,
@@ -7850,6 +7861,7 @@ export default function App() {
               // Routing (Round 2 #7): when the quote used Process Library items, pick the matching stage
               ...(data.initialStageId ? { currentStage: data.initialStageId } : {}),
             } as any);
+            return jobId; // so the quote can record linkedJobId + block duplicate creation
           }} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}

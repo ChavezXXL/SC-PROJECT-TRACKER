@@ -590,7 +590,11 @@ const ReceivingModal: React.FC<{
   onClose: () => void;
   onSave: (po: PurchaseOrder) => void;
 }> = ({ po, currentUser, onClose, onSave }) => {
-  const [items, setItems] = useState<POLineItem[]>(po.items.map(i => ({ ...i, receivedQty: i.receivedQty ?? i.quantity })));
+  // Seed unreceived lines to 0 (NOT full qty) so a partial shipment is the safe
+  // default — pre-filling full qty silently over-receives if the user doesn't
+  // zero out the lines that haven't arrived. The "Mark All Received" button
+  // still fills everything in one tap for genuine full receipts.
+  const [items, setItems] = useState<POLineItem[]>(po.items.map(i => ({ ...i, receivedQty: i.receivedQty ?? 0 })));
   const [note, setNote] = useState('');
   const [shipVia, setShipVia] = useState(po.shipVia || '');
   const [tracking, setTracking] = useState(po.trackingNumber || '');
@@ -685,7 +689,7 @@ const ReceivingModal: React.FC<{
               <div className="flex justify-end">
                 <input
                   type="number"
-                  value={item.receivedQty ?? item.quantity}
+                  value={item.receivedQty ?? 0}
                   onChange={e => updateReceivedQty(idx, Number(e.target.value))}
                   min="0"
                   max={item.quantity}

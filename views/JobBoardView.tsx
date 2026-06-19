@@ -90,7 +90,9 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
       if (stage?.isComplete) {
         list.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
       } else {
-        list.sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+        // Numeric (YYYYMMDD) compare — localeCompare on MM/DD/YYYY mis-orders
+        // dates (12/2025 sorted after 01/2026). No-due jobs go last.
+        list.sort((a, b) => (a.dueDate ? dateNum(a.dueDate) : 99991231) - (b.dueDate ? dateNum(b.dueDate) : 99991231));
       }
     });
     return map;
@@ -120,7 +122,11 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
       // get the same margin grade instead of silently skipping it.
       if (target.isComplete && !job.profitSnapshot) {
         try {
-          const breakdown = calcJobProfit(job, allLogs, workers, shopSettings, allPOs);
+          // Full log set (subscription is capped at 500) so the LOCKED snapshot
+          // isn't computed from truncated data for an older/long job.
+          let jobLogs = allLogs.filter(l => l.jobId === job.id);
+          try { jobLogs = await DB.getLogsForJob(job.id); } catch {}
+          const breakdown = calcJobProfit(job, jobLogs, workers, shopSettings, allPOs);
           const snapshot = buildProfitSnapshot(breakdown);
           await DB.completeJobWithSnapshot(job.id, job.materialCost ?? 0, snapshot);
           const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin' : breakdown.grade === 'good' ? '🔵 Good' : breakdown.grade === 'tight' ? '🟡 Tight' : '🔴 Loss';

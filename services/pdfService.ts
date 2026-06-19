@@ -4,10 +4,30 @@ import { printTraveler } from './travelerPrint';
 
 // ── Shared PDF Utilities ──
 
+/** Escape user-controlled text before it goes into the print HTML. */
+export function esc(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** Only allow http(s)/data:image logo URLs into <img src> — blocks javascript:
+ *  and data:text/html smuggling. */
+export function safeImgSrc(url?: string): string {
+  if (!url) return '';
+  const u = url.trim();
+  return /^(https?:\/\/|data:image\/)/i.test(u) ? u : '';
+}
+
 function openPrintWindow(html: string, title: string) {
   const win = window.open('', '_blank', 'width=850,height=1100');
   if (!win) return;
-  win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+  // CSP neutralizes the document.write XSS sink: no script-src means inline
+  // <script> AND inline event handlers (onerror=...) and javascript: URLs in
+  // any user field can't execute. Static print docs need no scripts —
+  // win.print() is invoked from the parent window below, not inline.
+  win.document.write(`<!DOCTYPE html><html><head><title>${esc(title)}</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http: blob:; style-src 'unsafe-inline'; font-src data: https:;">
     <style>
       @page { margin: 0.45in; size: letter portrait; }
       * { margin:0; padding:0; box-sizing:border-box; }

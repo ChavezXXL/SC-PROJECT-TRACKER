@@ -401,7 +401,10 @@ export async function saveJob(job: Job) {
   }
   const jobs = readLS<Job[]>(LS.jobs, []);
   const idx = jobs.findIndex((j) => j.id === job.id);
-  if (idx >= 0) jobs[idx] = job;
+  // Merge (not replace) so fields intentionally omitted by the caller — e.g.
+  // currentStage/stageHistory, which only advanceJobStage should write — keep
+  // their existing values instead of being wiped. Matches Firestore merge:true.
+  if (idx >= 0) jobs[idx] = { ...jobs[idx], ...job };
   else jobs.push(job);
   writeLS(LS.jobs, jobs);
 }
@@ -561,8 +564,13 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
   if (isComplete) {
     updates.status = 'completed';
     updates.completedAt = Date.now();
-  } else if (stageId === 'in-progress') {
-    updates.status = 'in-progress';
+  } else {
+    // Moving to ANY non-complete stage must drop the job out of 'completed' and
+    // clear the locked snapshot — otherwise dragging a done job back to QC
+    // leaves it counted as both completed AND active (the two views disagree).
+    updates.status = stageId === 'pending' ? 'pending' : 'in-progress';
+    updates.completedAt = null;
+    updates.profitSnapshot = null;
   }
   if (stageId === 'shipped') {
     updates.shippedAt = Date.now();
@@ -580,7 +588,13 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
     const j = jobs[idx] as any;
     const history = j.stageHistory || [];
     history.push({ stageId, timestamp: Date.now(), userId, userName });
-    jobs[idx] = { ...j, currentStage: stageId, stageHistory: history, ...(isComplete ? { status: 'completed', completedAt: Date.now() } : {}), ...(stageId === 'shipped' ? { shippedAt: Date.now() } : {}), ...(stageId === 'in-progress' ? { status: 'in-progress' } : {}) } as Job;
+    jobs[idx] = {
+      ...j, currentStage: stageId, stageHistory: history,
+      ...(isComplete
+        ? { status: 'completed', completedAt: Date.now() }
+        : { status: stageId === 'pending' ? 'pending' : 'in-progress', completedAt: null, profitSnapshot: null }),
+      ...(stageId === 'shipped' ? { shippedAt: Date.now() } : {}),
+    } as Job;
     writeLS(LS.jobs, jobs);
   }
 }
@@ -839,7 +853,9 @@ export async function updateTimeLog(log: TimeLog) {
      const pausedMs = log.totalPausedMs || 0;
      const workingMs = Math.max(0, wallMs - pausedMs);
      log.durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-     log.durationMinutes = Math.round(log.durationSeconds / 60);
+     // 2-decimal minutes — short sample sessions (90s for 2pc) must keep
+     // sub-minute precision or per-piece rate learning is off by 30%+.
+     log.durationMinutes = Math.round((log.durationSeconds / 60) * 100) / 100;
      log.status = 'completed';
   } else {
      log.endTime = undefined;
@@ -1535,6 +1551,15 @@ export async function saveSample(sample: Sample): Promise<void> {
 export async function deleteSample(id: string): Promise<void> {
   if (dbInstance) {
     try {
+      // Remove the bridged rate-learning logs for every work entry first,
+      // so a deleted sample's timing stops feeding estimates.
+      try {
+        const snap = await getDoc(doc(dbInstance, COL.samples, id));
+        if (snap.exists()) {
+          const s = snap.data() as Sample;
+          await Promise.all((s.workEntries || []).map(e => deleteTimeLog(`sample-tl-${e.id}`).catch(() => {})));
+        }
+      } catch {}
       await deleteDoc(doc(dbInstance, COL.samples, id));
       firebaseStatus = { connected: true };
     } catch (e) {
@@ -1542,8 +1567,10 @@ export async function deleteSample(id: string): Promise<void> {
     }
     return;
   }
-  const samples = readLS<Sample[]>(LS_SAMPLES, []).filter(s => s.id !== id);
-  writeLS(LS_SAMPLES, samples);
+  const all = readLS<Sample[]>(LS_SAMPLES, []);
+  const gone = all.find(s => s.id === id);
+  if (gone) (gone.workEntries || []).forEach(e => { deleteTimeLog(`sample-tl-${e.id}`).catch(() => {}); });
+  writeLS(LS_SAMPLES, all.filter(s => s.id !== id));
 }
 
 // ── localStorage → Firestore photo migration ──────────────────────────
@@ -1838,11 +1865,30 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
 export function nextPurchaseOrderNumber(list: PurchaseOrder[]): string {
   const year = new Date().getFullYear();
   let max = 0;
+  // Allow an optional suffix (e.g. "-RW" rework POs) so those numbers still
+  // advance the counter — otherwise the next regular PO reuses the base number.
   for (const p of list) {
-    const m = new RegExp(`^PO-${year}-(\\d+)$`).exec(p.poNumber || '');
+    const m = new RegExp(`^PO-${year}-(\\d+)`).exec(p.poNumber || '');
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return `PO-${year}-${String(max + 1).padStart(4, '0')}`;
+}
+
+/** Every log for a job — UNLIMITED (the live subscription caps at 500). Used
+ *  when locking a profit snapshot so cost/margin is computed from the full set. */
+export async function getLogsForJob(jobId: string): Promise<TimeLog[]> {
+  if (dbInstance) {
+    try {
+      const snap = await getDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', jobId)));
+      return snap.docs.map((d: any) => d.data() as TimeLog);
+    } catch {
+      try {
+        const snap = await getDocs(collection(dbInstance, COL.logs));
+        return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => l.jobId === jobId);
+      } catch { return []; }
+    }
+  }
+  return readLS<TimeLog[]>(LS.logs, []).filter(l => l.jobId === jobId);
 }
 
 export async function deleteRework(id: string): Promise<void> {
@@ -1922,6 +1968,9 @@ async function _bridgeSampleWorkToTimeLog(sample: Sample, entry: SampleWorkEntry
     endTime: entry.endTime || Date.now(),
     durationSeconds: durationSecondsCalc,
     durationMinutes: Math.round((durationSecondsCalc / 60) * 100) / 100,
+    // Carry the finalized paused span so updateTimeLog's recompute subtracts it
+    // — otherwise a sample paused for lunch teaches the rate engine the break.
+    totalPausedMs: entry.totalPausedMs || 0,
     partNumber: sample.partNumber,
     customer: sample.companyName,
     status: 'completed',
@@ -2121,6 +2170,9 @@ export async function editSampleWorkEntry(
       const totalWorkedMs = Math.max(0, (sample.totalWorkedMs || 0) - oldMs + newMs);
 
       await updateDoc(ref, sanitize({ workEntries: entries, totalWorkedMs, updatedAt: now }));
+      // Re-sync the bridged rate-learning log so a corrected time actually
+      // updates estimates (the bridge id is deterministic → overwrites in place).
+      try { await _bridgeSampleWorkToTimeLog(sample, updated, updated.durationSeconds || 0); } catch {}
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -2153,6 +2205,7 @@ export async function editSampleWorkEntry(
     updatedAt: now,
   };
   writeLS(LS_SAMPLES, samples);
+  try { await _bridgeSampleWorkToTimeLog(samples[sIdx], updated, updated.durationSeconds || 0); } catch {}
 }
 
 export async function deleteSampleWorkEntry(sampleId: string, entryId: string): Promise<void> {
@@ -2172,6 +2225,8 @@ export async function deleteSampleWorkEntry(sampleId: string, entryId: string): 
       const totalWorkedMs = Math.max(0, (sample.totalWorkedMs || 0) - removedMs);
 
       await updateDoc(ref, sanitize({ workEntries: filtered, totalWorkedMs, updatedAt: now }));
+      // Remove the bridged rate-learning log so deleted timing stops polluting estimates.
+      try { await deleteTimeLog(`sample-tl-${entryId}`); } catch {}
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -2194,4 +2249,5 @@ export async function deleteSampleWorkEntry(sampleId: string, entryId: string): 
     updatedAt: now,
   };
   writeLS(LS_SAMPLES, samples);
+  try { await deleteTimeLog(`sample-tl-${entryId}`); } catch {}
 }

@@ -158,6 +158,7 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
       {(editing || creating) && (
         <VendorEditor
           existing={editing}
+          vendors={vendors}
           onClose={() => { setEditing(null); setCreating(false); }}
           onSave={handleSave}
           addToast={addToast}
@@ -191,10 +192,11 @@ async function lookupZip(zip: string): Promise<ZipResult | null> {
 
 const VendorEditor: React.FC<{
   existing: Vendor | null;
+  vendors: Vendor[];
   onClose: () => void;
   onSave: (v: Vendor) => void;
   addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
-}> = ({ existing, onClose, onSave, addToast }) => {
+}> = ({ existing, vendors, onClose, onSave, addToast }) => {
   const [v, setV] = useState<Vendor>(() => existing || {
     id: `vendor_${Date.now()}`,
     name: '',
@@ -238,6 +240,10 @@ const VendorEditor: React.FC<{
 
   const handleSave = () => {
     if (!v.name.trim()) { addToast('error', 'Vendor name is required'); return; }
+    // Block duplicate names — duplicate vendors split one supplier's spend,
+    // on-time %, and lead-time history across separate performance cards.
+    const dupe = vendors.some(x => x.id !== v.id && x.name.trim().toLowerCase() === v.name.trim().toLowerCase());
+    if (dupe) { addToast('error', `A vendor named "${v.name.trim()}" already exists`); return; }
     onSave(v);
   };
 

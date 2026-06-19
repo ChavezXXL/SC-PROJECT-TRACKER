@@ -171,6 +171,12 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
   }, []);
 
   const beginRun = async (d: Delivery) => {
+    // One active run at a time — starting a second would orphan the first run's
+    // GPS session (gpsRef gets overwritten) so its miles are never saved.
+    if (deliveries.some(x => x.status === 'in-progress' && x.id !== d.id)) {
+      addToast('error', 'Finish or cancel the active run first');
+      return;
+    }
     const session = createGpsSession();
     gpsRef.current = { id: d.id, session };
     startTracking(

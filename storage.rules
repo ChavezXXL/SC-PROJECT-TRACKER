@@ -4,11 +4,14 @@ service firebase.storage {
 
     // ── Sample photos ─────────────────────────────────────────────
     // Public read so any device can display photos without auth.
-    // Write allowed from any origin — tighten to authenticated users
-    // once Firebase Auth is fully wired up.
+    // Writes (no Firebase Auth yet) are constrained to small image files so the
+    // bucket can't be abused as free hosting for arbitrary/malware content.
+    // TODO: require request.auth != null once Firebase Auth is wired up.
     match /sample-photos/{fileName} {
       allow read:  if true;
-      allow write: if true;
+      allow write: if request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if false;
     }
 
     // ── Everything else: deny ─────────────────────────────────────

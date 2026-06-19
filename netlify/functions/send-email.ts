@@ -27,13 +27,29 @@
 
 import type { Handler } from '@netlify/functions';
 
-const JSON_HEADERS = {
-  'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+// Only our own app origins may call this from a browser. Add custom domains via
+// the ALLOWED_ORIGINS env var (comma-separated). A curl attacker ignores CORS,
+// so this is paired with an optional shared-secret gate below.
+const ALLOWED_ORIGINS = [
+  'https://scprojtrac.netlify.app',
+  'https://main--scprojtrac.netlify.app',
+  ...((process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)),
+];
+
+function corsHeaders(origin?: string) {
+  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Headers': 'Content-Type, x-fabtrack-key',
+    'Vary': 'Origin',
+  };
+}
 
 export const handler: Handler = async (event) => {
+  const origin = (event.headers?.origin || event.headers?.Origin) as string | undefined;
+  const JSON_HEADERS = corsHeaders(origin);
+
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -44,6 +60,17 @@ export const handler: Handler = async (event) => {
 
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
+
+  // Optional shared-secret gate: when EMAIL_RELAY_SECRET is set in Netlify, every
+  // caller must send a matching x-fabtrack-key header. Off by default so existing
+  // flows keep working; turn it on to fully lock the relay to trusted callers.
+  const relaySecret = process.env.EMAIL_RELAY_SECRET;
+  if (relaySecret) {
+    const provided = (event.headers?.['x-fabtrack-key'] || event.headers?.['X-Fabtrack-Key']) as string | undefined;
+    if (provided !== relaySecret) {
+      return { statusCode: 401, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Unauthorized' }) };
+    }
   }
 
   const apiKey = process.env.RESEND_API_KEY;
@@ -71,6 +98,14 @@ export const handler: Handler = async (event) => {
       headers: JSON_HEADERS,
       body: JSON.stringify({ error: 'Missing required fields: to, subject, html' }),
     };
+  }
+  // Cap recipients + payload so a single call can't fan out into a spam blast.
+  const recipients = Array.isArray(to) ? to : [to];
+  if (recipients.length > 10) {
+    return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Too many recipients (max 10)' }) };
+  }
+  if (String(html).length > 500_000) {
+    return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Body too large' }) };
   }
 
   const from = process.env.RESEND_FROM || 'FabTrack IO <onboarding@resend.dev>';

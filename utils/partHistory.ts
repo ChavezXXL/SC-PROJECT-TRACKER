@@ -62,9 +62,12 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
     }, 0);
     const totalHours = totalMins / 60;
     const hoursPerUnit = job.quantity > 0 ? totalHours / job.quantity : 0;
-    // On-time: completed before end-of-day on dueDate
+    // On-time: completed by END-OF-DAY on the due date (matches the OTD/scorecard
+    // logic everywhere else). The old `+ 86400000` gave an extra ~12-24h of grace,
+    // counting next-day deliveries as on time and overstating performance.
     const due = parseDueDate(job.dueDate);
-    const onTime = !!(due && job.completedAt && job.completedAt <= due.getTime() + 86400000);
+    const dueEnd = due ? (due.setHours(23, 59, 59, 999), due.getTime()) : null;
+    const onTime = !!(dueEnd != null && job.completedAt && job.completedAt <= dueEnd);
     // Primary worker = user who logged the most time
     const byWorker = new Map<string, { name: string; mins: number }>();
     jobLogs.forEach(l => {
