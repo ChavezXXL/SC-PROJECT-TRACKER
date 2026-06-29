@@ -119,6 +119,19 @@ export interface PoDerived {
   invoiceStatus: PoInvoiceStatus; // normalized (unset → 'not-invoiced')
   readyToInvoice: boolean;        // job done & not yet invoiced/paid/n-a
   jobLabel?: string;              // human label of the matched job
+  amount?: number;                // best-known $ value (invoiceAmount → job.quoteAmount → ppp×qty)
+  completedAt?: number;           // matched job's completion timestamp (for aging)
+}
+
+/** Best-known dollar value for a PO: explicit invoice amount, else the job's quote. */
+export function poAmount(po: CustomerPoFile, job?: Job): number | undefined {
+  if (typeof po.invoiceAmount === 'number' && po.invoiceAmount > 0) return po.invoiceAmount;
+  if (!job) return undefined;
+  if (typeof job.quoteAmount === 'number' && job.quoteAmount > 0) return job.quoteAmount;
+  // Only derive from unit price when there's a real quantity — otherwise return
+  // undefined (a $0 would pollute "unbilled" totals), not 0.
+  if (typeof job.pricePerPart === 'number' && job.pricePerPart > 0 && (job.quantity || 0) > 0) return job.pricePerPart * (job.quantity as number);
+  return undefined;
 }
 
 export function derivePo(po: CustomerPoFile, jobs: Job[], stages: JobStage[]): PoDerived {
@@ -142,6 +155,8 @@ export function derivePo(po: CustomerPoFile, jobs: Job[], stages: JobStage[]): P
     invoiceStatus,
     readyToInvoice,
     jobLabel: m.job ? (m.job.jobIdsDisplay || m.job.poNumber || undefined) : undefined,
+    amount: poAmount(po, m.job),
+    completedAt: m.job?.completedAt,
   };
 }
 

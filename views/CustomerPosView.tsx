@@ -6,17 +6,51 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   FileText, Camera, Upload, X, Search, Trash2, Link2, ChevronDown, ChevronRight,
   Loader2, CheckCircle, Building2, Filter, Send, DollarSign, Edit3, Archive,
-  AlertTriangle, Clock,
+  AlertTriangle, Clock, Plus, Briefcase, Download,
 } from 'lucide-react';
 
 import { CustomerPoFile, Job, SystemSettings, PoInvoiceStatus } from '../types';
 import * as DB from '../services/mockDb';
 import { Overlay } from '../components/Overlay';
 import { scanDocument } from '../services/poScanner';
+import { normDate, todayFmt } from '../utils/date';
 import {
   derivePo, resolveStages, matchJobForPo, isJobComplete, readyToInvoiceList,
 } from '../utils/poOrganizer';
 import type { PoDerived } from '../utils/poOrganizer';
+
+/** Whole days since a timestamp (0 = today). */
+const daysSince = (ms?: number): number | null =>
+  typeof ms === 'number' && ms > 0 ? Math.max(0, Math.floor((Date.now() - ms) / 86400000)) : null;
+
+/** Normalize a (possibly OCR'd / garbage) due date to a VALID, zero-padded
+ *  MM/DD/YYYY — or '' if it isn't a real calendar date. Keeps junk out of jobs. */
+const normalizeDue = (s?: string): string => {
+  const d = normDate(s || '');
+  const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return '';
+  const mo = +m[1], da = +m[2];
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) return '';
+  return `${String(mo).padStart(2, '0')}/${String(da).padStart(2, '0')}/${m[3]}`;
+};
+
+/** "today" / "1d" / "5d ago" for invoice aging. */
+const agingLabel = (ms?: number): string => {
+  const d = daysSince(ms);
+  if (d === null) return '';
+  return d === 0 ? 'done today' : d === 1 ? '1 day' : `${d} days`;
+};
+
+function downloadCsv(filename: string, rows: (string | number | undefined)[][]) {
+  const esc = (v: string | number | undefined) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = rows.map(r => r.map(esc).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // Compress + re-encode to JPEG so uploads are small and Storage-friendly.
 function compressImage(file: File, maxWidth = 1600, quality = 0.7): Promise<string> {
@@ -84,6 +118,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   const [scanning, setScanning] = useState(false);
   const [scanPct, setScanPct] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [creating, setCreating] = useState('');   // id of PO currently being turned into a job
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -240,6 +275,43 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
     } catch { addToast('error', 'Update failed'); }
   };
 
+  /** Turn an unmatched PO into a real job on the board, then link them. */
+  const createJobFromPo = (po: CustomerPoFile) => {
+    const doCreate = async () => {
+      setCreating(po.id);
+      try {
+        const id = Date.now().toString();
+        const job: Job = {
+          id,
+          jobIdsDisplay: po.poNumber?.trim() || `J-${id.slice(-4)}`,
+          poNumber: po.poNumber?.trim() || '',
+          partNumber: po.partNumber?.trim() || '',
+          customer: po.customerName?.trim() || '',
+          quantity: Math.max(0, po.qty || 0),
+          dateReceived: todayFmt(),
+          dueDate: normalizeDue(po.dueDate),
+          info: `Created from customer PO photo${po.notes ? ` — ${po.notes}` : ''}`,
+          status: 'pending',
+          createdAt: Date.now(),
+        };
+        await DB.saveJob(job);
+        await DB.saveCustomerPo({
+          ...po,
+          linkedJobId: id,
+          linkedJobDisplay: job.jobIdsDisplay,
+          updatedAt: Date.now(),
+        });
+        addToast('success', `Job ${job.jobIdsDisplay} created & linked`);
+      } catch (e: any) {
+        addToast('error', `Couldn't create job${e?.message ? ` — ${e.message}` : ''}`);
+      } finally {
+        setCreating('');
+      }
+    };
+    if (confirm) confirm({ title: 'Add this PO to the Job Board?', message: `Creates a new job for ${po.customerName}${po.poNumber ? ` · ${po.poNumber}` : ''} and links this PO to it.`, onConfirm: doCreate });
+    else doCreate();
+  };
+
   const handleDelete = (po: CustomerPoFile) => {
     const doDelete = async () => {
       try { await DB.deleteCustomerPo(po.id); addToast('success', 'Deleted'); }
@@ -274,8 +346,26 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   }, [pos, derivedMap, search, fCustomer, fMatch, fInvoice, showArchived]);
 
   const shownCount = useMemo(() => grouped.reduce((n, [, l]) => n + l.length, 0), [grouped]);
+  const outstanding = useMemo(() => readyList.reduce((s, x) => s + (x.derived.amount || 0), 0), [readyList]);
   const activeFilterCount = (fCustomer ? 1 : 0) + (fMatch ? 1 : 0) + (fInvoice ? 1 : 0) + (showArchived ? 1 : 0);
   const clearFilters = () => { setFCustomer(''); setFMatch(''); setFInvoice(''); setShowArchived(false); };
+
+  const exportVisible = () => {
+    const rows: (string | number | undefined)[][] = [
+      ['Customer', 'PO #', 'Part #', 'Qty', 'Due', 'Linked Job', 'Job Status', 'Invoice Status', 'Invoice #', 'Amount', 'Uploaded'],
+    ];
+    grouped.forEach(([, list]) => list.forEach(p => {
+      const d = derivedMap.get(p.id);
+      rows.push([
+        p.customerName, p.poNumber, p.partNumber, p.qty, p.dueDate, d?.jobLabel,
+        d?.matchState === 'completed' ? 'Completed' : d?.matchState === 'active' ? 'Active' : 'Not added',
+        d?.readyToInvoice ? 'Ready to invoice' : (d?.invoiceStatus || 'not-invoiced'),
+        p.invoiceNumber, d?.amount, new Date(p.uploadedAt).toLocaleDateString(),
+      ]);
+    }));
+    if (rows.length <= 1) { addToast('info', 'Nothing to export'); return; }
+    downloadCsv(`customer-pos-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  };
 
   // ── small presentational helpers ──
   const MatchBadge = ({ d }: { d: PoDerived }) => {
@@ -329,6 +419,9 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
           <button onClick={() => fileRef.current?.click()} className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm">
             <Upload className="w-4 h-4 text-amber-400" /> Upload
           </button>
+          <button onClick={exportVisible} title="Export the filtered list to CSV" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-zinc-300 px-3 py-2 rounded-xl font-bold flex items-center gap-2 text-sm">
+            <Download className="w-4 h-4" /> Export
+          </button>
         </div>
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handlePhoto(f); e.target.value = ''; }} />
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handlePhoto(f); e.target.value = ''; }} />
@@ -345,17 +438,26 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
           </div>
           <p className="text-[11px] text-orange-300/70 mb-3">These jobs are finished but not marked invoiced. Send the invoice, then mark it.</p>
           <div className="space-y-1.5">
-            {readyList.slice(0, 5).map(({ po, derived }) => (
-              <div key={po.id} className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-white truncate">{po.customerName} <span className="text-zinc-500 font-normal">· {po.poNumber || '(no PO#)'}</span></p>
-                  <p className="text-[10px] text-zinc-500 truncate">Job {derived.jobLabel} done{po.qty ? ` · ${po.qty}pc` : ''}</p>
+            {readyList.slice(0, 5).map(({ po, derived }) => {
+              const age = daysSince(derived.completedAt);
+              return (
+                <div key={po.id} className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-white truncate">
+                      {po.customerName} <span className="text-zinc-500 font-normal">· {po.poNumber || '(no PO#)'}</span>
+                      {derived.amount ? <span className="text-emerald-400 font-bold"> · ${derived.amount >= 1000 ? (derived.amount / 1000).toFixed(1) + 'k' : derived.amount.toFixed(0)}</span> : ''}
+                    </p>
+                    <p className="text-[10px] text-zinc-500 truncate">
+                      Job {derived.jobLabel} done{age !== null ? ` · ` : ''}
+                      {age !== null && <span className={age >= 3 ? 'text-red-400 font-bold' : 'text-zinc-400'}>{agingLabel(derived.completedAt)}{age >= 3 ? ' waiting' : ''}</span>}
+                    </p>
+                  </div>
+                  <button onClick={() => setInvoice(po, 'invoiced')} className="shrink-0 bg-orange-500/90 hover:bg-orange-400 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1">
+                    <DollarSign className="w-3 h-3" /> Mark invoiced
+                  </button>
                 </div>
-                <button onClick={() => setInvoice(po, 'invoiced')} className="shrink-0 bg-orange-500/90 hover:bg-orange-400 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1">
-                  <DollarSign className="w-3 h-3" /> Mark invoiced
-                </button>
-              </div>
-            ))}
+              );
+            })}
             {readyList.length > 5 && (
               <button onClick={() => { setFInvoice('ready'); setShowFilters(true); }} className="text-[11px] font-bold text-orange-300 hover:text-orange-200 pt-1">
                 +{readyList.length - 5} more →
@@ -414,9 +516,10 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         </div>
       )}
 
-      <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+      <div className="flex items-center gap-3 text-[11px] text-zinc-500 flex-wrap">
         <span>{shownCount} shown · {pos.length} total</span>
         {readyList.length > 0 && <span className="text-orange-400 font-bold">· {readyList.length} to invoice</span>}
+        {outstanding > 0 && <span className="text-emerald-400 font-bold">· ${outstanding >= 1000 ? (outstanding / 1000).toFixed(1) + 'k' : outstanding.toFixed(0)} unbilled</span>}
       </div>
 
       {/* Scanning overlay (full-screen while OCR runs) */}
@@ -485,6 +588,11 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                           {d.invoiceStatus === 'invoiced' && (
                             <button onClick={() => setInvoice(po, 'paid')} className="w-full mt-1 bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center justify-center gap-1">
                               <CheckCircle className="w-3 h-3" /> Mark paid
+                            </button>
+                          )}
+                          {d.matchState === 'unmatched' && (
+                            <button onClick={() => createJobFromPo(po)} disabled={creating === po.id} className="w-full mt-1 bg-blue-600/80 hover:bg-blue-500 disabled:opacity-50 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center justify-center gap-1" title="Create a job on the board from this PO">
+                              {creating === po.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add to jobs
                             </button>
                           )}
                           <p className="text-[9px] text-zinc-600 flex items-center gap-1"><Clock className="w-2.5 h-2.5" />{new Date(po.uploadedAt).toLocaleDateString()}{po.invoiceNumber ? ` · inv ${po.invoiceNumber}` : ''}</p>

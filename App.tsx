@@ -19,7 +19,8 @@ import {
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample } from './types';
+import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample, CustomerPoFile } from './types';
+import { readyToInvoiceList } from './utils/poOrganizer';
 import { JobProfitCard } from './components/JobProfitCard';
 import { CanWeTakeIt } from './components/CanWeTakeIt';
 import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
@@ -2453,6 +2454,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [dashAllPOs, setDashAllPOs] = useState<PurchaseOrder[]>([]);
   const [dashQuotes, setDashQuotes] = useState<Quote[]>([]);
   const [dashSamples, setDashSamples] = useState<Sample[]>([]);
+  const [dashCustomerPos, setDashCustomerPos] = useState<CustomerPoFile[]>([]);
   const [showCanWeTakeIt, setShowCanWeTakeIt] = useState(false);
   const [hoveredCustIdx, setHoveredCustIdx] = useState<number | null>(null);
   const [attentionDismissed, setAttentionDismissed] = useState<boolean>(() => {
@@ -2471,8 +2473,13 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub8 = DB.subscribePurchaseOrders(setDashAllPOs);
     const unsub9 = DB.subscribeQuotes(setDashQuotes);
     const unsub10 = DB.subscribeSamples(setDashSamples);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); };
+    const unsub11 = DB.subscribeCustomerPos(setDashCustomerPos);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); };
   }, []);
+
+  const invoicePos = useMemo(() => readyToInvoiceList(dashCustomerPos, jobs, shopSettings), [dashCustomerPos, jobs, shopSettings]);
+  const invoiceCount = invoicePos.length;
+  const invoiceTotal = useMemo(() => invoicePos.reduce((s, x) => s + (x.derived.amount || 0), 0), [invoicePos]);
 
   const liveJobsCount = new Set(activeLogs.map(l => l.jobId)).size;
   const activeJobsCount = jobs.filter(j => j.status !== 'completed').length;
@@ -2931,7 +2938,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         </div>
       )}
 
-      <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4">
+      <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-3 sm:gap-4">
         {/* Live Activity */}
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Live</p><h3 className="text-xl sm:text-2xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] text-emerald-400 mt-0.5 truncate">Jobs running</p></div>
@@ -2979,6 +2986,15 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
           <CheckCircle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${onTimePct === null ? 'text-zinc-700' : onTimePct >= 90 ? 'text-emerald-500' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`} />
         </div>
+        {/* Ready to Invoice — customer POs whose job is done but not billed */}
+        <button onClick={() => setView('admin-customer-pos')} title="Customer POs ready to invoice" className={`text-left card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${invoiceCount > 0 ? 'bg-orange-500/10 border-orange-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0">
+            <p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${invoiceCount > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>To Invoice</p>
+            <h3 className={`text-xl sm:text-2xl font-black ${invoiceCount > 0 ? 'text-orange-400' : 'text-zinc-600'}`}>{invoiceCount}</h3>
+            <p className={`text-[10px] mt-0.5 truncate ${invoiceCount > 0 ? 'text-orange-400/70' : 'text-zinc-600'}`}>{invoiceTotal > 0 ? `$${invoiceTotal >= 1000 ? (invoiceTotal / 1000).toFixed(1) + 'k' : invoiceTotal.toFixed(0)} unbilled` : 'POs done'}</p>
+          </div>
+          <FileText className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${invoiceCount > 0 ? 'text-orange-500' : 'text-zinc-700'}`} />
+        </button>
       </div>
 
       {/* ── TODAY'S PULSE — what happened today + who's working ── */}
