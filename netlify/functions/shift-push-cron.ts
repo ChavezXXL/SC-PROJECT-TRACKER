@@ -19,7 +19,7 @@
 import type { Config } from '@netlify/functions';
 import webpush from 'web-push';
 import type { ShiftAlarm, SystemSettings } from '../../types';
-import { shopLocalTimeMs } from '../../utils/timezone';
+import { shopLocalTimeMs, shopDayOfWeek } from '../../utils/timezone';
 
 export const config: Config = {
   schedule: '*/5 * * * *',   // every 5 minutes
@@ -268,6 +268,38 @@ async function fetchRecentNotes(sinceMs: number, apiKey: string, projectId: stri
     if (!res.ok) return [];
     const rows: any[] = await res.json();
     return rows.filter(r => r.document).map(r => fsDoc(r.document));
+  } catch { return []; }
+}
+
+/**
+ * Completed logs that ENDED on/after sinceMs (shop-day start). Used by the
+ * idle-gap nudge to find workers who finished a job earlier today and haven't
+ * started another. Single-field range query on endTime.
+ */
+async function fetchCompletedLogsSince(sinceMs: number, apiKey: string, projectId: string): Promise<any[]> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery?key=${apiKey}`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: 'logs' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'endTime' },
+          op: 'GREATER_THAN_OR_EQUAL',
+          value: { integerValue: String(Math.round(sinceMs)) },
+        },
+      },
+    },
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return [];
+    const rows: any[] = await res.json();
+    return rows.filter(r => r.document).map(r => fsDoc(r.document))
+      .filter((l: any) => typeof l.endTime === 'number' && l.endTime > 0);
   } catch { return []; }
 }
 
@@ -829,5 +861,102 @@ export default async function handler() {
 
       console.log(`[shift-push-cron] note on ${note.jobLabel || note.jobId} by ${note.userName} → ${notified} notified (${recipientIds.size} recipient(s))`);
     }
+  }
+
+  // ── Section G: Idle / gap nudge — finished a job but hasn't started another ──
+  // The "did a job in the AM, stopped, and never clocked back in" gap. During
+  // work hours, find any worker whose last timer ENDED ≥ idleMin ago with no
+  // timer now running (or paused). Nudge the worker, summarize for the admin.
+  try {
+    const dow = shopDayOfWeek(tz, now);                 // 0=Sun … 6=Sat
+    const isWorkday = dow >= 1 && dow <= 6;             // Mon–Sat
+    const workStart = shopLocalTimeMs(now, tz, 6, 0);  // no expectation before 6:00
+    let weH = 17, weM = 30;
+    const wm = (settings.autoClockOutTime || '17:30').match(/^(\d{1,2}):(\d{2})$/);
+    if (wm) { weH = +wm[1]; weM = +wm[2]; }
+    const workEnd = shopLocalTimeMs(now, tz, weH, weM);
+    const idleMin = Math.max(20, Number((settings as any).idleGapMinutes) || 75);
+
+    // Only during work hours, on a workday, and not in the last 30 min before
+    // clock-out (no point telling someone to start a job right before they leave).
+    if (isWorkday && now >= workStart && now <= workEnd - 30 * 60 * 1000) {
+      const completedToday = await fetchCompletedLogsSince(workStart, apiKey, projectId);
+
+      // Last time each worker finished a job today.
+      const lastEndByUser = new Map<string, number>();
+      for (const l of completedToday) {
+        const uid = String(l.userId || '');
+        if (!uid) continue;
+        if (l.endTime > (lastEndByUser.get(uid) || 0)) lastEndByUser.set(uid, l.endTime);
+      }
+
+      // Anyone with ANY open timer (running OR paused) is not idle.
+      const openNow = await fetchOpenLogs(apiKey, projectId);
+      const busyUserIds = new Set(openNow.map((l: any) => String(l.userId || '')));
+
+      const idleUsers: { id: string; gapMs: number }[] = [];
+      for (const [uid, lastEnd] of lastEndByUser) {
+        if (busyUserIds.has(uid)) continue;   // currently on a job
+        if (lastEnd < workStart) continue;    // finished before work hours
+        const gapMs = now - lastEnd;
+        if (gapMs >= idleMin * 60 * 1000) idleUsers.push({ id: uid, gapMs });
+      }
+
+      if (idleUsers.length > 0) {
+        const allUsersIdle = await fetchCollection('users', apiKey, projectId);
+        const userById = new Map(allUsersIdle.map((u: any) => [String(u.id), u]));
+        const idleAdmins = allUsersIdle.filter((u: any) =>
+          u.role === 'admin' || u.role === 'manager' || u.role === 'owner',
+        );
+
+        const nudgedNames: string[] = [];
+        for (const { id, gapMs } of idleUsers) {
+          const worker: any = userById.get(id);
+          // Don't nag admins/owners about their own gaps.
+          if (worker && (worker.role === 'admin' || worker.role === 'manager' || worker.role === 'owner')) continue;
+
+          // Escalating dedup — re-nudge every 45 min, max 4 times per day.
+          const metaId = `idle-gap-${id}-${today}`;
+          const meta = await fetchDoc('push_meta', metaId, apiKey, projectId);
+          const lastSentAt: number = meta?.lastSentAt || 0;
+          const sentCount:  number = meta?.sentCount  || 0;
+          if (sentCount >= 4) continue;
+          if (sentCount > 0 && (now - lastSentAt) < 45 * 60 * 1000) continue;
+
+          await setMetaDoc(metaId, { lastSentAt: now, sentCount: sentCount + 1 }, apiKey, projectId);
+          nudgedNames.push((worker?.name || worker?.email || id).split(' ')[0]);
+
+          const workerSubs = subsByUser.get(id) || [];
+          if (workerSubs.length > 0) {
+            const wPayload = JSON.stringify({
+              title: `⏱ Start Your Next Job`,
+              body:  `You finished a job ${fmtElapsed(gapMs)} ago and no timer is running. Open FabTrack IO and clock into your next job.`,
+              tag:   `idle-gap-${id}`,
+              url:   '/',
+              requireInteraction: true,
+            });
+            for (const subDoc of workerSubs) await sendPush(subDoc, wPayload, 30 * 60, apiKey, projectId);
+          }
+          console.log(`[shift-push-cron] idle-gap nudge: ${worker?.name || id} idle ${fmtElapsed(gapMs)} (#${sentCount + 1})`);
+        }
+
+        // Admin summary — only when we actually nudged someone this run.
+        if (nudgedNames.length > 0 && idleAdmins.length > 0) {
+          const aPayload = JSON.stringify({
+            title: `😴 ${nudgedNames.length} Worker${nudgedNames.length > 1 ? 's' : ''} Idle Between Jobs`,
+            body:  `${nudgedNames.join(', ')} ${nudgedNames.length > 1 ? 'have' : 'has'} no timer running. They've been reminded to clock into their next job.`,
+            tag:   `admin-idle-gap-${today}`,
+            url:   '/',
+            requireInteraction: false,
+          });
+          for (const admin of idleAdmins) {
+            const adminSubs = subsByUser.get(String(admin.id)) || [];
+            for (const subDoc of adminSubs) await sendPush(subDoc, aPayload, 30 * 60, apiKey, projectId);
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[shift-push-cron] idle-gap nudge failed:', e?.message);
   }
 }
