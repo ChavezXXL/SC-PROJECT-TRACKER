@@ -55,18 +55,41 @@ async function ensureOcrLibs(): Promise<void> {
 
 // ── Field extraction helpers ──────────────────────────────────────────────────
 
-/** Normalise a date string to YYYY-MM-DD or return undefined */
+const MONTHS: Record<string, string> = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+
+/** Normalise a date string to YYYY-MM-DD or return undefined (rejects impossible dates). */
 function normaliseDate(raw: string): string | undefined {
-  // Try MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY, M-D-YY
+  // Build + validate — month 1-12, day 1-31. Garbage like "25/13/01" → undefined.
+  const build = (y: string, m: string, d: string): string | undefined => {
+    const mi = +m, di = +d;
+    if (mi < 1 || mi > 12 || di < 1 || di > 31) return undefined;
+    return `${y}-${String(mi).padStart(2, '0')}-${String(di).padStart(2, '0')}`;
+  };
+  // ISO first (YYYY-MM-DD) — must run BEFORE the MM/DD matcher, which would
+  // otherwise greedily mis-read "2025-12-01" as 25-12-01 → year 2001.
+  const iso = raw.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return build(iso[1], iso[2], iso[3]);
+  // Then MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY, M-D-YY
   const us = raw.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (us) {
     const [, m, d, y] = us;
-    const year = y.length === 2 ? '20' + y : y;
-    return `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    return build(y.length === 2 ? '20' + y : y, m, d);
   }
-  // ISO already
-  const iso = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return raw;
+  // "Jan 15, 2025" / "January 15 2025" / "Jan 15th 2025"
+  const mdy = raw.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?[ \t]+(\d{1,2})(?:st|nd|rd|th)?,?[ \t]+(\d{2,4})/i);
+  if (mdy) {
+    const mo = MONTHS[mdy[1].toLowerCase()];
+    if (mo) return build(mdy[3].length === 2 ? '20' + mdy[3] : mdy[3], mo, mdy[2]);
+  }
+  // "15 Jan 2025" / "15th January 2025"
+  const dmy = raw.match(/\b(\d{1,2})(?:st|nd|rd|th)?[ \t]+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?[ \t]+(\d{2,4})/i);
+  if (dmy) {
+    const mo = MONTHS[dmy[2].toLowerCase()];
+    if (mo) return build(dmy[3].length === 2 ? '20' + dmy[3] : dmy[3], mo, dmy[1]);
+  }
   return undefined;
 }
 
@@ -112,8 +135,14 @@ export function parseJobFields(rawText: string): ScanResult {
   const fields: Partial<Job> = {};
   const sources: Record<string, string> = {};
 
-  // Shared date fragment (no capture group — wrapped by callers)
-  const D = '\\d{1,2}[\/\\-]\\d{1,2}[\/\\-]\\d{2,4}|\\d{4}[\/\\-]\\d{2}[\/\\-]\\d{2}';
+  // Shared date fragment (no capture group — wrapped by callers).
+  // Covers MM/DD/YYYY, ISO, and month-name forms ("Jan 15, 2025" / "15 Jan 2025").
+  const MONTH = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?';
+  const D =
+    '\\d{1,2}[\/\\-]\\d{1,2}[\/\\-]\\d{2,4}' +
+    '|\\d{4}[\/\\-]\\d{2}[\/\\-]\\d{2}' +
+    `|${MONTH}[ \\t]+\\d{1,2}(?:st|nd|rd|th)?,?[ \\t]+\\d{2,4}` +
+    `|\\d{1,2}(?:st|nd|rd|th)?[ \\t]+${MONTH},?[ \\t]+\\d{2,4}`;
 
   // ── PO Number ────────────────────────────────────────────────────────────
   // Real-world PO formats seen in the wild:
@@ -136,6 +165,12 @@ export function parseJobFields(rawText: string): ScanResult {
     /\bOrder[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
     // "Job #" / "Job No"
     /\bJob[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // "Customer PO", "Cust PO#", "Cust. P.O. No"
+    /\bCust(?:omer)?\.?[ \t]*P\.?O\.?[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // "PurchaseOrder#" (no space — common in PDF text extraction)
+    /\bPurchase[ \t]*Order[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // "P/O" with a slash
+    /\bP[ \t]*\/[ \t]*O[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
     // "Order:" standalone — colon REQUIRED to avoid matching "Order" mid-sentence
     /\bOrder[ \t]*:[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
   ]);
@@ -180,6 +215,22 @@ export function parseJobFields(rawText: string): ScanResult {
           sources.quantity = liMatch[0].slice(0, 60);
         }
       }
+    } else {
+      // No-dash SKU line item: "ABC123  100  Widget  $5.00".
+      // Lookaheads require the token to mix letters AND digits, so we don't
+      // grab a bare quantity ("100") or a plain word ("Widget") by mistake.
+      const li2 = text.match(/\b((?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{3,18})[ \t]+(\d{1,5})[ \t]+([A-Za-z][\w\s,\.\-\/&'"()]{2,100}?)\$[\d]/i);
+      if (li2 && !PART_BLOCKLIST.has(li2[1].toLowerCase())) {
+        rawPart = { value: li2[1], snippet: li2[0].slice(0, 60) };
+        lineItemDescription = (li2[3] || '').trim();
+        if (!fields.quantity) {
+          const n = parseInt(li2[2], 10);
+          if (!isNaN(n) && n > 0 && n < 1_000_000) {
+            fields.quantity = n;
+            sources.quantity = li2[0].slice(0, 60);
+          }
+        }
+      }
     }
   } else {
     // Even when we already have a labelled part number, look for its line-item
@@ -193,9 +244,10 @@ export function parseJobFields(rawText: string): ScanResult {
   // ── Quantity ─────────────────────────────────────────────────────────────
   if (!fields.quantity) {
     const qty = tryPatterns(text, [
-      /(?:Qty|Quantity|QTY)\.?[ \t]*(?:Ordered|Req(?:uired|uested)?|Shipped)?[ \t]*:?[ \t]*(\d[\d,]*)/i,
+      /(?:Qty|Quantity|QTY)\.?[ \t]*(?:Ordered|Ord\.?|Req(?:uired|uested)?|Shipped)?[ \t]*:?[ \t]*(\d[\d,]*)/i,
+      /(?:Order[ \t]*Qty|Qty[ \t]*Ord(?:ered)?)\.?[ \t]*:?[ \t]*(\d[\d,]*)/i,
       /(?:Pieces?|Pcs?|Count|Units?)[ \t]*:?[ \t]*(\d[\d,]*)/i,
-      /(\d{1,6}[\d,]*)[ \t]*(?:EA|PCS?|PIECES?|UNITS?|EACH)\b/i,
+      /(\d{1,6}[\d,]*)[ \t]*(?:EA\.?|PCS?\.?|PIECES?|UNITS?|EACH)\b/i,
       /\bQty[ \t]+(\d[\d,]*)/i,
     ]);
     if (qty) {
@@ -240,17 +292,17 @@ export function parseJobFields(rawText: string): ScanResult {
   const SC_SELF = /^(sc deburring|scdeburring|sc-deburring)/i;
 
   let rawCust = tryPatterns(text, [
-    /(?:Customer|Client|Company|Issued[ \t]*By|Bill[ \t]*(?:To|From)|Sold[ \t]*(?:To|By)|Buyer)[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})$/im,
-    /\bFrom[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})$/im,
+    /(?:Customer|Client|Company|Issued[ \t]*By|Bill[ \t]*(?:To|From)|Sold[ \t]*(?:To|By)|Buyer)[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'()\/#\-]{2,50})$/im,
+    /\bFrom[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'()\/#\-]{2,50})$/im,
     // "Our account # is: COMPANY NAME"  /  "Account: COMPANY"
-    /(?:Our[ \t]+)?[Aa]ccount[ \t]*(?:#[ \t]*)?(?:is|:)[ \t]*:?[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})/im,
+    /(?:Our[ \t]+)?[Aa]ccount[ \t]*(?:#[ \t]*)?(?:is|:)[ \t]*:?[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'()\/#\-]{2,50})/im,
     // "Vendor:" — may refer to us or the sender depending on PO format; low priority
-    /\bVendor[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'\-]{2,50})$/im,
+    /\bVendor[ \t]*:[ \t]*([A-Za-z][A-Za-z0-9 ,\.&'()\/#\-]{2,50})$/im,
   ]);
 
   if (!rawCust) {
     // Letterhead scan: look in first 12 lines for anything resembling a company name
-    const bizWords = /\b(Inc\.?|LLC\.?|Ltd\.?|Corp\.?|Co\.?|Machine|Mfg|Manufacturing|Industries|Engineering|Supply|Solutions|Systems|Technologies|Fabricat|Metal|Precision|Products|Services|Group)\b/i;
+    const bizWords = /\b(Inc\.?|LLC\.?|L\.?L\.?C\.?|Ltd\.?|Corp\.?|Co\.?|Company|Machine|Machining|Mfg|Manufacturing|Industries|Industrial|Engineering|Supply|Solutions|Systems|Technologies|Tech|Fabricat|Metal|Metals|Steel|Precision|Products|Services|Group|Aerospace|Aero|Tool|Tooling|Plastics|Welding|Components|Enterprises|Corporation)\b/i;
     const notALabel = /^(purchase|order|invoice|delivery|packing|bill|from|to|date|page|ship|vendor|po |p\.o\.|quantity|part|item|ref|attn|\d)/i;
     for (const line of text.split('\n').slice(0, 12)) {
       const t = line.trim().replace(/\s+/g, ' ');
@@ -263,8 +315,10 @@ export function parseJobFields(rawText: string): ScanResult {
   }
 
   if (rawCust) {
-    const cleaned = rawCust.value.replace(/[,\.]+$/, '').trim();
-    if (cleaned.length > 2 && !SC_SELF.test(cleaned)) {
+    // Strip trailing symbol junk (the broadened char class allows ()/#, so a
+    // capture like "Inc. ###" trims to "Inc"), then require real letters.
+    const cleaned = rawCust.value.replace(/[^A-Za-z0-9)]+$/, '').replace(/[,\.]+$/, '').trim();
+    if (cleaned.length > 2 && /[A-Za-z]{2}/.test(cleaned) && !SC_SELF.test(cleaned)) {
       fields.customer = cleaned;
       sources.customer = rawCust.snippet;
     }
@@ -307,6 +361,8 @@ export function parseJobFields(rawText: string): ScanResult {
 
   // ── Shipping Method ───────────────────────────────────────────────────────
   const ship = tryPatterns(text, [
+    // Known carriers / methods first — highest confidence, no false grabs
+    /\b(UPS(?:[ \t]*Ground| Next[ \t]*Day)?|FED[ \t]*EX|FedEx|DHL|USPS|OnTrac|Old[ \t]*Dominion|Will[ \t]*Call|Customer[ \t]*Pick[ \t]*-?[ \t]*Up|Pick[ \t]*-?[ \t]*Up|Pickup|LTL|Freight|Common[ \t]*Carrier|Best[ \t]*Way|Our[ \t]*Truck|Your[ \t]*Truck)\b/i,
     /\bShip(?:ping)?[ \t]*(?:Via|Method|By|Mode)?[ \t]*:?[ \t]*([A-Za-z][A-Za-z0-9 &\-\.]{2,40})/i,
     /\bShip[ \t]*Via[ \t]+([\w][A-Za-z0-9 &\-\.]{2,40})/i,
   ]);

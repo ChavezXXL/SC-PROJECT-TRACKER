@@ -1024,6 +1024,10 @@ export interface Sample {
 // ── Customer PO Files ──────────────────────────────────────────────
 // A photo of a PURCHASE ORDER the customer gave us, uploaded from a phone and
 // organized by customer for reference. Optionally OCR-read + matched to a job.
+
+/** Where a customer PO is in the billing cycle. Default (unset) = not-invoiced. */
+export type PoInvoiceStatus = 'not-invoiced' | 'invoiced' | 'paid' | 'not-applicable';
+
 export interface CustomerPoFile {
   id: string;
   customerName: string;       // who the PO is for (the bucket it's filed under)
@@ -1038,6 +1042,14 @@ export interface CustomerPoFile {
   notes?: string;
   uploadedAt: number;
   uploadedBy?: string;
+  // ── Invoicing (so you stop forgetting to bill) ──────────────────────
+  invoiceStatus?: PoInvoiceStatus;  // unset is treated as 'not-invoiced'
+  invoicedAt?: number;              // when you marked it invoiced
+  paidAt?: number;                  // when marked paid
+  invoiceNumber?: string;           // your invoice / reference number
+  invoiceAmount?: number;           // $ billed (optional)
+  archived?: boolean;               // hide from the active list once fully handled
+  updatedAt?: number;               // last edit, for audit
 }
 
 export interface SmartPasteData {

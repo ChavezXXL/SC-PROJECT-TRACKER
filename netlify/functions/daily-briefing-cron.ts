@@ -20,6 +20,10 @@
 import type { Config } from '@netlify/functions';
 import webpush from 'web-push';
 import type { SystemSettings, ShiftAlarm } from '../../types';
+// Same matching + completion brain the UI uses, so the invoice reminder always
+// agrees with what the owner sees on screen. (poOrganizer has type-only imports,
+// so it's safe to bundle into this serverless function.)
+import { matchJobForPo, isJobComplete, resolveStages } from '../../utils/poOrganizer';
 
 export const config: Config = {
   schedule: '*/10 * * * *',   // every 10 minutes — early-exits outside send windows
@@ -274,6 +278,78 @@ export default async function handler() {
         }
       }
       console.log(`[daily-briefing-cron] morning briefing → ${sent} push(es): ${dueToday.length} due, ${overdue.length} overdue, ${fmtHrs(yMins)} yesterday`);
+    }
+  }
+
+  // ── 1b. INVOICE REMINDER — customer POs whose job is DONE but not invoiced ──
+  // The "I always forget to send invoices" catch. Fires once per day at briefing
+  // time: admins get a push + (if configured) an email listing what to bill.
+  if (doBriefing) {
+    const metaId = `invoice-reminder-${today}`;
+    const already = await fetchDoc('push_meta', metaId, apiKey, projectId);
+    if (!already) {
+      const cpos = await fetchCollection('customer_pos', apiKey, projectId);
+      if (cpos.length > 0) {
+        const jobs2 = await fetchCollection('jobs', apiKey, projectId);
+        const stages = resolveStages(settings as any);
+
+        // Identical logic to the client's derivePo → no drift between what the
+        // owner sees in the app and what this reminder fires on.
+        const ready = cpos.filter((po: any) => {
+          if (po.archived) return false;
+          const st = po.invoiceStatus || 'not-invoiced';
+          if (st === 'invoiced' || st === 'paid' || st === 'not-applicable') return false;
+          const m = matchJobForPo(po, jobs2 as any);
+          return !!m.job && isJobComplete(m.job, stages);
+        });
+
+        if (ready.length > 0) {
+          await setMetaDoc(metaId, { sentAt: Date.now(), count: ready.length }, apiKey, projectId); // write-first
+          const names = [...new Set(ready.map((p: any) => p.customerName).filter(Boolean))].slice(0, 4).join(', ');
+          const payload = JSON.stringify({
+            title: `🧾 ${ready.length} invoice${ready.length > 1 ? 's' : ''} to send`,
+            body: `Jobs are done but not invoiced yet${names ? ` — ${names}${ready.length > 4 ? ' +more' : ''}` : ''}. Open Customer POs.`,
+            tag: `invoice-reminder-${today}`,
+            url: '/',
+            requireInteraction: false,
+          });
+          if (admins.length === 0) console.warn('[daily-briefing-cron] no admins/managers/owners — invoice push skipped, relying on email');
+          let sent = 0;
+          for (const admin of admins) {
+            for (const subDoc of (subsByUser.get(admin.id) || [])) {
+              if (await sendPush(subDoc, payload, 4 * 3600, apiKey, projectId) === 'sent') sent++;
+            }
+          }
+
+          // Email fallback — it's money; worth landing in the inbox too.
+          const resendKey = process.env.RESEND_API_KEY;
+          const toEmail = (settings as any).recapEmail || (settings as any).alertEmail || (settings as any).companyEmail;
+          if (toEmail && !resendKey) console.warn('[daily-briefing-cron] invoice email address set but RESEND_API_KEY missing — email skipped');
+          if (resendKey && toEmail) {
+            const rows = ready.slice(0, 15).map((p: any) =>
+              `<tr><td style="padding:5px 8px;color:#e4e4e7;border-bottom:1px solid #27272a;">${p.customerName || '—'}</td><td style="padding:5px 8px;color:#a1a1aa;border-bottom:1px solid #27272a;">${p.poNumber || ''}</td></tr>`).join('');
+            const html = `<div style="font-family:sans-serif;background:#09090b;color:#fff;padding:28px;border-radius:12px;max-width:520px;">
+                <h2 style="color:#fb923c;margin:0 0 6px;">🧾 ${ready.length} PO${ready.length > 1 ? 's' : ''} ready to invoice</h2>
+                <p style="color:#a1a1aa;margin:0 0 14px;">These jobs are finished but aren't marked invoiced yet. Send the invoice, then mark it in Customer POs.</p>
+                <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:8px;overflow:hidden;">${rows}</table>
+                <p style="color:#52525b;font-size:12px;margin:14px 0 0;">— FabTrack IO · Customer POs</p>
+              </div>`;
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>',
+                to: [toEmail],
+                subject: `🧾 ${ready.length} invoice${ready.length > 1 ? 's' : ''} to send — ${shopName}`,
+                html,
+              }),
+            }).catch((e: any) => console.error('[daily-briefing-cron] invoice email failed:', e?.message || e));
+          }
+          console.log(`[daily-briefing-cron] invoice reminder → ${ready.length} ready, ${sent} push(es)`);
+        } else {
+          console.log('[daily-briefing-cron] invoice reminder — none ready to invoice');
+        }
+      }
     }
   }
 

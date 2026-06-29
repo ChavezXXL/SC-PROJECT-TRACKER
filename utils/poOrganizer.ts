@@ -1,0 +1,163 @@
+// utils/poOrganizer.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// The "brain" for the Customer PO library. Pure functions only (no React, no
+// Firebase) so they can be unit-tested and reused by a server cron.
+//
+// It does two jobs:
+//   1. MATCH a customer PO photo to an existing job (PO# → part# → loose), and
+//      report how strong the match is.
+//   2. DERIVE the PO's real-world state: is the matched job still active or
+//      already completed? has the PO been invoiced? is it ready to invoice?
+//
+// "Ready to invoice" = the matched job is DONE but you haven't marked the PO
+// invoiced yet. That's the "I always forget to send invoices" catch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { CustomerPoFile, Job, JobStage, SystemSettings, PoInvoiceStatus } from '../types';
+
+// Kept in sync with App.DEFAULT_STAGES — duplicated here so this module has no
+// dependency on the React app entrypoint (which would be a circular import).
+const DEFAULT_STAGES: JobStage[] = [
+  { id: 'pending', label: 'Pending', color: '#71717a', order: 0 },
+  { id: 'in-progress', label: 'In Progress', color: '#3b82f6', order: 1 },
+  { id: 'qc', label: 'QC', color: '#f59e0b', order: 2 },
+  { id: 'packing', label: 'Packing', color: '#8b5cf6', order: 3 },
+  { id: 'shipped', label: 'Shipped', color: '#06b6d4', order: 4 },
+  { id: 'completed', label: 'Completed', color: '#10b981', order: 5, isComplete: true },
+];
+
+/** Mirror of App.getStages — the configured pipeline or the default. */
+export function resolveStages(settings?: SystemSettings | null): JobStage[] {
+  const s = settings?.jobStages;
+  return s && s.length > 0 ? [...s].sort((a, b) => a.order - b.order) : DEFAULT_STAGES;
+}
+
+/** Mirror of App.getJobStage's completion test — is this job DONE? */
+export function isJobComplete(job: Job, stages: JobStage[]): boolean {
+  if (job.currentStage) {
+    const st = stages.find(s => s.id === job.currentStage);
+    if (st) return !!st.isComplete;
+  }
+  // Legacy / fallback: explicit completed status or a completion timestamp.
+  return job.status === 'completed' || !!job.completedAt;
+}
+
+// ── Matching ─────────────────────────────────────────────────────────────────
+
+/** Aggressive normalize for fuzzy ID compare: keep only [a-z0-9]. */
+export const normKey = (s?: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const stripZeros = (s: string): string => s.replace(/^0+/, '');
+
+export type PoMatchField = 'link' | 'po' | 'part';
+
+export interface PoMatchResult {
+  job?: Job;
+  field?: PoMatchField;
+  exact: boolean;       // true = confident (id/PO#/part# matched exactly)
+}
+
+/**
+ * Find the job a PO belongs to. Order of confidence:
+ *   1. Explicit stored linkedJobId (user/earlier match already decided)
+ *   2. Exact normalized PO# match
+ *   3. Loose PO# match (leading zeros / contained-within) — guarded by length
+ *   4. Exact normalized part# match
+ *   5. Loose part# match — guarded so short strings can't false-positive
+ */
+export function matchJobForPo(
+  po: Pick<CustomerPoFile, 'poNumber' | 'partNumber' | 'linkedJobId'>,
+  jobs: Job[],
+): PoMatchResult {
+  if (po.linkedJobId) {
+    const j = jobs.find(j => j.id === po.linkedJobId);
+    if (j) return { job: j, field: 'link', exact: true };
+  }
+
+  const pn = normKey(po.poNumber);
+  const part = normKey(po.partNumber);
+
+  if (pn) {
+    let m = jobs.find(j => normKey(j.poNumber) === pn);
+    if (m) return { job: m, field: 'po', exact: true };
+    // Loose match — guarded so short IDs can't substring-match the wrong job.
+    if (pn.length >= 4) {
+      const zpn = stripZeros(pn);
+      m = jobs.find(j => {
+        const k = normKey(j.poNumber);
+        if (k.length < 4) return false;          // both sides must be substantial
+        const zk = stripZeros(k);
+        return (!!zpn && zpn === zk) || k.includes(pn) || pn.includes(k);
+      });
+      if (m) return { job: m, field: 'po', exact: false };
+    }
+  }
+
+  if (part) {
+    let m = jobs.find(j => normKey(j.partNumber) === part);
+    if (m) return { job: m, field: 'part', exact: true };
+    if (part.length >= 4) {
+      m = jobs.find(j => {
+        const k = normKey(j.partNumber);
+        return k.length >= 4 && (k.includes(part) || part.includes(k));
+      });
+      if (m) return { job: m, field: 'part', exact: false };
+    }
+  }
+
+  return { exact: false };
+}
+
+// ── Derived state (drives badges + filters + reminders) ──────────────────────
+
+export type PoMatchState = 'completed' | 'active' | 'unmatched';
+
+export interface PoDerived {
+  matchState: PoMatchState;       // job done | job in-flight | no job in system
+  job?: Job;
+  matchField?: PoMatchField;
+  exact: boolean;                 // confidence of the match
+  invoiceStatus: PoInvoiceStatus; // normalized (unset → 'not-invoiced')
+  readyToInvoice: boolean;        // job done & not yet invoiced/paid/n-a
+  jobLabel?: string;              // human label of the matched job
+}
+
+export function derivePo(po: CustomerPoFile, jobs: Job[], stages: JobStage[]): PoDerived {
+  const m = matchJobForPo(po, jobs);
+  const invoiceStatus: PoInvoiceStatus = po.invoiceStatus || 'not-invoiced';
+
+  let matchState: PoMatchState = 'unmatched';
+  if (m.job) matchState = isJobComplete(m.job, stages) ? 'completed' : 'active';
+
+  const readyToInvoice =
+    matchState === 'completed' &&
+    invoiceStatus !== 'invoiced' &&
+    invoiceStatus !== 'paid' &&
+    invoiceStatus !== 'not-applicable';
+
+  return {
+    matchState,
+    job: m.job,
+    matchField: m.field,
+    exact: m.exact,
+    invoiceStatus,
+    readyToInvoice,
+    jobLabel: m.job ? (m.job.jobIdsDisplay || m.job.poNumber || undefined) : undefined,
+  };
+}
+
+/**
+ * POs whose matched job is DONE but which haven't been invoiced — the
+ * "send the invoice!" worklist. Oldest-completed first (most overdue to bill).
+ */
+export function readyToInvoiceList(
+  pos: CustomerPoFile[],
+  jobs: Job[],
+  settings?: SystemSettings | null,
+): { po: CustomerPoFile; derived: PoDerived }[] {
+  const stages = resolveStages(settings);
+  return pos
+    .filter(po => !po.archived)
+    .map(po => ({ po, derived: derivePo(po, jobs, stages) }))
+    .filter(x => x.derived.readyToInvoice)
+    .sort((a, b) => (a.derived.job?.completedAt || 0) - (b.derived.job?.completedAt || 0));
+}
