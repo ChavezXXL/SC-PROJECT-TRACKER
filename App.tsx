@@ -23,6 +23,7 @@ import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, Tv
 import { JobProfitCard } from './components/JobProfitCard';
 import { CanWeTakeIt } from './components/CanWeTakeIt';
 import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
+import { CustomerPosView } from './views/CustomerPosView';
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
@@ -7631,6 +7632,7 @@ export default function App() {
     ]},
     { label: 'Documents', items: [
       { id: 'admin-quotes',          l: 'Quotes',     i: FileText },
+      { id: 'admin-customer-pos',    l: 'Customer POs', i: FileText },
       { id: 'admin-purchase-orders', l: 'Purchasing', i: Package },
       { id: 'admin-deliveries',      l: 'Deliveries', i: Truck },
     ]},
@@ -7842,6 +7844,7 @@ export default function App() {
               <SamplesView addToast={addToast} currentUser={user ? { id: user.id, name: user.name } : null} />
             </FeatureGate>
           )}
+          {view === 'admin-customer-pos' && user && <CustomerPosView addToast={addToast} confirm={setConfirm} user={{ id: user.id, name: user.name }} />}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
             const jobId = `JOB-${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             await DB.saveJob({

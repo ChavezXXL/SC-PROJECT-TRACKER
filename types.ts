@@ -948,7 +948,7 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-customer-pos' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
 
 // ── Quality / Rework Tracking ──
 export type ReworkReason = 'finish' | 'dimensional' | 'missed-area' | 'damage' | 'wrong-part' | 'other';
@@ -1019,6 +1019,25 @@ export interface Sample {
   pricePerPart?: number;
   /** When the price was last set/updated, for audit / staleness display. */
   quotedAt?: number;
+}
+
+// ── Customer PO Files ──────────────────────────────────────────────
+// A photo of a PURCHASE ORDER the customer gave us, uploaded from a phone and
+// organized by customer for reference. Optionally OCR-read + matched to a job.
+export interface CustomerPoFile {
+  id: string;
+  customerName: string;       // who the PO is for (the bucket it's filed under)
+  photoUrl: string;           // Firebase Storage URL (base64 fallback if upload fails)
+  poNumber?: string;          // OCR-extracted or manually entered
+  partNumber?: string;
+  qty?: number;
+  dueDate?: string;           // MM/DD/YYYY
+  rawText?: string;           // raw OCR text (for search / re-extract)
+  linkedJobId?: string;       // matched existing job, if found
+  linkedJobDisplay?: string;  // human label of the matched job
+  notes?: string;
+  uploadedAt: number;
+  uploadedBy?: string;
 }
 
 export interface SmartPasteData {

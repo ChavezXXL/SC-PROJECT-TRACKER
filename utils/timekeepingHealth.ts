@@ -12,7 +12,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import type { Job, TimeLog, User, SystemSettings } from '../types';
-import { shopLocalTimeMs } from './timezone';
+import { shopLocalTimeMs, shopDayOfWeek } from './timezone';
 
 export type HealthSeverity = 'critical' | 'warning' | 'info';
 
@@ -320,6 +320,71 @@ export function computeTimekeepingHealth(input: HealthInput): TimekeepingHealth 
       title: `${forgetters.length} worker${forgetters.length > 1 ? 's' : ''} routinely don't clock out`,
       detail: `${nameList(top)} — their timers get force-closed by the system most of the time, so their recorded hours are unreliable. Worth a conversation.`,
       count: forgetters.length,
+    });
+  }
+
+  // ── 13. IDLE / GAP — worked earlier today but went quiet during work hours ──
+  // Catches "did a job in the AM, stopped, hasn't started another." Only during
+  // the shop's working window (Mon–Sat), so end-of-day isn't flagged.
+  const tz = (settings as any).recapTimezone || 'America/Los_Angeles';
+  const dow = shopDayOfWeek(tz, now);
+  const dayStartShop = shopLocalTimeMs(now, tz, 0, 0);
+  const minsSinceMidnight = (now - dayStartShop) / 60000;
+  const coMatch = (settings.autoClockOutTime || '17:30').match(/^(\d{1,2}):(\d{2})$/);
+  const workEndMin = coMatch ? (+coMatch[1] * 60 + +coMatch[2]) : 17 * 60 + 30;
+  const inWorkHours = dow !== 0 && minsSinceMidnight >= 6 * 60 && minsSinceMidnight <= workEndMin;
+  const idleMin = (settings as any).idleAlertMinutes || 75; // grace > a long lunch
+
+  if (inWorkHours) {
+    const openUserIds = new Set(open.map(l => l.userId));
+    const lastEndToday = new Map<string, { ms: number; name: string }>();
+    for (const l of real) {
+      if (!l.userId || !l.endTime || l.endTime < dayStartShop) continue;
+      const cur = lastEndToday.get(l.userId);
+      if (!cur || l.endTime > cur.ms) lastEndToday.set(l.userId, { ms: l.endTime, name: firstName(l.userName) });
+    }
+    const idle: { name: string; mins: number }[] = [];
+    for (const [uid, info] of lastEndToday) {
+      if (openUserIds.has(uid)) continue;        // currently clocked in → not idle
+      const gapMin = (now - info.ms) / 60000;
+      if (gapMin >= idleMin) idle.push({ name: info.name, mins: Math.round(gapMin) });
+    }
+    idle.sort((a, b) => b.mins - a.mins);
+    if (idle.length) {
+      const labels = idle.map(i => `${i.name} (${i.mins >= 120 ? (i.mins / 60).toFixed(1) + 'h' : i.mins + 'm'})`);
+      issues.push({
+        id: 'idle-workers',
+        severity: 'warning',
+        category: 'Idle',
+        title: `${idle.length} worker${idle.length > 1 ? 's' : ''} clocked in earlier but ${idle.length > 1 ? 'are' : 'is'} idle now`,
+        detail: `${nameList(labels)} worked today but ${idle.length > 1 ? 'have' : 'has'} no timer running and ${idle.length > 1 ? "haven't" : "hasn't"} started another job. Gap shown per worker — check if they're between jobs or slacking.`,
+        count: idle.length,
+      });
+    }
+  }
+
+  // ── 14. OVER-PACE — a running job is past its expected/budgeted time ──
+  const overPace: { label: string; at: number; exp: number }[] = [];
+  for (const l of open) {
+    if (l.pausedAt) continue;
+    const job = jobs.find(j => j.id === l.jobId);
+    const exp = job?.expectedHours || 0;
+    if (!exp || !l.startTime) continue;
+    const elapsedH = Math.max(0, (now - l.startTime - (l.totalPausedMs || 0))) / HOUR;
+    if (elapsedH > exp * 1.25) {
+      overPace.push({ label: job?.poNumber || l.jobIdsDisplay || firstName(l.userName), at: elapsedH, exp });
+    }
+  }
+  if (overPace.length) {
+    overPace.sort((a, b) => (b.at / b.exp) - (a.at / a.exp));
+    const labels = overPace.slice(0, 5).map(o => `${o.label} (${o.at.toFixed(1)}h of ${o.exp}h)`);
+    issues.push({
+      id: 'over-pace',
+      severity: 'warning',
+      category: 'Over pace',
+      title: `${overPace.length} running job${overPace.length > 1 ? 's are' : ' is'} taking longer than expected`,
+      detail: `${nameList(labels)} — already past the budgeted time and still running. Either the estimate was low or the job hit a snag. Check in.`,
+      count: overPace.length,
     });
   }
 

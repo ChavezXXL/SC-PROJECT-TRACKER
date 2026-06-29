@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import {
   initFirebaseFromLocalStorage,
@@ -146,6 +146,19 @@ export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Pr
     const path = `sample-photos/${sampleId}_${Date.now()}.jpg`;
     const ref = storageRef(storage, path);
     await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 15_000, 'Storage upload');
+    return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
+  } catch (e) {
+    throw new Error('Storage upload failed: ' + (e as any)?.message);
+  }
+}
+
+/** Upload a customer-PO photo to Firebase Storage (separate path from samples). */
+export async function uploadCustomerPoPhoto(file: File | Blob, poId: string): Promise<string> {
+  try {
+    const storage = getStorage();
+    const path = `customer-pos/${poId}_${Date.now()}.jpg`;
+    const ref = storageRef(storage, path);
+    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 20_000, 'Storage upload');
     return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
   } catch (e) {
     throw new Error('Storage upload failed: ' + (e as any)?.message);
@@ -356,6 +369,7 @@ const COL = {
   get userProgress()      { return colPath(getTenantId(), "userProgress"); },
   get pushSubscriptions() { return colPath(getTenantId(), "push_subscriptions"); },
   get notes()             { return colPath(getTenantId(), "notes"); },
+  get customerPos()       { return colPath(getTenantId(), "customer_pos"); },
 };
 
 // --------------------
@@ -1571,6 +1585,46 @@ export async function deleteSample(id: string): Promise<void> {
   const gone = all.find(s => s.id === id);
   if (gone) (gone.workEntries || []).forEach(e => { deleteTimeLog(`sample-tl-${e.id}`).catch(() => {}); });
   writeLS(LS_SAMPLES, all.filter(s => s.id !== id));
+}
+
+// ── CUSTOMER PO FILES ────────────────────────────────────────────────
+const LS_CUSTOMER_POS = "nexus_customer_pos";
+
+export function subscribeCustomerPos(cb: (pos: CustomerPoFile[]) => void): () => void {
+  if (dbInstance) {
+    const key = 'customerPos:' + COL.customerPos;
+    return multicast<CustomerPoFile[]>(key, notify => {
+      return retryingSnapshot(
+        () => collection(dbInstance!, COL.customerPos),
+        (snap: any) => { firebaseStatus = { connected: true }; notify(snap.docs.map((d: any) => d.data() as CustomerPoFile)); },
+        () => notify(readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, [])),
+      );
+    }, cb);
+  }
+  return localSubscribe(() => readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []), cb);
+}
+
+export async function saveCustomerPo(po: CustomerPoFile): Promise<void> {
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, COL.customerPos, po.id), sanitize(po), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const list = readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []);
+  const idx = list.findIndex(p => p.id === po.id);
+  if (idx >= 0) list[idx] = po; else list.push(po);
+  writeLS(LS_CUSTOMER_POS, list);
+}
+
+export async function deleteCustomerPo(id: string): Promise<void> {
+  if (dbInstance) {
+    try { await deleteDoc(doc(dbInstance, COL.customerPos, id)); firebaseStatus = { connected: true }; }
+    catch (e) { throw handleError(e); }
+    return;
+  }
+  writeLS(LS_CUSTOMER_POS, readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []).filter(p => p.id !== id));
 }
 
 // ── localStorage → Firestore photo migration ──────────────────────────
