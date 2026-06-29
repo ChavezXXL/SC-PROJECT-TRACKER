@@ -1391,8 +1391,18 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const [shopActiveLogs, setShopActiveLogs] = useState<TimeLog[]>([]);
   const [ops, setOps] = useState<string[]>([]);
   const [scannedJobId, setScannedJobId] = useState<string | null>(null);
+  const [resumeStarting, setResumeStarting] = useState(false);   // optimistic guard for one-tap "Jump back in"
   const activePanelRef = useRef<HTMLDivElement>(null);
   const [shouldScrollToTimer, setShouldScrollToTimer] = useState(false);
+
+  // Clear the optimistic resume guard once the timer actually registers (or as a
+  // safety net if the start fails and no activeLog ever arrives).
+  useEffect(() => {
+    if (!resumeStarting) return;
+    if (activeLog) { setResumeStarting(false); return; }
+    const t = setTimeout(() => setResumeStarting(false), 6000);
+    return () => clearTimeout(t);
+  }, [resumeStarting, activeLog]);
 
   // Scroll to active timer panel when it appears after starting an operation
   useEffect(() => {
@@ -1716,6 +1726,26 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     try { return JSON.stringify(j).toLowerCase().includes((search || '').toLowerCase()); } catch { return false; }
   });
 
+  // One-tap "jump back in": the worker's most recent job+operation combos that
+  // are still open — clock straight back in after a break/lunch without
+  // searching, expanding a card, and picking the operation every time.
+  const quickResume = (() => {
+    const seen = new Set<string>();
+    const out: { job: Job; operation: string }[] = [];
+    for (const l of [...myHistory].sort((a, b) => b.startTime - a.startTime)) {
+      if (!l.jobId || !l.operation) continue;
+      const key = `${l.jobId}|${l.operation}`;
+      if (seen.has(key)) continue;
+      const job = jobs.find(j => j.id === l.jobId);
+      if (!job || job.status === 'completed' || job.status === 'hold') continue; // don't resume done/held jobs
+      if (ops.length > 0 && !ops.includes(l.operation)) continue;                 // only offer still-configured operations
+      seen.add(key);
+      out.push({ job, operation: l.operation });
+      if (out.length >= 3) break;
+    }
+    return out;
+  })();
+
   // History grouping
   const histToday = new Date(); histToday.setHours(0,0,0,0);
   const histYesterday = new Date(histToday); histYesterday.setDate(histToday.getDate() - 1);
@@ -1892,6 +1922,23 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         <ProgressView userId={user?.id || ''} userName={user?.name || ''} recentLogs={myHistory} />
       ) : (
         <div className="flex-1 flex flex-col animate-fade-in">
+          {/* One-tap jump back in — recent open job+operation combos */}
+          {quickResume.length > 0 && !activeLog && !resumeStarting && (
+            <div className="mb-4">
+              <p className="text-[11px] font-black text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5 text-amber-400" /> Jump back in</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {quickResume.map(({ job, operation }) => (
+                  <button key={`${job.id}|${operation}`} disabled={resumeStarting}
+                    onClick={() => { if (resumeStarting || activeLog) return; setResumeStarting(true); handleStartJob(job.id, operation); }}
+                    className="text-left bg-gradient-to-br from-amber-500/15 to-amber-500/[0.04] hover:from-amber-500/25 border border-amber-500/30 rounded-xl px-3 py-2.5 transition-all active:scale-95 disabled:opacity-50">
+                    <p className="text-sm font-black text-white truncate">{job.poNumber}</p>
+                    <p className="text-[11px] text-amber-300/90 truncate flex items-center gap-1"><Play className="w-3 h-3 shrink-0" /> {operation}</p>
+                    <p className="text-[10px] text-zinc-500 truncate">{job.partNumber}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="relative mb-6">
             <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-500" />
             <input type="text" placeholder="Search by Job #, PO, or Part..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none shadow-sm" />
@@ -2344,6 +2391,8 @@ const INSIGHT_ICON: Record<string, React.ReactNode> = {
   worker_anomaly:<AlertCircle   className="w-4 h-4" />,
   quote_gap:     <FileText      className="w-4 h-4" />,
   hero_part:     <Sparkles      className="w-4 h-4" />,
+  customer_late: <Clock         className="w-4 h-4" />,
+  part_overrun:  <TrendingDown  className="w-4 h-4" />,
 };
 
 const ShopBrainPanel = ({ insights, setView }: { insights: ShopInsight[]; setView: (v: string) => void }) => {

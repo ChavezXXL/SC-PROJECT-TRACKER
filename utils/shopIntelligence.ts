@@ -35,7 +35,9 @@ export type InsightType =
   | 'great_customer'
   | 'worker_anomaly'
   | 'quote_gap'
-  | 'hero_part';
+  | 'hero_part'
+  | 'customer_late'   // customer whose jobs chronically ship past due date
+  | 'part_overrun';   // part whose actual labor keeps beating its time estimate
 
 export type InsightSeverity = 'critical' | 'warning' | 'info' | 'positive';
 
@@ -374,6 +376,85 @@ export function computeInsights(
       });
     }
   });
+
+  // ─── 10. CUSTOMER CHRONICALLY LATE ──────────────────────────
+  // A customer whose jobs ship late again and again — a scheduling / credibility
+  // risk the margin-based customer_risk check doesn't catch. Date-only compare.
+  {
+    const ymd = (ms: number) => { const d = new Date(ms); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
+    const dueYmd = (due?: string) => {
+      const m = (due || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (!m) return 0;
+      const mo = +m[1], da = +m[2];
+      if (mo < 1 || mo > 12 || da < 1 || da > 31) return 0;   // reject 13/32/2024 etc.
+      return (+m[3]) * 10000 + mo * 100 + da;
+    };
+    const lateByCust = new Map<string, { name: string; late: number; total: number }>();
+    for (const j of completedJobs) {
+      const due = dueYmd(j.dueDate);
+      if (!due || !j.completedAt) continue;
+      const c = (j.customer || '').trim();
+      if (!c) continue;
+      const key = customerKey(c) || c.toLowerCase();
+      const e = lateByCust.get(key) || { name: c, late: 0, total: 0 };
+      e.total++;
+      if (ymd(j.completedAt) > due) e.late++;
+      lateByCust.set(key, e);
+    }
+    lateByCust.forEach((e, key) => {
+      if (e.total < 3 || e.late < 2) return;
+      const rate = e.late / e.total;
+      if (rate >= 0.4) {
+        insights.push({
+          id: `customer_late_${key.replace(/\W+/g, '_')}`,
+          type: 'customer_late',
+          severity: rate >= 0.6 ? 'warning' : 'info',
+          title: `${e.name} jobs ship late a lot`,
+          body: `${e.late} of ${e.total} completed jobs for ${e.name} shipped past their due date (${Math.round(rate * 100)}%). Build a buffer into their dates, or push back when they promise tight turnarounds.`,
+          action: 'View Jobs',
+          actionView: 'admin-jobs',
+          metadata: { customer: e.name, late: e.late, total: e.total, rate },
+        });
+      }
+    });
+  }
+
+  // ─── 11. PART RUNS OVER TIME ESTIMATE ───────────────────────
+  // A part whose actual labor hours keep beating its expectedHours estimate —
+  // you're under-budgeting the time (and likely the quote). Distinct from
+  // repeat_loss (margin) and worker_anomaly (per-worker drift).
+  {
+    const overByPart = new Map<string, { name: string; ratios: number[] }>();
+    for (const j of completedJobs) {
+      const est = j.expectedHours || 0;
+      if (est <= 0) continue;
+      const actualH = jobLaborMinutes(j, allLogs) / 60;
+      if (actualH <= 0) continue;
+      const pn = (j.partNumber || '').trim().toLowerCase();
+      if (!pn) continue;
+      const e = overByPart.get(pn) || { name: j.partNumber || pn, ratios: [] };
+      e.ratios.push(actualH / est);
+      overByPart.set(pn, e);
+    }
+    overByPart.forEach((e, pn) => {
+      if (e.ratios.length < 2) return;
+      const avgRatio = e.ratios.reduce((a, r) => a + r, 0) / e.ratios.length;
+      const overRuns = e.ratios.filter(r => r >= 1.25).length;
+      if (avgRatio >= 1.25 && overRuns >= 2) {
+        const overPct = Math.round((avgRatio - 1) * 100);
+        insights.push({
+          id: `part_overrun_${pn}`,
+          type: 'part_overrun',
+          severity: avgRatio >= 1.5 ? 'warning' : 'info',
+          title: `Part "${e.name}" runs ~${overPct}% over your time estimate`,
+          body: `${e.ratios.length} runs averaged ${overPct}% more labor hours than the estimate you set. Bump this part's expected hours (and quote) so scheduling and margins stay honest.`,
+          action: 'View Reports',
+          actionView: 'admin-reports',
+          metadata: { partNumber: e.name, runs: e.ratios.length, avgRatio, overPct },
+        });
+      }
+    });
+  }
 
   // ─── Sort: critical → warning → info → positive ────────
   const order: Record<InsightSeverity, number> = { critical: 0, warning: 1, info: 2, positive: 3 };
