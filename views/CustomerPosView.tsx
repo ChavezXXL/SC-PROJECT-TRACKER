@@ -34,6 +34,21 @@ const normalizeDue = (s?: string): string => {
   return `${String(mo).padStart(2, '0')}/${String(da).padStart(2, '0')}/${m[3]}`;
 };
 
+/** MM/DD/YYYY (or YYYY-MM-DD) → YYYY-MM-DD for a native <input type="date">. */
+const toDateInput = (s?: string): string => {
+  if (!s) return '';
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  return '';
+};
+/** YYYY-MM-DD (from the date input) → MM/DD/YYYY for storage. */
+const fromDateInput = (s?: string): string => {
+  const m = (s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+};
+
 /** "today" / "1d" / "5d ago" for invoice aging. */
 const agingLabel = (ms?: number): string => {
   const d = daysSince(ms);
@@ -119,8 +134,16 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   const [scanPct, setScanPct] = useState(0);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState('');   // id of PO currently being turned into a job
+  const [newCustomer, setNewCustomer] = useState(false);          // typing a brand-new customer name
+  const [chipTarget, setChipTarget] = useState<'po' | 'part'>('po'); // where a tapped scan-chip lands
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const scanTimer = useRef<any>(null);
+  const scanningRef = useRef(false);   // synchronous re-entry guards (state is async)
+  const savingRef = useRef(false);
+
+  // Clear the scan-timeout if the view unmounts mid-scan.
+  useEffect(() => () => { if (scanTimer.current) clearTimeout(scanTimer.current); }, []);
 
   useEffect(() => {
     const u1 = DB.subscribeCustomerPos(setPos);
@@ -158,10 +181,15 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
 
   const handlePhoto = async (file: File) => {
     if (!file.type.startsWith('image/')) { addToast('error', 'Pick an image / photo'); return; }
+    if (scanningRef.current) return;   // synchronous guard — don't overlap scans
+    scanningRef.current = true;
     const id = `cpo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setEditing(false);
     setScanning(true);
     setScanPct(0);
+    // Safety: never let the scanning overlay get stuck if OCR hangs.
+    if (scanTimer.current) clearTimeout(scanTimer.current);
+    scanTimer.current = setTimeout(() => { setScanning(false); addToast('error', 'Scan took too long — try again or type it in.'); }, 60000);
     let ocrFailed = false;
     try {
       const preview = await compressImage(file, 1600, 0.7);
@@ -181,7 +209,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         poNumber: fields.poNumber || matched?.poNumber || '',
         partNumber: fields.partNumber || matched?.partNumber || '',
         qty: fields.quantity || matched?.quantity || undefined,
-        dueDate: fields.dueDate || '',
+        dueDate: fields.dueDate ? normalizeDue(fields.dueDate) : '',   // OCR gives YYYY-MM-DD → store MM/DD/YYYY
         rawText,
         linkedJobId: matched?.id,
         linkedJobDisplay: matched ? (matched.jobIdsDisplay || matched.poNumber) : undefined,
@@ -194,21 +222,37 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
     } catch (e: any) {
       addToast('error', e?.message || 'Could not read that photo');
     } finally {
+      if (scanTimer.current) { clearTimeout(scanTimer.current); scanTimer.current = null; }
+      scanningRef.current = false;
       setScanning(false);
     }
   };
 
   const openEdit = (po: CustomerPoFile) => {
     setEditing(true);
+    setNewCustomer(false);
+    setChipTarget('po');
     setDraft({ ...po });
     setDraftPreview(po.photoUrl);
   };
 
-  const closeModal = () => { if (!saving) { setDraft(null); setDraftPreview(''); setEditing(false); } };
+  const closeModal = () => { if (!saving) { setDraft(null); setDraftPreview(''); setEditing(false); setNewCustomer(false); setChipTarget('po'); } };
+
+  // Candidate tokens pulled from the raw OCR text — short alphanumeric strings
+  // containing a digit (PO/part-shaped). Tapping one drops it into PO# or Part#.
+  const scanTokens = useMemo(() => {
+    if (!draft?.rawText) return [] as string[];
+    const toks = (draft.rawText.match(/[A-Za-z0-9][A-Za-z0-9\-\/\.]{2,19}/g) || [])
+      .map(t => t.toUpperCase())
+      .filter(t => /\d/.test(t) && /^[A-Z0-9][A-Z0-9\-/.]*$/.test(t) && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(t));
+    return [...new Set(toks)].slice(0, 12);
+  }, [draft?.rawText]);
 
   const saveDraft = async () => {
+    if (savingRef.current) return;   // synchronous guard against double-tap
     if (!draft || !draftPreview) return;
     if (!draft.customerName?.trim()) { addToast('error', 'Pick a customer'); return; }
+    savingRef.current = true;
     setSaving(true);
     try {
       // Re-match against the (possibly user-edited) PO#/part#.
@@ -254,6 +298,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
     } catch (e: any) {
       addToast('error', `Save failed${e?.message ? ` — ${e.message}` : ''}`);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -626,6 +671,27 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
             <div className="overflow-y-auto flex-1 p-5 space-y-4">
               {draftPreview && <img src={draftPreview} alt="PO preview" className="w-full max-h-52 object-contain rounded-xl border border-white/10 bg-zinc-950" />}
 
+              {/* Smart fix: tap a scanned value to drop it into PO# or Part# */}
+              {scanTokens.length > 0 && (
+                <div className="bg-zinc-950/60 border border-white/10 rounded-xl p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Scan wrong? Tap the right value</p>
+                    <div className="flex gap-1 bg-zinc-900 rounded-lg p-0.5">
+                      <button onClick={() => setChipTarget('po')} className={`text-[10px] font-bold px-2 py-0.5 rounded ${chipTarget === 'po' ? 'bg-amber-500 text-white' : 'text-zinc-400'}`}>→ PO #</button>
+                      <button onClick={() => setChipTarget('part')} className={`text-[10px] font-bold px-2 py-0.5 rounded ${chipTarget === 'part' ? 'bg-amber-500 text-white' : 'text-zinc-400'}`}>→ Part #</button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {scanTokens.map(t => (
+                      <button key={t} onClick={() => setDraft({ ...draft, [chipTarget === 'po' ? 'poNumber' : 'partNumber']: t })}
+                        className="bg-zinc-800 hover:bg-amber-600 hover:text-white text-[11px] font-mono text-zinc-200 px-2 py-1 rounded-lg border border-white/10 transition-colors">
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Live match indicator */}
               {draftMatch ? (
                 <div className={`rounded-xl px-3 py-2 flex items-center gap-2 text-sm font-bold border ${draftMatch.complete ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300' : 'bg-blue-500/10 border-blue-500/25 text-blue-300'}`}>
@@ -641,8 +707,28 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
 
               <div>
                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Customer *</label>
-                <input list="cpo-clients" value={draft.customerName || ''} onChange={e => setDraft({ ...draft, customerName: e.target.value })} placeholder="e.g. Boeing" className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white" />
-                <datalist id="cpo-clients">{clients.map(c => <option key={c} value={c} />)}</datalist>
+                {newCustomer ? (
+                  <div className="flex gap-2">
+                    <input autoFocus value={draft.customerName || ''} onChange={e => setDraft({ ...draft, customerName: e.target.value })} placeholder="New customer name" className="flex-1 bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white" />
+                    <button type="button" onClick={() => { setNewCustomer(false); setDraft({ ...draft, customerName: '' }); }} className="px-3 rounded-lg bg-zinc-800 border border-white/10 text-xs font-bold text-zinc-300 hover:text-white">List</button>
+                  </div>
+                ) : (
+                  <select
+                    value={draft.customerName && clients.includes(draft.customerName) ? draft.customerName : (draft.customerName ? '__scanned__' : '')}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (v === '__new__') { setNewCustomer(true); setDraft({ ...draft, customerName: '' }); }
+                      else if (v === '__scanned__') { /* keep scanned value */ }
+                      else setDraft({ ...draft, customerName: v });
+                    }}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white"
+                  >
+                    <option value="">Select customer…</option>
+                    {draft.customerName && !clients.includes(draft.customerName) && <option value="__scanned__">{draft.customerName} (scanned)</option>}
+                    {clients.map(c => <option key={c} value={c}>{c}</option>)}
+                    <option value="__new__">➕ Add new customer…</option>
+                  </select>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -659,7 +745,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Due Date</label>
-                  <input value={draft.dueDate || ''} onChange={e => setDraft({ ...draft, dueDate: e.target.value })} placeholder="MM/DD/YYYY" className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white" />
+                  <input type="date" value={toDateInput(draft.dueDate)} onChange={e => setDraft({ ...draft, dueDate: fromDateInput(e.target.value) })} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white [color-scheme:dark]" />
                 </div>
               </div>
 

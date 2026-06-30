@@ -177,7 +177,7 @@ export function parseJobFields(rawText: string): ScanResult {
   if (po) {
     const upper = po.value.toUpperCase();
     if (/\d/.test(po.value) && !PO_BLOCKLIST.has(upper)) {
-      fields.poNumber = po.value;
+      fields.poNumber = upper;   // PO numbers are uppercase — normalize for display + matching
       sources.poNumber = po.snippet;
     }
   }
@@ -468,50 +468,81 @@ function imageFileToJpeg(file: File): Promise<string> {
     const blobUrl = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      // Higher cap for camera photos — 2400px gives Tesseract better letter details
-      const MAX = 2400;
+      // Size for OCR: shrink huge photos, but also UPSCALE small ones so tiny
+      // printed PO numbers have enough pixels for Tesseract to resolve.
+      const MAX = 2600, MIN = 1200;
       let { width: w, height: h } = img;
-      if (w > MAX || h > MAX) {
-        const r = Math.min(MAX / w, MAX / h);
-        w = Math.round(w * r);
-        h = Math.round(h * r);
-      }
+      const longEdge = Math.max(w, h), shortEdge = Math.min(w, h);
+      let scale = 1;
+      if (longEdge > MAX) scale = MAX / longEdge;
+      else if (shortEdge < MIN) scale = Math.min(MIN / shortEdge, MAX / longEdge);
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+
       const canvas = document.createElement('canvas');
       canvas.width  = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d')!;
+      ctx.imageSmoothingEnabled = true;
+      (ctx as any).imageSmoothingQuality = 'high';
 
       // White background (handles transparent PNGs)
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
 
-      // ── Image preprocessing for OCR quality ──────────────────────────────
-      // Apply contrast + brightness boost so text pops on printed PO docs.
-      // CSS filter on canvas context: contrast(1.4) brightness(1.05) saturate(0)
-      // We do this by reading pixel data, converting to grayscale, then
-      // applying a simple contrast stretch — fast and works in all browsers.
+      // ── OCR preprocessing ────────────────────────────────────────────────
+      // 1) grayscale + contrast stretch, then 2) Bradley ADAPTIVE thresholding
+      // to pure black/white. Adaptive (local) thresholding handles the uneven
+      // lighting and shadows of phone photos far better than a global stretch —
+      // the single biggest accuracy win for Tesseract on printed PO forms.
       try {
         const imageData = ctx.getImageData(0, 0, w, h);
         const d = imageData.data;
-        // Find luminance range for adaptive stretch (sample every 4th pixel for speed)
+        const n = w * h;
+        const gray = new Uint8ClampedArray(n);
         let minL = 255, maxL = 0;
-        for (let i = 0; i < d.length; i += 16) {
-          const l = Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]);
-          if (l < minL) minL = l;
-          if (l > maxL) maxL = l;
+        for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+          const g = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+          gray[p] = g;
+          if (g < minL) minL = g;
+          if (g > maxL) maxL = g;
         }
-        // Contrast stretch: remap [minL..maxL] → [0..255], then apply mild gamma
         const range = Math.max(1, maxL - minL);
-        for (let i = 0; i < d.length; i += 4) {
-          // Convert to greyscale (OCR performs better on greyscale)
-          const grey = Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]);
-          // Stretch contrast
-          const stretched = Math.min(255, Math.max(0, Math.round(((grey - minL) / range) * 255)));
-          // Apply slight gamma (0.85) to darken midtones → crisp text
-          const gamma = Math.round(Math.pow(stretched / 255, 0.85) * 255);
-          d[i] = d[i+1] = d[i+2] = gamma; // greyscale
-          // d[i+3] = alpha — leave as-is
+        for (let p = 0; p < n; p++) gray[p] = (Math.min(255, Math.max(0, ((gray[p] - minL) / range) * 255))) | 0;
+
+        // Integral image → O(1) window means for the adaptive threshold.
+        const iw = w + 1;
+        const integral = new Uint32Array(iw * (h + 1));
+        for (let y = 0; y < h; y++) {
+          let rowSum = 0;
+          for (let x = 0; x < w; x++) {
+            rowSum += gray[y * w + x];
+            integral[(y + 1) * iw + (x + 1)] = integral[y * iw + (x + 1)] + rowSum;
+          }
+        }
+        const S = Math.max(16, Math.min(64, Math.round(w / 16)));
+        const half = S >> 1;
+        const Tf = 0.85;   // ink if pixel < local mean * Tf
+        let black = 0;
+        for (let y = 0; y < h; y++) {
+          const y1 = Math.max(0, y - half), y2 = Math.min(h - 1, y + half);
+          for (let x = 0; x < w; x++) {
+            const x1 = Math.max(0, x - half), x2 = Math.min(w - 1, x + half);
+            const count = (x2 - x1 + 1) * (y2 - y1 + 1);
+            const sum = integral[(y2 + 1) * iw + (x2 + 1)] - integral[y1 * iw + (x2 + 1)] - integral[(y2 + 1) * iw + x1] + integral[y1 * iw + x1];
+            const p = y * w + x;
+            const ink = gray[p] * count < sum * Tf;
+            if (ink) black++;
+            const di = p * 4; d[di] = d[di + 1] = d[di + 2] = ink ? 0 : 255;
+          }
+        }
+        // Safety net: if thresholding blew out (nearly all white/black), the
+        // params didn't suit this image — fall back to plain grayscale so we
+        // never hand Tesseract a blank page.
+        const ratio = black / n;
+        if (ratio < 0.003 || ratio > 0.7) {
+          for (let p = 0; p < n; p++) { const di = p * 4; d[di] = d[di + 1] = d[di + 2] = gray[p]; }
         }
         ctx.putImageData(imageData, 0, 0);
       } catch {
@@ -519,7 +550,7 @@ function imageFileToJpeg(file: File): Promise<string> {
       }
 
       URL.revokeObjectURL(blobUrl);
-      resolve(canvas.toDataURL('image/jpeg', 0.93));
+      resolve(canvas.toDataURL('image/jpeg', 0.95));
     };
     img.onerror = () => {
       URL.revokeObjectURL(blobUrl);
@@ -664,17 +695,49 @@ async function runOcr(
   });
 
   try {
-    // PSM 1: auto page segmentation with OSD — best for real PO documents
-    // (mix of text blocks, tables, headers). PSM 6 (assume single block) is
-    // too aggressive for multi-column POs and misses header/table text.
-    await worker.setParameters({
-      tessedit_pageseg_mode: '1',       // auto with OSD
-      tessedit_char_whitelist: '',       // allow all chars (don't restrict)
-      preserve_interword_spaces: '1',   // keep spaces between words intact
-    });
-    const { data } = await worker.recognize(jpegDataUrl);
-    return parseJobFields(data.text);
+    const recognize = async (psm: string): Promise<string> => {
+      await worker.setParameters({
+        tessedit_pageseg_mode: psm,
+        tessedit_char_whitelist: '',
+        preserve_interword_spaces: '1',
+      });
+      const { data } = await worker.recognize(jpegDataUrl);
+      return (data?.text as string) || '';
+    };
+
+    // Bound each pass so a hung worker can't run forever (the UI overlay also
+    // has its own 60s timeout; this kills the worker thread at the source).
+    const withTimeout = <X>(p: Promise<X>, ms = 45000): Promise<X> =>
+      Promise.race([p, new Promise<X>((_, rej) => setTimeout(() => rej(new Error('OCR timed out — try again')), ms))]);
+
+    // Primary pass — PSM 6 (assume a uniform block of text). After adaptive
+    // binarization this reads printed PO forms cleanly and keeps the line
+    // structure our label-anchored regexes rely on.
+    let result = parseJobFields(await withTimeout(recognize('6')));
+
+    // If the PO number didn't come through (the field most likely to sit in a
+    // boxed header), retry with PSM 4 (single column of variable-size text).
+    // PSM 4 preserves reading order — unlike sparse PSM 11 — so our line-anchored
+    // regexes still work. Merge: primary wins where both found something.
+    if (!result.fields.poNumber || result.confidence < 60) {
+      onProgress?.(92, 'Re-reading…');
+      result = mergeScans(result, parseJobFields(await withTimeout(recognize('4'))));
+    }
+    onProgress?.(100, 'Done');
+    return result;
   } finally {
-    await worker.terminate();
+    // Always runs — including when withTimeout rejects — so a hung recognize()
+    // is aborted and the worker thread is freed (no accumulating OOM).
+    await worker.terminate().catch(() => {});
   }
+}
+
+/** Merge two scan passes: the primary's fields win; the other fills the gaps. */
+function mergeScans(primary: ScanResult, other: ScanResult): ScanResult {
+  const fields = { ...other.fields, ...primary.fields };          // primary keys override
+  const fieldSources = { ...other.fieldSources, ...primary.fieldSources };
+  const rawText = [primary.rawText, other.rawText].filter(Boolean).join('\n');
+  const keyFields = ['poNumber', 'partNumber', 'quantity', 'dueDate', 'customer'];
+  const filled = keyFields.filter(k => k in fields).length;
+  return { fields, rawText, confidence: Math.round((filled / keyFields.length) * 100), fieldSources };
 }

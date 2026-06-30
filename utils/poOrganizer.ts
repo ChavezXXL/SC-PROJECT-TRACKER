@@ -48,6 +48,15 @@ export function isJobComplete(job: Job, stages: JobStage[]): boolean {
 export const normKey = (s?: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const stripZeros = (s: string): string => s.replace(/^0+/, '');
 
+/**
+ * Fold the letters Tesseract most often confuses with digits onto those digits,
+ * so an OCR'd PO like "PO 1l42i3" still matches the job's real "114213". Applied
+ * to an already-normalized (lowercase a-z0-9) key. Non-destructive — only used
+ * for comparison, never stored.
+ */
+const ocrFold = (k: string): string =>
+  k.replace(/[oq]/g, '0').replace(/[il]/g, '1').replace(/s/g, '5').replace(/b/g, '8').replace(/z/g, '2').replace(/g/g, '6');
+
 export type PoMatchField = 'link' | 'po' | 'part';
 
 export interface PoMatchResult {
@@ -79,6 +88,21 @@ export function matchJobForPo(
   if (pn) {
     let m = jobs.find(j => normKey(j.poNumber) === pn);
     if (m) return { job: m, field: 'po', exact: true };
+    // OCR-tolerant match — fold confusable letters→digits so a slightly-misread
+    // PO still finds its job (this is why a bad scan used to fall back to the
+    // part number). Heavily guarded against collisions: the scanned PO must be
+    // DIGIT-DOMINANT (so real word-like codes like "TAIL" never fold-match), the
+    // job PO must be the SAME LENGTH and also digit-dominant, and the fold must
+    // resolve to exactly ONE job (never link when it's ambiguous).
+    const digitShare = (s: string) => s.replace(/[^0-9]/g, '').length / Math.max(1, s.length);
+    if (pn.length >= 4 && digitShare(pn) >= 0.5) {
+      const fpn = ocrFold(pn);
+      const cands = jobs.filter(j => {
+        const k = normKey(j.poNumber);
+        return k.length === pn.length && digitShare(k) >= 0.5 && ocrFold(k) === fpn;
+      });
+      if (cands.length === 1) return { job: cands[0], field: 'po', exact: false };
+    }
     // Loose match — guarded so short IDs can't substring-match the wrong job.
     if (pn.length >= 4) {
       const zpn = stripZeros(pn);
