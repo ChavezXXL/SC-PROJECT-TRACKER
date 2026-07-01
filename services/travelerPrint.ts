@@ -78,6 +78,7 @@ const TRAVELER_CSS = `
     padding: 2pt 10pt 9pt;
     font-variant-numeric: tabular-nums;
     word-break: break-word;
+    overflow-wrap: anywhere;
   }
   .id-val.po   { font-size: var(--po-fs, 28pt); }
   .id-val.part { font-size: var(--pn-fs, 20pt); }
@@ -398,7 +399,7 @@ export function renderTravelerHtml(
 
   // ── HEADER ──
   const logoHtml = show.logo && settings.companyLogo
-    ? `<img class="hdr-logo" src="${settings.companyLogo}" alt="" />`
+    ? `<img class="hdr-logo" src="${escapeHtml(settings.companyLogo)}" alt="" />`
     : '';
   const phoneHtml = settings.companyPhone
     ? `<div class="hdr-sub">${escapeHtml(settings.companyPhone)}</div>` : '';
@@ -406,7 +407,7 @@ export function renderTravelerHtml(
   // ── QR cell (spans both rows of identity block) ──
   const qrCellHtml = show.qr && options._qrDataUrl
     ? `<td class="id-qr-cell" rowspan="2">
-        <img src="${options._qrDataUrl}" alt="Scan to open job in FabTrack" />
+        <img src="${escapeHtml(options._qrDataUrl)}" alt="Scan to open job in FabTrack" />
         <div class="qr-cap">Scan to Open</div>
        </td>`
     : '';
@@ -448,7 +449,7 @@ export function renderTravelerHtml(
   // ── PART PHOTO ──
   const photoHtml = show.partImage && job.partImage
     ? `<div class="photo-wrap">
-        <img src="${job.partImage}" alt="Part photo" />
+        <img src="${escapeHtml(job.partImage)}" alt="Part photo" />
         <div class="photo-cap">Part Reference</div>
        </div>` : '';
 
@@ -682,8 +683,8 @@ export async function printTraveler(
         margin: 1,
         color: { dark: '#000000', light: '#ffffff' },
       });
-    } catch {
-      // QR generation failed — continue without it
+    } catch (e) {
+      console.warn('[traveler] QR generation failed — printing without QR code', e);
     }
   }
 
@@ -704,8 +705,31 @@ export async function printTraveler(
   );
   win.document.close();
 
-  // Let logo + part photo load before opening print dialog
-  setTimeout(() => { win.focus(); win.print(); }, 600);
+  // Wait for the logo / part photo / QR images to actually finish loading, THEN
+  // print — a fixed delay could fire before large images render (blank page).
+  // Resolve only after print() is triggered so callers' onPrinted is accurate.
+  await new Promise<void>((resolve) => {
+    let fired = false;
+    const doPrint = () => {
+      if (fired) return;
+      fired = true;
+      try { win.focus(); win.print(); } catch { /* popup closed or print blocked */ }
+      resolve();
+    };
+    try {
+      const imgs = Array.from(win.document.images || []);
+      let pending = imgs.filter(im => !im.complete).length;
+      if (pending === 0) {
+        setTimeout(doPrint, 250);   // small settle for layout/fonts
+      } else {
+        const tick = () => { if (--pending <= 0) doPrint(); };
+        imgs.forEach(im => {
+          if (!im.complete) { im.addEventListener('load', tick); im.addEventListener('error', tick); }
+        });
+      }
+    } catch { doPrint(); }
+    setTimeout(doPrint, 3000);      // hard cap — never hang if an image stalls
+  });
 }
 
 /** Returns a blob: URL — useful for iframe preview or batch download. */

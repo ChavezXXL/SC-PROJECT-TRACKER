@@ -2342,11 +2342,15 @@ const TravelerPreview = ({ settings }: { settings: SystemSettings }) => {
   });
   useEffect(() => {
     let currentUrl = '';
+    let cancelled = false;
     buildTravelerBlobUrl(sampleJob, settings, {}).then(url => {
+      // If this effect was cleaned up before the blob resolved, revoke it right
+      // away instead of leaking — otherwise store + show it.
+      if (cancelled) { URL.revokeObjectURL(url); return; }
       currentUrl = url;
       setBlobUrl(url);
     });
-    return () => { if (currentUrl) URL.revokeObjectURL(currentUrl); };
+    return () => { cancelled = true; if (currentUrl) URL.revokeObjectURL(currentUrl); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depKey]);
 
