@@ -163,8 +163,9 @@ export function parseJobFields(rawText: string): ScanResult {
     /\bPurchase[ \t]+Order[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
     // "Order No / Order # / Order Number" — specific enough to not need colon
     /\bOrder[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
-    // "Job #" / "Job No"
-    /\bJob[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    // NOTE: "Job #" is intentionally NOT a PO pattern — a job number on the
+    // customer's document must never be captured as the PO number (it's read
+    // separately into jobNumber below). Matching is PO#-only.
     // "Customer PO", "Cust PO#", "Cust. P.O. No"
     /\bCust(?:omer)?\.?[ \t]*P\.?O\.?[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
     // "PurchaseOrder#" (no space — common in PDF text extraction)
@@ -179,6 +180,22 @@ export function parseJobFields(rawText: string): ScanResult {
     if (/\d/.test(po.value) && !PO_BLOCKLIST.has(upper)) {
       fields.poNumber = upper;   // PO numbers are uppercase — normalize for display + matching
       sources.poNumber = po.snippet;
+    }
+  }
+
+  // ── Job Number ─────────────────────────────────────────────────────────────
+  // Captured for reference/display only — NOT used for matching (PO# is king).
+  const jobNo = tryPatterns(text, [
+    /\bJob[ \t]*(?:#|No\.?|Num(?:ber)?)[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    /\bJob[ \t]*ID[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    /\bWork[ \t]*Order[ \t]*(?:#|No\.?|Num(?:ber)?)?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+    /\b(?:W\.?O\.?)[ \t]*#?[ \t]*:?[ \t]*([A-Z0-9][A-Z0-9\-\/\.]{0,24})/i,
+  ]);
+  if (jobNo) {
+    const jv = jobNo.value.toUpperCase();
+    if (/\d/.test(jv) && !PO_BLOCKLIST.has(jv) && jv !== (fields.poNumber || '').toUpperCase()) {
+      (fields as any).jobNumber = jv;
+      sources.jobNumber = jobNo.snippet;
     }
   }
 

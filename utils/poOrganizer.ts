@@ -57,7 +57,7 @@ const stripZeros = (s: string): string => s.replace(/^0+/, '');
 const ocrFold = (k: string): string =>
   k.replace(/[oq]/g, '0').replace(/[il]/g, '1').replace(/s/g, '5').replace(/b/g, '8').replace(/z/g, '2').replace(/g/g, '6');
 
-export type PoMatchField = 'link' | 'po' | 'part';
+export type PoMatchField = 'link' | 'po';
 
 export interface PoMatchResult {
   job?: Job;
@@ -66,66 +66,58 @@ export interface PoMatchResult {
 }
 
 /**
- * Find the job a PO belongs to. Order of confidence:
- *   1. Explicit stored linkedJobId (user/earlier match already decided)
+ * Find the job a PO belongs to — BY PO NUMBER ONLY. Never part# or job#, because
+ * those cause wrong matches (a PO landing on an unrelated/completed job). If the
+ * PO number doesn't hit a job, the PO stays 'unmatched' so it can be added to the
+ * board. Order of confidence:
+ *   1. Explicit stored linkedJobId — but only if still consistent with the PO#
+ *      (older records may have been auto-linked by part#; those self-heal here).
  *   2. Exact normalized PO# match
- *   3. Loose PO# match (leading zeros / contained-within) — guarded by length
- *   4. Exact normalized part# match
- *   5. Loose part# match — guarded so short strings can't false-positive
+ *   3. OCR-tolerant PO# match (confusable letters→digits) — heavily guarded
+ *   4. Loose PO# match (leading zeros / contained-within) — guarded by length
  */
 export function matchJobForPo(
   po: Pick<CustomerPoFile, 'poNumber' | 'partNumber' | 'linkedJobId'>,
   jobs: Job[],
 ): PoMatchResult {
+  const pn = normKey(po.poNumber);
+
   if (po.linkedJobId) {
     const j = jobs.find(j => j.id === po.linkedJobId);
-    if (j) return { job: j, field: 'link', exact: true };
+    // Trust the stored link only when there's no PO# to check against, or the
+    // linked job's PO# actually matches — this drops stale part#-based links.
+    if (j && (!pn || normKey(j.poNumber) === pn)) return { job: j, field: 'link', exact: true };
   }
 
-  const pn = normKey(po.poNumber);
-  const part = normKey(po.partNumber);
+  if (!pn) return { exact: false };
 
-  if (pn) {
-    let m = jobs.find(j => normKey(j.poNumber) === pn);
-    if (m) return { job: m, field: 'po', exact: true };
-    // OCR-tolerant match — fold confusable letters→digits so a slightly-misread
-    // PO still finds its job (this is why a bad scan used to fall back to the
-    // part number). Heavily guarded against collisions: the scanned PO must be
-    // DIGIT-DOMINANT (so real word-like codes like "TAIL" never fold-match), the
-    // job PO must be the SAME LENGTH and also digit-dominant, and the fold must
-    // resolve to exactly ONE job (never link when it's ambiguous).
-    const digitShare = (s: string) => s.replace(/[^0-9]/g, '').length / Math.max(1, s.length);
-    if (pn.length >= 4 && digitShare(pn) >= 0.5) {
-      const fpn = ocrFold(pn);
-      const cands = jobs.filter(j => {
-        const k = normKey(j.poNumber);
-        return k.length === pn.length && digitShare(k) >= 0.5 && ocrFold(k) === fpn;
-      });
-      if (cands.length === 1) return { job: cands[0], field: 'po', exact: false };
-    }
-    // Loose match — guarded so short IDs can't substring-match the wrong job.
-    if (pn.length >= 4) {
-      const zpn = stripZeros(pn);
-      m = jobs.find(j => {
-        const k = normKey(j.poNumber);
-        if (k.length < 4) return false;          // both sides must be substantial
-        const zk = stripZeros(k);
-        return (!!zpn && zpn === zk) || k.includes(pn) || pn.includes(k);
-      });
-      if (m) return { job: m, field: 'po', exact: false };
-    }
+  let m = jobs.find(j => normKey(j.poNumber) === pn);
+  if (m) return { job: m, field: 'po', exact: true };
+
+  // OCR-tolerant — fold confusable letters→digits so a slightly-misread PO still
+  // finds its job. Guarded hard against collisions: scanned PO must be
+  // DIGIT-DOMINANT (real word codes like "TAIL" never fold), the job PO must be
+  // the SAME LENGTH and also digit-dominant, and it must resolve to exactly ONE.
+  const digitShare = (s: string) => s.replace(/[^0-9]/g, '').length / Math.max(1, s.length);
+  if (pn.length >= 4 && digitShare(pn) >= 0.5) {
+    const fpn = ocrFold(pn);
+    const cands = jobs.filter(j => {
+      const k = normKey(j.poNumber);
+      return k.length === pn.length && digitShare(k) >= 0.5 && ocrFold(k) === fpn;
+    });
+    if (cands.length === 1) return { job: cands[0], field: 'po', exact: false };
   }
 
-  if (part) {
-    let m = jobs.find(j => normKey(j.partNumber) === part);
-    if (m) return { job: m, field: 'part', exact: true };
-    if (part.length >= 4) {
-      m = jobs.find(j => {
-        const k = normKey(j.partNumber);
-        return k.length >= 4 && (k.includes(part) || part.includes(k));
-      });
-      if (m) return { job: m, field: 'part', exact: false };
-    }
+  // Loose — guarded so short IDs can't substring-match the wrong job.
+  if (pn.length >= 4) {
+    const zpn = stripZeros(pn);
+    m = jobs.find(j => {
+      const k = normKey(j.poNumber);
+      if (k.length < 4) return false;
+      const zk = stripZeros(k);
+      return (!!zpn && zpn === zk) || k.includes(pn) || pn.includes(k);
+    });
+    if (m) return { job: m, field: 'po', exact: false };
   }
 
   return { exact: false };

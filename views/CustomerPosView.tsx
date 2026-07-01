@@ -135,7 +135,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState('');   // id of PO currently being turned into a job
   const [newCustomer, setNewCustomer] = useState(false);          // typing a brand-new customer name
-  const [chipTarget, setChipTarget] = useState<'po' | 'part'>('po'); // where a tapped scan-chip lands
+  const [chipTarget, setChipTarget] = useState<'po' | 'job' | 'part'>('po'); // where a tapped scan-chip lands
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scanTimer = useRef<any>(null);
@@ -207,6 +207,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         id,
         customerName: fields.customer || matched?.customer || '',
         poNumber: fields.poNumber || matched?.poNumber || '',
+        jobNumber: fields.jobNumber || matched?.jobIdsDisplay || '',
         partNumber: fields.partNumber || matched?.partNumber || '',
         qty: fields.quantity || matched?.quantity || undefined,
         dueDate: fields.dueDate ? normalizeDue(fields.dueDate) : '',   // OCR gives YYYY-MM-DD → store MM/DD/YYYY
@@ -275,6 +276,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         customerName: draft.customerName!.trim(),
         photoUrl,
         poNumber: draft.poNumber?.trim() || undefined,
+        jobNumber: draft.jobNumber?.trim() || undefined,
         partNumber: draft.partNumber?.trim() || undefined,
         qty: draft.qty || undefined,
         dueDate: draft.dueDate?.trim() || undefined,
@@ -379,7 +381,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         if (fMatch && d.matchState !== fMatch) return false;
         if (fInvoice === 'ready' && !d.readyToInvoice) return false;
         if (fInvoice && fInvoice !== 'ready' && d.invoiceStatus !== fInvoice) return false;
-        if (q && ![p.customerName, p.poNumber, p.partNumber, p.notes, p.invoiceNumber].filter(Boolean).join(' ').toLowerCase().includes(q)) return false;
+        if (q && ![p.customerName, p.poNumber, p.jobNumber, p.partNumber, p.notes, p.invoiceNumber].filter(Boolean).join(' ').toLowerCase().includes(q)) return false;
         return true;
       })
       .sort((a, b) => b.uploadedAt - a.uploadedAt)
@@ -397,12 +399,12 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
 
   const exportVisible = () => {
     const rows: (string | number | undefined)[][] = [
-      ['Customer', 'PO #', 'Part #', 'Qty', 'Due', 'Linked Job', 'Job Status', 'Invoice Status', 'Invoice #', 'Amount', 'Uploaded'],
+      ['Customer', 'PO #', 'Job #', 'Part #', 'Qty', 'Due', 'Linked Job', 'Job Status', 'Invoice Status', 'Invoice #', 'Amount', 'Uploaded'],
     ];
     grouped.forEach(([, list]) => list.forEach(p => {
       const d = derivedMap.get(p.id);
       rows.push([
-        p.customerName, p.poNumber, p.partNumber, p.qty, p.dueDate, d?.jobLabel,
+        p.customerName, p.poNumber, p.jobNumber, p.partNumber, p.qty, p.dueDate, d?.jobLabel,
         d?.matchState === 'completed' ? 'Completed' : d?.matchState === 'active' ? 'Active' : 'Not added',
         d?.readyToInvoice ? 'Ready to invoice' : (d?.invoiceStatus || 'not-invoiced'),
         p.invoiceNumber, d?.amount, new Date(p.uploadedAt).toLocaleDateString(),
@@ -619,6 +621,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                         </div>
                         <div className="p-2.5 space-y-1.5">
                           <p className="text-sm font-black text-white truncate">{po.poNumber || '(no PO #)'}</p>
+                          {po.jobNumber && <p className="text-[10px] text-zinc-500 truncate">Job {po.jobNumber}</p>}
                           {po.partNumber && <p className="text-[11px] text-zinc-400 truncate">{po.partNumber}{po.qty ? ` · ${po.qty}pc` : ''}</p>}
                           <div className="flex flex-wrap gap-1">
                             <MatchBadge d={d} />
@@ -635,9 +638,14 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                               <CheckCircle className="w-3 h-3" /> Mark paid
                             </button>
                           )}
-                          {d.matchState === 'unmatched' && (
+                          {d.matchState === 'unmatched' ? (
                             <button onClick={() => createJobFromPo(po)} disabled={creating === po.id} className="w-full mt-1 bg-blue-600/80 hover:bg-blue-500 disabled:opacity-50 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center justify-center gap-1" title="Create a job on the board from this PO">
                               {creating === po.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add to jobs
+                            </button>
+                          ) : (
+                            // Escape hatch: matched to the wrong job? force a new one anyway.
+                            <button onClick={() => createJobFromPo(po)} disabled={creating === po.id} className="w-full mt-1 text-[9px] font-bold text-blue-300/80 hover:text-blue-200 flex items-center justify-center gap-1" title="Not the right job? Create a new job from this PO">
+                              {creating === po.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />} Wrong job? Add new
                             </button>
                           )}
                           <p className="text-[9px] text-zinc-600 flex items-center gap-1"><Clock className="w-2.5 h-2.5" />{new Date(po.uploadedAt).toLocaleDateString()}{po.invoiceNumber ? ` · inv ${po.invoiceNumber}` : ''}</p>
@@ -677,13 +685,14 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Scan wrong? Tap the right value</p>
                     <div className="flex gap-1 bg-zinc-900 rounded-lg p-0.5">
-                      <button onClick={() => setChipTarget('po')} className={`text-[10px] font-bold px-2 py-0.5 rounded ${chipTarget === 'po' ? 'bg-amber-500 text-white' : 'text-zinc-400'}`}>→ PO #</button>
-                      <button onClick={() => setChipTarget('part')} className={`text-[10px] font-bold px-2 py-0.5 rounded ${chipTarget === 'part' ? 'bg-amber-500 text-white' : 'text-zinc-400'}`}>→ Part #</button>
+                      {(['po', 'job', 'part'] as const).map(t => (
+                        <button key={t} onClick={() => setChipTarget(t)} className={`text-[10px] font-bold px-2 py-0.5 rounded ${chipTarget === t ? 'bg-amber-500 text-white' : 'text-zinc-400'}`}>→ {t === 'po' ? 'PO #' : t === 'job' ? 'Job #' : 'Part #'}</button>
+                      ))}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {scanTokens.map(t => (
-                      <button key={t} onClick={() => setDraft({ ...draft, [chipTarget === 'po' ? 'poNumber' : 'partNumber']: t })}
+                      <button key={t} onClick={() => setDraft({ ...draft, [chipTarget === 'po' ? 'poNumber' : chipTarget === 'job' ? 'jobNumber' : 'partNumber']: t })}
                         className="bg-zinc-800 hover:bg-amber-600 hover:text-white text-[11px] font-mono text-zinc-200 px-2 py-1 rounded-lg border border-white/10 transition-colors">
                         {t}
                       </button>
@@ -732,8 +741,12 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">PO Number</label>
-                  <input value={draft.poNumber || ''} onChange={e => setDraft({ ...draft, poNumber: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white" />
+                  <label className="text-[10px] font-black text-amber-500/80 uppercase tracking-widest block mb-1">PO Number <span className="text-zinc-600">(matches jobs)</span></label>
+                  <input value={draft.poNumber || ''} onChange={e => setDraft({ ...draft, poNumber: e.target.value })} className="w-full bg-zinc-950 border border-amber-500/30 rounded-lg p-2.5 text-sm text-white" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Job Number</label>
+                  <input value={draft.jobNumber || ''} onChange={e => setDraft({ ...draft, jobNumber: e.target.value })} placeholder="reference" className="w-full bg-zinc-950 border border-white/10 rounded-lg p-2.5 text-sm text-white" />
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Part Number</label>

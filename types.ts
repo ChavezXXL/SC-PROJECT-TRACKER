@@ -1032,7 +1032,8 @@ export interface CustomerPoFile {
   id: string;
   customerName: string;       // who the PO is for (the bucket it's filed under)
   photoUrl: string;           // Firebase Storage URL (base64 fallback if upload fails)
-  poNumber?: string;          // OCR-extracted or manually entered
+  poNumber?: string;          // OCR-extracted or manually entered (the match key)
+  jobNumber?: string;         // customer's job/work-order number — reference only, NOT matched
   partNumber?: string;
   qty?: number;
   dueDate?: string;           // MM/DD/YYYY
