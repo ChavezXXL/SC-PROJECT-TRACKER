@@ -1040,6 +1040,7 @@ export interface CustomerPoFile {
   rawText?: string;           // raw OCR text (for search / re-extract)
   linkedJobId?: string;       // matched existing job, if found
   linkedJobDisplay?: string;  // human label of the matched job
+  linkConfirmed?: boolean;    // user manually picked this job — honor the link even if PO# differs
   notes?: string;
   uploadedAt: number;
   uploadedBy?: string;

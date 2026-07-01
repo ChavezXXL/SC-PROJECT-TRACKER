@@ -15,7 +15,7 @@ import { Overlay } from '../components/Overlay';
 import { scanDocument } from '../services/poScanner';
 import { normDate, todayFmt } from '../utils/date';
 import {
-  derivePo, resolveStages, matchJobForPo, isJobComplete, readyToInvoiceList,
+  derivePo, resolveStages, matchJobForPo, isJobComplete, readyToInvoiceList, normKey,
 } from '../utils/poOrganizer';
 import type { PoDerived } from '../utils/poOrganizer';
 
@@ -136,6 +136,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   const [creating, setCreating] = useState('');   // id of PO currently being turned into a job
   const [newCustomer, setNewCustomer] = useState(false);          // typing a brand-new customer name
   const [chipTarget, setChipTarget] = useState<'po' | 'job' | 'part'>('po'); // where a tapped scan-chip lands
+  const [jobSearch, setJobSearch] = useState('');                 // manual job-link picker query
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scanTimer = useRef<any>(null);
@@ -171,13 +172,47 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   // The "send the invoice!" worklist — job done but not invoiced yet.
   const readyList = useMemo(() => readyToInvoiceList(pos, jobs, settings), [pos, jobs, settings]);
 
-  /** Live match for the open draft (so the modal shows the current match + status). */
+  /** Live match for the open draft (so the modal shows the current match + status).
+   *  A confirmed manual link wins; otherwise an auto-link doesn't freeze the live
+   *  re-match (so editing the PO# re-matches fresh). */
   const draftMatch = useMemo(() => {
     if (!draft) return null;
-    const m = matchJobForPo({ poNumber: draft.poNumber, partNumber: draft.partNumber, linkedJobId: editing ? draft.linkedJobId : undefined }, jobs);
+    const useLink = draft.linkConfirmed || editing;
+    const m = matchJobForPo({ poNumber: draft.poNumber, partNumber: draft.partNumber, linkedJobId: useLink ? draft.linkedJobId : undefined, linkConfirmed: draft.linkConfirmed }, jobs);
     if (!m.job) return null;
-    return { job: m.job, complete: isJobComplete(m.job, stages), field: m.field, exact: m.exact };
-  }, [draft?.poNumber, draft?.partNumber, draft?.linkedJobId, editing, jobs, stages]);
+    return { job: m.job, complete: isJobComplete(m.job, stages), field: m.field, exact: m.exact, manual: !!draft.linkConfirmed };
+  }, [draft?.poNumber, draft?.partNumber, draft?.linkedJobId, draft?.linkConfirmed, editing, jobs, stages]);
+
+  // Duplicate-PO guard: another filed PO already carries this PO number.
+  const dupPo = useMemo(() => {
+    const k = normKey(draft?.poNumber);
+    if (!k) return null;
+    return pos.find(p => p.id !== draft?.id && normKey(p.poNumber) === k) || null;
+  }, [pos, draft?.poNumber, draft?.id]);
+
+  // Manual job-link picker results.
+  const jobPickResults = useMemo(() => {
+    const q = jobSearch.trim().toLowerCase();
+    if (!q) return [] as Job[];
+    return jobs
+      .filter(j => [j.poNumber, j.partNumber, j.customer, j.jobIdsDisplay].filter(Boolean).join(' ').toLowerCase().includes(q))
+      .slice(0, 6);
+  }, [jobs, jobSearch]);
+
+  const pickJob = (job: Job) => {
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      linkedJobId: job.id,
+      linkedJobDisplay: job.jobIdsDisplay || job.poNumber,
+      linkConfirmed: true,
+      poNumber: draft.poNumber || job.poNumber,
+      partNumber: draft.partNumber || job.partNumber,
+      customerName: draft.customerName || job.customer || '',
+    });
+    setJobSearch('');
+  };
+  const unlinkJob = () => { if (draft) setDraft({ ...draft, linkedJobId: undefined, linkedJobDisplay: undefined, linkConfirmed: false }); };
 
   const handlePhoto = async (file: File) => {
     if (!file.type.startsWith('image/')) { addToast('error', 'Pick an image / photo'); return; }
@@ -237,7 +272,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
     setDraftPreview(po.photoUrl);
   };
 
-  const closeModal = () => { if (!saving) { setDraft(null); setDraftPreview(''); setEditing(false); setNewCustomer(false); setChipTarget('po'); } };
+  const closeModal = () => { if (!saving) { setDraft(null); setDraftPreview(''); setEditing(false); setNewCustomer(false); setChipTarget('po'); setJobSearch(''); } };
 
   // Candidate tokens pulled from the raw OCR text — short alphanumeric strings
   // containing a digit (PO/part-shaped). Tapping one drops it into PO# or Part#.
@@ -256,8 +291,10 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
     savingRef.current = true;
     setSaving(true);
     try {
-      // Re-match against the (possibly user-edited) PO#/part#.
-      const matched = matchJobForPo({ poNumber: draft.poNumber, partNumber: draft.partNumber, linkedJobId: editing ? draft.linkedJobId : undefined }, jobs).job;
+      // Re-match against the (possibly user-edited) PO#/part#. A confirmed manual
+      // link is honored; otherwise editing re-matches by PO#.
+      const useLink = draft.linkConfirmed || editing;
+      const matched = matchJobForPo({ poNumber: draft.poNumber, partNumber: draft.partNumber, linkedJobId: useLink ? draft.linkedJobId : undefined, linkConfirmed: draft.linkConfirmed }, jobs).job;
 
       let photoUrl = editing ? (draft.photoUrl || draftPreview) : draftPreview; // base64 / existing URL fallback
       // Upload for new POs; also re-upload when editing if the stored photo is
@@ -283,6 +320,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         rawText: draft.rawText || undefined,
         linkedJobId: matched?.id || undefined,
         linkedJobDisplay: matched ? (matched.jobIdsDisplay || matched.poNumber) : undefined,
+        linkConfirmed: (draft.linkConfirmed && matched?.id === draft.linkedJobId) || undefined,
         notes: draft.notes?.trim() || undefined,
         invoiceStatus: draft.invoiceStatus || 'not-invoiced',
         invoicedAt: draft.invoicedAt,
@@ -346,6 +384,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
           ...po,
           linkedJobId: id,
           linkedJobDisplay: job.jobIdsDisplay,
+          linkConfirmed: true,
           updatedAt: Date.now(),
         });
         addToast('success', `Job ${job.jobIdsDisplay} created & linked`);
@@ -701,18 +740,45 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                 </div>
               )}
 
+              {/* Duplicate-PO warning */}
+              {dupPo && !editing && (
+                <div className="rounded-xl px-3 py-2 flex items-center gap-2 text-xs font-bold border bg-red-500/10 border-red-500/25 text-red-300">
+                  <AlertTriangle className="w-4 h-4 shrink-0" /> PO #{draft.poNumber} is already filed for {dupPo.customerName}. File anyway only if this is a revision.
+                </div>
+              )}
+
               {/* Live match indicator */}
               {draftMatch ? (
                 <div className={`rounded-xl px-3 py-2 flex items-center gap-2 text-sm font-bold border ${draftMatch.complete ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300' : 'bg-blue-500/10 border-blue-500/25 text-blue-300'}`}>
-                  {draftMatch.complete ? <CheckCircle className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
-                  Matched job {draftMatch.job.jobIdsDisplay || draftMatch.job.poNumber}
-                  <span className="font-normal opacity-80">· {draftMatch.complete ? 'completed' : 'active'}{draftMatch.exact ? '' : ' (loose match)'}</span>
+                  {draftMatch.complete ? <CheckCircle className="w-4 h-4 shrink-0" /> : <Link2 className="w-4 h-4 shrink-0" />}
+                  <span className="min-w-0 truncate">Matched job {draftMatch.job.jobIdsDisplay || draftMatch.job.poNumber}
+                    <span className="font-normal opacity-80"> · {draftMatch.complete ? 'completed' : 'active'}{draftMatch.manual ? ' (manual)' : draftMatch.exact ? '' : ' (loose)'}</span>
+                  </span>
+                  {draftMatch.manual && <button onClick={unlinkJob} className="ml-auto shrink-0 text-[10px] font-bold underline underline-offset-2 opacity-80 hover:opacity-100">Unlink</button>}
                 </div>
               ) : (
                 <div className="rounded-xl px-3 py-2 flex items-center gap-2 text-sm font-bold border bg-amber-500/10 border-amber-500/25 text-amber-300">
-                  <AlertTriangle className="w-4 h-4" /> No matching job yet <span className="font-normal opacity-80">· filed for reference</span>
+                  <AlertTriangle className="w-4 h-4 shrink-0" /> No matching job yet <span className="font-normal opacity-80">· filed for reference</span>
                 </div>
               )}
+
+              {/* Manual job link picker — override the auto-match with the exact job */}
+              <div>
+                <div className="relative">
+                  <Link2 className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
+                  <input value={jobSearch} onChange={e => setJobSearch(e.target.value)} placeholder={draftMatch ? 'Link a different job…' : 'Link to a job (search PO#, part, customer)…'} className="w-full bg-zinc-950 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder:text-zinc-600" />
+                </div>
+                {jobPickResults.length > 0 && (
+                  <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto">
+                    {jobPickResults.map(j => (
+                      <button key={j.id} onClick={() => pickJob(j)} className="w-full text-left bg-zinc-900 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500/40 rounded-lg px-3 py-1.5 transition-colors">
+                        <p className="text-sm font-bold text-white truncate">{j.poNumber} <span className="text-zinc-500 font-normal">· {j.jobIdsDisplay}</span></p>
+                        <p className="text-[10px] text-zinc-500 truncate">{j.partNumber}{j.customer ? ` · ${j.customer}` : ''}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div>
                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Customer *</label>

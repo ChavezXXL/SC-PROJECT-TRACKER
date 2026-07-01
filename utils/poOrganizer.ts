@@ -77,16 +77,17 @@ export interface PoMatchResult {
  *   4. Loose PO# match (leading zeros / contained-within) — guarded by length
  */
 export function matchJobForPo(
-  po: Pick<CustomerPoFile, 'poNumber' | 'partNumber' | 'linkedJobId'>,
+  po: Pick<CustomerPoFile, 'poNumber' | 'partNumber' | 'linkedJobId' | 'linkConfirmed'>,
   jobs: Job[],
 ): PoMatchResult {
   const pn = normKey(po.poNumber);
 
   if (po.linkedJobId) {
     const j = jobs.find(j => j.id === po.linkedJobId);
-    // Trust the stored link only when there's no PO# to check against, or the
-    // linked job's PO# actually matches — this drops stale part#-based links.
-    if (j && (!pn || normKey(j.poNumber) === pn)) return { job: j, field: 'link', exact: true };
+    // A user-confirmed manual link is always honored. An auto-link is trusted
+    // only when there's no PO# to check, or the linked job's PO# matches — so
+    // stale part#-based auto-links self-heal.
+    if (j && (po.linkConfirmed || !pn || normKey(j.poNumber) === pn)) return { job: j, field: 'link', exact: true };
   }
 
   if (!pn) return { exact: false };
