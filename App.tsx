@@ -2018,10 +2018,20 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                 {quickResume.map(({ job, operation }) => (
                   <button key={`${job.id}|${operation}`} disabled={resumeStarting}
                     onClick={() => { if (resumeStarting || activeLog) return; setResumeStarting(true); handleStartJob(job.id, operation); }}
-                    className="text-left bg-gradient-to-br from-amber-500/15 to-amber-500/[0.04] hover:from-amber-500/25 border border-amber-500/30 rounded-xl px-3 py-2.5 transition-all active:scale-95 disabled:opacity-50">
-                    <p className="text-sm font-black text-white truncate">{job.poNumber}</p>
-                    <p className="text-[11px] text-amber-300/90 truncate flex items-center gap-1"><Play className="w-3 h-3 shrink-0" /> {operation}</p>
-                    <p className="text-[10px] text-zinc-500 truncate">{job.partNumber}</p>
+                    className="flex items-center gap-3 text-left bg-gradient-to-br from-amber-500/15 to-amber-500/[0.04] hover:from-amber-500/25 border border-amber-500/30 rounded-xl p-2 transition-all active:scale-95 disabled:opacity-50">
+                    {/* Part photo — instant visual recognition of the job */}
+                    {job.partImage ? (
+                      <img src={job.partImage} alt="" className="w-12 h-12 rounded-lg object-cover border border-white/10 shrink-0" loading="lazy" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-lg bg-zinc-800/80 border border-white/10 flex items-center justify-center shrink-0">
+                        <Image className="w-5 h-5 text-zinc-600" aria-hidden="true" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-black text-white truncate">{job.poNumber}</p>
+                      <p className="text-[11px] text-amber-300/90 truncate flex items-center gap-1"><Play className="w-3 h-3 shrink-0" /> {operation}</p>
+                      <p className="text-[10px] text-zinc-500 truncate">{job.partNumber}</p>
+                    </div>
                   </button>
                 ))}
               </div>
