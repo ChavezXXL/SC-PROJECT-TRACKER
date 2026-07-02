@@ -65,8 +65,13 @@ async function fetchCollection(col: string, apiKey: string, projectId: string): 
   do {
     const url = `${base}?key=${apiKey}&pageSize=300${pageToken ? `&pageToken=${pageToken}` : ''}`;
     const res = await fetch(url);
+    if (!res.ok) {
+      // Mid-pagination failure: log loudly so a silently-truncated collection
+      // (e.g. alarms reaching only half the devices) is visible in the logs.
+      console.error(`[shift-push-cron] fetchCollection ${col} page failed: ${res.status} (loaded ${docs.length} doc(s) so far)`);
+      break;
+    }
     const data: any = await res.json();
-    if (!res.ok) break;
     (data.documents || []).forEach((d: any) => docs.push(fsDoc(d)));
     pageToken = data.nextPageToken;
   } while (pageToken);
@@ -92,6 +97,36 @@ async function setMetaDoc(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields }),
   }).catch(() => {});
+}
+
+/**
+ * Atomically create a push_meta doc ONLY if it doesn't already exist, via
+ * Firestore's `currentDocument.exists=false` precondition. Returns true when
+ * this call created the doc (we "won" and own the send); false when another
+ * overlapping cron run already created it — or on a network error, which
+ * safely skips the send (the next 5-min tick retries).
+ */
+async function setMetaDocIfNotExists(
+  id: string,
+  data: Record<string, string | number | boolean>,
+  apiKey: string,
+  projectId: string,
+): Promise<boolean> {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/push_meta/${id}?key=${apiKey}&currentDocument.exists=false`;
+  const fields: any = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof v === 'string')  fields[k] = { stringValue: v };
+    else if (typeof v === 'number') fields[k] = { integerValue: String(Math.round(v)) };
+    else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    return res.ok;
+  } catch { return false; }
 }
 
 /** Delete a Firestore doc (used to remove stale/expired push subscriptions). */
@@ -311,7 +346,11 @@ function fmtElapsed(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-/** Send one push, delete sub on 404/410. Returns 'sent' | 'failed' | 'removed'. */
+/**
+ * Send one push. Deletes the sub on 404/410 (device gone); retries transient
+ * failures (5xx / 429) with a short backoff so a push-service hiccup doesn't
+ * silently drop a time-sensitive alarm. Returns 'sent' | 'failed' | 'removed'.
+ */
 async function sendPush(
   subDoc: any,
   payload: string,
@@ -321,18 +360,27 @@ async function sendPush(
 ): Promise<'sent' | 'failed' | 'removed'> {
   const subscription = subDoc.subscription;
   if (!subscription?.endpoint) return 'failed';
-  try {
-    await webpush.sendNotification(subscription, payload, { TTL: ttl });
-    return 'sent';
-  } catch (e: any) {
-    const code = e?.statusCode || 0;
-    if (code === 404 || code === 410) {
-      await deleteDoc('push_subscriptions', subDoc.id, apiKey, projectId).catch(() => {});
-      return 'removed';
+  const MAX_RETRIES = 2; // backoff: 1s then 2s
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await webpush.sendNotification(subscription, payload, { TTL: ttl });
+      return 'sent';
+    } catch (e: any) {
+      const code = e?.statusCode || 0;
+      if (code === 404 || code === 410) {
+        await deleteDoc('push_subscriptions', subDoc.id, apiKey, projectId).catch(() => {});
+        return 'removed';
+      }
+      // Transient push-service error — back off and retry.
+      if (attempt < MAX_RETRIES && (code >= 500 || code === 429)) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
+      }
+      console.warn(`[shift-push-cron] Push failed for sub ${subDoc.id} (${code || 'no status'}): ${e?.message}`);
+      return 'failed';
     }
-    console.warn(`[shift-push-cron] Push failed for sub ${subDoc.id}: ${e?.message}`);
-    return 'failed';
   }
+  return 'failed';
 }
 
 // ── Main handler ──────────────────────────────────────────────────────
@@ -421,7 +469,14 @@ export default async function handler() {
         // lands BEFORE the clock-in → roll to the next morning. Only for genuine
         // AM cutoffs: a PM cutoff already passed (clock back in 6pm after a
         // 5:30pm cutoff) must NOT roll ~24h — let the safety net handle it.
-        if (cutoffMs <= log.startTime && c.h < 12) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
+        // DST-safe roll: startTime+24h can land on the wrong shop-calendar day
+        // across a spring-forward/fall-back boundary (23h/25h days). Anchor at
+        // the SAME day's noon instead — noon+24h shifted ±1h by DST is always
+        // inside the next calendar day — then rebuild the cutoff on that day.
+        if (cutoffMs <= log.startTime && c.h < 12) {
+          const noonSameDay = shopLocalTimeMs(log.startTime, tz, 12, 0);
+          cutoffMs = shopLocalTimeMs(noonSameDay + 86400000, tz, c.h, c.m);
+        }
         if (log.startTime < cutoffMs && nowMs > cutoffMs) {
           if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
         }
@@ -522,11 +577,11 @@ export default async function handler() {
   // ── Section A: Shift alarm pushes — broadcast to ALL subscribed devices ──
   for (const alarm of toFire) {
     // Once-per-day dedup: the cron runs every 5 min with a ±4-min window, so an
-    // alarm can match two ticks. Without this, workers' phones buzz twice.
+    // alarm can match two ticks. Atomic create-if-absent — a plain fetch-then-
+    // write check lets two overlapping runs both send; only one can win this.
     const metaId = `shift-alarm-${alarm.id}-${today}`;
-    const already = await fetchDoc('push_meta', metaId, apiKey, projectId);
-    if (already) continue;
-    await setMetaDoc(metaId, { sentAt: Date.now() }, apiKey, projectId);
+    const won = await setMetaDocIfNotExists(metaId, { sentAt: Date.now() }, apiKey, projectId);
+    if (!won) continue;
 
     const isClockIn  = alarm.clockIn === true;
     const isClockOut = alarm.clockOut || alarm.label.toLowerCase().includes('clock out') || alarm.label.toLowerCase().includes('shift end');
@@ -575,7 +630,10 @@ export default async function handler() {
       u.role === 'admin' || u.role === 'manager' || u.role === 'owner',
     );
 
-    const activeUserIds = new Set(activeLogs.map(l => l.userId));
+    // Open timers (in_progress + paused) — a paused timer is still evidence of
+    // a clock-in, so a worker on break must NOT get a missed-clock-in nag.
+    const openForClockIn = await fetchOpenLogs(apiKey, projectId);
+    const activeUserIds = new Set(openForClockIn.map(l => l.userId));
 
     for (const alarm of clockInAlarmsForCheck) {
       const metaId = `late-clockin-${alarm.id}-${today}`;
@@ -588,8 +646,15 @@ export default async function handler() {
 
       const notClockedIn = employees.filter((u: any) => !activeUserIds.has(u.id));
 
-      // Write meta first (prevents double-send if cron overlaps)
-      await setMetaDoc(metaId, { lastSentAt: now, sentCount: sentCount + 1 }, apiKey, projectId);
+      // Write meta first (prevents double-send if cron overlaps). Reminder #1
+      // is an atomic create-if-absent so two overlapping runs can't both send
+      // it; later reminders are already throttled by the 30-min gate above.
+      if (!meta) {
+        const won = await setMetaDocIfNotExists(metaId, { lastSentAt: now, sentCount: 1 }, apiKey, projectId);
+        if (!won) continue; // a concurrent run just sent this reminder
+      } else {
+        await setMetaDoc(metaId, { lastSentAt: now, sentCount: sentCount + 1 }, apiKey, projectId);
+      }
 
       if (notClockedIn.length === 0) {
         console.log(`[shift-push-cron] clock-in check "${alarm.label}" — all workers clocked in ✓`);
@@ -660,7 +725,7 @@ export default async function handler() {
             </div>`;
 
           try {
-            await fetch('https://api.resend.com/emails', {
+            const emailRes = await fetch('https://api.resend.com/emails', {
               method: 'POST',
               headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -670,9 +735,15 @@ export default async function handler() {
                 html: emailBody,
               }),
             });
+            if (!emailRes.ok) {
+              const errText = await emailRes.text().catch(() => '');
+              throw new Error(`Resend API ${emailRes.status}: ${errText.slice(0, 200)}`);
+            }
             console.log(`[shift-push-cron] escalation email sent to ${toEmail} (${notClockedIn.length} missing)`);
           } catch (e: any) {
-            console.warn('[shift-push-cron] escalation email failed:', e?.message);
+            // Critical escalation (3+ reminders, workers ~90 min late) — log at
+            // error level so it surfaces in Netlify alerts instead of vanishing.
+            console.error('[shift-push-cron] CRITICAL: escalation email failed:', e?.message);
           }
         }
       }
@@ -701,14 +772,13 @@ export default async function handler() {
 
     for (const log of longRunning) {
       const metaId = `long-timer-${log.id}-${today}`;
-      const alreadySent = await fetchDoc('push_meta', metaId, apiKey, projectId);
-      if (alreadySent) continue;
+      // Atomic create-if-absent — only one overlapping run gets to send.
+      const won = await setMetaDocIfNotExists(metaId, { sentAt: now }, apiKey, projectId);
+      if (!won) continue;
 
       const elapsed = now - log.startTime - (log.totalPausedMs || 0);
       const job: any = jobMap.get(log.jobId);
       const jobLabel = job?.jobIdsDisplay || job?.partNumber || log.jobId;
-
-      await setMetaDoc(metaId, { sentAt: now }, apiKey, projectId);
 
       const adminPayload = JSON.stringify({
         title: `⏱ Long Timer — ${fmtElapsed(elapsed)}`,
@@ -757,11 +827,10 @@ export default async function handler() {
       const budgetMs = item.estimatedMinutes * rateBuffer * 60_000;
       if (elapsed <= budgetMs) continue; // still within estimate
 
-      // Dedup — only fire once per active session
+      // Dedup — only fire once per active session (atomic create-if-absent)
       const metaId = `over-est-${log.id}`;
-      const alreadySent = await fetchDoc('push_meta', metaId, apiKey, projectId);
-      if (alreadySent) continue;
-      await setMetaDoc(metaId, { sentAt: now }, apiKey, projectId);
+      const won = await setMetaDocIfNotExists(metaId, { sentAt: now }, apiKey, projectId);
+      if (!won) continue;
 
       const jobLabel = job.jobIdsDisplay || job.partNumber || log.jobId;
       const overBy   = fmtElapsed(elapsed - budgetMs);
@@ -815,11 +884,10 @@ export default async function handler() {
     );
 
     for (const note of recentNotes) {
-      // Dedup — only notify once per note
+      // Dedup — only notify once per note (atomic create-if-absent)
       const noteMeta = `note-notified-${note.id}`;
-      const alreadyNotified = await fetchDoc('push_meta', noteMeta, apiKey, projectId);
-      if (alreadyNotified) continue;
-      await setMetaDoc(noteMeta, { sentAt: now }, apiKey, projectId);
+      const won = await setMetaDocIfNotExists(noteMeta, { sentAt: now }, apiKey, projectId);
+      if (!won) continue;
 
       const preview = (note.text || '').length > 80
         ? (note.text as string).slice(0, 77) + '…'
@@ -923,7 +991,14 @@ export default async function handler() {
           if (sentCount >= 4) continue;
           if (sentCount > 0 && (now - lastSentAt) < 45 * 60 * 1000) continue;
 
-          await setMetaDoc(metaId, { lastSentAt: now, sentCount: sentCount + 1 }, apiKey, projectId);
+          // First nudge of the day: atomic create-if-absent so two overlapping
+          // runs can't both fire it; re-nudges are throttled 45 min apart.
+          if (!meta) {
+            const won = await setMetaDocIfNotExists(metaId, { lastSentAt: now, sentCount: 1 }, apiKey, projectId);
+            if (!won) continue; // a concurrent run just nudged them
+          } else {
+            await setMetaDoc(metaId, { lastSentAt: now, sentCount: sentCount + 1 }, apiKey, projectId);
+          }
           nudgedNames.push((worker?.name || worker?.email || id).split(' ')[0]);
 
           const workerSubs = subsByUser.get(id) || [];

@@ -56,8 +56,9 @@ export interface RateEstimate {
  * physical cycle time regardless of which customer it ships to, so
  * pooling data across customers gives stronger signal faster.
  *
- * Only counts logs that have `sessionQty` AND `durationMinutes` — older
- * logs without sessionQty can't be converted to a per-piece rate.
+ * Only counts logs that have `sessionQty` AND a duration (durationSeconds
+ * preferred, durationMinutes as fallback) — older logs without sessionQty
+ * can't be converted to a per-piece rate.
  * Admin-entered samples (isSample=true) are included by design — that's
  * how the rate engine gets its seed data in this product.
  */
@@ -72,7 +73,8 @@ export function computeOperationRates(
     (l.partNumber || '').trim().toLowerCase() === part &&
     !!l.operation &&
     (l as any).durationAnomaly !== true &&   // never learn from a clamped/corrupt log
-    typeof l.durationMinutes === 'number' && l.durationMinutes > 0 &&
+    ((typeof l.durationSeconds === 'number' && l.durationSeconds > 0) ||
+      (typeof l.durationMinutes === 'number' && l.durationMinutes > 0)) &&
     typeof l.sessionQty === 'number' && l.sessionQty > 0
   );
 
@@ -87,7 +89,9 @@ export function computeOperationRates(
     const key = l.operation.trim().toLowerCase();
     if (!key) continue;
     const e = byOp.get(key) || { sessions: [], displayName: l.operation.trim() };
-    e.sessions.push({ mins: l.durationMinutes!, qty: l.sessionQty!, rate: l.durationMinutes! / l.sessionQty!, jobId: l.jobId });
+    // durationSeconds-first (sub-minute precision), legacy durationMinutes as fallback
+    const mins = typeof l.durationSeconds === 'number' && l.durationSeconds > 0 ? l.durationSeconds / 60 : l.durationMinutes!;
+    e.sessions.push({ mins, qty: l.sessionQty!, rate: mins / l.sessionQty!, jobId: l.jobId });
     e.displayName = l.operation.trim();
     byOp.set(key, e);
   }

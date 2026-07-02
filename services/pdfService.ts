@@ -145,7 +145,7 @@ export function printQuotePDF(quote: Quote, settings: SystemSettings) {
   const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([,v]) => v) : [];
 
   const html = `<div class="page">
-    ${settings.companyLogo ? `<img src="${settings.companyLogo}" class="company-logo-center" />` : ''}
+    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
 
     <div class="doc-header">
       <div class="company-left">
@@ -242,7 +242,7 @@ export function printQuotePDF(quote: Quote, settings: SystemSettings) {
 
 export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
   const html = `<div class="page">
-    ${settings.companyLogo ? `<img src="${settings.companyLogo}" class="company-logo-center" />` : ''}
+    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
 
     <div class="doc-header">
       <div class="company-left">
@@ -344,7 +344,7 @@ export function printPurchaseOrderPDF(po: PurchaseOrder, settings: SystemSetting
     + po.items.reduce((a, i) => a + (i.attachments?.length || 0), 0);
 
   const html = `<div class="page">
-    ${settings.companyLogo ? `<img src="${settings.companyLogo}" class="company-logo-center" />` : ''}
+    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
 
     <div class="doc-header">
       <div class="company-left">
@@ -457,7 +457,7 @@ export function printInvoicePDF(quote: Quote, job: Job | null, settings: SystemS
   const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([,v]) => v) : [];
 
   const html = `<div class="page">
-    ${settings.companyLogo ? `<img src="${settings.companyLogo}" class="company-logo-center" />` : ''}
+    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
 
     <div class="doc-header">
       <div class="company-left">

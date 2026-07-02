@@ -32,6 +32,7 @@ import {
   type SignupResult,
 } from './authService';
 import { clearCurrentTenantId, setCurrentTenantId as persistTenantId } from './tenantContext';
+import { clearMulticastCache } from '../services/mockDb';
 
 export interface AuthContextValue {
   /** Current signed-in account, or null when signed out. */
@@ -98,6 +99,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     },
     logOut: async () => {
       await logOut();
+      clearMulticastCache();           // tear down shared listeners before tenant id changes
       clearCurrentTenantId();          // wipe localStorage so legacy fallback re-engages
       setAccount(null);
       setTenants([]);
@@ -106,6 +108,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       window.location.href = '/login';
     },
     switchTenant: (tid) => {
+      // Tear down mockDb's shared listeners BEFORE the new tenant id is
+      // visible — a stale listener could otherwise deliver the previous
+      // tenant's cached jobs/logs to components that haven't re-subscribed.
+      clearMulticastCache();
       persistTenantId(tid);            // persist in localStorage so mockDb sees it next read
       setCurrentTenantId(tid);
     },

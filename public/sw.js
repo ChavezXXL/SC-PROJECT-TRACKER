@@ -182,6 +182,9 @@ self.addEventListener('notificationclick', event => {
 self.addEventListener('message', event => {
   const data = event.data;
   if (!data) return;
+  // Defense in depth: only accept messages from our own origin. (SW messages
+  // are same-origin by construction, but reject any mismatched origin anyway.)
+  if (event.origin && event.origin !== self.location.origin) return;
   if (data.type === 'SKIP_WAITING') { self.skipWaiting(); return; }
   if (data.type === 'NOTIFY') {
     const { title, body, tag, url, actions, logId, userId, requireInteraction, silent } = data;

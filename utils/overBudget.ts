@@ -44,7 +44,7 @@ export function findOverBudgetJobs(
 
     const actualMins = allLogs
       .filter(l => l.jobId === job.id && !l.isSample)
-      .reduce((a, l) => a + (l.durationMinutes || 0), 0);
+      .reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
     const actualHours = actualMins / 60;
     if (actualHours <= 0) continue;
 

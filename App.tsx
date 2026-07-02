@@ -1123,7 +1123,9 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                               : { ...c, done: true, doneAt: Date.now(), doneBy: user.id, doneByName: user.name })
                           : c
                       );
-                      DB.saveJob({ ...job, checklist: next });
+                      // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
+                      const { currentStage: _cs, stageHistory: _sh, ...jobRest } = job;
+                      DB.saveJob({ ...jobRest, checklist: next });
                       if (!item.done) addToast?.('success', `✓ ${item.label}`);
                     }}
                     className={`w-full flex items-center gap-2 p-2 rounded-lg border transition-all text-left ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900 border-white/10 hover:border-purple-400/30'}`}
@@ -1582,7 +1584,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         // Read from ref so we always have the current log without re-mounting.
         const currentLog = activeLogRef.current;
         if (alarm.pauseTimers && currentLog && !currentLog.pausedAt) {
-          try { await DB.pauseTimeLog(currentLog.id, `Auto-pause: ${alarm.label}`); } catch {}
+          // Lunch alarms must write the SAME pauseReason as useAutoLunch so
+          // resumeAllPaused('auto-lunch') can resume them — otherwise a lunch
+          // paused via alarm freezes the worker's afternoon hours.
+          const isLunch = alarm.id === 'legacy-lunch-start' || /lunch/i.test(alarm.label || '');
+          try { await DB.pauseTimeLog(currentLog.id, isLunch ? 'auto-lunch' : `Auto-pause: ${alarm.label}`); } catch {}
         }
         // Lunch-end resume — the counterpart to pauseTimers, so afternoon hours
         // don't silently freeze. Never resume a worker's OWN manual pause.
@@ -1614,11 +1620,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           addToast('success', '⏹️ Timer stopped');
         } else if (action === 'pause') {
           await DB.pauseTimeLog(logId, 'manual');
-          swPost({ type: 'TIMER_PAUSE' });
+          swPost({ type: 'TIMER_PAUSE', logId });
           addToast('info', '⏸️ Timer paused');
         } else if (action === 'resume') {
           await DB.resumeTimeLog(logId);
-          swPost({ type: 'TIMER_RESUME' });
+          swPost({ type: 'TIMER_RESUME', logId });
           addToast('success', '▶️ Timer resumed');
         }
       } catch { addToast('error', 'Action failed — please try again'); }
@@ -1655,7 +1661,9 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     } catch (e: any) {
       addToast('error', e?.message || 'Failed to start timer');
     } finally {
-      _startInFlight.delete(user.id);
+      // Hold the guard briefly so a second tap can't slip through before the
+      // Firestore snapshot with the new log arrives (subscription latency).
+      setTimeout(() => _startInFlight.delete(user.id), 2000);
     }
   };
 
@@ -1673,6 +1681,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         setScannedJobId(stoppedJobId);
         setTab('jobs');
         setTimeout(() => {
+          // Skip scroll if the worker already started a different job in the 300ms window
+          if (activeLogRef.current && activeLogRef.current.jobId !== stoppedJobId) return;
           const jobCard = document.querySelector(`[data-job-id="${stoppedJobId}"]`);
           if (jobCard) jobCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 300);
@@ -1722,9 +1732,17 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     }
   };
 
-  const filteredJobs = jobs.filter(j => {
-    try { return JSON.stringify(j).toLowerCase().includes((search || '').toLowerCase()); } catch { return false; }
-  });
+  // Search only the fields a worker would actually type — the old version
+  // JSON.stringify'd EVERY job (including base64 part images!) on EVERY
+  // keystroke, which froze the search box on shops with photo-heavy jobs.
+  const filteredJobs = useMemo(() => {
+    const q = (search || '').trim().toLowerCase();
+    if (!q) return jobs;
+    return jobs.filter(j =>
+      [j.poNumber, j.partNumber, j.customer, j.jobIdsDisplay, j.info, j.specialInstructions]
+        .filter(Boolean).join(' ').toLowerCase().includes(q)
+    );
+  }, [jobs, search]);
 
   // One-tap "jump back in": the worker's most recent job+operation combos that
   // are still open — clock straight back in after a break/lunch without
@@ -1835,8 +1853,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       )}
 
       {activeLog && <div ref={activePanelRef}><ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob}
-        onPause={async (id) => { try { await DB.pauseTimeLog(id, 'manual'); swPost({ type: 'TIMER_PAUSE' }); addToast('info', 'Timer Paused'); } catch { addToast('error', 'Failed to pause'); } }}
-        onResume={async (id) => { try { await DB.resumeTimeLog(id); swPost({ type: 'TIMER_RESUME' }); addToast('success', 'Timer Resumed'); } catch { addToast('error', 'Failed to resume'); } }}
+        onPause={async (id) => { try { await DB.pauseTimeLog(id, 'manual'); swPost({ type: 'TIMER_PAUSE', logId: id }); addToast('info', 'Timer Paused'); } catch { addToast('error', 'Failed to pause'); } }}
+        onResume={async (id) => { try { await DB.resumeTimeLog(id); swPost({ type: 'TIMER_RESUME', logId: id }); addToast('success', 'Timer Resumed'); } catch { addToast('error', 'Failed to resume'); } }}
       /></div>}
 
       <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
@@ -2526,6 +2544,14 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); };
   }, []);
 
+  // ── Live tick — re-renders every 60s so time-derived memos (attack plan
+  // remaining hours) stay fresh even when Firestore sends no updates.
+  const [liveTick, setLiveTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setLiveTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const invoicePos = useMemo(() => readyToInvoiceList(dashCustomerPos, jobs, shopSettings), [dashCustomerPos, jobs, shopSettings]);
   const invoiceCount = invoicePos.length;
   const invoiceTotal = useMemo(() => invoicePos.reduce((s, x) => s + (x.derived.amount || 0), 0), [invoicePos]);
@@ -2566,10 +2592,10 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
   // Workers who haven't logged any operations today
   const activeWorkers = (dashWorkers || []).filter((w: User) => w.isActive !== false && w.role !== 'admin');
-  const workersWithLogsToday = new Set(allLogs.filter(l => l.startTime >= todayMs).map(l => l.userId));
+  const workersWithLogsToday = new Set(allLogs.filter(l => l.startTime >= todayMs && !l.isSample).map(l => l.userId));
   const workersNoScansToday = activeWorkers.filter((w: User) => !workersWithLogsToday.has(w.id) && !activeLogs.some(l => l.userId === w.id));
-  // Completed logs today (fixed: use allLogs not the trimmed top-5 `logs`)
-  const completedTodayMins = allLogs.filter(l => l.endTime && l.startTime >= todayMs).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
+  // Completed logs today (fixed: use allLogs not the trimmed top-5 `logs`; exclude sample/rate-learning logs)
+  const completedTodayMins = allLogs.filter(l => l.endTime && l.startTime >= todayMs && !l.isSample).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
   // Add time from still-running active logs that started today (subtract any paused time)
   const runningTodayMins = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => {
     const pausedMs = (l.totalPausedMs || 0) + (l.pausedAt ? Date.now() - l.pausedAt : 0);
@@ -2608,7 +2634,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
       });
     const totalRemaining = [...etaMap.values()].reduce((a, e) => a + (e.remainingHours ?? 0), 0);
     return { ranked: ranked.slice(0, 6), totalCount: open.length, totalRemaining };
-  }, [jobs, allLogs, activeLogs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, allLogs, activeLogs, liveTick]);
 
   // ── Recent Activity Feed — chronological cross-module event log (72h window)
   const recentActivity = useMemo(() => {
@@ -2805,7 +2832,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const STALE_MS = 48 * 3600000;
         const now = Date.now();
         const lastLogMs = new Map<string, number>();
-        allLogs.forEach(l => { if (l.endTime && l.endTime > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, l.endTime); });
+        allLogs.forEach(l => { const ts = l.endTime || l.startTime; if (ts && ts > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, ts); });
         const staleCount = jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').filter(j => {
           const last = lastLogMs.get(j.id) || 0;
           return (now - j.createdAt) > STALE_MS && (now - last) > STALE_MS;
@@ -2814,7 +2841,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         // Brain: over-budget active jobs
         const rate = shopSettings.shopRate || 0;
         const overBudgetCount = rate > 0 ? jobs.filter(j => j.status !== 'completed' && j.quoteAmount && j.quoteAmount > 0).filter(j => {
-          const mins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
+          const mins = allLogs.filter(l => l.jobId === j.id && !l.isSample).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           return (mins / 60) * rate > j.quoteAmount!;
         }).length : 0;
 
@@ -4393,7 +4420,17 @@ const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; on
       }
     }
     if (newAtts.length > 0) {
-      onUpdate([...attachments, ...newAtts]);
+      // Firestore hard-caps docs at 1MB — attachments live inline as base64
+      // dataUrls, so guard the TOTAL size or the next job save silently fails.
+      const merged = [...attachments, ...newAtts];
+      const totalBytes = merged.reduce((sum, att) => sum + (att.dataUrl?.length || 0), 0);
+      const MAX_TOTAL_BYTES = 900_000; // ~900KB leaves headroom for the rest of the job doc
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        addToast('error', `Attachments total ${(totalBytes / 1024 / 1024).toFixed(1)}MB — max ~0.9MB per job. Remove or compress files first.`);
+        setUploading(false);
+        return;
+      }
+      onUpdate(merged);
       addToast('success', `Added ${newAtts.length} attachment${newAtts.length > 1 ? 's' : ''}`);
     }
     setUploading(false);
@@ -4551,6 +4588,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [bulkActionOpen, setBulkActionOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Partial<Job>>({});
   const [showModal, setShowModal] = useState(false);
+  // Tracks whether the checklist was edited in THIS modal session. Workers
+  // check items off from the floor card while the modal sits open — if the
+  // admin then saves an untouched (stale) checklist it clobbers their
+  // check-offs. Only write the checklist when it actually changed here.
+  // (Concurrent edits on BOTH sides remain last-write-wins on the array.)
+  const checklistDirtyRef = useRef(false);
+  useEffect(() => { if (showModal) checklistDirtyRef.current = false; }, [showModal]);
   const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
@@ -4655,7 +4699,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     } catch (e: any) {
       addToast('error', 'Failed to start: ' + (e?.message || 'unknown'));
     } finally {
-      _startInFlight.delete(targetWorker.id);
+      // Hold the guard briefly so a second tap can't slip through before the
+      // Firestore snapshot with the new log arrives (subscription latency).
+      setTimeout(() => _startInFlight.delete(targetWorker.id), 2000);
     }
   };
 
@@ -4713,7 +4759,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const now = Date.now();
     const lastLogMs = new Map<string, number>();
     allLogs.forEach(l => {
-      if (l.endTime && l.endTime > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, l.endTime);
+      const ts = l.endTime || l.startTime; // active logs count as activity too
+      if (ts && ts > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, ts);
     });
     const ids = new Set<string>();
     jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').forEach(j => {
@@ -4909,6 +4956,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
 
   const handleSave = async () => {
     if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
+    if ((editingJob.expectedHours ?? 0) < 0) return addToast('error', 'Expected hours must be 0 or positive');
     const today = new Date();
     // Format as MM/DD/YYYY — the app's canonical date format.
     // The old ISO-string approach produced YYYY-MM-DD which broke every dateNum() comparison.
@@ -4957,6 +5005,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // worker clock-in / board drag) while the modal was open and erase history.
     delete (job as any).currentStage;
     delete (job as any).stageHistory;
+    // Checklist: only persist when edited in this modal session, so a stale
+    // snapshot can't wipe check-offs made from the floor card meanwhile.
+    if (!checklistDirtyRef.current) delete (job as any).checklist;
     try {
       const isNew = !editingJob.id;
       await DB.saveJob(job);
@@ -5404,7 +5455,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   await Promise.all(ids.map(id => {
                     const job = jobs.find(x => x.id === id);
                     if (!job) return Promise.resolve();
-                    return DB.saveJob({ ...job, priority: p });
+                    // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
+                    const { currentStage: _cs, stageHistory: _sh, ...jobRest } = job;
+                    return DB.saveJob({ ...jobRest, priority: p });
                   }));
                   addToast('success', `Set ${ids.length} job${ids.length > 1 ? 's' : ''} to ${p}`);
                   setSelectedJobIds(new Set());
@@ -5598,8 +5651,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             onChange={async (e) => {
                               const file = e.target.files?.[0]; if (!file) return;
                               const compressed = await compressImage(file, 800, 0.6);
-                              const updated = { ...j, partImage: compressed };
-                              await DB.saveJob(updated);
+                              // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
+                              const { currentStage: _cs, stageHistory: _sh, ...jRest } = j;
+                              await DB.saveJob({ ...jRest, partImage: compressed });
                               addToast('success', 'Photo added');
                             }}
                           />
@@ -5863,7 +5917,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
                             const file = e.target.files?.[0]; if (!file) return;
                             const compressed = await compressImage(file, 800, 0.6);
-                            const updated = { ...j, partImage: compressed }; await DB.saveJob(updated);
+                            // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
+                            const { currentStage: _cs, stageHistory: _sh, ...jRest } = j;
+                            await DB.saveJob({ ...jRest, partImage: compressed });
                             addToast('success', 'Photo added');
                           }} />
                         </label>
@@ -6036,7 +6092,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             if (!targetStage || targetStage.id === currentStage.id) return;
                             if (targetStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
                             await DB.advanceJobStage(editingJob.id, targetStage.id, user.id, user.name, false);
-                            setEditingJob(p => ({ ...p, currentStage: targetStage.id, status: targetStage.id === 'in-progress' ? 'in-progress' : (p as Job).status, stageHistory: [...((p as Job).stageHistory || []), { stageId: targetStage.id, timestamp: Date.now(), userId: user.id, userName: user.name }] }));
+                            // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
+                            setEditingJob(p => ({ ...p, currentStage: targetStage.id, status: targetStage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
                             addToast('success', `Moved to ${targetStage.label}`);
                           }}
                           className="text-xs font-bold px-3 py-2 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors min-w-0 w-full"
@@ -6050,7 +6107,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             onClick={async () => {
                               if (nextStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
                               await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, false);
-                              setEditingJob(p => ({ ...p, currentStage: nextStage.id, status: nextStage.id === 'in-progress' ? 'in-progress' : (p as Job).status, stageHistory: [...((p as Job).stageHistory || []), { stageId: nextStage.id, timestamp: Date.now(), userId: user.id, userName: user.name }] }));
+                              // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
+                              setEditingJob(p => ({ ...p, currentStage: nextStage.id, status: nextStage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
                               addToast('success', `Advanced to ${nextStage.label}`);
                             }}
                             className="text-xs font-bold px-3 py-2 rounded-lg transition-colors hover:brightness-110 flex items-center justify-center gap-1.5 whitespace-nowrap"
@@ -6082,7 +6140,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             if (stage.id === currentStage.id) return;
                             if (stage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
                             await DB.advanceJobStage(editingJob.id, stage.id, user.id, user.name, false);
-                            setEditingJob(p => ({ ...p, currentStage: stage.id, status: stage.id === 'in-progress' ? 'in-progress' : (p as Job).status, stageHistory: [...((p as Job).stageHistory || []), { stageId: stage.id, timestamp: Date.now(), userId: user.id, userName: user.name }] }));
+                            // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
+                            setEditingJob(p => ({ ...p, currentStage: stage.id, status: stage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
                             addToast('success', `Moved to ${stage.label}`);
                           }}>
                             <div className={`h-3 w-full rounded-full transition-all group-hover:scale-y-125 ${isCurrent ? 'ring-2 ring-white/40 ring-offset-1 ring-offset-zinc-900' : ''}`}
@@ -6556,7 +6615,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Expected Hours <span className="text-zinc-600 normal-case">(budget)</span></label>
                   <div className="relative">
                     <span className="absolute left-4 top-3 text-zinc-500 font-bold text-lg">⏱</span>
-                    <input type="number" step="0.5" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.expectedHours || ''} onChange={e => setEditingJob({ ...editingJob, expectedHours: Number(e.target.value) || 0 })} placeholder="0" />
+                    <input type="number" step="0.5" min="0" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 pl-9 text-white font-mono text-lg outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.expectedHours || ''} onChange={e => setEditingJob({ ...editingJob, expectedHours: Math.max(0, Number(e.target.value) || 0) })} placeholder="0" />
                   </div>
                   <p className="text-[10px] text-zinc-600 mt-1">Time budget. Job row shows red badge if actual exceeds this.</p>
                 </div>
@@ -6651,7 +6710,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               {/* ── Operation Checklist — always visible, saved with job ── */}
               <JobChecklistSection
                 job={editingJob as Job}
-                onUpdate={(items) => setEditingJob({ ...editingJob, checklist: items })}
+                onUpdate={(items) => { checklistDirtyRef.current = true; setEditingJob({ ...editingJob, checklist: items }); }}
                 user={user}
               />
 

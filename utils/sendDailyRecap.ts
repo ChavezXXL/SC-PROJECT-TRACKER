@@ -19,6 +19,18 @@ import { getPartHistory } from './partHistory';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
+// HTML escaping for email content — prevents markup injection via
+// user-controlled fields (worker names, PO/customer/part numbers, etc.)
+function escapeHtml(s: string | undefined | null): string {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function logMins(l: TimeLog): number {
   if (l.durationSeconds != null && l.durationSeconds >= 0) return l.durationSeconds / 60;
   return l.durationMinutes || 0;
@@ -297,20 +309,20 @@ export function buildRecapHtml(data: RecapData): string {
   // ── Worker rows
   const workerRows = workerSummaries.map(w => `
     <tr>
-      <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#fff;font-weight:700;">${w.name}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#fff;font-weight:700;">${escapeHtml(w.name)}</td>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#f59e0b;font-weight:800;text-align:right;white-space:nowrap;">${fmtHours(w.totalMins)}</td>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#f87171;font-weight:800;text-align:right;white-space:nowrap;">${w.laborCost > 0 ? fmtMoney(w.laborCost) : '—'}</td>
       <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#71717a;font-size:13px;">${w.sessions} session${w.sessions !== 1 ? 's' : ''}</td>
-      <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;font-size:12px;">${w.operations.slice(0, 3).join(', ')}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;font-size:12px;">${escapeHtml(w.operations.slice(0, 3).join(', '))}</td>
     </tr>
   `).join('');
 
   // ── Completed job rows
   const jobRows = completedToday.map(j => `
     <tr>
-      <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#fff;font-weight:700;">${j.poNumber || j.id.slice(-6).toUpperCase()}</td>
-      <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;">${j.customer || '—'}</td>
-      <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;">${j.partNumber || '—'}</td>
+      <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#fff;font-weight:700;">${escapeHtml(j.poNumber || j.id.slice(-6).toUpperCase())}</td>
+      <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;">${escapeHtml(j.customer || '—')}</td>
+      <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#a1a1aa;">${escapeHtml(j.partNumber || '—')}</td>
       <td style="padding:8px 16px;border-bottom:1px solid #27272a;color:#10b981;font-weight:700;text-align:right;">${j.quoteAmount ? fmtMoney(j.quoteAmount) : '—'}</td>
     </tr>
   `).join('');
@@ -348,9 +360,9 @@ export function buildRecapHtml(data: RecapData): string {
         <div style="padding:12px 16px;background:#1c1c1e;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
             <div>
-              <span style="font-size:13px;font-weight:800;color:#fff;">${ins.partNumber}</span>
-              <span style="font-size:12px;color:#71717a;margin-left:8px;">${ins.customer}</span>
-              <span style="font-size:11px;color:#52525b;margin-left:6px;">PO ${ins.poNumber}</span>
+              <span style="font-size:13px;font-weight:800;color:#fff;">${escapeHtml(ins.partNumber)}</span>
+              <span style="font-size:12px;color:#71717a;margin-left:8px;">${escapeHtml(ins.customer)}</span>
+              <span style="font-size:11px;color:#52525b;margin-left:6px;">PO ${escapeHtml(ins.poNumber)}</span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;">${statusDot} ${badge}</div>
           </div>
@@ -377,7 +389,7 @@ export function buildRecapHtml(data: RecapData): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Daily Recap — ${shopName}</title>
+  <title>Daily Recap — ${escapeHtml(shopName)}</title>
 </head>
 <body style="margin:0;padding:0;background:#09090b;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#09090b;">
@@ -389,7 +401,7 @@ export function buildRecapHtml(data: RecapData): string {
         <tr>
           <td style="background:linear-gradient(135deg,#92400e,#b45309,#d97706);padding:28px 32px 24px;">
             <p style="margin:0 0 3px;font-size:10px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#fcd34d;opacity:0.9;">Daily Recap</p>
-            <h1 style="margin:0 0 4px;font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.02em;">${shopName}</h1>
+            <h1 style="margin:0 0 4px;font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.02em;">${escapeHtml(shopName)}</h1>
             <p style="margin:0;font-size:13px;color:#fde68a;opacity:0.8;">${formatDate(date)}</p>
           </td>
         </tr>

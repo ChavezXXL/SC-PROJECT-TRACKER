@@ -156,9 +156,17 @@ function formatDueForTv(raw?: string | null): { dueText: string; daysLeft: numbe
 }
 
 // ── LIVE CLOCK — big, always ticking ──
-const LiveClock = ({ size = 'xl' }: { size?: 'md' | 'lg' | 'xl' | 'huge' }) => {
+// Memoized + minute-resolution updates: the display only shows hh:mm, so the 1s
+// interval bails out (returns prev → no re-render) until the minute flips.
+const LiveClock = React.memo(function LiveClock({ size = 'xl' }: { size?: 'md' | 'lg' | 'xl' | 'huge' }) {
   const [now, setNow] = useState(new Date());
-  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    const i = setInterval(() => setNow(prev => {
+      const next = new Date();
+      return next.getMinutes() === prev.getMinutes() && next.getHours() === prev.getHours() ? prev : next;
+    }), 1000);
+    return () => clearInterval(i);
+  }, []);
   const sz = { md: 'text-2xl', lg: 'text-4xl', xl: 'text-6xl', huge: 'text-8xl' }[size];
   const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   const timeParts = time.split(' ');
@@ -170,10 +178,13 @@ const LiveClock = ({ size = 'xl' }: { size?: 'md' | 'lg' | 'xl' | 'huge' }) => {
       {ampm && <span className="text-white/40 font-bold text-2xl">{ampm}</span>}
     </div>
   );
-};
+});
 
 // ── LIVE TICKER (pause-aware) ───────────────────────────────────
-const LiveTicker = ({ log, size = 'lg' }: { log: TimeLog; size?: 'sm' | 'lg' | 'xl' }) => {
+// Memoized leaf: its 1s ticker re-renders only this tiny component (seconds ARE
+// displayed, so per-second updates are intentional) — memo just keeps parent
+// card re-renders from re-rendering it when log/size haven't changed.
+const LiveTicker = React.memo(function LiveTicker({ log, size = 'lg' }: { log: TimeLog; size?: 'sm' | 'lg' | 'xl' }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -200,7 +211,7 @@ const LiveTicker = ({ log, size = 'lg' }: { log: TimeLog; size?: 'sm' | 'lg' | '
       <span className="text-white">{pad(s)}</span>
     </div>
   );
-};
+});
 
 // ── ELAPSED BAR (pause-aware) ───────────────────────────────────
 const ElapsedBar = ({ log }: { log: TimeLog }) => {
@@ -212,7 +223,9 @@ const ElapsedBar = ({ log }: { log: TimeLog }) => {
       setPct(Math.min(100, (mins / 240) * 100));
     };
     tick();
-    const i = setInterval(tick, 5000);
+    // 60s tick is plenty — the bar spans 240 min, so width moves ~0.4%/min;
+    // a 5s tick was 12× the layout work for an imperceptible change.
+    const i = setInterval(tick, 60000);
     return () => clearInterval(i);
   }, [log.startTime, log.pausedAt, log.totalPausedMs]);
 
@@ -579,13 +592,13 @@ interface LiveFloorMonitorProps {
 type LeaderRow = { userId: string; name: string; hours: number; jobs: number; sessions: number; topOp: string };
 
 // Leaderboard — ranked workers, big podium + medal bars
-const TvLeaderboardSlide: React.FC<{
+const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period, count, metric, speed }: {
   data: LeaderRow[];
   period: 'today' | 'week' | 'month';
   count: number;
   metric: 'hours' | 'jobs' | 'mixed';
   speed?: 'slow' | 'normal' | 'fast' | 'off';
-}> = ({ data, period, count, metric, speed }) => {
+}) {
   const scrollSpeed: 'slow' | 'normal' | 'fast' | 'off' = speed ?? 'normal';
   const rows = data.slice(0, count);
   const maxH = Math.max(1, ...rows.map(r => r.hours));
@@ -688,7 +701,7 @@ const TvLeaderboardSlide: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 // Weather forecast — current + next 5 days
 const TvWeatherSlide: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) => {
@@ -1121,12 +1134,12 @@ const TvAtRiskSlide: React.FC<{
 // Same ranking as the admin dashboard's Attack Plan: risk level first
 // (critical → at-risk → watch → on-track), then earliest due date, then
 // priority. #1 glows orange — that's the job that should never sit idle.
-const TvAttackPlanSlide: React.FC<{
+const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs, activeLogs, speed = 'normal' }: {
   jobs: Job[];
   allLogs: TimeLog[];
   activeLogs: TimeLog[];
   speed?: 'slow' | 'normal' | 'fast' | 'off';
-}> = ({ jobs, allLogs, activeLogs, speed = 'normal' }) => {
+}) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const riskScore: Record<JobRiskLevel, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
@@ -1252,7 +1265,7 @@ const TvAttackPlanSlide: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 // ── TODAY'S SCORECARD slide — the heartbeat every shop needs ──────────
 // Big 4: jobs done today, hours on the clock, $ pipeline, overdue count.
@@ -1495,7 +1508,7 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
 };
 
 // Workers + Jobs combined (the default TV layout)
-const TvWorkersJobsSlide: React.FC<{
+const TvWorkersJobsSlide = React.memo(function TvWorkersJobsSlide({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt }: {
   sorted: TimeLog[];
   jobs: Job[];
   jobsForBelt: Job[];
@@ -1503,12 +1516,14 @@ const TvWorkersJobsSlide: React.FC<{
   runningCount: number;
   speed: 'slow' | 'normal' | 'fast' | 'off';
   showJobsBelt: boolean;
-}> = ({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt }) => (
-  <div className={`h-full grid grid-cols-1 ${showJobsBelt ? 'lg:grid-cols-2' : ''} min-h-0 gap-0`}>
-    <TvWorkersColumn sorted={sorted} jobs={jobs} stages={stages} runningCount={runningCount} speed={speed} />
-    {showJobsBelt && <TvJobsBelt jobs={jobsForBelt} stages={stages} speed={speed} />}
-  </div>
-);
+}) {
+  return (
+    <div className={`h-full grid grid-cols-1 ${showJobsBelt ? 'lg:grid-cols-2' : ''} min-h-0 gap-0`}>
+      <TvWorkersColumn sorted={sorted} jobs={jobs} stages={stages} runningCount={runningCount} speed={speed} />
+      {showJobsBelt && <TvJobsBelt jobs={jobsForBelt} stages={stages} speed={speed} />}
+    </div>
+  );
+});
 
 // ── TV Jobs Belt — scrollable, auto-advances, pauses on manual scroll ──
 // ── TV Currently-Running Workers column with the same auto-scroll behavior as the jobs belt
@@ -1592,7 +1607,7 @@ const TvWorkersColumn: React.FC<{
   );
 };
 
-const TvJobsBelt: React.FC<{ jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'normal' | 'fast' | 'off'; showCustomers?: boolean }> = ({ jobs, stages, speed, showCustomers = true }) => {
+const TvJobsBelt = React.memo(function TvJobsBelt({ jobs, stages, speed, showCustomers = true }: { jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'normal' | 'fast' | 'off'; showCustomers?: boolean }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const handlers = useTvAutoScroll(scrollRef, speed, jobs.length);
 
@@ -1671,7 +1686,7 @@ const TvJobsBelt: React.FC<{ jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'n
       </div>
     </div>
   );
-};
+});
 
 export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack, addToast: addToastProp, standalone }) => {
   const addToast = addToastProp || (() => {});
@@ -2077,12 +2092,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
   const getJob = (jobId: string) => jobs.find(j => j.id === jobId) || null;
 
-  const sorted = [...activeLogs].sort((a, b) => {
+  // Memoized so the reference stays stable across unrelated re-renders —
+  // lets React.memo'd TV slides (TvWorkersJobsSlide etc.) skip re-rendering.
+  const sorted = React.useMemo(() => [...activeLogs].sort((a, b) => {
     const aPaused = a.pausedAt ? 1 : 0;
     const bPaused = b.pausedAt ? 1 : 0;
     if (aPaused !== bPaused) return aPaused - bPaused;
     return a.startTime - b.startTime;
-  });
+  }), [activeLogs]);
 
   const workerCount = new Set(activeLogs.map(l => l.userId)).size;
   const runningCount = activeLogs.filter(l => !l.pausedAt).length;
@@ -2189,14 +2206,18 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       }
     }
 
+    // Track the nested fade timeout too — if the effect re-runs (arrow-key nav,
+    // settings change) or unmounts mid-fade, an orphaned 400ms callback would
+    // otherwise advance the slide / re-fade after a DIFFERENT slide took over.
+    let fadeT: ReturnType<typeof setTimeout> | undefined;
     const t = setTimeout(() => {
       setTvFade(false);
-      setTimeout(() => {
+      fadeT = setTimeout(() => {
         setTvSlideIdx(prev => (prev + 1) % configuredTvSlides.length);
         setTvFade(true);
       }, 400);
     }, effectiveDur * 1000);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); if (fadeT !== undefined) clearTimeout(fadeT); };
     // configuredTvSlides (memoized on settings.tvSlides) is in deps so per-slide
     // duration changes from Settings take effect mid-rotation, not next reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2262,13 +2283,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
   // ── OPEN JOBS ─────────────────────────────────────────────────
   // Sort by parsed due date (soonest first). Jobs without a due date fall to the end.
-  const openJobs = jobs.filter(j => j.status !== 'completed').sort((a, b) => {
+  // Memoized (like `sorted` above) so React.memo'd TV slides see stable refs.
+  const openJobs = React.useMemo(() => jobs.filter(j => j.status !== 'completed').sort((a, b) => {
     const da = parseDueDate(a.dueDate)?.getTime() ?? Infinity;
     const db = parseDueDate(b.dueDate)?.getTime() ?? Infinity;
     return da - db;
-  });
+  }), [jobs]);
 
-  const stages = getStages(settings);
+  const stages = React.useMemo(() => getStages(settings), [settings]);
 
   // ── TV MODE VIEW — full-screen immersive, auto-scroll, always-on clock + weather ──
   if (tvMode) {

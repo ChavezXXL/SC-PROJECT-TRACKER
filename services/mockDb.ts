@@ -305,6 +305,7 @@ type MCEntry<T> = {
   last:    T | undefined;
   hasLast: boolean;
   unsub:   (() => void) | null;
+  tenant:  string;   // tenant at attach time — stale-listener guard on tenant switch
 };
 const _mc = new Map<string, MCEntry<any>>();
 
@@ -315,11 +316,19 @@ function multicast<T>(
 ): () => void {
   let m = _mc.get(key) as MCEntry<T> | undefined;
   if (!m) {
-    m = { cbs: new Set(), last: undefined, hasLast: false, unsub: null };
+    m = { cbs: new Set(), last: undefined, hasLast: false, unsub: null, tenant: getTenantId() };
     _mc.set(key, m);
     m.unsub = create(v => {
       const e = _mc.get(key) as MCEntry<T>;
       if (!e) return;
+      // Tenant switched since this listener attached — tear it down and DROP
+      // the payload, so the previous tenant's data can never reach subscribers
+      // that haven't re-subscribed yet (cross-tenant leak).
+      if (getTenantId() !== e.tenant) {
+        e.unsub?.();
+        _mc.delete(key);
+        return;
+      }
       e.last = v; e.hasLast = true;
       e.cbs.forEach(fn => { try { fn(v); } catch {} });
     });
@@ -396,6 +405,12 @@ export async function getJobById(id: string): Promise<Job | null> {
         firebaseStatus = { connected: true };
         return snap.exists() ? (snap.data() as Job) : null;
       } catch (e) {
+        // Network glitch / permission error — serve the localStorage cache
+        // before giving up (same fallback pattern as getOpenLogsForUser).
+        try {
+          const cached = readLS<Job[]>(LS.jobs, []).find((j) => j.id === id);
+          if (cached) return cached;
+        } catch {}
         throw handleError(e);
       }
   }
@@ -781,7 +796,9 @@ function finalizeDuration(
   totalPausedMs = Math.min(Math.max(0, totalPausedMs), Math.max(0, wallMs));
   const workingMs = Math.min(Math.max(0, wallMs - totalPausedMs), MAX_SESSION_MS);
   const durationSeconds = Math.floor(workingMs / 1000);
-  const durationMinutes = Math.round(durationSeconds / 60); // 61s → 1 min, not 2
+  // 2-decimal minutes — must match updateTimeLog (90s → 1.5 min, not 2) so
+  // stop vs. edit paths never record different durations for the same session.
+  const durationMinutes = Math.round((durationSeconds / 60) * 100) / 100;
   return { totalPausedMs, durationSeconds, durationMinutes, anomaly };
 }
 
@@ -1182,7 +1199,9 @@ export async function resumeTimeLog(logId: string): Promise<void> {
       if (!snap.exists()) throw new Error("Log not found.");
       const existing = snap.data() as TimeLog;
       if (!existing.pausedAt) return; // not paused
-      const pausedDuration = now - existing.pausedAt;
+      // Clamp ≥ 0 — clock skew (now < pausedAt) must not write a negative
+      // pause total to Firestore (finalizeDuration guards reads, not writes).
+      const pausedDuration = Math.max(0, now - existing.pausedAt);
       const totalPausedMs = (existing.totalPausedMs || 0) + pausedDuration;
       await updateDoc(ref, sanitize({
         pausedAt: null,
@@ -1202,9 +1221,9 @@ export async function resumeTimeLog(logId: string): Promise<void> {
   if (idx >= 0) {
     const l = logs[idx];
     if (!l.pausedAt) return;
-    const pausedDuration = now - l.pausedAt;
+    const pausedDuration = Math.max(0, now - l.pausedAt); // clamp — see Firestore branch
     const totalPausedMs = (l.totalPausedMs || 0) + pausedDuration;
-    logs[idx] = { ...l, pausedAt: null, pauseReason: undefined, totalPausedMs, status: 'in_progress', updatedAt: now };
+    logs[idx] = { ...l, pausedAt: null, pauseReason: null, totalPausedMs, status: 'in_progress', updatedAt: now };
     writeLS(LS.logs, logs);
   }
 }
@@ -1251,7 +1270,7 @@ export async function createBackfillLog(
 ) {
   const id = 'bf_' + Date.now().toString();
   const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-  const durationMinutes = Math.round(durationSeconds / 60);
+  const durationMinutes = Math.round((durationSeconds / 60) * 100) / 100; // 2-decimal, matches finalizeDuration/updateTimeLog
   const log: TimeLog = {
     id, jobId, userId, userName, operation,
     startTime, endTime, durationSeconds, durationMinutes,

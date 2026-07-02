@@ -91,6 +91,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
   const [tab, setTab] = useState<'quote' | 'jobs'>(quoteId ? 'quote' : 'jobs');
   const [approvalDone, setApprovalDone] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false); // blocks approve/decline double-fire race
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
@@ -183,7 +184,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
   const completedJobs = customerJobs.filter(j => j.status === 'completed');
 
   const handleApprove = async () => {
-    if (!linkedQuote) return;
+    if (!linkedQuote || isSubmitting || approvalDone) return;
+    setIsSubmitting(true);
     setApprovalError(null);
     try {
       await DB.saveQuote({ ...linkedQuote, status: 'accepted', acceptedAt: Date.now() });
@@ -191,11 +193,14 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
     } catch (e) {
       console.error('Failed to approve quote:', e);
       setApprovalError('Something went wrong approving this quote. Please try again or contact us directly.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDecline = async () => {
-    if (!linkedQuote) return;
+    if (!linkedQuote || isSubmitting || approvalDone) return;
+    setIsSubmitting(true);
     setApprovalError(null);
     try {
       await DB.saveQuote({ ...linkedQuote, status: 'declined', declinedAt: Date.now() });
@@ -203,6 +208,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
     } catch (e) {
       console.error('Failed to decline quote:', e);
       setApprovalError('Something went wrong submitting your response. Please try again or contact us directly.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -335,8 +342,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                         <p className="text-zinc-400 text-xs mt-0.5">Review the details below, then approve or decline.</p>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={handleApprove} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20"><Check className="w-4 h-4" /> Approve Quote</button>
-                        <button onClick={handleDecline} className="bg-zinc-700 hover:bg-zinc-600 text-zinc-300 px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2"><X className="w-4 h-4" /> Decline</button>
+                        <button onClick={handleApprove} disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"><Check className="w-4 h-4" /> Approve Quote</button>
+                        <button onClick={handleDecline} disabled={isSubmitting} className="bg-zinc-700 hover:bg-zinc-600 text-zinc-300 px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><X className="w-4 h-4" /> Decline</button>
                       </div>
                     </div>
                   </div>
@@ -422,8 +429,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
             {/* Approve/Decline Buttons (bottom) */}
             {linkedQuote.status === 'sent' && !approvalDone && (
               <div className="flex gap-3 justify-center pt-2">
-                <button onClick={handleApprove} className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20"><Check className="w-5 h-5" /> Approve & Start Work</button>
-                <button onClick={handleDecline} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-6 py-3 rounded-xl font-bold text-sm"><X className="w-4 h-4 inline mr-1" /> Decline</button>
+                <button onClick={handleApprove} disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"><Check className="w-5 h-5" /> Approve & Start Work</button>
+                <button onClick={handleDecline} disabled={isSubmitting} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-6 py-3 rounded-xl font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"><X className="w-4 h-4 inline mr-1" /> Decline</button>
               </div>
             )}
           </div>
