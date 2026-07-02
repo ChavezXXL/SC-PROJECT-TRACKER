@@ -85,47 +85,125 @@ function parseDueDate(raw?: string | null): Date | null {
 }
 
 /** Shared auto-scroll hook for TV lists. Seamless infinite loop.
- *  - Scrolls down continuously via setInterval at a constant pace.
- *  - Assumes the caller duplicates the content (clone + aria-hidden) so scrolling
- *    past the first copy reveals the duplicate seamlessly — then we reset to 0 invisibly.
+ *  Rebuilt for TV-grade smoothness + zero cumulative drift:
+ *  - rAF-driven and TIME-based (constant px/sec at any frame rate) instead of
+ *    the old 20 Hz setInterval — no more visible 50 ms stepping on big screens.
+ *  - Layout is only READ in a low-frequency measure pass (≈1×/sec) — the
+ *    per-frame hot path is a single scrollTop WRITE, so ticking LiveTimers
+ *    never cause forced-reflow storms while scrolling.
+ *  - Scroll position wraps modulo the first copy's height (callers duplicate
+ *    content with aria-hidden for the seamless loop), so nothing accumulates
+ *    over hours of runtime, and every fresh mount starts back at 0.
+ *  - When the list actually FITS on screen the aria-hidden duplicate copy is
+ *    hidden, so short lists no longer render twice.
  *  - Pauses for 8s when the user manually scrolls/wheels/touches.
  */
 function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | 'normal' | 'fast' | 'off', _itemCount: number) {
   const pauseUntilRef = useRef<number>(0);
   const lastScrollRef = useRef<number>(0);
-  // px per 50ms tick — normal ≈ 30px/sec, enough to notice but not dizzying
-  const pxPerTick = speed === 'off' ? 0 : speed === 'slow' ? 0.75 : speed === 'fast' ? 3 : 1.5;
+  // px per second — same real-world pace as the old 50ms tick (0.75/1.5/3 px per tick).
+  const pxPerSec = speed === 'off' ? 0 : speed === 'slow' ? 15 : speed === 'fast' ? 60 : 30;
 
   useEffect(() => {
-    if (pxPerTick === 0) return;
-    const tick = () => {
-      const el = ref.current;
-      if (!el) return;
-      if (Date.now() < pauseUntilRef.current) return;
-      // Seamless loop: the caller duplicates the content. When we pass the first
-      // copy, instantly rewind by its height — user sees no jump because the
-      // content at (height/2) looks identical to the content at 0.
-      const halfway = el.scrollHeight / 2;
-      if (halfway > el.clientHeight) {
-        if (el.scrollTop >= halfway) {
-          el.scrollTop = el.scrollTop - halfway;
-        } else {
-          el.scrollTop += pxPerTick;
-        }
-      } else if (el.scrollHeight > el.clientHeight + 2) {
-        // Fallback: content only fits once, use classic bottom-to-top with pause.
-        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 2) {
-          pauseUntilRef.current = Date.now() + 1500;
-          el.scrollTop = 0;
-        } else {
-          el.scrollTop += pxPerTick;
+    let rafId = 0;
+    let lastTs = 0;
+    let acc = 0;                                  // fractional px carried between frames
+    let pos = 0;                                  // tracked scroll pos — avoids per-frame scrollTop reads
+    let needResync = true;                        // re-read real scrollTop after pauses/measures
+    let halfway = 0;                              // height of one content copy (loop wrap point)
+    let maxScroll = 0;                            // scrollHeight - clientHeight (classic mode)
+    let mode: 'loop' | 'classic' | 'none' = 'none';
+    let dupsHidden = false;
+    let lastMeasure = -Infinity;
+    let measuredEl: HTMLDivElement | null = null;
+
+    // The seamless-loop duplicates are the direct children flagged aria-hidden.
+    const setDupsHidden = (el: HTMLDivElement, hide: boolean) => {
+      for (let i = 0; i < el.children.length; i++) {
+        const c = el.children[i] as HTMLElement;
+        if (c.getAttribute('aria-hidden') === 'true') {
+          const want = hide ? 'none' : '';
+          if (c.style.display !== want) c.style.display = want;
         }
       }
-      lastScrollRef.current = el.scrollTop;
+      dupsHidden = hide;
     };
-    const id = window.setInterval(tick, 50);
-    return () => window.clearInterval(id);
-  }, [pxPerTick, ref]);
+
+    // The ONLY place layout is read — runs about once a second, not per frame.
+    const measure = (el: HTMLDivElement) => {
+      let hasDups = false;
+      for (let i = 0; i < el.children.length; i++) {
+        if ((el.children[i] as HTMLElement).getAttribute('aria-hidden') === 'true') { hasDups = true; break; }
+      }
+      const client = el.clientHeight;
+      const sh = el.scrollHeight;
+      if (hasDups) {
+        // Estimate one copy's height from the current visibility state.
+        const single = dupsHidden ? sh : sh / 2;
+        const shouldLoop = pxPerSec > 0 && single > client + 2;
+        if (shouldLoop && dupsHidden) setDupsHidden(el, false);
+        else if (!shouldLoop && !dupsHidden) setDupsHidden(el, true);
+        if (shouldLoop) {
+          halfway = el.scrollHeight / 2;          // re-read only if visibility just changed
+          mode = 'loop';
+        } else {
+          mode = 'none';
+          // Content fits in one copy — keep it pinned at the top so nothing
+          // ever sits half-cut after live data shrinks the list.
+          if (single <= client + 2 && el.scrollTop !== 0 && Date.now() >= pauseUntilRef.current) el.scrollTop = 0;
+        }
+      } else if (pxPerSec > 0 && sh > client + 2) {
+        // Caller doesn't duplicate content (e.g. Attack Plan) — classic
+        // top→bottom scroll with a pause-and-reset at the end.
+        mode = 'classic';
+        maxScroll = sh - client;
+      } else {
+        mode = 'none';
+      }
+      pos = el.scrollTop;
+      lastScrollRef.current = pos;
+      needResync = false;
+    };
+
+    const loop = (ts: number) => {
+      rafId = requestAnimationFrame(loop);
+      const el = ref.current;
+      if (!el) { lastTs = ts; return; }
+      if (measuredEl !== el) {
+        // Fresh container (slide re-mounted / list re-appeared): always start at the top.
+        measuredEl = el;
+        el.scrollTop = 0;
+        lastMeasure = -Infinity;
+      }
+      if (ts - lastMeasure > 1000) { lastMeasure = ts; measure(el); }
+      const dt = lastTs ? Math.min(100, ts - lastTs) : 0; // clamp — no giant jump after throttling
+      lastTs = ts;
+      if (mode === 'none' || pxPerSec === 0 || dt === 0) return;
+      if (Date.now() < pauseUntilRef.current) { needResync = true; return; }
+      if (needResync) { pos = lastScrollRef.current; needResync = false; }
+      acc += (pxPerSec * dt) / 1000;
+      if (acc < 0.5) return;                      // batch sub-half-pixel movement
+      pos += acc;
+      acc = 0;
+      if (mode === 'loop') {
+        if (pos >= halfway) pos -= halfway;       // seamless wrap — bounded forever
+        el.scrollTop = pos;
+        lastScrollRef.current = pos;
+      } else {
+        if (pos >= maxScroll - 1) {
+          pauseUntilRef.current = Date.now() + 1500;
+          pos = 0;
+          el.scrollTop = 0;
+          lastScrollRef.current = 0;
+        } else {
+          el.scrollTop = pos;
+          lastScrollRef.current = pos;
+        }
+      }
+    };
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, [pxPerSec, ref]);
 
   return {
     onScroll: () => {
@@ -591,6 +669,24 @@ interface LiveFloorMonitorProps {
 
 type LeaderRow = { userId: string; name: string; hours: number; jobs: number; sessions: number; topOp: string };
 
+// Stable empty-array ref for the Goals slide — `settings.shopGoals || []` would
+// mint a new array every render and defeat TvGoalsSlide's React.memo.
+const EMPTY_GOALS: ShopGoal[] = [];
+
+// Default TV slides — module-scoped so the memoized slide list keeps a stable
+// identity (an inline array would reset the rotation timer on settings pushes).
+const DEFAULT_TV_SLIDES: TvSlide[] = [
+  { id: 'default-today', type: 'today', enabled: true },                             // Today's scorecard — FIRST
+  { id: 'default-attack-plan', type: 'attack-plan', enabled: true },                 // Ranked run order for the floor
+  { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
+  { id: 'default-at-risk', type: 'at-risk', enabled: true },                         // Jobs predicted to be late
+  { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
+  { id: 'default-leaderboard-week', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
+  { id: 'default-goals', type: 'goals', enabled: true },
+  { id: 'default-stats-week', type: 'stats-week', enabled: true },
+  { id: 'default-weather', type: 'weather', enabled: true },
+];
+
 // Leaderboard — ranked workers, big podium + medal bars
 const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period, count, metric, speed }: {
   data: LeaderRow[];
@@ -704,11 +800,18 @@ const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period
 });
 
 // Weather forecast — current + next 5 days
-const TvWeatherSlide: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) => {
+// Memoized: parent re-renders (fade toggles, data pushes) skip this slide entirely
+// unless the manual lat/lon coords actually change.
+const TvWeatherSlide = React.memo(function TvWeatherSlide({ lat, lon }: { lat?: number; lon?: number }) {
   const { current, forecast, status } = useWeather({ lat, lon });
   const today = forecast[0];
   return (
-    <div className="h-full flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)] overflow-hidden">
+    // Scroll-safe: worst case content scrolls inside its own clip instead of
+    // being invisibly clipped top+bottom by overflow-hidden + justify-center.
+    // minHeight is inline because body.tv-mode * { min-height: 0 } (index.html)
+    // outranks Tailwind's .min-h-full and silently breaks centering.
+    <div className="h-full w-full overflow-y-auto overflow-x-hidden">
+      <div className="flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)]" style={{ minHeight: '100%' }}>
       <div className="w-full max-w-5xl">
         <p className="font-black text-blue-400/80 uppercase tracking-[0.3em] text-center" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>Outside · Live</p>
         <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.75rem)' }}>Weather Forecast</h2>
@@ -736,15 +839,16 @@ const TvWeatherSlide: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) 
           </div>
         ) : (
           <>
-            {/* CURRENT */}
+            {/* CURRENT — vertical sizes clamp on vh so 720p TVs fit; the vh terms
+                exceed the caps at 1080p+, so big TVs render pixel-identical. */}
             {current && (
-              <div className="mt-10 bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl p-8 flex items-center justify-around">
+              <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl flex items-center justify-around" style={{ marginTop: 'clamp(1rem, 4vh, 2.5rem)', padding: 'clamp(0.75rem, 3vh, 2rem)' }}>
                 <div className="text-center">
                   <div className="flex items-center justify-center mb-2">{weatherIcon(current.code, 'w-20 h-20')}</div>
                   <p className="text-2xl font-bold text-white/80">{weatherLabel(current.code)}</p>
                 </div>
                 <div className="text-center">
-                  <div className="text-9xl font-black text-white tabular leading-none">{current.temp}°</div>
+                  <div className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(3.5rem, 15vh, 8rem)' }}>{current.temp}°</div>
                   <p className="text-xl text-white/50 mt-2">Right now</p>
                 </div>
                 {today && (
@@ -758,7 +862,7 @@ const TvWeatherSlide: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) 
             )}
             {/* 5-DAY */}
             {forecast.length > 1 && (
-              <div className="mt-6 grid grid-cols-5 gap-3">
+              <div className="grid grid-cols-5 gap-3" style={{ marginTop: 'clamp(0.75rem, 2.5vh, 1.5rem)' }}>
                 {forecast.slice(0, 5).map((d, i) => (
                   <div key={d.dateMs} className={`rounded-2xl p-4 border text-center ${i === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
                     <p className={`text-xs font-black uppercase tracking-widest mb-2 ${i === 0 ? 'text-blue-400' : 'text-white/40'}`}>{d.dayLabel}</p>
@@ -772,12 +876,15 @@ const TvWeatherSlide: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) 
           </>
         )}
       </div>
+      </div>
     </div>
   );
-};
+});
 
 // Weekly stats — bar graphs of hours/jobs by day
-const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: Job[]; showRevenue?: boolean; showCustomers?: boolean }> = ({ allLogs, weekStart, jobs, showRevenue = false, showCustomers = true }) => {
+// Memoized — weekStart is a stable useMemo'd Date in the parent, so this only
+// re-renders when log/job data actually changes (not on fade/chrome renders).
+const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, weekStart, jobs, showRevenue = false, showCustomers = true }: { allLogs: TimeLog[]; weekStart: Date; jobs: Job[]; showRevenue?: boolean; showCustomers?: boolean }) {
   // Group by day-of-week
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const daily = dayNames.map((name, i) => {
@@ -816,8 +923,9 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
   const revenue = completedThisWeek.reduce((a, j) => a + (j.quoteAmount || 0), 0);
 
   return (
-    <div className="h-full w-full overflow-y-auto">
-      <div className="min-h-full flex items-center justify-center p-[clamp(1rem,2vw,2.5rem)]">
+    <div className="h-full w-full overflow-y-auto overflow-x-hidden">
+      {/* minHeight inline: body.tv-mode * { min-height: 0 } outranks .min-h-full */}
+      <div className="flex items-center justify-center p-[clamp(1rem,2vw,2.5rem)]" style={{ minHeight: '100%' }}>
       <div className="w-full max-w-6xl mx-auto">
         <p className="font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <TrendingUp className="w-4 h-4" aria-hidden="true" /> Weekly Output
@@ -898,12 +1006,12 @@ const TvWeeklyStatsSlide: React.FC<{ allLogs: TimeLog[]; weekStart: Date; jobs: 
       </div>
     </div>
   );
-};
+});
 
 // Full-screen Flow Map slide — live visual of jobs across every stage.
-const TvFlowMapSlide: React.FC<{ jobs: Job[]; stages: JobStage[]; activeLogs: TimeLog[] }> = ({ jobs, stages, activeLogs }) => {
+const TvFlowMapSlide = React.memo(function TvFlowMapSlide({ jobs, stages, activeLogs }: { jobs: Job[]; stages: JobStage[]; activeLogs: TimeLog[] }) {
   return (
-    <div className="h-full w-full overflow-y-auto"><div className="min-h-full flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)]">
+    <div className="h-full w-full overflow-y-auto overflow-x-hidden"><div className="flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)]" style={{ minHeight: '100%' }}>
       <div className="w-full max-w-7xl mx-auto">
         <p className="font-black text-indigo-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <Activity className="w-4 h-4" aria-hidden="true" /> Shop Flow
@@ -917,7 +1025,7 @@ const TvFlowMapSlide: React.FC<{ jobs: Job[]; stages: JobStage[]; activeLogs: Ti
       </div>
     </div></div>
   );
-};
+});
 
 // Safety slide — full-screen, bold, attention-grabbing
 const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, icon, cycleInfo }) => {
@@ -931,7 +1039,10 @@ const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; i
   };
   const p = palette[color || 'yellow'] || palette.yellow;
   return (
-    <div className="h-full flex items-center justify-center p-[clamp(1rem,3vw,4rem)] overflow-hidden">
+    // Scroll-safe: a long safety message scrolls inside its clip instead of
+    // being invisibly cut top+bottom by overflow-hidden + centered flex.
+    <div className="h-full w-full overflow-y-auto overflow-x-hidden">
+      <div className="flex items-center justify-center p-[clamp(1rem,3vw,4rem)]" style={{ minHeight: '100%' }}>
       <div className={`w-full max-w-5xl bg-gradient-to-br ${p.from} to-transparent border-2 ${p.border} rounded-[clamp(1.5rem,3vw,3rem)] text-center relative overflow-hidden`} style={{ padding: 'clamp(1.5rem,4vw,5rem)' }}>
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
         <div className="relative">
@@ -943,6 +1054,7 @@ const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; i
           <h2 className="font-black text-white tracking-tight leading-tight" style={{ fontSize: 'clamp(2rem, 5.5vw, 4.5rem)' }}>{title || 'Think Safety First'}</h2>
           {body && <p className="text-white/70 mt-[clamp(0.75rem,1.5vw,1.5rem)] leading-relaxed max-w-3xl mx-auto" style={{ fontSize: 'clamp(0.95rem, 1.6vw, 1.5rem)' }}>{body}</p>}
         </div>
+      </div>
       </div>
     </div>
   );
@@ -960,7 +1072,8 @@ const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; 
   };
   const cls = palette[color || 'blue'] || palette.blue;
   return (
-    <div className="h-full flex items-center justify-center p-[clamp(1rem,3vw,4rem)] overflow-hidden">
+    <div className="h-full w-full overflow-y-auto overflow-x-hidden">
+      <div className="flex items-center justify-center p-[clamp(1rem,3vw,4rem)]" style={{ minHeight: '100%' }}>
       <div className={`w-full max-w-5xl bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-[clamp(1.5rem,3vw,3rem)] text-center`} style={{ padding: 'clamp(2rem,5vw,6rem)' }}>
         <p className={`font-black uppercase tracking-[0.4em] ${cls.split(' ')[2]} mb-[clamp(0.75rem,1.5vw,1.5rem)] flex items-center justify-center gap-3`} style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <span>Announcement</span>
@@ -969,22 +1082,25 @@ const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; 
         <h2 className="font-black text-white tracking-tight leading-tight" style={{ fontSize: 'clamp(2.5rem, 7vw, 5.5rem)' }}>{title || 'Message'}</h2>
         {body && <p className="text-white/70 mt-[clamp(1rem,2vw,2rem)] leading-relaxed max-w-3xl mx-auto" style={{ fontSize: 'clamp(1.125rem, 2vw, 1.875rem)' }}>{body}</p>}
       </div>
+      </div>
     </div>
   );
 };
 
 // ── AT-RISK JOBS slide — jobs predicted to miss their due date ────────
-const TvAtRiskSlide: React.FC<{
+// Memoized: the ETA computation walks every open job × every log — it must NOT
+// re-run on every parent fade/chrome re-render, only when data actually changes.
+const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeLogs, speed = 'normal' }: {
   jobs: Job[];
   allLogs: TimeLog[];
   activeLogs: TimeLog[];
   speed?: 'slow' | 'normal' | 'fast' | 'off';
-}> = ({ jobs, allLogs, activeLogs, speed = 'normal' }) => {
+}) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Compute ETAs for all open jobs
-  const openJobs = jobs.filter(j => j.status !== 'completed');
-  const etas: Array<{ job: Job; eta: JobETA }> = openJobs
+  // Compute ETAs for all open jobs — memoized on the data arrays
+  const etas = React.useMemo<Array<{ job: Job; eta: JobETA }>>(() => jobs
+    .filter(j => j.status !== 'completed')
     .map(job => {
       const history = getPartHistory(job.partNumber || '', jobs, allLogs);
       const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
@@ -997,7 +1113,7 @@ const TvAtRiskSlide: React.FC<{
       if (diff !== 0) return diff;
       // Within same risk: soonest due first
       return (a.eta.daysUntilDue ?? 999) - (b.eta.daysUntilDue ?? 999);
-    });
+    }), [jobs, allLogs, activeLogs]);
 
   const handlers = useTvAutoScroll(scrollRef, (speed ?? 'normal') as 'slow' | 'normal' | 'fast' | 'off', etas.length);
 
@@ -1128,7 +1244,7 @@ const TvAtRiskSlide: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 // ── ATTACK PLAN slide — ranked "run these in this order" for the floor ──
 // Same ranking as the admin dashboard's Attack Plan: risk level first
@@ -1142,28 +1258,30 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const riskScore: Record<JobRiskLevel, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
-  const prioScore: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
-  const dueNum = (d?: string) => {
-    const m = (d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    return m ? parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : 99991231;
-  };
-
-  const ranked = jobs
-    .filter(j => j.status !== 'completed' && j.status !== 'hold')
-    .map(job => {
-      const history = getPartHistory(job.partNumber || '', jobs, allLogs);
-      const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
-      return { job, eta };
-    })
-    .sort((a, b) => {
-      const r = (riskScore[a.eta.riskLevel] ?? 4) - (riskScore[b.eta.riskLevel] ?? 4);
-      if (r !== 0) return r;
-      const d = dueNum(a.job.dueDate) - dueNum(b.job.dueDate);
-      if (d !== 0) return d;
-      return (prioScore[a.job.priority || 'normal'] ?? 2) - (prioScore[b.job.priority || 'normal'] ?? 2);
-    })
-    .slice(0, 10);
+  // Memoized — ETA per job is expensive; recompute only when data changes.
+  const ranked = React.useMemo(() => {
+    const riskScore: Record<JobRiskLevel, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
+    const prioScore: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+    const dueNum = (d?: string) => {
+      const m = (d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      return m ? parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : 99991231;
+    };
+    return jobs
+      .filter(j => j.status !== 'completed' && j.status !== 'hold')
+      .map(job => {
+        const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+        const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
+        return { job, eta };
+      })
+      .sort((a, b) => {
+        const r = (riskScore[a.eta.riskLevel] ?? 4) - (riskScore[b.eta.riskLevel] ?? 4);
+        if (r !== 0) return r;
+        const d = dueNum(a.job.dueDate) - dueNum(b.job.dueDate);
+        if (d !== 0) return d;
+        return (prioScore[a.job.priority || 'normal'] ?? 2) - (prioScore[b.job.priority || 'normal'] ?? 2);
+      })
+      .slice(0, 10);
+  }, [jobs, allLogs, activeLogs]);
 
   const handlers = useTvAutoScroll(scrollRef, (speed ?? 'normal') as 'slow' | 'normal' | 'fast' | 'off', ranked.length);
 
@@ -1270,13 +1388,15 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
 // ── TODAY'S SCORECARD slide — the heartbeat every shop needs ──────────
 // Big 4: jobs done today, hours on the clock, $ pipeline, overdue count.
 // Every metric updates live. Overdue tile flashes red when > 0.
-const TvTodaySlide: React.FC<{
+// Memoized: recomputes only on real data changes; every slide rotation re-mounts
+// it anyway, so "today" stats can never go stale for more than one rotation.
+const TvTodaySlide = React.memo(function TvTodaySlide({ jobs, allLogs, openJobs, activeLogs, showRevenue = false }: {
   jobs: Job[];
   allLogs: TimeLog[];
   openJobs: Job[];
   activeLogs: TimeLog[];
   showRevenue?: boolean;
-}> = ({ jobs, allLogs, openJobs, activeLogs, showRevenue = false }) => {
+}) {
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const todayMs = todayStart.getTime();
 
@@ -1357,8 +1477,8 @@ const TvTodaySlide: React.FC<{
   };
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="min-h-full flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)' }}>
+    <div className="h-full overflow-y-auto overflow-x-hidden">
+      <div className="flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)', minHeight: '100%' }}>
         <div className="w-full max-w-6xl mx-auto">
           {/* Header */}
           <p className="font-black text-orange-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
@@ -1405,18 +1525,19 @@ const TvTodaySlide: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 // Goal calculation helpers come from utils/goals.ts — same logic used by Settings editor
 import { computeGoalProgress, formatGoalValue, goalUnit } from './utils/goals';
 
 // ── Full-screen GOALS slide with progress gauges
-const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; reworkCount: number; showRevenue?: boolean }> = ({ goals, jobs, logs, reworkCount, showRevenue = false }) => {
+const TvGoalsSlide = React.memo(function TvGoalsSlide({ goals, jobs, logs, reworkCount, showRevenue = false }: { goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; reworkCount: number; showRevenue?: boolean }) {
   // Filter out revenue goals if user has TV revenue hidden
   const visible = goals.filter(g => g.enabled && g.showOnTv !== false && (showRevenue || g.metric !== 'revenue'));
   if (visible.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center p-12">
+      <div className="h-full w-full overflow-y-auto overflow-x-hidden">
+        <div className="flex items-center justify-center p-12" style={{ minHeight: '100%' }}>
         <div className="text-center max-w-xl">
           <div className="w-24 h-24 mx-auto rounded-3xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/25 flex items-center justify-center mb-4">
             <Zap className="w-12 h-12 text-emerald-400" aria-hidden="true" />
@@ -1442,6 +1563,7 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
             ))}
           </div>
         </div>
+        </div>
       </div>
     );
   }
@@ -1456,8 +1578,8 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
   };
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="min-h-full flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)' }}>
+    <div className="h-full overflow-y-auto overflow-x-hidden">
+      <div className="flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)', minHeight: '100%' }}>
       <div className="w-full max-w-6xl mx-auto">
         <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
           <Zap className="w-4 h-4" aria-hidden="true" /> Shop Goals
@@ -1505,7 +1627,7 @@ const TvGoalsSlide: React.FC<{ goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; 
       </div>
     </div>
   );
-};
+});
 
 // Workers + Jobs combined (the default TV layout)
 const TvWorkersJobsSlide = React.memo(function TvWorkersJobsSlide({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt }: {
@@ -2141,21 +2263,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const inLunch = settings.autoLunchPauseEnabled && hhmm >= (settings.lunchStart || '12:00') && hhmm < (settings.lunchEnd || '12:30');
 
   // ─── TV MODE SLIDES ────────────────────────────────────────────
-  // If user has defined tvSlides, use those. Otherwise, use sensible defaults.
-  // Default lineup: Workers+Jobs · Leaderboard · Weather · Weekly Stats
-  // Default TV slides — each tab gets its own dedicated full-screen slide.
+  // If user has defined tvSlides, use those. Otherwise, use the module-scoped
+  // DEFAULT_TV_SLIDES (each tab gets its own dedicated full-screen slide).
   // Users can customize in Settings → TV Display → Slides.
-  const DEFAULT_TV_SLIDES: TvSlide[] = [
-    { id: 'default-today', type: 'today', enabled: true },                             // Today's scorecard — FIRST
-    { id: 'default-attack-plan', type: 'attack-plan', enabled: true },                 // Ranked run order for the floor
-    { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
-    { id: 'default-at-risk', type: 'at-risk', enabled: true },                         // Jobs predicted to be late
-    { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
-    { id: 'default-leaderboard-week', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
-    { id: 'default-goals', type: 'goals', enabled: true },
-    { id: 'default-stats-week', type: 'stats-week', enabled: true },
-    { id: 'default-weather', type: 'weather', enabled: true },
-  ];
   // Dedup enabled slides by id (prevents "same slide shows twice" bugs from legacy configs)
   const configuredTvSlides = React.useMemo(() => {
     const enabled = (settings.tvSlides || []).filter(s => s.enabled);
@@ -2240,9 +2350,25 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
 
   // ── WEEKLY LEADERBOARD DATA ───────────────────────────────────
-  const weekStart = new Date();
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-  weekStart.setHours(0, 0, 0, 0);
+  // dayKey ticks over at midnight so day/week windows roll correctly during
+  // multi-day TV runtime. weekStart is memoized on it — a STABLE Date identity
+  // is what lets React.memo'd slides (WeeklyStats) skip fade/chrome re-renders;
+  // the old `new Date()` per render defeated the memo entirely.
+  const [dayKey, setDayKey] = useState(() => new Date().toDateString());
+  useEffect(() => {
+    const i = window.setInterval(() => {
+      const k = new Date().toDateString();
+      setDayKey(prev => (prev === k ? prev : k));
+    }, 60_000);
+    return () => window.clearInterval(i);
+  }, []);
+  const weekStart = React.useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - d.getDay());
+    d.setHours(0, 0, 0, 0);
+    return d;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayKey]);
   const weekCutoff = weekStart.getTime();
 
   // Shared leaderboard builder that takes a cutoff timestamp
@@ -2279,7 +2405,23 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       .sort((a, b) => b.hours - a.hours);
   }, [allLogs, activeLogs]);
 
-  const weeklyData = React.useMemo(() => buildLeaderboard(weekCutoff), [buildLeaderboard, weekCutoff]);
+  // ── LEADERBOARD DATA for the currently-showing TV slide ──────────────
+  // Hoisted + memoized so the React.memo'd TvLeaderboardSlide receives a
+  // STABLE array ref — it recomputes once per slide change / data push, not on
+  // every fade or chrome re-render like the old inline leaderboardForSlide().
+  const activeTvSlide = tvMode ? (configuredTvSlides[tvSlideIdx] || configuredTvSlides[0]) : null;
+  const tvLeaderboardData = React.useMemo<LeaderRow[]>(() => {
+    if (!activeTvSlide || activeTvSlide.type !== 'leaderboard') return [];
+    if (activeTvSlide.leaderboardPeriod === 'today') {
+      const d = new Date(); d.setHours(0, 0, 0, 0);
+      return buildLeaderboard(d.getTime());
+    }
+    if (activeTvSlide.leaderboardPeriod === 'month') {
+      const n = new Date();
+      return buildLeaderboard(new Date(n.getFullYear(), n.getMonth(), 1).getTime());
+    }
+    return buildLeaderboard(weekCutoff);
+  }, [activeTvSlide, buildLeaderboard, weekCutoff]);
 
   // ── OPEN JOBS ─────────────────────────────────────────────────
   // Sort by parsed due date (soonest first). Jobs without a due date fall to the end.
@@ -2301,20 +2443,6 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const jobsForBelt = openJobs;
     const currentSlide = configuredTvSlides[tvSlideIdx] || configuredTvSlides[0];
 
-    // Compute leaderboard based on slide period
-    const leaderboardForSlide = (slide: TvSlide): LeaderRow[] => {
-      const now = new Date();
-      let cutoff: number;
-      if (slide.leaderboardPeriod === 'today') {
-        const d = new Date(); d.setHours(0, 0, 0, 0); cutoff = d.getTime();
-      } else if (slide.leaderboardPeriod === 'month') {
-        const d = new Date(now.getFullYear(), now.getMonth(), 1); cutoff = d.getTime();
-      } else {
-        cutoff = weekCutoff;
-      }
-      return buildLeaderboard(cutoff);
-    };
-
     const overdueCount = openJobs.filter(j => {
       const d = parseDueDate(j.dueDate);
       return d && d.getTime() < Date.now();
@@ -2334,7 +2462,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'jobs':
           return <div className="h-full flex flex-col"><TvJobsBelt jobs={jobsForBelt} stages={stages} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} /></div>;
         case 'leaderboard':
-          return <TvLeaderboardSlide data={leaderboardForSlide(slide)} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} speed={settings.tvScrollSpeed || 'normal'} />;
+          return <TvLeaderboardSlide data={tvLeaderboardData} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} speed={settings.tvScrollSpeed || 'normal'} />;
         case 'weather':
           return <TvWeatherSlide lat={settings.weatherLat} lon={settings.weatherLon} />;
         case 'stats-week':
@@ -2348,7 +2476,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           />;
         case 'goals':
           return <TvGoalsSlide
-            goals={settings.shopGoals || []}
+            goals={settings.shopGoals || EMPTY_GOALS}
             jobs={jobs}
             logs={allLogs}
             reworkCount={openReworkCount}
@@ -2399,6 +2527,20 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
     return (
       <div className="fixed inset-0 z-[9999] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 text-white overflow-hidden">
+        {/* Ambient glow — deliberately full-bleed: TV overscan may crop the
+            background, but never content (everything else lives in the
+            safe-area wrapper below). */}
+        <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-600/10 blur-[120px]" />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-amber-600/10 blur-[120px]" />
+        </div>
+
+        {/* ── TV SAFE AREA ── real TVs overscan-crop 2–5% of every edge, so ALL
+            content (header, slides, chrome, indicators) is inset from the
+            physical edge. Explicit top/right/bottom/left (not the `inset`
+            shorthand) for older smart-TV browsers. Hard-coded on purpose —
+            no settings dependency. */}
+        <div className="absolute overflow-hidden" style={{ top: '2vh', bottom: '2vh', left: '2.5vw', right: '2.5vw' }}>
         {/* ── Shift Alarm Banner ── pops up when an alarm fires, auto-dismisses */}
         {tvAlarmBanner && (
           <div className="absolute top-0 left-0 right-0 z-[10002] flex items-center justify-center pointer-events-none animate-fade-in">
@@ -2409,12 +2551,6 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           </div>
         )}
 
-        {/* Ambient glow */}
-        <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-600/10 blur-[120px]" />
-          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-amber-600/10 blur-[120px]" />
-        </div>
-
         {/* Double-Escape guard indicator — shows briefly after first Esc press */}
         {escGuardActive && (
           <div className="absolute top-4 left-4 z-[10002] bg-zinc-900/90 border border-amber-500/50 text-amber-300 text-sm font-black px-4 py-2.5 rounded-xl backdrop-blur-xl animate-fade-in shadow-lg pointer-events-none">
@@ -2423,7 +2559,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         )}
 
         {/* Exit chrome — auto-hides after 5 s; any mouse/touch/key brings it back */}
-        <div className={`tv-chrome absolute top-4 right-4 z-[10001] flex items-center gap-2 transition-opacity duration-700 ${tvChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        {/* `invisible` when hidden: these overlays carry backdrop-blur, which TVs
+            keep compositing even at opacity 0 — visibility:hidden skips it. */}
+        <div className={`tv-chrome absolute top-4 right-4 z-[10001] flex items-center gap-2 transition-opacity duration-700 ${tvChromeVisible ? 'opacity-100 visible' : 'opacity-0 invisible pointer-events-none'}`}>
           {tvPaused && (
             <div className="flex items-center gap-1.5 text-[11px] text-yellow-400 uppercase tracking-widest font-black bg-yellow-500/15 border border-yellow-500/30 rounded-lg px-2.5 py-1.5 animate-pulse">
               <Pause className="w-3 h-3" aria-hidden="true" /> Paused
@@ -2447,7 +2585,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         </div>
 
         {/* Bottom keyboard-shortcut hint bar — hides with the rest of the chrome */}
-        <div className={`tv-chrome absolute bottom-4 left-1/2 -translate-x-1/2 z-[10001] flex items-center gap-3 bg-black/50 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2 pointer-events-none transition-opacity duration-700 ${tvChromeVisible ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`tv-chrome absolute bottom-4 left-1/2 -translate-x-1/2 z-[10001] flex items-center gap-3 bg-black/50 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2 pointer-events-none transition-opacity duration-700 ${tvChromeVisible ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
           {!standalone && (
             <>
               <span className="text-[10px] text-white/60 font-semibold flex items-center gap-1.5">
@@ -2542,7 +2680,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           {/* MAIN — Rotating slides (fades between).
               min-h-0 is critical so the flex child can shrink below its content
               and overflow-hidden prevents children from pushing the layout off-screen. */}
-          <div className={`flex-1 min-h-0 overflow-hidden transition-opacity duration-400 ${tvFade ? 'opacity-100' : 'opacity-0'}`}>
+          {/* duration-[400ms]: `duration-400` isn't a Tailwind class — the fade
+              was silently running at the 150ms default while JS waited 400ms. */}
+          <div className={`flex-1 min-h-0 overflow-hidden transition-opacity duration-[400ms] ${tvFade ? 'opacity-100' : 'opacity-0'}`}>
             {renderSlide(currentSlide)}
           </div>
 
@@ -2566,6 +2706,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
               ))}
             </div>
           )}
+        </div>
+        {/* end TV safe area */}
         </div>
       </div>
     );

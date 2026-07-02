@@ -24,6 +24,8 @@ import type { SystemSettings, ShiftAlarm } from '../../types';
 // agrees with what the owner sees on screen. (poOrganizer has type-only imports,
 // so it's safe to bundle into this serverless function.)
 import { matchJobForPo, isJobComplete, resolveStages } from '../../utils/poOrganizer';
+// Weekly Pulse (Monday digest) — same pure trend brain the dashboard panel uses.
+import { computeShopTrends, fmtTrendValue, fmtTrendDelta } from '../../utils/shopTrends';
 
 export const config: Config = {
   schedule: '*/10 * * * *',   // every 10 minutes — early-exits outside send windows
@@ -164,6 +166,15 @@ function fmtHrs(mins: number): string {
   const h = Math.floor(mins / 60);
   const m = Math.round(mins % 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** Escape user-controlled text before HTML email interpolation. */
+function escHtml(s: any): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+/** Email subjects must stay RFC 5322-safe — strip newlines/quotes from user text. */
+function subjSafe(s: any): string {
+  return String(s ?? '').replace(/[\r\n"]+/g, ' ').trim();
 }
 
 async function sendPush(subDoc: any, payload: string, ttl: number, apiKey: string, projectId: string): Promise<'sent' | 'failed' | 'removed'> {
@@ -327,7 +338,7 @@ export default async function handler() {
           if (toEmail && !resendKey) console.warn('[daily-briefing-cron] invoice email address set but RESEND_API_KEY missing — email skipped');
           if (resendKey && toEmail) {
             const rows = ready.slice(0, 15).map((p: any) =>
-              `<tr><td style="padding:5px 8px;color:#e4e4e7;border-bottom:1px solid #27272a;">${p.customerName || '—'}</td><td style="padding:5px 8px;color:#a1a1aa;border-bottom:1px solid #27272a;">${p.poNumber || ''}</td></tr>`).join('');
+              `<tr><td style="padding:5px 8px;color:#e4e4e7;border-bottom:1px solid #27272a;">${escHtml(p.customerName || '—')}</td><td style="padding:5px 8px;color:#a1a1aa;border-bottom:1px solid #27272a;">${escHtml(p.poNumber || '')}</td></tr>`).join('');
             const html = `<div style="font-family:sans-serif;background:#09090b;color:#fff;padding:28px;border-radius:12px;max-width:520px;">
                 <h2 style="color:#fb923c;margin:0 0 6px;">🧾 ${ready.length} PO${ready.length > 1 ? 's' : ''} ready to invoice</h2>
                 <p style="color:#a1a1aa;margin:0 0 14px;">These jobs are finished but aren't marked invoiced yet. Send the invoice, then mark it in Customer POs.</p>
@@ -340,7 +351,7 @@ export default async function handler() {
               body: JSON.stringify({
                 from: process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>',
                 to: [toEmail],
-                subject: `🧾 ${ready.length} invoice${ready.length > 1 ? 's' : ''} to send — ${shopName}`,
+                subject: `🧾 ${ready.length} invoice${ready.length > 1 ? 's' : ''} to send — ${subjSafe(shopName)}`,
                 html,
               }),
             }).catch((e: any) => console.error('[daily-briefing-cron] invoice email failed:', e?.message || e));
@@ -349,6 +360,99 @@ export default async function handler() {
         } else {
           console.log('[daily-briefing-cron] invoice reminder — none ready to invoice');
         }
+      }
+    }
+  }
+
+  // ── 1c. WEEKLY PULSE — Monday-morning strategic digest (trend brain) ──
+  // The daily recap says what happened YESTERDAY; this says where the shop is
+  // HEADING: last complete week vs the 4-week normal, computed by the same
+  // shopTrends brain the dashboard panel uses (never disagrees with the UI).
+  if (doBriefing && dowInTz(tz) === 1) {
+    const metaId = `weekly-digest-${today}`;
+    const already = await fetchDoc('push_meta', metaId, apiKey, projectId);
+    if (!already) {
+      await setMetaDoc(metaId, { sentAt: Date.now() }, apiKey, projectId); // write-first
+      try {
+        const wJobs = await fetchCollection('jobs', apiKey, projectId);
+        const wLogs = await fetchLogsSince(Date.now() - 42 * 86_400_000, apiKey, projectId);
+        let wRework: any[] = [];
+        try { wRework = await fetchCollection('rework', apiKey, projectId); } catch { /* optional */ }
+
+        const trends = computeShopTrends(wJobs as any, wLogs as any, wRework as any);
+        if (!trends.hasData) {
+          console.log('[daily-briefing-cron] weekly pulse — not enough history yet');
+        } else {
+          const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          const arrow = (m: any) => (m.direction === 'up' ? '▲' : m.direction === 'down' ? '▼' : '—');
+          const color = (m: any) => (m.good === null || m.direction === 'flat' ? '#a1a1aa' : m.good ? '#34d399' : '#f87171');
+
+          // Push: lead with the two biggest movers
+          const movers = trends.metrics.filter(m => m.direction !== 'flat').slice(0, 2);
+          const pushBody = movers.length > 0
+            ? movers.map(m => `${m.label}: ${fmtTrendValue(m.current, m.unit)} (${fmtTrendDelta(m)})`).join(' · ')
+            : 'Steady week — everything within your normal range.';
+          const payload = JSON.stringify({
+            title: `📈 Weekly Pulse — ${shopName}`,
+            body: pushBody,
+            tag: `weekly-digest-${today}`,
+            url: '/',
+            requireInteraction: false,
+          });
+          let sent = 0;
+          for (const admin of admins) {
+            for (const subDoc of (subsByUser.get(admin.id) || [])) {
+              if (await sendPush(subDoc, payload, 4 * 3600, apiKey, projectId) === 'sent') sent++;
+            }
+          }
+
+          // Email: full trend table + customer movers
+          const resendKey = process.env.RESEND_API_KEY;
+          const toEmail = (settings as any).recapEmail || (settings as any).alertEmail || (settings as any).companyEmail;
+          if (toEmail && !resendKey) console.warn('[daily-briefing-cron] weekly pulse email configured but RESEND_API_KEY missing');
+          if (resendKey && toEmail) {
+            const rows = trends.metrics.map(m => `
+              <tr>
+                <td style="padding:8px 12px;border-bottom:1px solid #27272a;color:#e4e4e7;font-weight:700;">${esc(m.label)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #27272a;color:#fff;font-weight:800;text-align:right;">${esc(fmtTrendValue(m.current, m.unit))}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #27272a;color:#71717a;text-align:right;">${esc(fmtTrendValue(m.baseline, m.unit))}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #27272a;font-weight:900;text-align:right;color:${color(m)};">${arrow(m)} ${esc(fmtTrendDelta(m))}</td>
+              </tr>`).join('');
+            const moverLine = (x: any, up: boolean) =>
+              `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;color:${up ? '#34d399' : '#f87171'};border:1px solid ${up ? '#065f46' : '#7f1d1d'};">${up ? '▲' : '▼'} ${esc(x.customer)} · ${esc(fmtTrendValue(x.current, 'money'))}/wk</span>`;
+            const html = `
+              <div style="font-family:sans-serif;background:#09090b;color:#fff;padding:28px;border-radius:12px;max-width:560px;">
+                <h2 style="color:#38bdf8;margin:0 0 4px;">📈 Weekly Pulse — ${esc(shopName)}</h2>
+                <p style="color:#a1a1aa;margin:0 0 16px;">Last week vs your 4-week normal. Where the shop is heading, not just what happened.</p>
+                <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:8px;overflow:hidden;">
+                  <tr>
+                    <th style="padding:8px 12px;text-align:left;color:#71717a;font-size:11px;text-transform:uppercase;">Metric</th>
+                    <th style="padding:8px 12px;text-align:right;color:#71717a;font-size:11px;text-transform:uppercase;">Last wk</th>
+                    <th style="padding:8px 12px;text-align:right;color:#71717a;font-size:11px;text-transform:uppercase;">Normal</th>
+                    <th style="padding:8px 12px;text-align:right;color:#71717a;font-size:11px;text-transform:uppercase;">Trend</th>
+                  </tr>
+                  ${rows}
+                </table>
+                ${(trends.risingCustomers.length || trends.fallingCustomers.length) ? `
+                  <p style="color:#a1a1aa;font-size:12px;margin:16px 0 6px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Customer movers</p>
+                  <div>${trends.risingCustomers.map(x => moverLine(x, true)).join('')}${trends.fallingCustomers.map(x => moverLine(x, false)).join('')}</div>` : ''}
+                <p style="color:#52525b;font-size:12px;margin:18px 0 0;">— FabTrack IO · Shop Trends</p>
+              </div>`;
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>',
+                to: [toEmail],
+                subject: `📈 Weekly Pulse — ${subjSafe(shopName)}`,
+                html,
+              }),
+            }).catch((e: any) => console.error('[daily-briefing-cron] weekly pulse email failed:', e?.message || e));
+          }
+          console.log(`[daily-briefing-cron] weekly pulse → ${sent} push(es), ${trends.metrics.filter(m => m.direction !== 'flat').length} moving metric(s)`);
+        }
+      } catch (e: any) {
+        console.error('[daily-briefing-cron] weekly pulse failed:', e?.message || e);
       }
     }
   }

@@ -24,23 +24,38 @@ import { readyToInvoiceList } from './utils/poOrganizer';
 import { JobProfitCard } from './components/JobProfitCard';
 import { CanWeTakeIt } from './components/CanWeTakeIt';
 import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
-import { CustomerPosView } from './views/CustomerPosView';
+import { ShopTrendsPanel } from './components/ShopTrendsPanel';
+// ── Lazy views ────────────────────────────────────────────────────────────
+// Post-login screens load on demand — cuts the startup bundle roughly in half
+// so the login/dashboard paint much sooner. LiveFloorMonitor, CustomerPortal
+// and QuotesView stay EAGER: they render before login (?tv= wall, ?portal=).
+const CustomerPosView = React.lazy(() => import('./views/CustomerPosView').then(m => ({ default: m.CustomerPosView })));
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
-import { SamplesView } from './SamplesView';
+const SamplesView = React.lazy(() => import('./SamplesView').then(m => ({ default: m.SamplesView })));
 // AI scanning (parseJobDetails / POScanner) removed from production —
 // see Jobs view comment. Gemini service file stays for future re-enable.
 import { QuotesView } from './QuotesView';
 import { CustomerPortal } from './CustomerPortal';
-import { ReportsView } from './views/ReportsView';
-import { JobBoardView } from './views/JobBoardView';
-import { DeliveriesView } from './views/DeliveriesView';
-import { PurchaseOrdersView } from './views/PurchaseOrdersView';
-import { SettingsView, ProgressView } from './views/SettingsView';
+const ReportsView = React.lazy(() => import('./views/ReportsView').then(m => ({ default: m.ReportsView })));
+const JobBoardView = React.lazy(() => import('./views/JobBoardView').then(m => ({ default: m.JobBoardView })));
+const DeliveriesView = React.lazy(() => import('./views/DeliveriesView').then(m => ({ default: m.DeliveriesView })));
+const PurchaseOrdersView = React.lazy(() => import('./views/PurchaseOrdersView').then(m => ({ default: m.PurchaseOrdersView })));
+const SettingsView = React.lazy(() => import('./views/SettingsView').then(m => ({ default: m.SettingsView })));
+const ProgressView = React.lazy(() => import('./views/SettingsView').then(m => ({ default: m.ProgressView })));
 import { VendorsManager } from './components/VendorsManager';
-import { QualityView, ReworkModal } from './views/QualityView';
-import { LogsView } from './views/LogsView';
+const QualityView = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.QualityView })));
+const ReworkModal = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.ReworkModal })));
+const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })));
+
+/** Suspense fallback while a lazy view chunk downloads — calm, centered, brief. */
+const ViewLoader = () => (
+  <div className="flex flex-col items-center justify-center py-24 gap-3 animate-fade-in">
+    <div className="w-8 h-8 rounded-full border-2 border-amber-500/30 border-t-amber-500 animate-spin" />
+    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Loading…</p>
+  </div>
+);
 import { POScanner } from './components/POScanner';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
 import { printTraveler } from './services/travelerPrint';
@@ -966,8 +981,9 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
 };
 
 // --- JOB SELECTION CARD ---
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[] }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast, activeLogs = [] }) => {
+const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[], knownOps?: string[] }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast, activeLogs = [], knownOps = [] }) => {
   const [expanded, setExpanded] = useState(defaultExpanded || false);
+  const [showAllOps, setShowAllOps] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [newNote, setNewNote] = useState('');
   // Workers can click the part photo to view a big lightbox version (user request)
@@ -1167,16 +1183,45 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             </div>
           )}
 
-          <p className="text-xs text-zinc-500 uppercase font-bold mb-3">Select Operation:</p>
-          <div className="grid grid-cols-2 gap-2">
-            {operations.map(op => (
+          {(() => {
+            // Job memory: this job's / this part's previously-used operations
+            // come FIRST — the rest hide behind "All operations" so a repeat
+            // job is one glance, one tap, instead of scanning the whole list.
+            // Only offer remembered ops that STILL exist in settings — an op the
+            // admin deleted must not be startable from history.
+            const usual = knownOps.filter(op => op && op.trim() && operations.includes(op));
+            const rest = operations.filter(op => !usual.includes(op));
+            const startBtn = (op: string, highlight: boolean) => (
               <button key={op} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
-                className="bg-zinc-800 hover:bg-amber-600 hover:text-white border border-white/5 py-3 px-4 rounded-xl text-sm text-zinc-300 transition-colors font-bold active:scale-95">
-                {op}
+                className={`${highlight
+                  ? 'bg-gradient-to-br from-amber-500/20 to-amber-500/[0.06] hover:from-amber-500 hover:to-orange-500 border-amber-500/40 text-amber-200 hover:text-white'
+                  : 'bg-zinc-800 hover:bg-amber-600 hover:text-white border-white/5 text-zinc-300'} border py-3 px-4 rounded-xl text-sm transition-colors font-bold active:scale-95`}>
+                {highlight && <span className="mr-1.5 text-[10px] opacity-70">↺</span>}{op}
               </button>
-            ))}
-            {operations.length === 0 && <p className="col-span-2 text-xs text-zinc-500 text-center py-2">No operations configured.</p>}
-          </div>
+            );
+            if (usual.length === 0) {
+              return (<>
+                <p className="text-xs text-zinc-500 uppercase font-bold mb-3">Select Operation:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {operations.map(op => startBtn(op, false))}
+                  {operations.length === 0 && <p className="col-span-2 text-xs text-zinc-500 text-center py-2">No operations configured.</p>}
+                </div>
+              </>);
+            }
+            return (<>
+              <p className="text-xs text-amber-400/90 uppercase font-bold mb-2 flex items-center gap-1.5">↺ Done on this job before</p>
+              <div className="grid grid-cols-2 gap-2">{usual.map(op => startBtn(op, true))}</div>
+              {rest.length > 0 && (
+                <button onClick={e => { e.stopPropagation(); setShowAllOps(s => !s); }}
+                  className="mt-2 w-full text-[11px] font-bold text-zinc-500 hover:text-white py-1.5 flex items-center justify-center gap-1 transition-colors">
+                  {showAllOps ? <>Hide other operations <ChevronUp className="w-3 h-3" /></> : <>All operations ({rest.length}) <ChevronDown className="w-3 h-3" /></>}
+                </button>
+              )}
+              {showAllOps && rest.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 mt-1 animate-fade-in">{rest.map(op => startBtn(op, false))}</div>
+              )}
+            </>);
+          })()}
 
           {/* Notes toggle */}
           <button onClick={(e) => { e.stopPropagation(); setShowNotes(!showNotes); }} className="mt-3 w-full flex items-center justify-between bg-zinc-900 hover:bg-zinc-800 border border-white/5 rounded-lg px-3 py-2 transition-colors">
@@ -1394,6 +1439,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const [ops, setOps] = useState<string[]>([]);
   const [scannedJobId, setScannedJobId] = useState<string | null>(null);
   const [resumeStarting, setResumeStarting] = useState(false);   // optimistic guard for one-tap "Jump back in"
+  // Job memory: jobId → ops used before (recent first), partNumber → same.
+  const [opsMemory, setOpsMemory] = useState<{ byJob: Map<string, string[]>; byPart: Map<string, string[]> }>({ byJob: new Map(), byPart: new Map() });
   const activePanelRef = useRef<HTMLDivElement>(null);
   const [shouldScrollToTimer, setShouldScrollToTimer] = useState(false);
 
@@ -1445,6 +1492,27 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       } else {
         setActiveJob(null);
       }
+      // Job memory: which operations has this job / this part ACTUALLY used
+      // before (any worker)? Lets the picker surface "the usual ops" first
+      // instead of making workers scan the whole operation list every time.
+      const byJob = new Map<string, string[]>();
+      const byPart = new Map<string, string[]>();
+      const push = (map: Map<string, string[]>, key: string, op: string) => {
+        const arr = map.get(key) || [];
+        const i = arr.indexOf(op);
+        if (i >= 0) arr.splice(i, 1);
+        arr.unshift(op);              // most recent first
+        map.set(key, arr);
+      };
+      // Iterate oldest → newest (snapshot order isn't guaranteed) so the final
+      // order after unshift is most-recent-first.
+      const chrono = allLogs.filter(l => l.operation && !l.isSample).sort((a, b) => a.startTime - b.startTime);
+      for (const l of chrono) {
+        if (l.jobId) push(byJob, l.jobId, l.operation);
+        const pn = (l.partNumber || '').trim().toLowerCase();
+        if (pn) push(byPart, pn, l.operation);
+      }
+      setOpsMemory({ byJob, byPart });
     });
     const unsubJobs = DB.subscribeJobs((allJobs) => {
       setJobs(allJobs.filter(j => j.status !== 'completed').reverse());
@@ -1937,7 +2005,9 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           ))}
         </div>
       ) : tab === 'progress' ? (
-        <ProgressView userId={user?.id || ''} userName={user?.name || ''} recentLogs={myHistory} />
+        <React.Suspense fallback={<div className="py-12 text-center text-zinc-500 text-sm">Loading…</div>}>
+          <ProgressView userId={user?.id || ''} userName={user?.name || ''} recentLogs={myHistory} />
+        </React.Suspense>
       ) : (
         <div className="flex-1 flex flex-col animate-fade-in">
           {/* One-tap jump back in — recent open job+operation combos */}
@@ -1985,7 +2055,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           })()}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredJobs.map(job => (
-              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs} />
+              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
+                knownOps={[...new Set([...(opsMemory.byJob.get(job.id) || []), ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || [])])]} />
             ))}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
@@ -2952,6 +3023,9 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         settings={shopSettings}
         onView={() => setView('admin-logs')}
       />
+
+      {/* 📈 SHOP TRENDS — the brain's memory: last week vs your 4-week normal */}
+      <ShopTrendsPanel jobs={jobs} logs={allLogs} rework={reworkEntries} />
 
       {/* ⚡ TODAY'S ATTACK PLAN — ranked run-order for the floor */}
       {attackPlan.ranked.length > 0 && (
@@ -6935,7 +7009,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       {lightboxImg && <PartImageLightbox src={lightboxImg} onClose={() => setLightboxImg(null)} />}
 
       {/* Rework modal — opened from the row's AlertTriangle button */}
-      {reworkModal && <ReworkModal entry={reworkModal} jobs={jobs} user={user} onClose={() => setReworkModal(null)} addToast={addToast} />}
+      {reworkModal && <React.Suspense fallback={null}><ReworkModal entry={reworkModal} jobs={jobs} user={user} onClose={() => setReworkModal(null)} addToast={addToast} /></React.Suspense>}
       {PromptHost}
       {JobCompletePromptHost}
     </div>
@@ -7935,6 +8009,7 @@ export default function App() {
         )}
 
         <div className="p-4 md:p-8 pb-24 md:pb-8">
+          <React.Suspense fallback={<ViewLoader />}>
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} />}
           {view === 'admin-board' && (
@@ -7992,6 +8067,7 @@ export default function App() {
           }} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
+          </React.Suspense>
         </div>
       </main>
 

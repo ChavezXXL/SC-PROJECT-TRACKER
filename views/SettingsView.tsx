@@ -16,7 +16,7 @@ import {
   Activity, AlertCircle, AlertTriangle, Bell, Briefcase, Calculator,
   Calendar, Camera, CheckCircle, CheckCircle2, ChevronDown, ChevronRight,
   ChevronUp, Clock, Cloud, Copy, Edit2, Eye, FileText, Image, Info, Link2, Mail, MapPin, Maximize2,
-  MessageSquare, Phone, Play, Plus, Printer, Radio, RotateCcw, Save, Settings, Share2,
+  MessageSquare, Phone, Play, Plus, Printer, Radio, RotateCcw, Save, Search, Settings, Share2,
   Trash2, Users, X, Zap,
 } from 'lucide-react';
 
@@ -627,7 +627,7 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div>
+      <div data-settings-anchor="goals-overview" className="rounded-xl">
         <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2"><Zap className="w-5 h-5 text-amber-400" aria-hidden="true" /> Shop Goals</h3>
         <p className="text-sm text-zinc-500">Set targets that matter to <em>your</em> shop — jobs per week, revenue, on-time delivery, rework limits, or custom metrics. Shown on the TV Goals slide and admin dashboard.</p>
       </div>
@@ -710,7 +710,7 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
         </div>
       )}
 
-      <div className="space-y-3">
+      <div data-settings-anchor="goals-list" className="space-y-3 rounded-2xl">
         {goals.map((goal, idx) => {
           const meta = GOAL_METRIC_META[goal.metric];
           const expanded = expandedId === goal.id;
@@ -891,7 +891,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
       </div>
 
       {/* ── LIVE SHOP ECONOMICS (last 30 days) — real data */}
-      <div>
+      <div data-settings-anchor="financial-live" className="rounded-xl">
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs font-black text-zinc-500 uppercase tracking-widest">Live · Last 30 Days</p>
           <span className="text-[10px] text-zinc-600">{completedRecent.length} jobs · {loggedHrs30.toFixed(1)}h logged</span>
@@ -924,7 +924,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
       </div>
 
       {/* ── RATE & OVERHEAD INPUTS */}
-      <div>
+      <div data-settings-anchor="financial-rates" className="rounded-xl">
         <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">Shop Rates</p>
         <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -982,7 +982,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
       </div>
 
       {/* ── QUOTE CALCULATOR (existing) */}
-      <div>
+      <div data-settings-anchor="financial-calculator" className="rounded-2xl">
         <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">Quote Calculator</p>
         <QuoteCalculator settings={settings} />
       </div>
@@ -4031,6 +4031,213 @@ const SampleTimesEntry: React.FC<{
   );
 };
 
+// ═════════════════════════════════════════════════════════════════════
+// SETTINGS SEARCH — find any setting by keyword and jump straight to it.
+// Each entry maps plain-language synonyms → a tab + a data-settings-anchor
+// attribute somewhere in that tab's markup. Selecting a result switches
+// tabs, scrolls the anchored section into view, and flashes it briefly.
+// ═════════════════════════════════════════════════════════════════════
+type SettingsTabId = 'profile' | 'schedule' | 'production' | 'financial' | 'goals' | 'documents' | 'tv' | 'system';
+
+interface SettingsSearchEntry {
+  /** Plain-language synonyms a shop owner might type */
+  keywords: string[];
+  label: string;
+  tab: SettingsTabId;
+  anchor: string;
+  /** Documents tab has a Quote/Traveler sub-toggle — jump must pick the right pane */
+  docSubTab?: 'quote' | 'traveler';
+}
+
+const SETTINGS_TAB_LABELS: Record<SettingsTabId, string> = {
+  profile: 'Shop Profile',
+  schedule: 'Schedule & Time',
+  system: 'Defaults',
+  production: 'Production',
+  financial: 'Financial',
+  goals: 'Goals',
+  documents: 'Documents',
+  tv: 'Live Display',
+};
+
+const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
+  // ── Shop Profile ──
+  { label: 'Company Logo', tab: 'profile', anchor: 'profile-logo', keywords: ['logo', 'picture', 'brand', 'image', 'upload', 'branding'] },
+  { label: 'Company Name', tab: 'profile', anchor: 'profile-company', keywords: ['company', 'name', 'business', 'shop name'] },
+  { label: 'Phone Number', tab: 'profile', anchor: 'profile-company', keywords: ['phone', 'telephone', 'number', 'contact'] },
+  { label: 'Company Email', tab: 'profile', anchor: 'profile-company', keywords: ['email', 'contact', 'mail'] },
+  { label: 'Company Address', tab: 'profile', anchor: 'profile-company', keywords: ['address', 'street', 'location', 'city'] },
+  { label: 'Website & Tax ID', tab: 'profile', anchor: 'profile-company', keywords: ['website', 'url', 'tax', 'ein', 'vat'] },
+  { label: 'Theme (Dark / Light)', tab: 'profile', anchor: 'profile-theme', keywords: ['theme', 'dark', 'light', 'mode', 'appearance', 'color scheme'] },
+  // ── Schedule & Time ──
+  { label: 'Shift Alarms & Breaks', tab: 'schedule', anchor: 'schedule-alarms', keywords: ['alarm', 'shift', 'bell', 'buzzer', 'break', 'sound', 'horn', 'siren', 'start time', 'end time'] },
+  { label: 'Auto-Pause at Lunch', tab: 'schedule', anchor: 'schedule-lunch', keywords: ['lunch', 'meal', 'pause', 'auto pause', 'timers'] },
+  { label: 'Auto Clock-Out', tab: 'schedule', anchor: 'schedule-autoclockout', keywords: ['clock out', 'clockout', 'auto stop', 'forgot', 'timer', 'end of day', 'punch out'] },
+  { label: 'Clock-Out Audit Log', tab: 'schedule', anchor: 'schedule-audit', keywords: ['audit', 'history', 'log', 'clock out', 'who forgot'] },
+  // ── Production ──
+  { label: 'Workflow Stages', tab: 'production', anchor: 'production-stages', keywords: ['stages', 'workflow', 'pipeline', 'status', 'kanban', 'steps', 'job stages'] },
+  { label: 'Operations List', tab: 'production', anchor: 'production-operations', keywords: ['operations', 'ops', 'process', 'tasks', 'deburr', 'tumble', 'work types'] },
+  { label: 'Operations → Stage Routing', tab: 'production', anchor: 'production-opmap', keywords: ['routing', 'route', 'auto route', 'map', 'mapper', 'clock in moves job'] },
+  { label: 'Per-Customer Pipelines', tab: 'production', anchor: 'production-pipelines', keywords: ['customer pipeline', 'custom workflow', 'per customer', 'stage sequence'] },
+  { label: 'Machines & Stations', tab: 'production', anchor: 'production-machines', keywords: ['machine', 'station', 'equipment', 'tumbler', 'workcenter', 'work center'] },
+  { label: 'Process Library (Pricing Templates)', tab: 'production', anchor: 'production-processes', keywords: ['process library', 'pricing', 'templates', 'presets', 'line items'] },
+  { label: 'Customers', tab: 'production', anchor: 'production-customers', keywords: ['customer', 'client', 'company', 'contact', 'portal', 'accounts'] },
+  { label: 'Vendors & Suppliers', tab: 'production', anchor: 'production-vendors', keywords: ['vendor', 'supplier', 'purchase order', 'po', 'outside service'] },
+  // ── Financial ──
+  { label: 'Live Shop Economics (30 days)', tab: 'financial', anchor: 'financial-live', keywords: ['profit', 'margin', 'revenue', 'economics', 'money', 'cost', 'gross'] },
+  { label: 'Shop Hourly Rate', tab: 'financial', anchor: 'financial-rates', keywords: ['shop rate', 'hourly', 'rate', 'labor', 'wage', 'fallback rate'] },
+  { label: 'Monthly Overhead', tab: 'financial', anchor: 'financial-rates', keywords: ['overhead', 'rent', 'utilities', 'insurance', 'fixed costs'] },
+  { label: 'Productive Hours / Month', tab: 'financial', anchor: 'financial-rates', keywords: ['productive hours', 'billable', 'work hours', 'monthly hours'] },
+  { label: 'Monthly Revenue Goal', tab: 'financial', anchor: 'financial-rates', keywords: ['revenue goal', 'sales target', 'monthly goal'] },
+  { label: 'Quote Calculator', tab: 'financial', anchor: 'financial-calculator', keywords: ['calculator', 'quote', 'price', 'estimate', 'markup', 'per part'] },
+  // ── Goals ──
+  { label: 'Shop Goals & Targets', tab: 'goals', anchor: 'goals-overview', keywords: ['goals', 'targets', 'kpi', 'metrics', 'on-time', 'rework', 'jobs per week'] },
+  { label: 'Edit Goal Targets', tab: 'goals', anchor: 'goals-list', keywords: ['goal target', 'edit goal', 'goal period', 'goal color', 'show on tv'] },
+  // ── Documents · Quote / Invoice ──
+  { label: 'Document Logo', tab: 'documents', anchor: 'documents-logo', keywords: ['logo', 'document logo', 'quote logo', 'brand'] },
+  { label: 'Quote Numbering & Prefix', tab: 'documents', anchor: 'documents-numbering', docSubTab: 'quote', keywords: ['numbering', 'prefix', 'quote number', 'invoice number', 'next number'] },
+  { label: 'Quote Header (Ship To / Due / Terms)', tab: 'documents', anchor: 'documents-header', docSubTab: 'quote', keywords: ['header', 'ship to', 'shipping', 'due date', 'terms'] },
+  { label: 'Quote Table Columns', tab: 'documents', anchor: 'documents-table', docSubTab: 'quote', keywords: ['table', 'columns', 'unit', 'rate', 'quantity', 'qty'] },
+  { label: 'Signature Lines & Certificate', tab: 'documents', anchor: 'documents-footer', docSubTab: 'quote', keywords: ['signature', 'sign', 'certificate', 'conformance', 'comment', 'footer'] },
+  { label: 'Project Detail Fields', tab: 'documents', anchor: 'documents-project-fields', docSubTab: 'quote', keywords: ['project fields', 'po number', 'part number', 'custom fields'] },
+  { label: 'Quote Defaults (Terms · Tax · Markup)', tab: 'documents', anchor: 'documents-defaults', docSubTab: 'quote', keywords: ['payment terms', 'tax', 'discount', 'markup', 'margin', 'net 30', 'defaults'] },
+  { label: 'Snippet Library', tab: 'documents', anchor: 'documents-snippets', docSubTab: 'quote', keywords: ['snippet', 'text blocks', 'boilerplate', 'reusable text'] },
+  { label: 'Document Accent Color', tab: 'documents', anchor: 'documents-color', docSubTab: 'quote', keywords: ['color', 'accent', 'document color', 'brand color'] },
+  { label: 'Watermark (Draft / Confidential)', tab: 'documents', anchor: 'documents-watermark', docSubTab: 'quote', keywords: ['watermark', 'draft', 'sample', 'confidential', 'void', 'copy'] },
+  // ── Documents · Job Traveler ──
+  { label: 'Job Traveler Layout', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['traveler', 'traveller', 'route sheet', 'shop floor', 'print', 'work order'] },
+  { label: 'Traveler QR Code', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['qr', 'qr code', 'barcode', 'scan'] },
+  { label: 'Traveler Header Banner (ITAR etc.)', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['banner', 'itar', 'as9100', 'certified', 'header strip'] },
+  { label: 'Traveler Sign-Off & Operation Log', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['sign off', 'signoff', 'operation log', 'inspector', 'rows'] },
+  // ── Live Display (TV) ──
+  { label: 'Weather Location', tab: 'tv', anchor: 'tv-weather', keywords: ['weather', 'temperature', 'city', 'zip', 'location', 'forecast'] },
+  { label: 'TV Stream Link', tab: 'tv', anchor: 'tv-link', keywords: ['tv link', 'tv url', 'wall display', 'token', 'stream', 'shareable', 'monitor'] },
+  { label: 'TV Privacy (Revenue / Names)', tab: 'tv', anchor: 'tv-privacy', keywords: ['privacy', 'hide', 'revenue', 'customer names', 'sensitive', 'dollar'] },
+  { label: 'TV Display Options', tab: 'tv', anchor: 'tv-display', keywords: ['clock', 'stats bar', 'jobs belt', 'card size', 'scroll speed', 'display', 'header'] },
+  { label: 'TV Slideshow Timing', tab: 'tv', anchor: 'tv-slideshow', keywords: ['slideshow', 'rotate', 'duration', 'slide timing'] },
+  { label: 'TV Slides Editor', tab: 'tv', anchor: 'tv-slides', keywords: ['slides', 'announcement', 'photos', 'messages', 'birthday', 'safety'] },
+  // ── System / Defaults ──
+  { label: 'Default Job Priority', tab: 'system', anchor: 'system-job-defaults', keywords: ['priority', 'urgent', 'default priority', 'new job'] },
+  { label: 'Default Payment Terms', tab: 'system', anchor: 'system-job-defaults', keywords: ['payment terms', 'net 30', 'net 15', 'terms'] },
+  { label: 'Weekly Goal Hours (Workers)', tab: 'system', anchor: 'system-worker-defaults', keywords: ['weekly hours', 'worker goal', 'goal hours', '40 hours', 'target hours'] },
+  { label: 'Daily Email Recap', tab: 'system', anchor: 'system-recap', keywords: ['recap', 'daily email', 'summary', 'nightly', 'report', 'email'] },
+  { label: 'Recap Send Time & Timezone', tab: 'system', anchor: 'system-recap', keywords: ['timezone', 'time zone', 'send time', 'auto send', 'schedule email'] },
+  { label: 'Morning Briefing (Push)', tab: 'system', anchor: 'system-push', keywords: ['briefing', 'morning', 'push', 'notification', 'due today', 'overdue'] },
+  { label: 'Worker Scorecards (Push)', tab: 'system', anchor: 'system-push', keywords: ['scorecard', 'end of shift', 'worker stats', 'push', 'pieces'] },
+  { label: 'Rate Learning & Sample Times', tab: 'system', anchor: 'system-rate-learning', keywords: ['rate learning', 'sample times', 'estimates', 'learn', 'pieces per hour'] },
+  { label: 'Estimate Buffer %', tab: 'system', anchor: 'system-rate-learning', keywords: ['buffer', 'padding', 'generosity', 'estimate padding'] },
+  { label: 'Pricing Markup %', tab: 'system', anchor: 'system-rate-learning', keywords: ['pricing markup', 'markup', 'charge per part', 'labor cost'] },
+  { label: 'Over-Budget Email Alerts', tab: 'system', anchor: 'system-rate-learning', keywords: ['over budget', 'alert', 'emailjs', 'exceeded', 'warning email'] },
+  { label: 'Backfill Historical Pieces', tab: 'system', anchor: 'system-rate-learning', keywords: ['backfill', 'historical', 'pieces data', 'old jobs'] },
+];
+
+/** Token-AND matcher with light ranking: exact keyword > prefix > substring. */
+const searchSettingsIndex = (query: string): SettingsSearchEntry[] => {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const scored: { entry: SettingsSearchEntry; score: number }[] = [];
+  for (const entry of SETTINGS_SEARCH_INDEX) {
+    const label = entry.label.toLowerCase();
+    let total = 0;
+    let allMatch = true;
+    for (const t of tokens) {
+      let s = 0;
+      if (label.startsWith(t)) s = 5;
+      else if (label.includes(t)) s = 3;
+      for (const k of entry.keywords) {
+        if (k === t) { s = Math.max(s, 6); break; }
+        if (k.startsWith(t)) s = Math.max(s, 4);
+        else if (k.includes(t)) s = Math.max(s, 2);
+      }
+      if (s === 0) { allMatch = false; break; }
+      total += s;
+    }
+    if (allMatch) scored.push({ entry, score: total });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, 8).map(s => s.entry);
+};
+
+// Compact search input + dropdown. Self-contained query state so the desktop
+// sidebar and mobile bar instances stay independent. Dropdown is absolutely
+// positioned so it never shifts the surrounding layout.
+const SettingsSearchBox = ({ onJump }: { onJump: (entry: SettingsSearchEntry) => void }) => {
+  const [q, setQ] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const matches = useMemo(() => searchSettingsIndex(q), [q]);
+  const open = q.trim().length >= 2;
+
+  const select = (entry: SettingsSearchEntry) => {
+    setQ('');
+    setActiveIdx(0);
+    onJump(entry);
+  };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
+        <input
+          type="text"
+          value={q}
+          onChange={e => { setQ(e.target.value); setActiveIdx(0); }}
+          onKeyDown={e => {
+            if (e.key === 'Escape') {
+              setQ(''); setActiveIdx(0); (e.target as HTMLInputElement).blur();
+            } else if (e.key === 'Enter') {
+              const m = matches[activeIdx] || matches[0];
+              if (m) select(m);
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault(); setActiveIdx(i => Math.min(i + 1, matches.length - 1));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0));
+            }
+          }}
+          placeholder="Search settings…"
+          aria-label="Search settings"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full bg-zinc-900/70 border border-white/10 rounded-xl pl-9 pr-8 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/40 focus:bg-zinc-900 transition-colors"
+        />
+        {q && (
+          <button
+            type="button"
+            onClick={() => { setQ(''); setActiveIdx(0); }}
+            aria-label="Clear search"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          >
+            <X className="w-3 h-3" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1.5 z-[70] bg-zinc-900 border border-white/10 rounded-xl shadow-2xl shadow-black/60 overflow-hidden animate-fade-in">
+          {matches.length === 0 ? (
+            <p className="px-3 py-2.5 text-xs text-zinc-500">No settings match “{q.trim()}”</p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+              {matches.map((m, i) => (
+                <button
+                  key={`${m.anchor}-${m.label}`}
+                  type="button"
+                  role="option"
+                  aria-selected={i === activeIdx}
+                  onMouseEnter={() => setActiveIdx(i)}
+                  onClick={() => select(m)}
+                  className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 transition-colors ${i === activeIdx ? 'bg-amber-500/15' : ''}`}
+                >
+                  <span className={`text-xs font-bold truncate ${i === activeIdx ? 'text-white' : 'text-zinc-300'}`}>{m.label}</span>
+                  <span className="text-[10px] text-zinc-500 shrink-0">{SETTINGS_TAB_LABELS[m.tab]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
@@ -4140,6 +4347,26 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   // Flat list for mobile pills
   const sideItems = sideGroups.flatMap(g => g.items);
 
+  // ── Settings search: jump to any anchored section ────────────────────
+  // Switch tab (and Documents sub-tab) first, then after a tick — once the
+  // tab content has rendered — scroll the anchor into view and flash it.
+  const jumpToSetting = useCallback((entry: SettingsSearchEntry) => {
+    setSettingsTab(entry.tab);
+    if (entry.docSubTab) setDocSubTab(entry.docSubTab);
+    if (entry.anchor === 'production-operations') setOpsOpen(true); // collapsed by default
+    setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[data-settings-anchor="${entry.anchor}"]`);
+      if (!el) return;
+      if (el instanceof HTMLDetailsElement) el.open = true; // expand collapsed <details> sections
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Restart the flash animation even if the same anchor is picked twice
+      el.classList.remove('settings-anchor-flash');
+      void el.offsetWidth;
+      el.classList.add('settings-anchor-flash');
+      window.setTimeout(() => el.classList.remove('settings-anchor-flash'), 1700);
+    }, 80);
+  }, []);
+
   // ── Email recap ──────────────────────────────────────────────────────
   const [recapSending, setRecapSending] = useState(false);
   const [recapStatus, setRecapStatus] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -4175,6 +4402,19 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
   return (
     <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0 pb-6 md:pb-0">
+      {/* Search-jump flash + scroll offset (keeps anchors clear of sticky bars) */}
+      <style>{`
+        @keyframes settingsFlash {
+          0%   { box-shadow: 0 0 0 3px rgba(245,158,11,0.8), 0 0 24px rgba(245,158,11,0.25); }
+          60%  { box-shadow: 0 0 0 3px rgba(245,158,11,0.45), 0 0 12px rgba(245,158,11,0.1); }
+          100% { box-shadow: 0 0 0 3px rgba(245,158,11,0); }
+        }
+        .settings-anchor-flash { animation: settingsFlash 1.6s ease-out; }
+        /* Mobile: clear the sticky app header + search + pill tabs (~150px);
+           desktop sidebar layout only needs a small breathing gap. */
+        [data-settings-anchor] { scroll-margin-top: 160px; }
+        @media (min-width: 768px) { [data-settings-anchor] { scroll-margin-top: 24px; } }
+      `}</style>
       {/* Floating save indicator — fixed position so it NEVER shifts layout
           (the old inline version grew the sticky mobile tab bar on every save,
           making the page jump while typing). Visible on every screen size,
@@ -4196,6 +4436,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
       {/* ── LEFT SIDEBAR — Apple Settings style, grouped nav ── */}
       <aside className="w-52 xl:w-60 flex-shrink-0 hidden md:block">
         <div className="sticky top-4">
+          {/* Search — finds any setting by keyword and jumps to it */}
+          <div className="mb-4">
+            <SettingsSearchBox onJump={jumpToSetting} />
+          </div>
           {/* Header */}
           <div className="flex items-center justify-between px-2 mb-4">
             <p className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.12em]">Settings</p>
@@ -4262,6 +4506,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
       <div className="flex-1 min-w-0">
         {/* Mobile tabs — horizontal pill scroll */}
         <div className="md:hidden sticky top-[56px] z-10 -mx-4 px-4 pb-3 pt-1 bg-zinc-950/90 backdrop-blur-xl mb-4">
+          {/* Search — same jump behavior as desktop sidebar */}
+          <div className="mb-2">
+            <SettingsSearchBox onJump={jumpToSetting} />
+          </div>
           <div className="flex gap-1 overflow-x-auto no-scrollbar">
             {sideItems.map(item => (
               <button key={item.id} onClick={() => setSettingsTab(item.id)}
@@ -4309,7 +4557,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4">
             {/* Logo uploader — clear dropzone + separate remove button so
                 it doesn't live on top of the drop target. */}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
+            <div data-settings-anchor="profile-logo" className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
               <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Company Logo</p>
               <div
                 className="border-2 border-dashed border-white/10 rounded-xl p-5 text-center cursor-pointer hover:border-amber-500/40 hover:bg-amber-500/5 transition-all aspect-square flex items-center justify-center"
@@ -4379,7 +4627,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
 
             {/* Basics — name, phone, email, address */}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
+            <div data-settings-anchor="profile-company" className="bg-zinc-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
               <div>
                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1.5">Company Name</label>
                 <input
@@ -4445,7 +4693,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* Theme */}
-          <div>
+          <div data-settings-anchor="profile-theme" className="rounded-2xl">
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Appearance</p>
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
               <div className="px-4 py-3 flex items-center justify-between">
@@ -4472,11 +4720,13 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             <p className="text-sm text-zinc-500">Set up break alarms, lunch times, and shift end — fully customizable.</p>
           </div>
 
-          <ShiftAlarmsEditor settings={settings} setSettings={setSettings} addToast={addToast} />
+          <div data-settings-anchor="schedule-alarms" className="rounded-2xl">
+            <ShiftAlarmsEditor settings={settings} setSettings={setSettings} addToast={addToast} />
+          </div>
 
           {/* Lunch pause toggle — auto-pauses timers during the lunch window.
               This is separate from alarms (which just fire notifications). */}
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
+          <div data-settings-anchor="schedule-lunch" className="bg-zinc-900/50 border border-white/5 rounded-xl">
             <div className="px-4 py-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -4494,7 +4744,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               Shift alarm clock-out = in-browser only (tab must be open).
               This setting = server sweep runs every minute regardless.
               ─────────────────────────────────────────────────────────── */}
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
+          <div data-settings-anchor="schedule-autoclockout" className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden">
             <div className="px-4 py-3 flex items-center justify-between border-b border-white/[0.04]">
               <div>
                 <p className="text-sm font-semibold text-white flex items-center gap-1.5">
@@ -4532,7 +4782,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* ── Clock-Out Audit Log ────────────────────────────────────── */}
-          <ClockOutAuditLog logs={tvAllLogs} />
+          <div data-settings-anchor="schedule-audit" className="rounded-2xl">
+            <ClockOutAuditLog logs={tvAllLogs} />
+          </div>
 
         </div>
       )}
@@ -4557,7 +4809,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
 
           {/* Workflow Stages */}
-          <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5 space-y-4">
+          <div data-settings-anchor="production-stages" className="bg-zinc-900/50 border border-white/5 rounded-2xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-bold text-white">Workflow Stages</h4>
@@ -4659,7 +4911,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* Operations */}
-          <div>
+          <div data-settings-anchor="production-operations" className="rounded-xl">
             <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
               <button onClick={() => setOpsOpen(!opsOpen)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 rounded-xl transition-colors">
                 <div className="flex items-center gap-2">
@@ -4688,10 +4940,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
           {/* Operations → Stages mapper — drag operations into their stages
               so clock-ins auto-route jobs. */}
-          <OperationsStageMapper settings={settings} setSettings={setSettings} />
+          <div data-settings-anchor="production-opmap" className="rounded-2xl">
+            <OperationsStageMapper settings={settings} setSettings={setSettings} />
+          </div>
 
           {/* Per-Customer Pipelines ─ each company can have a unique stage sequence */}
-          <CustomerPipelineAssigner settings={settings} setSettings={setSettings} />
+          <div data-settings-anchor="production-pipelines" className="rounded-2xl">
+            <CustomerPipelineAssigner settings={settings} setSettings={setSettings} />
+          </div>
           </section>
 
           {/* ═══════════════════════════════════════════════════════════
@@ -4706,10 +4962,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
 
             {/* Machines / Stations — physical work locations */}
-            <MachineManager settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
+            <div data-settings-anchor="production-machines" className="rounded-2xl">
+              <MachineManager settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
+            </div>
 
             {/* Process Library — reusable pricing templates that pre-fill quote line items */}
-            <ProcessLibraryManager settings={settings} setSettings={setSettings} />
+            <div data-settings-anchor="production-processes" className="rounded-2xl">
+              <ProcessLibraryManager settings={settings} setSettings={setSettings} />
+            </div>
           </section>
 
           {/* ═══════════════════════════════════════════════════════════
@@ -4724,10 +4984,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
 
             {/* Customers — full profile editor + per-customer workflow routing */}
-            <CustomerManager addToast={addToast} settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
+            <div data-settings-anchor="production-customers" className="rounded-2xl">
+              <CustomerManager addToast={addToast} settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
+            </div>
 
             {/* Vendors — reusable supplier records used by Purchase Orders */}
-            <VendorsManager addToast={addToast} />
+            <div data-settings-anchor="production-vendors" className="rounded-2xl">
+              <VendorsManager addToast={addToast} />
+            </div>
           </section>
         </div>
       )}
@@ -4784,7 +5048,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
 
             {/* Logo — shared between both docs */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-logo" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Logo <span className="text-[9px] text-zinc-600 ml-1 normal-case font-normal">(shared)</span></span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -4816,7 +5080,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             {/* ─── Quote/Invoice only sections ─── */}
             {docSubTab === 'quote' && <>
             {/* Numbering */}
-            <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-numbering" open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Numbering</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -4839,7 +5103,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Header */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-header" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Header</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -4865,7 +5129,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             {/* Job Traveler — production route sheet customization. Every shop
                 uses a slightly different traveler; these toggles let them
                 hide sections they don't need without touching code. */}
-            <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-traveler" open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white flex items-center gap-2">📋 Job Traveler</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -4957,7 +5221,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             {docSubTab === 'quote' && <>
 
             {/* Table */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-table" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Table</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -4977,7 +5241,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Footer */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-footer" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Footer</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -4995,7 +5259,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Project Details */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-project-fields" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Project Details</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -5016,7 +5280,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Defaults */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-defaults" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Defaults</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -5035,10 +5299,12 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Snippet Library — reusable text blocks (Round 1 #8) */}
-            <SnippetLibraryManager settings={settings} setSettings={setSettings} />
+            <div data-settings-anchor="documents-snippets" className="rounded-2xl">
+              <SnippetLibraryManager settings={settings} setSettings={setSettings} />
+            </div>
 
             {/* Color */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-color" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Color</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -5058,7 +5324,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Watermark */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="documents-watermark" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                 <span className="text-sm font-bold text-white">Watermark</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
@@ -5165,10 +5431,12 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
 
             {/* Weather Location */}
-            <WeatherLocationCard addToast={addToast} settings={settings} setSettings={setSettings} />
+            <div data-settings-anchor="tv-weather" className="rounded-2xl">
+              <WeatherLocationCard addToast={addToast} settings={settings} setSettings={setSettings} />
+            </div>
 
             {/* TV Stream Link */}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
+            <div data-settings-anchor="tv-link" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <Radio className="w-4 h-4 text-red-500" />
                 <span className="text-sm font-bold text-white">TV Stream Link</span>
@@ -5207,7 +5475,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
 
             {/* Privacy — sensitive data toggles */}
-            <details open className="bg-red-500/5 border border-red-500/20 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="tv-privacy" open className="bg-red-500/5 border border-red-500/20 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-red-500/10">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold text-white flex items-center gap-1.5">🔒 Privacy</span>
@@ -5230,7 +5498,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Display Options */}
-            <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="tv-display" open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Display</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
               <div className="px-4 pb-4 space-y-2">
                 {[
@@ -5267,7 +5535,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Slideshow */}
-            <details className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
+            <details data-settings-anchor="tv-slideshow" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Slideshow</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
               <div className="px-4 pb-4 space-y-3">
                 <div className="flex items-center justify-between py-1">
@@ -5284,7 +5552,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </details>
 
             {/* Slides — rich editor with all slide types */}
-            <TvSlidesEditor settings={settings} setSettings={setSettings} />
+            <div data-settings-anchor="tv-slides" className="rounded-2xl">
+              <TvSlidesEditor settings={settings} setSettings={setSettings} />
+            </div>
           </div>
 
           {/* RIGHT: True TV-mode Mirror Preview */}
@@ -5304,7 +5574,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* Job Defaults */}
-          <div>
+          <div data-settings-anchor="system-job-defaults" className="rounded-2xl">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Job Defaults</p>
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
               <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
@@ -5336,7 +5606,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* Worker Defaults */}
-          <div>
+          <div data-settings-anchor="system-worker-defaults" className="rounded-2xl">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Worker Defaults</p>
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
               <div className="px-4 py-3.5 flex items-center justify-between">
@@ -5358,7 +5628,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* Daily Email Recap */}
-          <div>
+          <div data-settings-anchor="system-recap" className="rounded-2xl">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Daily Email Recap</p>
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
               <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
@@ -5455,7 +5725,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* Daily Push Notifications — morning briefing + worker scorecards */}
-          <div>
+          <div data-settings-anchor="system-push" className="rounded-2xl">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Daily Push Notifications</p>
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
               <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.04]">
@@ -5486,7 +5756,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           </div>
 
           {/* ═══ Rate Learning ═══ */}
-          <div>
+          <div data-settings-anchor="system-rate-learning" className="rounded-2xl">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Rate Learning</p>
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden divide-y divide-white/[0.04]">
 
