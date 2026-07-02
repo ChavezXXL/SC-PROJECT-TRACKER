@@ -152,6 +152,21 @@ export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Pr
   }
 }
 
+/** Upload a job part photo to Firebase Storage. Part images used to live as
+ *  base64 INSIDE the job document — every device re-downloaded every photo on
+ *  every snapshot. Storage URLs keep job docs tiny and sync fast. */
+export async function uploadJobPartImage(file: File | Blob, jobId: string): Promise<string> {
+  try {
+    const storage = getStorage();
+    const path = `job-parts/${jobId}_${Date.now()}.jpg`;
+    const ref = storageRef(storage, path);
+    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 15_000, 'Storage upload');
+    return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
+  } catch (e) {
+    throw new Error('Storage upload failed: ' + (e as any)?.message);
+  }
+}
+
 /** Upload a customer-PO photo to Firebase Storage (separate path from samples). */
 export async function uploadCustomerPoPhoto(file: File | Blob, poId: string): Promise<string> {
   try {
@@ -969,6 +984,10 @@ export async function saveUser(user: User) {
   writeLS(LS.users, users);
 }
 
+// NOTE: Deleting a user INTENTIONALLY does not cascade to their TimeLogs.
+// Logs are payroll/job-costing history and must survive user deletion; each
+// TimeLog snapshots `userName` at creation, so historical entries remain
+// readable in reports even after the user document is gone.
 export async function deleteUser(id: string) {
   if (dbInstance) {
       try {
@@ -984,8 +1003,11 @@ export async function deleteUser(id: string) {
 }
 
 export async function loginUser(username: string, pin: string): Promise<User | null> {
-  const normalizedUser = username.toLowerCase();
-  
+  // Trim both inputs — mobile keyboards commonly append a trailing space,
+  // which would otherwise fail an exact match. PINs stay case-sensitive (digits).
+  const normalizedUser = username.trim().toLowerCase();
+  const normalizedPin = pin.trim();
+
   if (dbInstance) {
       try {
         const q = query(collection(dbInstance, COL.users));
@@ -995,7 +1017,7 @@ export async function loginUser(username: string, pin: string): Promise<User | n
         ]);
         firebaseStatus = { connected: true };
         const users = snap.docs.map((d: any) => d.data() as User);
-        const found = users.find((u: User) => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
+        const found = users.find((u: User) => u.username.trim().toLowerCase() === normalizedUser && u.pin.trim() === normalizedPin && u.isActive !== false);
         if (found) return found;
       } catch (e) {
         console.warn("Firebase Login failed (Network/Config/Timeout), falling back to Local Storage:", e);
@@ -1004,7 +1026,7 @@ export async function loginUser(username: string, pin: string): Promise<User | n
 
   ensureSeedUsers();
   const users = readLS<User[]>(LS.users, []);
-  const found = users.find(u => u.username.toLowerCase() === normalizedUser && u.pin === pin && u.isActive !== false);
+  const found = users.find(u => u.username.trim().toLowerCase() === normalizedUser && u.pin.trim() === normalizedPin && u.isActive !== false);
   return found || null;
 }
 
@@ -1719,6 +1741,50 @@ export async function migrateLocalPhotosToFirestore(): Promise<void> {
       // Per-sample failure must never crash the whole migration
       console.warn(`[FabTrack] Photo migration failed for sample ${local.id}:`, e?.message);
     }
+  }
+}
+
+// ── Job part-image → Storage migration ────────────────────────────────
+// Part photos historically lived as base64 INSIDE job documents, so every
+// device re-downloaded every photo on every jobs snapshot (a 100-job board
+// with 200KB photos = ~20MB per sync — the single biggest source of lag).
+// This moves them to Firebase Storage and patches the job with the URL.
+//
+// Safe by construction: capped per run (spreads work across startups),
+// re-checks each doc right before patching (another device may have done it),
+// patches ONLY the partImage field (updateDoc — never clobbers other edits),
+// and any failure just leaves that job on base64 until the next run.
+export async function migrateJobPartImagesToStorage(maxPerRun = 10): Promise<void> {
+  if (!dbInstance) return;
+  try {
+    const snap = await getDocs(collection(dbInstance, COL.jobs));
+    const candidates: Job[] = [];
+    snap.forEach(d => {
+      const j = d.data() as Job;
+      if (j.partImage && j.partImage.startsWith('data:')) candidates.push(j);
+    });
+    if (candidates.length === 0) return;
+
+    const batch = candidates.slice(0, maxPerRun);
+    console.log(`[FabTrack] Migrating ${batch.length}/${candidates.length} job part image(s) to Storage…`);
+    for (const job of batch) {
+      try {
+        // Re-check right before work — another device may have migrated it.
+        const fresh = await getDoc(doc(dbInstance!, COL.jobs, job.id));
+        const cur = fresh.exists() ? (fresh.data() as Job) : null;
+        if (!cur?.partImage || !cur.partImage.startsWith('data:')) continue;
+
+        const blob = dataUrlToBlob(cur.partImage);
+        if (!blob) continue;
+        const url = await uploadJobPartImage(blob, job.id);
+        await updateDoc(doc(dbInstance!, COL.jobs, job.id), { partImage: url });
+        console.log(`[FabTrack] ✓ Part image → Storage for job ${job.jobIdsDisplay || job.id}`);
+      } catch (e: any) {
+        console.warn(`[FabTrack] Part-image migration failed for job ${job.id}:`, e?.message);
+      }
+    }
+  } catch (e: any) {
+    console.warn('[FabTrack] Part-image migration skipped:', e?.message);
   }
 }
 

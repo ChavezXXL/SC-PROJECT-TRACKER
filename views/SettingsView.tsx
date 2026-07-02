@@ -574,6 +574,7 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
   const goals = settings.shopGoals || [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
   // Subscribe to live data so the progress bar on each goal row is always current
   const [gJobs, setGJobs] = useState<Job[]>([]);
   const [gLogs, setGLogs] = useState<TimeLog[]>([]);
@@ -593,7 +594,17 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
     next[idx] = { ...next[idx], ...patch };
     setSettings({ ...settings, shopGoals: next });
   };
-  const remove = (idx: number) => {
+  const remove = async (idx: number) => {
+    const goal = goals[idx];
+    const ok = await askConfirm({
+      title: `Delete goal "${goal?.label || 'Untitled'}"?`,
+      message: goal?.showOnTv !== false
+        ? 'This goal is shown on the TV display — deleting it removes it from all displays.'
+        : 'This goal will be permanently removed.',
+      tone: 'warning',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     setSettings({ ...settings, shopGoals: goals.filter((_, i) => i !== idx) });
   };
   const add = (metric: GoalMetric) => {
@@ -827,6 +838,7 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
           );
         })}
       </div>
+      {ConfirmHost}
     </div>
   );
 };
@@ -930,17 +942,17 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Fallback Rate</label>
-              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.shopRate || ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.shopRate ?? ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Used when a worker has no individual rate.</p>
             </div>
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Monthly Overhead</label>
-              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyOverhead || ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyOverhead ?? ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Rent, utilities, insurance, software, etc.</p>
             </div>
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Productive Hours</label>
-              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyWorkHours || ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyWorkHours ?? ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Billable hours per month per worker.</p>
             </div>
           </div>
@@ -949,7 +961,7 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
             <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Monthly Revenue Goal</label>
             <div className="relative max-w-xs">
               <span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span>
-              <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pl-7 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyRevenueGoal || ''} onChange={e => setSettings({ ...settings, monthlyRevenueGoal: Number(e.target.value) || undefined })} placeholder="e.g. 25000" />
+              <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pl-7 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyRevenueGoal ?? ''} onChange={e => setSettings({ ...settings, monthlyRevenueGoal: Number(e.target.value) || undefined })} placeholder="e.g. 25000" />
             </div>
             <p className="text-[10px] text-zinc-600 mt-1">Shows a progress bar on the Dashboard — how close you are to hitting your monthly target.</p>
           </div>
@@ -1139,6 +1151,7 @@ const QuoteCalculator = ({ settings }: { settings: SystemSettings }) => {
 const MachineManager = ({ settings, onSaveSettings }: { settings: SystemSettings; onSaveSettings: (s: SystemSettings) => void }) => {
   const [open, setOpen] = useState(false);
   const [newMachine, setNewMachine] = useState('');
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const machines = settings.machines || [];
   const handleAdd = () => {
     const name = newMachine.trim();
@@ -1147,7 +1160,16 @@ const MachineManager = ({ settings, onSaveSettings }: { settings: SystemSettings
     onSaveSettings({ ...settings, machines: [...machines, name] });
     setNewMachine('');
   };
-  const handleDelete = (m: string) => onSaveSettings({ ...settings, machines: machines.filter(x => x !== m) });
+  const handleDelete = async (m: string) => {
+    const ok = await askConfirm({
+      title: `Remove "${m}"?`,
+      message: 'This machine/station will no longer be offered when workers tag where an operation happened. Past logs keep their tag.',
+      tone: 'warning',
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
+    onSaveSettings({ ...settings, machines: machines.filter(x => x !== m) });
+  };
   return (
     <div>
       <div className="bg-zinc-900/50 border border-white/5 rounded-xl">
@@ -1192,6 +1214,7 @@ const MachineManager = ({ settings, onSaveSettings }: { settings: SystemSettings
           </div>
         )}
       </div>
+      {ConfirmHost}
     </div>
   );
 };
@@ -1206,6 +1229,7 @@ const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any
   const [editingProfile, setEditingProfile] = useState<string | null>(null);
   const [previewingPortal, setPreviewingPortal] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
 
   useEffect(() => DB.subscribeJobs(setJobs), []);
 
@@ -1465,7 +1489,17 @@ const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any
                         <button
                           type="button"
                           aria-label={`Remove ${r.name}`}
-                          onClick={(e) => { e.preventDefault(); onSaveSettings({ ...settings, clients: (settings.clients || []).filter(c => c !== r.name) }); }}
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            const ok = await askConfirm({
+                              title: `Remove customer "${r.name}"?`,
+                              message: 'They have no jobs on file. This removes them from the customer list.',
+                              tone: 'warning',
+                              confirmLabel: 'Remove',
+                            });
+                            if (!ok) return;
+                            onSaveSettings({ ...settings, clients: (settings.clients || []).filter(c => c !== r.name) });
+                          }}
                           className="text-zinc-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Delete (no jobs)"
                         >
@@ -1520,6 +1554,7 @@ const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any
           addToast={addToast}
         />
       )}
+      {ConfirmHost}
     </div>
   );
 };
@@ -2037,14 +2072,35 @@ const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSett
   const processes = settings.processTemplates || [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showSeeds, setShowSeeds] = useState(false);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
+
+  // Duplicate names break quote auto-matching (find() returns the first hit) —
+  // warn inline while editing rather than blocking keystrokes.
+  const isDupName = (name: string, selfIdx: number) =>
+    processes.some((p, i) => i !== selfIdx && p.name.trim().toLowerCase() === name.trim().toLowerCase());
 
   const update = (idx: number, patch: Partial<ProcessTemplate>) => {
     const next = [...processes];
     next[idx] = { ...next[idx], ...patch };
     setSettings({ ...settings, processTemplates: next });
   };
-  const remove = (idx: number) => setSettings({ ...settings, processTemplates: processes.filter((_, i) => i !== idx) });
+  const remove = async (idx: number) => {
+    const procName = processes[idx]?.name || 'this process';
+    const ok = await askConfirm({
+      title: `Delete "${procName}"?`,
+      message: 'Removes it from the process library. Existing quotes that used it are unaffected.',
+      tone: 'warning',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    setSettings({ ...settings, processTemplates: processes.filter((_, i) => i !== idx) });
+  };
   const add = (seed?: Omit<ProcessTemplate, 'id'>) => {
+    // Don't create a second template with the same name — expand the existing one instead
+    if (seed) {
+      const existing = processes.find(x => x.name.trim().toLowerCase() === seed.name.trim().toLowerCase());
+      if (existing) { setExpandedId(existing.id); setShowSeeds(false); return; }
+    }
     const p: ProcessTemplate = seed
       ? { id: `proc_${Date.now()}`, ...seed }
       : { id: `proc_${Date.now()}`, name: 'New Process', unit: 'ea', pricePerUnit: 0, category: 'Other' };
@@ -2125,6 +2181,9 @@ const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSett
                           <div className="sm:col-span-2">
                             <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Process Name</label>
                             <input value={p.name} onChange={e => update(idx, { name: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500/50 focus:outline-none" />
+                            {isDupName(p.name, idx) && (
+                              <p className="text-[10px] text-red-400 mt-1">Another process already has this name — quote auto-matching may pick the wrong one.</p>
+                            )}
                           </div>
                           <div className="sm:col-span-2">
                             <label className="text-[10px] text-zinc-500 block mb-1 font-black uppercase tracking-widest">Default Line-Item Description</label>
@@ -2166,6 +2225,7 @@ const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSett
           ))}
         </div>
       )}
+      {ConfirmHost}
     </div>
   );
 };
@@ -2187,12 +2247,22 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
   const snippets = settings.quoteSnippets || [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showSeeds, setShowSeeds] = useState(false);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
 
   const update = (idx: number, patch: Partial<QuoteSnippet>) => {
     const next = [...snippets]; next[idx] = { ...next[idx], ...patch };
     setSettings({ ...settings, quoteSnippets: next });
   };
-  const remove = (idx: number) => setSettings({ ...settings, quoteSnippets: snippets.filter((_, i) => i !== idx) });
+  const remove = async (idx: number) => {
+    const ok = await askConfirm({
+      title: 'Delete snippet?',
+      message: `"${snippets[idx]?.label || 'This snippet'}" will be removed from the library. Quotes it was already inserted into keep their text.`,
+      tone: 'warning',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    setSettings({ ...settings, quoteSnippets: snippets.filter((_, i) => i !== idx) });
+  };
   const add = (seed?: Omit<QuoteSnippet, 'id'>) => {
     const s: QuoteSnippet = seed
       ? { id: `snip_${Date.now()}`, ...seed }
@@ -2275,6 +2345,7 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
             </div>
           );
         })}
+        {ConfirmHost}
       </div>
     </details>
   );
@@ -2760,7 +2831,15 @@ const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; s
     next[idx] = { ...next[idx], ...patch };
     setSettings({ ...settings, tvSlides: next });
   };
-  const remove = (idx: number) => {
+  const remove = async (idx: number) => {
+    const s = slides[idx];
+    const ok = await askConfirm({
+      title: `Remove "${s?.title || SLIDE_TYPE_META[s?.type || 'message']?.label || 'this'}" slide?`,
+      message: 'It drops out of the TV rotation immediately. You can re-add it later, but any custom text is lost.',
+      tone: 'warning',
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     setSettings({ ...settings, tvSlides: slides.filter((_, i) => i !== idx) });
   };
   const move = (idx: number, dir: -1 | 1) => {
@@ -4260,6 +4339,11 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   // typed in the last 1.5s), and another device's update mid-edit silently
   // discards the user's in-progress changes.
   const dirtyRef = useRef(false);
+  // Monotonic edit counter — bumped on every local change. A completing save
+  // only clears the dirty flag if NO newer edits happened while it was in
+  // flight; otherwise a remote snapshot arriving in that gap would clobber
+  // the user's newest unsaved keystrokes.
+  const editSeqRef = useRef(0);
   // Honest save indicator — driven by the REAL save promise, not a blind timer.
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const saveStateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4282,8 +4366,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
   const handleSave = () => {
     setSaveState('saving');
+    const mySeq = editSeqRef.current;
     DB.saveSettings(settings)
-      .then(() => { dirtyRef.current = false; flashSaveState('saved'); addToast('success', 'Settings Updated'); })
+      .then(() => { if (editSeqRef.current === mySeq) dirtyRef.current = false; flashSaveState('saved'); addToast('success', 'Settings Updated'); })
       .catch(() => { flashSaveState('error'); addToast('error', 'Save failed — check connection'); });
   };
 
@@ -4293,10 +4378,16 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   useEffect(() => {
     if (settingsJson === initialSettingsRef.current) return; // skip initial render
     dirtyRef.current = true;
+    const mySeq = ++editSeqRef.current;
     const timer = setTimeout(() => {
       setSaveState('saving');
       DB.saveSettings(settings)
-        .then(() => { dirtyRef.current = false; flashSaveState('saved'); })
+        .then(() => {
+          // Only clear the dirty flag if this save still reflects the latest
+          // edits — a newer keystroke mid-flight schedules its own save.
+          if (editSeqRef.current === mySeq) dirtyRef.current = false;
+          flashSaveState('saved');
+        })
         .catch(() => { flashSaveState('error'); /* stay dirty — retry on next edit */ });
     }, 1500);
     return () => clearTimeout(timer);
@@ -6065,15 +6156,21 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
     </div>
   );
 
-  // Streak calc
+  // Streak calc — compare local calendar-day keys (year/month/date) instead of
+  // ms boundary math so DST shifts and timezone offsets can't misfile a log
+  // into the wrong day.
   const WEEKLY_GOAL_HRS = 54;
+  const dayKey = (t: number | Date) => {
+    const d = t instanceof Date ? t : new Date(t);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  };
+  const workedDayKeys = new Set(recentLogs.map(l => dayKey(l.startTime)));
   const streakCheck = new Date(todayStart);
   let streak = 0;
   for (let i = 0; i < 60; i++) {
     const dow = streakCheck.getDay();
     if (dow === 0 || dow === 6) { streakCheck.setDate(streakCheck.getDate() - 1); continue; }
-    const dayEnd = new Date(streakCheck); dayEnd.setHours(23,59,59,999);
-    if (recentLogs.some(l => l.startTime >= streakCheck.getTime() && l.startTime <= dayEnd.getTime())) {
+    if (workedDayKeys.has(dayKey(streakCheck))) {
       streak++; streakCheck.setDate(streakCheck.getDate() - 1);
     } else break;
   }

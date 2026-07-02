@@ -53,7 +53,11 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
   if (priorJobs.length === 0) return null;
 
   const runs: PartRun[] = priorJobs.map(job => {
-    const jobLogs = logs.filter(l => l.jobId === job.id && l.endTime);
+    // Exclude isSample logs — admin-entered calibration samples feed the rate
+    // engine (rateLearning.ts) by design, but must never inflate real
+    // production-hour history used for quoting. Matches the convention in
+    // jobProfit.ts / overBudget.ts / shopIntelligence.ts.
+    const jobLogs = logs.filter(l => l.jobId === job.id && l.endTime && !l.isSample);
     // Prefer durationSeconds (stored precisely at clock-out) over the rounded
     // durationMinutes integer so that sub-minute sessions are counted accurately.
     const totalMins = jobLogs.reduce((a, l) => {

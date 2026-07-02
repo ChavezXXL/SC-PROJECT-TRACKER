@@ -14,6 +14,14 @@ service firebase.storage {
       allow delete: if false;
     }
 
+    // ── Job part photos (moved out of Firestore job docs) ─────────
+    match /job-parts/{fileName} {
+      allow read:  if true;
+      allow write: if request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if false;
+    }
+
     // ── Customer PO photos (uploaded from phone) ──────────────────
     // Full-document photos can be larger; cap at 10MB, images only.
     match /customer-pos/{fileName} {

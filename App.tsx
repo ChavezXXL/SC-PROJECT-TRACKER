@@ -49,6 +49,18 @@ const QualityView = React.lazy(() => import('./views/QualityView').then(m => ({ 
 const ReworkModal = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.ReworkModal })));
 const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })));
 
+/** base64 data URL → Blob (for uploading legacy/captured images to Storage). */
+function dataUrlToBlobApp(dataUrl: string): Blob | null {
+  try {
+    const [header, b64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  } catch { return null; }
+}
+
 /** Suspense fallback while a lazy view chunk downloads — calm, centered, brief. */
 const ViewLoader = () => (
   <div className="flex flex-col items-center justify-center py-24 gap-3 animate-fade-in">
@@ -496,12 +508,12 @@ const NotificationBell = ({ permission, requestPermission, userId, alerts, markR
   //   If bell is on right side (mobile top bar), open below-right
   const openOnRight = align === 'left' || (pos && pos.left < 200); // bell is on left → panel opens rightward
   const panelStyle: React.CSSProperties = isMobile
-    ? { left: 8, right: 8, top: 'auto', bottom: 8, maxHeight: 'calc(100vh - 80px)' }
+    ? { left: 8, right: 8, top: 'auto', bottom: 8, maxHeight: 'calc(100vh - 80px - env(safe-area-inset-bottom))' }
     : pos
       ? openOnRight
-        ? { top: pos.top, left: Math.min(pos.left, window.innerWidth - 392), width: 384, maxHeight: 'calc(100vh - 120px)' }
-        : { top: pos.top, right: Math.max(pos.right, 12), width: 384, maxHeight: 'calc(100vh - 120px)' }
-      : { top: 64, right: 12, width: 384, maxHeight: 'calc(100vh - 120px)' };
+        ? { top: pos.top, left: Math.min(pos.left, window.innerWidth - 392), width: 384, maxHeight: `calc(100vh - ${Math.max(pos.top + 24, 120)}px - env(safe-area-inset-bottom))` }
+        : { top: pos.top, right: Math.max(pos.right, 12), width: 384, maxHeight: `calc(100vh - ${Math.max(pos.top + 24, 120)}px - env(safe-area-inset-bottom))` }
+      : { top: 64, right: 12, width: 384, maxHeight: 'calc(100vh - 120px - env(safe-area-inset-bottom))' };
 
   return (
     <>
@@ -915,20 +927,20 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
             </div>
             <Clock className="w-8 h-8 text-zinc-600" />
           </div>
-          <div className="flex gap-3 w-full max-w-sm">
+          <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
             {isPaused ? (
               <button aria-label="Resume timer" onClick={handleResumeClick}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 active:scale-[0.97] transition-transform">
+                className="flex-1 w-full min-h-[48px] bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-5 sm:py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 active:scale-[0.97] transition-transform">
                 <Play className="w-5 h-5" aria-hidden="true" /> Resume
               </button>
             ) : onPause ? (
               <button aria-label="Pause timer" onClick={handlePauseClick}
-                className="flex-1 bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-yellow-900/20 active:scale-[0.97] transition-transform">
+                className="flex-1 w-full min-h-[48px] bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-5 sm:py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-yellow-900/20 active:scale-[0.97] transition-transform">
                 <Pause className="w-5 h-5" aria-hidden="true" /> Pause
               </button>
             ) : null}
             <button aria-label="Stop timer" onClick={handleStopClick} disabled={isStopping}
-              className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-red-900/20 active:scale-[0.97] transition-transform">
+              className="flex-1 w-full min-h-[48px] bg-red-600 hover:bg-red-500 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-5 sm:py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-red-900/20 active:scale-[0.97] transition-transform">
               {isStopping
                 ? <><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Stopping…</>
                 : <><StopCircle className="w-5 h-5" aria-hidden="true" /> Stop</>}
@@ -1388,10 +1400,10 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
 
         {/* Mode tabs */}
         <div className="flex border-t border-white/5">
-          <button onClick={() => { stopCamera(); setMode('input'); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'input' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+          <button onClick={() => { stopCamera(); setMode('input'); }} className={`flex-1 py-3 min-h-[44px] text-sm font-bold transition-all ${mode === 'input' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
             ⌨️ Type / Hardware
           </button>
-          <button onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-2.5 text-sm font-bold transition-all ${mode === 'camera' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+          <button onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-3 min-h-[44px] text-sm font-bold transition-all ${mode === 'camera' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
             📷 Camera Scan
           </button>
         </div>
@@ -1927,14 +1939,14 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 
       <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
         <div className="flex gap-2">
-          <button onClick={() => setTab('jobs')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
-          <button onClick={() => setTab('history')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
-          <button onClick={() => setTab('progress')} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'progress' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><Zap className="w-4 h-4" /> Stats</button>
+          <button onClick={() => setTab('jobs')} className={`px-4 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
+          <button onClick={() => setTab('history')} className={`px-4 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
+          <button onClick={() => setTab('progress')} className={`px-4 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'progress' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><Zap className="w-4 h-4" /> Stats</button>
         </div>
         <div className="flex items-center gap-2">
           {notifBell}
-          <button onClick={() => setTab('scan')} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-amber-600 text-white shadow' : 'bg-zinc-800 text-amber-400 hover:bg-amber-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
-          <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
+          <button onClick={() => setTab('scan')} className={`px-3 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-amber-600 text-white shadow' : 'bg-zinc-800 text-amber-400 hover:bg-amber-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
+          <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
         </div>
       </div>
 
@@ -2385,6 +2397,24 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
   const [loading, setLoading] = useState(false);
   const [loginSettings, setLoginSettings] = useState<SystemSettings>(DB.getSettings());
 
+  // Brute-force guard — 5 consecutive failures locks the form for 30s (persists across reloads)
+  const MAX_LOGIN_ATTEMPTS = 5;
+  const LOCKOUT_MS = 30_000;
+  const failedAttemptsRef = useRef<number>((() => {
+    try { return Number(localStorage.getItem('login_fails')) || 0; } catch { return 0; }
+  })());
+  const [lockedUntil, setLockedUntil] = useState<number>(() => {
+    try { return Number(localStorage.getItem('login_lock_until')) || 0; } catch { return 0; }
+  });
+  const [nowTick, setNowTick] = useState(Date.now());
+  const locked = lockedUntil > nowTick;
+
+  useEffect(() => {
+    if (!locked) return;
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [locked]);
+
   useEffect(() => {
     const unsub = DB.subscribeSettings(setLoginSettings);
     return unsub;
@@ -2395,14 +2425,28 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (lockedUntil > Date.now()) return;
     setLoading(true);
     try {
       const user = await DB.loginUser(username, pin);
       if (user) {
+        failedAttemptsRef.current = 0;
+        try { localStorage.removeItem('login_fails'); localStorage.removeItem('login_lock_until'); } catch {}
         onLogin(user);
         addToast('success', `Welcome, ${user.name}`);
       } else {
-        addToast('error', 'Invalid Credentials');
+        failedAttemptsRef.current += 1;
+        try { localStorage.setItem('login_fails', String(failedAttemptsRef.current)); } catch {}
+        if (failedAttemptsRef.current >= MAX_LOGIN_ATTEMPTS) {
+          const until = Date.now() + LOCKOUT_MS;
+          failedAttemptsRef.current = 0;
+          setLockedUntil(until);
+          setNowTick(Date.now());
+          try { localStorage.setItem('login_lock_until', String(until)); localStorage.removeItem('login_fails'); } catch {}
+          addToast('error', 'Too many failed attempts — locked for 30 seconds');
+        } else {
+          addToast('error', 'Invalid Credentials');
+        }
         setPin('');
       }
     } catch (e: any) {
@@ -2453,11 +2497,11 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
               placeholder="PIN"
             />
             <button
-              disabled={loading}
+              disabled={loading || locked}
               type="submit"
               className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white py-3.5 rounded-xl font-semibold tracking-wide transition-all shadow-lg shadow-amber-900/30 mt-1 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Verifying…' : 'Sign In →'}
+              {locked ? `Locked — try again in ${Math.max(1, Math.ceil((lockedUntil - nowTick) / 1000))}s` : loading ? 'Verifying…' : 'Sign In →'}
             </button>
           </form>
         </div>
@@ -5092,6 +5136,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // Checklist: only persist when edited in this modal session, so a stale
     // snapshot can't wipe check-offs made from the floor card meanwhile.
     if (!checklistDirtyRef.current) delete (job as any).checklist;
+    // Part photo → Storage URL (base64 kept only as offline fallback). Keeps
+    // job docs tiny so snapshots stay fast for every device.
+    if (job.partImage && job.partImage.startsWith('data:')) {
+      try {
+        const blob = dataUrlToBlobApp(job.partImage);
+        if (blob) job.partImage = await DB.uploadJobPartImage(blob, job.id);
+      } catch { /* keep base64 — migration upgrades it later */ }
+    }
     try {
       const isNew = !editingJob.id;
       await DB.saveJob(job);
@@ -5735,9 +5787,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             onChange={async (e) => {
                               const file = e.target.files?.[0]; if (!file) return;
                               const compressed = await compressImage(file, 800, 0.6);
+                              // Upload to Storage (base64 fallback) — keeps job docs tiny
+                              let partImage = compressed;
+                              try { const b = dataUrlToBlobApp(compressed); if (b) partImage = await DB.uploadJobPartImage(b, j.id); } catch {}
                               // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
                               const { currentStage: _cs, stageHistory: _sh, ...jRest } = j;
-                              await DB.saveJob({ ...jRest, partImage: compressed });
+                              await DB.saveJob({ ...jRest, partImage });
                               addToast('success', 'Photo added');
                             }}
                           />
@@ -6001,9 +6056,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
                             const file = e.target.files?.[0]; if (!file) return;
                             const compressed = await compressImage(file, 800, 0.6);
+                            // Upload to Storage (base64 fallback) — keeps job docs tiny
+                            let partImage = compressed;
+                            try { const b = dataUrlToBlobApp(compressed); if (b) partImage = await DB.uploadJobPartImage(b, j.id); } catch {}
                             // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
                             const { currentStage: _cs, stageHistory: _sh, ...jRest } = j;
-                            await DB.saveJob({ ...jRest, partImage: compressed });
+                            await DB.saveJob({ ...jRest, partImage });
                             addToast('success', 'Photo added');
                           }} />
                         </label>
@@ -7070,15 +7128,23 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
     return `EMP-${String(next).padStart(3, '0')}`;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingUser.name || !editingUser.username || !editingUser.pin) { addToast('error', 'Missing fields'); return; }
     if (editingUser.pin.length < 4) { addToast('error', 'PIN must be at least 4 digits'); return; }
     if (users.some(u => u.username.toLowerCase() === editingUser.username!.toLowerCase() && u.id !== editingUser.id)) {
       addToast('error', 'Username already taken');
       return;
     }
+    if (users.some(u => u.pin === editingUser.pin && u.id !== editingUser.id)) {
+      addToast('error', 'PIN already in use by another member');
+      return;
+    }
+    if (editingUser.hourlyRate !== undefined && editingUser.hourlyRate < 0) {
+      addToast('error', 'Hourly rate cannot be negative');
+      return;
+    }
     const newUser: User = {
-      id: editingUser.id || Date.now().toString(),
+      id: editingUser.id || crypto.randomUUID(),
       employeeId: editingUser.employeeId || nextEmployeeId(),
       name: editingUser.name,
       username: editingUser.username,
@@ -7087,7 +7153,12 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
       isActive: editingUser.isActive !== false,
       hourlyRate: editingUser.hourlyRate || undefined,
     };
-    DB.saveUser(newUser);
+    try {
+      await DB.saveUser(newUser);
+    } catch (e: any) {
+      addToast('error', 'Save failed: ' + (e?.message || 'Unknown error'));
+      return;
+    }
     closeModal();
     addToast('success', `${editingUser.id ? 'Updated' : 'Welcome'} ${newUser.name} (${newUser.employeeId})`);
   };
@@ -7342,6 +7413,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                         <input
                           type="number"
                           step="0.01"
+                          min="0"
                           className="w-full bg-black/40 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white placeholder:text-zinc-700 outline-none font-mono"
                           placeholder="0.00"
                           value={editingUser.hourlyRate || ''}
@@ -7390,7 +7462,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                           </div>
                           <div>
                             <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">PIN</p>
-                            <p className="text-white font-mono tracking-[0.2em] mt-0.5">{editingUser.pin}</p>
+                            <p className="text-white font-mono tracking-[0.2em] mt-0.5">{'•'.repeat(editingUser.pin?.length || 4)}</p>
                           </div>
                           {editingUser.hourlyRate ? (
                             <div className="col-span-2">
@@ -7683,11 +7755,13 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useCommandPalette();
   const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user, allFullLogs);
 
-  // Subscribe globally for notification checks + settings
+  // Subscribe globally for notification checks + settings.
+  // Keyed on user?.id (not []) so the subscription re-attaches after
+  // handleLogout wipes the multicast cache.
   useEffect(() => {
     const unsubS = DB.subscribeSettings(s => setAppSettings(s));
     return unsubS;
-  }, []);
+  }, [user?.id]);
   useEffect(() => {
     if (!user) return;
     const unsub1 = DB.subscribeJobs(jobs => setAllJobs(jobs));
@@ -7707,7 +7781,11 @@ export default function App() {
     if (!user) return;
     // Small delay to let Firestore connection settle before issuing reads
     const t = setTimeout(() => DB.migrateLocalPhotosToFirestore(), 3000);
-    return () => clearTimeout(t);
+    // Move legacy base64 part images out of job docs → Storage URLs (capped
+    // per run; admin devices only so ten floor iPads don't all race it).
+    const isStaff = user.role === 'admin' || user.role === 'manager';
+    const t2 = isStaff ? setTimeout(() => DB.migrateJobPartImagesToStorage(), 8000) : null;
+    return () => { clearTimeout(t); if (t2) clearTimeout(t2); };
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Over-budget alert engine ─────────────────────────────────────────
@@ -7775,17 +7853,27 @@ export default function App() {
     setToasts(p => [...p, { id: Date.now().toString(), type, message }]);
   }, []);
 
+  // Logout — tear down shared Firestore listeners BEFORE the re-render so
+  // stale multicast callbacks can't leak or pollute the next session. The
+  // always-on settings/theme effects below are keyed on user?.id so they
+  // re-subscribe cleanly after the wipe.
+  const handleLogout = useCallback(() => {
+    DB.clearMulticastCache();
+    setUser(null);
+  }, []);
+
   // Auto lunch pause hook
   useAutoLunch(addToast);
 
-  // Theme effect — apply light/dark class to body
+  // Theme effect — apply light/dark class to body.
+  // Keyed on user?.id so it re-subscribes after logout wipes the multicast cache.
   useEffect(() => {
     const unsub = DB.subscribeSettings((s) => {
       if (s.theme === 'light') { document.body.classList.add('light-theme'); }
       else { document.body.classList.remove('light-theme'); }
     });
     return unsub;
-  }, []);
+  }, [user?.id]);
 
   // Auto clock-out sweep: runs on mount + every 60s
   useEffect(() => {
@@ -7981,7 +8069,7 @@ export default function App() {
                 </div>
               </div>
               <button
-                onClick={() => setUser(null)}
+                onClick={handleLogout}
                 aria-label="Sign out"
                 title={sidebarCollapsed ? 'Sign Out' : undefined}
                 className={`w-full flex items-center justify-center gap-2 rounded-xl border border-white/5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20 text-sm font-bold transition-all
@@ -8076,7 +8164,7 @@ export default function App() {
             return jobId; // so the quote can record linkedJobId + block duplicate creation
           }} />}
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
-          {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setUser(null)} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
+          {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={handleLogout} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           </React.Suspense>
         </div>
       </main>

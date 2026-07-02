@@ -17,6 +17,14 @@ import { fmtMoneyK } from '../utils/format';
 import { calcJobProfit, GRADE_COLORS, GRADE_LABELS } from '../utils/jobProfit';
 import { getPartHistory } from '../utils/partHistory';
 
+// Accurate minutes from a completed log — prefers stored durationSeconds
+// (precise, from Math.floor at clock-out) over rounded durationMinutes.
+// Module-level (pure) so memoized derivations don't need it as a dependency.
+const logMins = (l: { durationSeconds?: number; durationMinutes?: number | null }) =>
+  l.durationSeconds != null && l.durationSeconds >= 0
+    ? l.durationSeconds / 60
+    : (l.durationMinutes || 0);
+
 // ── Small delta badge used on KPI cards ──────────────────────────────────────
 const DeltaBadge = ({ current, prev }: { current: number; prev: number }) => {
   if (prev === 0 && current === 0) return null;
@@ -58,23 +66,22 @@ export const ReportsView = () => {
   const weekAgo = now - 7 * 86400000;
   const monthAgo = now - 30 * 86400000;
   const customCutoffStart = customStart ? new Date(customStart).getTime() : 0;
-  const customCutoffEnd = customEnd ? new Date(customEnd + 'T23:59:59').getTime() : now;
+  // End of the custom range: INCLUSIVE end-of-day (23:59:59.999 local).
+  // All period filters below use the same convention: inclusive start
+  // (>= cutoff) through inclusive end (<= customCutoffEnd).
+  const customCutoffEnd = customEnd ? new Date(customEnd + 'T23:59:59.999').getTime() : now;
   const cutoff = period === 'week' ? weekAgo : period === 'month' ? monthAgo : period === 'custom' ? customCutoffStart : 0;
 
-  const completedLogs = logs.filter(l => l.endTime && l.endTime > cutoff && (period !== 'custom' || l.endTime <= customCutoffEnd));
-  const activeWorkers = users.filter(u => u.isActive !== false && u.role !== 'admin');
+  const completedLogs = useMemo(
+    () => logs.filter(l => l.endTime && l.endTime >= cutoff && (period !== 'custom' || l.endTime <= customCutoffEnd)),
+    [logs, cutoff, period, customCutoffEnd]
+  );
+  const activeWorkers = useMemo(() => users.filter(u => u.isActive !== false && u.role !== 'admin'), [users]);
   const shopRate = settings.shopRate || 0;
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
 
-  // Accurate minutes from a completed log — prefers stored durationSeconds
-  // (precise, from Math.floor at clock-out) over rounded durationMinutes.
-  const logMins = (l: { durationSeconds?: number; durationMinutes?: number | null }) =>
-    l.durationSeconds != null && l.durationSeconds >= 0
-      ? l.durationSeconds / 60
-      : (l.durationMinutes || 0);
-
   // Per-worker stats
-  const workerStats = activeWorkers.map(w => {
+  const workerStats = useMemo(() => activeWorkers.map(w => {
     const wLogs = completedLogs.filter(l => l.userId === w.id);
     const totalMins = wLogs.reduce((a, l) => a + logMins(l), 0);
     const totalHrs = totalMins / 60;
@@ -84,13 +91,16 @@ export const ReportsView = () => {
     const cost = totalHrs * (rate + ohRate);
     const avgMinsPerSession = wLogs.length > 0 ? totalMins / wLogs.length : 0;
     return { user: w, logs: wLogs, totalMins, totalHrs, jobCount: jobIds.length, operations, cost, sessions: wLogs.length, avgMinsPerSession };
-  }).sort((a, b) => b.totalHrs - a.totalHrs);
+  }).sort((a, b) => b.totalHrs - a.totalHrs), [activeWorkers, completedLogs, shopRate, ohRate]);
 
   // Totals
   const totalHrs = workerStats.reduce((a, w) => a + w.totalHrs, 0);
   const totalCost = workerStats.reduce((a, w) => a + w.cost, 0);
   const totalSessions = workerStats.reduce((a, w) => a + w.sessions, 0);
-  const completedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd));
+  const completedJobs = useMemo(
+    () => jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd)),
+    [jobs, cutoff, period, customCutoffEnd]
+  );
   const totalRevenue = completedJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
 
   // ── Change 1: Previous-period data for delta badges ──────────────────────
@@ -102,7 +112,9 @@ export const ReportsView = () => {
   const showDelta = period === 'week' || period === 'month';
   const prevCompletedJobs = useMemo(() =>
     showDelta
-      ? jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > prevCutoff && j.completedAt <= cutoff)
+      // Inclusive start, exclusive end at the boundary shared with the current
+      // period (which starts at >= cutoff) — keeps the two windows disjoint.
+      ? jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= prevCutoff && j.completedAt < cutoff)
       : [],
     [jobs, prevCutoff, cutoff, showDelta]
   );
@@ -111,9 +123,11 @@ export const ReportsView = () => {
   const currentProfit = completedJobs.reduce((a, j) => a + (j.profitSnapshot?.profit ?? 0), 0);
 
   // Operations breakdown
-  const opMap = new Map<string, number>();
-  completedLogs.forEach(l => opMap.set(l.operation, (opMap.get(l.operation) || 0) + logMins(l)));
-  const opBreakdown = Array.from(opMap.entries()).sort((a, b) => b[1] - a[1]);
+  const opBreakdown = useMemo(() => {
+    const opMap = new Map<string, number>();
+    completedLogs.forEach(l => opMap.set(l.operation, (opMap.get(l.operation) || 0) + logMins(l)));
+    return Array.from(opMap.entries()).sort((a, b) => b[1] - a[1]);
+  }, [completedLogs]);
   const maxOpMins = opBreakdown.length > 0 ? opBreakdown[0][1] : 1;
 
   // ── Change 2: 12-week rolling trend data ─────────────────────────────────
@@ -121,6 +135,9 @@ export const ReportsView = () => {
     return Array.from({ length: 12 }, (_, i) => {
       const weekEnd = now - i * 7 * 86400000;
       const weekStart = weekEnd - 7 * 86400000;
+      // Half-open interval [weekStart, weekEnd): inclusive start matches the
+      // period filters above; exclusive end means a job landing exactly on a
+      // week boundary is counted in exactly one week (no double-count, no gap).
       const wJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= weekStart && j.completedAt < weekEnd);
       const revenue = wJobs.reduce((a, j) => a + (j.quoteAmount || 0), 0);
       const profit = wJobs.reduce((a, j) => {
@@ -630,7 +647,7 @@ export const ReportsView = () => {
           cur.hours += logMins(l) / 60;
           custMap.set(cust, cur);
         });
-        jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd)).forEach(j => {
+        jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd)).forEach(j => {
           const cust = j.customer || 'Unknown';
           const cur = custMap.get(cust) || { jobs: 0, hours: 0, revenue: 0, cost: 0, profit: 0 };
           cur.jobs++;
@@ -921,7 +938,7 @@ export const ReportsView = () => {
 
       {/* Job Profitability — uses locked profitSnapshot when available for accuracy */}
       {(() => {
-        const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && j.quoteAmount).map(j => {
+        const profitableJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && j.quoteAmount).map(j => {
           // Prefer locked snapshot (fully accurate: labor + materials + outsourced)
           // Fall back to calcJobProfit (live calculation using same engine)
           const snap = j.profitSnapshot;
@@ -1010,7 +1027,7 @@ export const ReportsView = () => {
 
       {/* ── Estimated vs Actual ── */}
       {(() => {
-        const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt > cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && (j.quoteAmount || j.expectedHours)).map(j => {
+        const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && (j.quoteAmount || j.expectedHours)).map(j => {
           const jLogs = completedLogs.filter(l => l.jobId === j.id);
           const actualHrs = jLogs.reduce((a, l) => a + logMins(l), 0) / 60;
           const actualCost = actualHrs * ((shopRate || 0) + ohRate);
