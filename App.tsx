@@ -12,19 +12,20 @@ import {
   ArrowRight, Box, History, AlertCircle, ChevronDown, ChevronRight, Filter, Info,
   Printer, ScanLine, QrCode, Power, AlertTriangle, Trash2, Wifi, WifiOff,
   RotateCcw, ChevronUp, Database, ExternalLink, RefreshCw, Calculator, Activity,
-  Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText,
+  Play, Bell, BellOff, BellRing, Pause, Camera, Image, ChevronLeft, Download, FileText, ClipboardCheck,
   Share2, Link, Copy, Radio, Columns3, GripVertical, MessageSquare,
   PanelLeftClose, PanelLeftOpen, Cloud, Truck, Package, Scan, DollarSign, TrendingUp, TrendingDown, Award, Beaker, PhoneCall
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample, CustomerPoFile } from './types';
+import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample, CustomerPoFile, ShopAction } from './types';
 import { readyToInvoiceList } from './utils/poOrganizer';
 import { JobProfitCard } from './components/JobProfitCard';
 import { CanWeTakeIt } from './components/CanWeTakeIt';
 import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
 import { ShopTrendsPanel } from './components/ShopTrendsPanel';
+import { ShopActionsPanel } from './components/ShopActionsPanel';
 // ── Lazy views ────────────────────────────────────────────────────────────
 // Post-login screens load on demand — cuts the startup bundle roughly in half
 // so the login/dashboard paint much sooner. LiveFloorMonitor, CustomerPortal
@@ -48,6 +49,7 @@ import { VendorsManager } from './components/VendorsManager';
 const QualityView = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.QualityView })));
 const ReworkModal = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.ReworkModal })));
 const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })));
+const CustomersView = React.lazy(() => import('./views/CustomersView').then(m => ({ default: m.CustomersView })));
 
 /** base64 data URL → Blob (for uploading legacy/captured images to Storage). */
 function dataUrlToBlobApp(dataUrl: string): Blob | null {
@@ -2542,7 +2544,7 @@ const INSIGHT_ICON: Record<string, React.ReactNode> = {
   part_overrun:  <TrendingDown  className="w-4 h-4" />,
 };
 
-const ShopBrainPanel = ({ insights, setView }: { insights: ShopInsight[]; setView: (v: string) => void }) => {
+const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsight[]; setView: (v: string) => void; onMakeTask?: (insight: ShopInsight) => void }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(sessionStorage.getItem('brain_dismissed') || '[]')); }
@@ -2619,14 +2621,25 @@ const ShopBrainPanel = ({ insights, setView }: { insights: ShopInsight[]; setVie
                     </div>
                     <p className="text-[12px] font-bold text-white leading-snug">{insight.title}</p>
                     <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">{insight.body}</p>
-                    {insight.action && insight.actionView && (
-                      <button
-                        onClick={() => setView(insight.actionView!)}
-                        className={`mt-2 text-[11px] font-bold flex items-center gap-1 ${cfg.labelCls} hover:opacity-80 transition-opacity`}
-                      >
-                        {insight.action} <ChevronRight className="w-3 h-3" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {insight.action && insight.actionView && (
+                        <button
+                          onClick={() => setView(insight.actionView!)}
+                          className={`mt-2 text-[11px] font-bold flex items-center gap-1 ${cfg.labelCls} hover:opacity-80 transition-opacity`}
+                        >
+                          {insight.action} <ChevronRight className="w-3 h-3" />
+                        </button>
+                      )}
+                      {onMakeTask && insight.severity !== 'positive' && (
+                        <button
+                          onClick={() => { onMakeTask(insight); dismiss(insight.id); }}
+                          className="mt-2 text-[11px] font-bold flex items-center gap-1 text-violet-300 hover:text-violet-200 transition-colors"
+                          title="Turn this insight into an assigned action"
+                        >
+                          <ClipboardCheck className="w-3 h-3" /> Make task
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2651,6 +2664,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [dashQuotes, setDashQuotes] = useState<Quote[]>([]);
   const [dashSamples, setDashSamples] = useState<Sample[]>([]);
   const [dashCustomerPos, setDashCustomerPos] = useState<CustomerPoFile[]>([]);
+  const [dashActions, setDashActions] = useState<ShopAction[]>([]);
   const [showCanWeTakeIt, setShowCanWeTakeIt] = useState(false);
   const [hoveredCustIdx, setHoveredCustIdx] = useState<number | null>(null);
   const [attentionDismissed, setAttentionDismissed] = useState<boolean>(() => {
@@ -2670,7 +2684,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub9 = DB.subscribeQuotes(setDashQuotes);
     const unsub10 = DB.subscribeSamples(setDashSamples);
     const unsub11 = DB.subscribeCustomerPos(setDashCustomerPos);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); };
+    const unsub12 = DB.subscribeShopActions(setDashActions);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); };
   }, []);
 
   // ── Live tick — re-renders every 60s so time-derived memos (attack plan
@@ -3085,6 +3100,9 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
       {/* 📈 SHOP TRENDS — the brain's memory: last week vs your 4-week normal */}
       <ShopTrendsPanel jobs={jobs} logs={allLogs} rework={reworkEntries} />
 
+      {/* ✅ SHOP ACTIONS — assigned, dated, measurable */}
+      <ShopActionsPanel actions={dashActions} users={dashWorkers} currentUserName={user?.name} addToast={addToast} />
+
       {/* ⚡ TODAY'S ATTACK PLAN — ranked run-order for the floor */}
       {attackPlan.ranked.length > 0 && (
         <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
@@ -3431,7 +3449,21 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
       {/* ── SHOP BRAIN — intelligent pattern detection ── */}
       {shopInsights.length > 0 && (
-        <ShopBrainPanel insights={shopInsights} setView={setView} />
+        <ShopBrainPanel insights={shopInsights} setView={setView} onMakeTask={async (insight) => {
+          try {
+            await DB.saveShopAction({
+              id: crypto.randomUUID(),
+              title: insight.title,
+              notes: insight.body,
+              done: false,
+              createdAt: Date.now(),
+              createdBy: user?.name,
+              source: 'brain',
+              sourceInsightId: insight.id,
+            });
+            addToast('success', 'Added to Shop Actions — assign it a person & date');
+          } catch { addToast('error', 'Could not create the action'); }
+        }} />
       )}
 
       {/* ── SHOP FLOW MAP — visual of jobs moving through each stage.
@@ -7932,6 +7964,7 @@ export default function App() {
     ]},
     { label: 'Documents', items: [
       { id: 'admin-quotes',          l: 'Quotes',     i: FileText },
+      { id: 'admin-customers',       l: 'Customers',  i: Users },
       { id: 'admin-customer-pos',    l: 'Customer POs', i: FileText },
       { id: 'admin-purchase-orders', l: 'Purchasing', i: Package },
       { id: 'admin-deliveries',      l: 'Deliveries', i: Truck },
@@ -8146,6 +8179,7 @@ export default function App() {
             </FeatureGate>
           )}
           {view === 'admin-customer-pos' && user && <CustomerPosView addToast={addToast} confirm={setConfirm} user={{ id: user.id, name: user.name }} />}
+          {view === 'admin-customers' && user && <CustomersView addToast={addToast} />}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
             const jobId = `JOB-${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             await DB.saveJob({

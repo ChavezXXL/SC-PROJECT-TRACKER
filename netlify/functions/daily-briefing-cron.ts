@@ -26,6 +26,7 @@ import type { SystemSettings, ShiftAlarm } from '../../types';
 import { matchJobForPo, isJobComplete, resolveStages } from '../../utils/poOrganizer';
 // Weekly Pulse (Monday digest) — same pure trend brain the dashboard panel uses.
 import { computeShopTrends, fmtTrendValue, fmtTrendDelta } from '../../utils/shopTrends';
+import { computeCustomerIntel } from '../../utils/customerIntel';
 
 export const config: Config = {
   schedule: '*/10 * * * *',   // every 10 minutes — early-exits outside send windows
@@ -436,6 +437,15 @@ export default async function handler() {
                 ${(trends.risingCustomers.length || trends.fallingCustomers.length) ? `
                   <p style="color:#a1a1aa;font-size:12px;margin:16px 0 6px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Customer movers</p>
                   <div>${trends.risingCustomers.map(x => moverLine(x, true)).join('')}${trends.fallingCustomers.map(x => moverLine(x, false)).join('')}</div>` : ''}
+                ${(() => {
+                  // Concentration risk — how dependent 90-day revenue is on one shop.
+                  try {
+                    const intel = computeCustomerIntel(wJobs as any, wLogs as any);
+                    if (intel.topSharePct === null || intel.topSharePct < 40) return '';
+                    const col = intel.topSharePct >= 60 ? '#f87171' : '#fbbf24';
+                    return `<p style="color:${col};font-size:12px;margin:14px 0 0;font-weight:700;">⚠ Concentration: ${esc(intel.topShareName)} is ${Math.round(intel.topSharePct)}% of your last-90-day revenue — worth spreading the base.</p>`;
+                  } catch { return ''; }
+                })()}
                 <p style="color:#52525b;font-size:12px;margin:18px 0 0;">— FabTrack IO · Shop Trends</p>
               </div>`;
             await fetch('https://api.resend.com/emails', {

@@ -949,7 +949,25 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-customer-pos' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-customer-pos' | 'admin-customers' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
+
+// ── Shop Actions ────────────────────────────────────────────────────
+// "A system that turns the right ideas into assigned, dated, measurable
+// actions." Lightweight owner to-dos: created by hand or promoted from a
+// Shop Brain insight, assigned to a person, given a date, checked off.
+export interface ShopAction {
+  id: string;
+  title: string;
+  ownerName?: string;         // who's responsible (display name)
+  dueDate?: string;           // MM/DD/YYYY
+  done: boolean;
+  doneAt?: number;
+  createdAt: number;
+  createdBy?: string;
+  source?: 'manual' | 'brain';
+  sourceInsightId?: string;   // the ShopInsight id this was promoted from
+  notes?: string;
+}
 
 // ── Quality / Rework Tracking ──
 export type ReworkReason = 'finish' | 'dimensional' | 'missed-area' | 'damage' | 'wrong-part' | 'other';

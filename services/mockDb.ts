@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import {
   initFirebaseFromLocalStorage,
@@ -394,6 +394,7 @@ const COL = {
   get pushSubscriptions() { return colPath(getTenantId(), "push_subscriptions"); },
   get notes()             { return colPath(getTenantId(), "notes"); },
   get customerPos()       { return colPath(getTenantId(), "customer_pos"); },
+  get shopActions()       { return colPath(getTenantId(), "shop_actions"); },
 };
 
 // --------------------
@@ -1671,6 +1672,48 @@ export async function deleteCustomerPo(id: string): Promise<void> {
     return;
   }
   writeLS(LS_CUSTOMER_POS, readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []).filter(p => p.id !== id));
+}
+
+// ── SHOP ACTIONS ─────────────────────────────────────────────────────
+// Owner to-dos: manual or promoted from a Shop Brain insight. Same
+// Firestore + localStorage-fallback pattern as customer POs.
+const LS_SHOP_ACTIONS = "nexus_shop_actions";
+
+export function subscribeShopActions(cb: (actions: ShopAction[]) => void): () => void {
+  if (dbInstance) {
+    const key = 'shopActions:' + COL.shopActions;
+    return multicast<ShopAction[]>(key, notify => {
+      return retryingSnapshot(
+        () => collection(dbInstance!, COL.shopActions),
+        (snap: any) => { firebaseStatus = { connected: true }; notify(snap.docs.map((d: any) => d.data() as ShopAction)); },
+        () => notify(readLS<ShopAction[]>(LS_SHOP_ACTIONS, [])),
+      );
+    }, cb);
+  }
+  return localSubscribe(() => readLS<ShopAction[]>(LS_SHOP_ACTIONS, []), cb);
+}
+
+export async function saveShopAction(action: ShopAction): Promise<void> {
+  if (dbInstance) {
+    try {
+      await setDoc(doc(dbInstance, COL.shopActions, action.id), sanitize(action), { merge: true });
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const list = readLS<ShopAction[]>(LS_SHOP_ACTIONS, []);
+  const idx = list.findIndex(a => a.id === action.id);
+  if (idx >= 0) list[idx] = action; else list.push(action);
+  writeLS(LS_SHOP_ACTIONS, list);
+}
+
+export async function deleteShopAction(id: string): Promise<void> {
+  if (dbInstance) {
+    try { await deleteDoc(doc(dbInstance, COL.shopActions, id)); firebaseStatus = { connected: true }; }
+    catch (e) { throw handleError(e); }
+    return;
+  }
+  writeLS(LS_SHOP_ACTIONS, readLS<ShopAction[]>(LS_SHOP_ACTIONS, []).filter(a => a.id !== id));
 }
 
 // ── localStorage → Firestore photo migration ──────────────────────────
