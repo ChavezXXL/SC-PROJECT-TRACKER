@@ -42,6 +42,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [showExportModal, setShowExportModal] = useState(false);
   const [selectedExportJobs, setSelectedExportJobs] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [photoLightbox, setPhotoLightbox] = useState<string | null>(null);
   const [showBackfill, setShowBackfill] = useState(false);
   const [bfJob, setBfJob] = useState('');
   const [bfJobSearch, setBfJobSearch] = useState('');
@@ -53,6 +54,8 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   // "active" = job not yet marked complete | "completed" = job marked complete
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'completed'>('active');
   const [filterSearch, setFilterSearch] = useState('');
+  const [filterWorker, setFilterWorker] = useState('');
+  const [filterOp, setFilterOp] = useState('');
 
   // Default to "Last 90 days" so logs don't disappear on month rollover or
   // when the shop has a slow week. Previously defaulted to current month only,
@@ -325,6 +328,10 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
       // Date range: use startTime for the check (covers both active & completed logs)
       if (log.startTime < startTs || log.startTime > endTs) return false;
 
+      // Worker / operation dropdown filters
+      if (filterWorker && log.userName !== filterWorker) return false;
+      if (filterOp && log.operation !== filterOp) return false;
+
       // Search — includes job's poNumber and partNumber from the job record
       if (term) {
         const job = jobMap[log.jobId];
@@ -344,6 +351,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
       jobId: string;
       internalJobId: string;
       partNumber: string;
+      partImage: string;
       customer: string;
       dueDate: string;
       poNumber: string;
@@ -373,6 +381,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           jobId: log.jobIdsDisplay || log.jobId || 'Unknown Job',
           internalJobId: log.jobId || '__unknown__',
           partNumber: log.partNumber || job?.partNumber || 'N/A',
+          partImage:  job?.partImage || log.partImage || '',
           customer:   log.customer  || job?.customer  || '',
           dueDate:    job?.dueDate  || '',
           poNumber:   job?.poNumber || '',
@@ -417,7 +426,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         g.logs.sort((a, b) => b.startTime - a.startTime);
         return g;
       });
-  }, [logs, jobs, jobDoneMap, jobMap, activeTab, dateRange, filterSearch]);
+  }, [logs, jobs, jobDoneMap, jobMap, activeTab, dateRange, filterSearch, filterWorker, filterOp]);
+
+  // Distinct workers / operations present in the current log set — dropdown options.
+  const workerOptions = useMemo(() => [...new Set(logs.map(l => l.userName).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [logs]);
+  const operationOptions = useMemo(() => [...new Set(logs.map(l => l.operation).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [logs]);
 
   const totalHours    = groupedLogs.reduce((acc, g) => acc + g.totalDurationMinutes / 60, 0);
   const totalEntries  = groupedLogs.reduce((acc, g) => acc + g.logs.length, 0);
@@ -784,6 +797,17 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               className="w-full pl-9 pr-4 py-2 bg-black/30 border border-white/10 rounded-xl text-sm text-white focus:ring-1 focus:ring-amber-500 outline-none"
             />
           </div>
+          <select aria-label="Filter by worker" value={filterWorker} onChange={e => setFilterWorker(e.target.value)} className={`shrink-0 bg-black/30 border rounded-xl px-3 py-2 text-sm outline-none ${filterWorker ? 'border-amber-500/40 text-amber-300' : 'border-white/10 text-zinc-300'}`}>
+            <option value="">All workers</option>
+            {workerOptions.map(w => <option key={w} value={w}>{w}</option>)}
+          </select>
+          <select aria-label="Filter by operation" value={filterOp} onChange={e => setFilterOp(e.target.value)} className={`shrink-0 bg-black/30 border rounded-xl px-3 py-2 text-sm outline-none ${filterOp ? 'border-amber-500/40 text-amber-300' : 'border-white/10 text-zinc-300'}`}>
+            <option value="">All operations</option>
+            {operationOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+          {(filterWorker || filterOp) && (
+            <button onClick={() => { setFilterWorker(''); setFilterOp(''); }} className="shrink-0 text-xs font-bold text-zinc-400 hover:text-white px-2 py-2">Clear</button>
+          )}
         </div>
       </div>
 
@@ -818,12 +842,21 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             {/* Group Header */}
             <div className={`p-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 ${group.jobIsCompleted ? 'bg-emerald-950/30 border-emerald-500/10' : 'bg-zinc-900/80 border-white/5'}`}>
               <div className="flex items-start gap-4">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${group.jobIsCompleted ? 'bg-emerald-500/10 border border-emerald-500/30' : 'bg-blue-500/10 border border-blue-500/20'}`}>
-                  {group.jobIsCompleted
-                    ? <CheckCircle className="w-5 h-5 text-emerald-400" />
-                    : <Briefcase className="w-5 h-5 text-blue-500" />
-                  }
-                </div>
+                {group.partImage ? (
+                  <button type="button" onClick={() => setPhotoLightbox(group.partImage)} className="relative w-12 h-12 rounded-lg overflow-hidden shrink-0 border border-white/10 hover:border-cyan-400/60 transition-colors" title="View part photo">
+                    <img src={group.partImage} alt={`Part ${group.partNumber}`} className="w-full h-full object-cover" loading="lazy" />
+                    <span className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-zinc-900 ${group.jobIsCompleted ? 'bg-emerald-500' : 'bg-blue-500'}`}>
+                      {group.jobIsCompleted ? <CheckCircle className="w-2.5 h-2.5 text-white" /> : <Briefcase className="w-2.5 h-2.5 text-white" />}
+                    </span>
+                  </button>
+                ) : (
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${group.jobIsCompleted ? 'bg-emerald-500/10 border border-emerald-500/30' : 'bg-blue-500/10 border border-blue-500/20'}`}>
+                    {group.jobIsCompleted
+                      ? <CheckCircle className="w-5 h-5 text-emerald-400" />
+                      : <Briefcase className="w-5 h-5 text-blue-500" />
+                    }
+                  </div>
+                )}
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-xl font-black text-white leading-tight">{group.poNumber || group.jobId}</h3>
@@ -966,6 +999,14 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           </div>
         ))}
       </div>
+
+      {/* Part photo lightbox */}
+      {photoLightbox && (
+        <div className="fixed inset-0 z-[220] bg-black/90 flex items-center justify-center p-4" onClick={() => setPhotoLightbox(null)}>
+          <img src={photoLightbox} alt="Part" className="max-w-full max-h-full object-contain rounded-lg" />
+          <button onClick={() => setPhotoLightbox(null)} className="absolute top-4 right-4 text-white bg-white/10 hover:bg-white/20 p-2 rounded-full"><X className="w-5 h-5" /></button>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {showEditModal && editingLog && (

@@ -275,6 +275,7 @@ export interface TimeLog {
   durationMinutes?: number | null;
   // New fields for historical accuracy and reporting
   partNumber?: string;
+  partImage?: string;     // Storage URL snapshot of the part photo (never base64)
   customer?: string;
   jobIdsDisplay?: string; // Human readable Job ID snapshot
   status?: 'in_progress' | 'completed' | 'paused';

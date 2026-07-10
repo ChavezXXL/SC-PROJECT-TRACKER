@@ -1718,7 +1718,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     _startInFlight.add(user.id);
     const job = jobs.find(j => j.id === jobId);
     try {
-      const logId = await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay);
+      const logId = await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay, job?.partImage);
       if (logId) {
         const jobLabel = job?.jobIdsDisplay || job?.partNumber || jobId;
         const startTime = Date.now();
@@ -1977,9 +1977,12 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                 <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">{group.label}</span>
               </div>
               <div className="divide-y divide-white/5">
-                {group.logs.map(log => (
+                {group.logs.map(log => {
+                  const logPhoto = log.partImage || jobs.find(j => j.id === log.jobId)?.partImage;
+                  return (
                   <React.Fragment key={log.id}>
                     <div className="px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors">
+                      {logPhoto && <img src={logPhoto} alt="" className="w-10 h-10 rounded-lg object-cover border border-white/10 shrink-0" loading="lazy" />}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-white text-sm">{log.jobIdsDisplay || log.jobId}</span>
@@ -2011,7 +2014,8 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                       </div>
                     )}
                   </React.Fragment>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -4805,7 +4809,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     if (_startInFlight.has(targetWorker.id)) return;   // drop double-tap
     _startInFlight.add(targetWorker.id);
     try {
-      const logId = await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay);
+      const logId = await DB.startTimeLog(startJobModal.id, targetWorker.id, targetWorker.name, operation, startJobModal.partNumber, startJobModal.customer, selectedMachine || undefined, undefined, startJobModal.jobIdsDisplay, startJobModal.partImage);
       if (logId) {
         const jobLabel = startJobModal.jobIdsDisplay || startJobModal.partNumber || startJobModal.id;
         showTimerStarted({ id: logId, userId: user.id, operation, startTime: Date.now() }, jobLabel);

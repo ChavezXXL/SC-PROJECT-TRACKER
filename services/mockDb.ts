@@ -693,7 +693,8 @@ export async function startTimeLog(
     customer?: string,
     machineId?: string,
     notes?: string,
-    jobIdsDisplay?: string
+    jobIdsDisplay?: string,
+    partImage?: string
 ): Promise<string> {
   // ── Validate + trim required fields — a blank operation breaks rate learning
   // and PR tracking; a blank user/job corrupts payroll attribution.
@@ -743,6 +744,10 @@ export async function startTimeLog(
   if (machineId !== undefined) log.machineId = machineId;
   if (notes !== undefined) log.notes = notes;
   if (jobIdsDisplay !== undefined) log.jobIdsDisplay = jobIdsDisplay;
+  // Snapshot the part photo so a log stays self-identifying even after the job
+  // is completed/deleted. Only Storage URLs — never a base64 data: URL (that
+  // would re-bloat every log with the image we just moved OUT of job docs).
+  if (partImage && !partImage.startsWith('data:')) log.partImage = partImage;
 
   if (dbInstance) {
     try {
