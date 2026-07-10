@@ -14,6 +14,7 @@ import { Job, User, TimeLog, SystemSettings } from '../types';
 import * as DB from '../services/mockDb';
 import { fmt, toDateTimeLocal, formatDuration, getLogDurationMins } from '../utils/date';
 import { Overlay } from '../components/Overlay';
+import { JobTimeline } from '../components/JobTimeline';
 import { resolveJobStage } from '../utils/stageRouting';
 import { shopLocalTimeMs } from '../utils/timezone';
 import { getStages } from '../App';
@@ -43,6 +44,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [selectedExportJobs, setSelectedExportJobs] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
   const [photoLightbox, setPhotoLightbox] = useState<string | null>(null);
+  const [timelineJob, setTimelineJob] = useState<Job | null>(null);
   const [showBackfill, setShowBackfill] = useState(false);
   const [bfJob, setBfJob] = useState('');
   const [bfJobSearch, setBfJobSearch] = useState('');
@@ -923,6 +925,17 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                     </div>
                   );
                 })()}
+                {(() => {
+                  const job = jobs.find(j => j.id === group.internalJobId);
+                  if (!job) return null;
+                  return (
+                    <button onClick={() => setTimelineJob(job)} title="See the full story of this job"
+                      className="border-l border-white/10 pl-4 flex flex-col items-center gap-1 text-zinc-400 hover:text-amber-300 transition-colors">
+                      <Clock className="w-5 h-5" />
+                      <span className="text-[10px] font-bold uppercase tracking-wide">Story</span>
+                    </button>
+                  );
+                })()}
               </div>
             </div>
 
@@ -999,6 +1012,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           </div>
         ))}
       </div>
+
+      {/* Job story / timeline */}
+      {timelineJob && (
+        <JobTimeline job={timelineJob} logs={logs} stages={stages} onClose={() => setTimelineJob(null)} />
+      )}
 
       {/* Part photo lightbox */}
       {photoLightbox && (
