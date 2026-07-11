@@ -50,6 +50,7 @@ const QualityView = React.lazy(() => import('./views/QualityView').then(m => ({ 
 const ReworkModal = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.ReworkModal })));
 const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })));
 const CustomersView = React.lazy(() => import('./views/CustomersView').then(m => ({ default: m.CustomersView })));
+const PricingView = React.lazy(() => import('./views/PricingView').then(m => ({ default: m.PricingView })));
 
 /** base64 data URL → Blob (for uploading legacy/captured images to Storage). */
 function dataUrlToBlobApp(dataUrl: string): Blob | null {
@@ -7976,6 +7977,7 @@ export default function App() {
     ]},
     { label: 'Admin', items: [
       { id: 'admin-reports',   l: 'Reports',      i: Calculator },
+      { id: 'admin-pricing',   l: 'Pricing',      i: DollarSign },
       { id: 'admin-team',      l: 'Team',         i: Users },
       { id: 'admin-settings',  l: 'Settings',     i: Settings, adminOnly: true },
     ]},
@@ -8180,6 +8182,7 @@ export default function App() {
           )}
           {view === 'admin-customer-pos' && user && <CustomerPosView addToast={addToast} confirm={setConfirm} user={{ id: user.id, name: user.name }} />}
           {view === 'admin-customers' && user && <CustomersView addToast={addToast} />}
+          {view === 'admin-pricing' && user && <PricingView addToast={addToast} />}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
             const jobId = `JOB-${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             await DB.saveJob({

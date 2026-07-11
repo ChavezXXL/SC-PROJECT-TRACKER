@@ -949,7 +949,7 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-customer-pos' | 'admin-customers' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
+export type AppView = 'login' | 'admin-dashboard' | 'admin-jobs' | 'admin-board' | 'admin-calendar' | 'admin-logs' | 'admin-team' | 'admin-settings' | 'admin-reports' | 'admin-live' | 'admin-samples' | 'admin-scan' | 'admin-quotes' | 'admin-customer-pos' | 'admin-customers' | 'admin-pricing' | 'admin-quality' | 'admin-deliveries' | 'admin-purchase-orders' | 'employee-scan' | 'employee-job';
 
 // ── Shop Actions ────────────────────────────────────────────────────
 // "A system that turns the right ideas into assigned, dated, measurable
