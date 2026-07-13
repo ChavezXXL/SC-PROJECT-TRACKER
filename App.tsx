@@ -8189,7 +8189,17 @@ export default function App() {
               </div>
               SC DEBURRING
             </div>
-            <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
+            <div className="flex items-center gap-2">
+              {/* Settings — one tap, always visible (was buried at the bottom of the drawer) */}
+              <button
+                aria-label="Settings"
+                onClick={() => setView('admin-settings')}
+                className={`p-2.5 rounded-xl border min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 transition-all ${view === 'admin-settings' ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800/80 border-white/10 text-zinc-300 hover:text-white hover:bg-zinc-700'}`}
+              >
+                <Settings className="w-5 h-5" aria-hidden="true" />
+              </button>
+              <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
+            </div>
           </div>
         )}
 
