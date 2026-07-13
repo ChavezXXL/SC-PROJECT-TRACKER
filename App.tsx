@@ -30,27 +30,51 @@ import { ShopActionsPanel } from './components/ShopActionsPanel';
 // Post-login screens load on demand — cuts the startup bundle roughly in half
 // so the login/dashboard paint much sooner. LiveFloorMonitor, CustomerPortal
 // and QuotesView stay EAGER: they render before login (?tv= wall, ?portal=).
-const CustomerPosView = React.lazy(() => import('./views/CustomerPosView').then(m => ({ default: m.CustomerPosView })));
+//
+// lazyView = React.lazy + a stale-deploy net. Chunks are content-hashed, so a
+// device still running YESTERDAY'S index.html asks for chunk names that no
+// longer exist after a deploy → the import rejects → the view renders blank.
+// Net: retry once (transient network), then force ONE reload (sessionStorage
+// guard prevents loops) so the client picks up the fresh index + chunks.
+function lazyView<T extends React.ComponentType<any>>(loader: () => Promise<{ default: T }>): React.LazyExoticComponent<T> {
+  return React.lazy(() =>
+    loader().catch(() =>
+      new Promise<{ default: T }>(res => setTimeout(res as any, 800)).then(() => loader())
+    ).then((mod) => {
+      try { sessionStorage.removeItem('chunk_reload'); } catch {}   // healthy again — re-arm the net
+      return mod;
+    }).catch((err) => {
+      try {
+        if (!sessionStorage.getItem('chunk_reload')) {
+          sessionStorage.setItem('chunk_reload', '1');
+          window.location.reload();
+        }
+      } catch {}
+      throw err;
+    })
+  );
+}
+const CustomerPosView = lazyView(() => import('./views/CustomerPosView').then(m => ({ default: m.CustomerPosView })));
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
-const SamplesView = React.lazy(() => import('./SamplesView').then(m => ({ default: m.SamplesView })));
+const SamplesView = lazyView(() => import('./SamplesView').then(m => ({ default: m.SamplesView })));
 // AI scanning (parseJobDetails / POScanner) removed from production —
 // see Jobs view comment. Gemini service file stays for future re-enable.
 import { QuotesView } from './QuotesView';
 import { CustomerPortal } from './CustomerPortal';
-const ReportsView = React.lazy(() => import('./views/ReportsView').then(m => ({ default: m.ReportsView })));
-const JobBoardView = React.lazy(() => import('./views/JobBoardView').then(m => ({ default: m.JobBoardView })));
-const DeliveriesView = React.lazy(() => import('./views/DeliveriesView').then(m => ({ default: m.DeliveriesView })));
-const PurchaseOrdersView = React.lazy(() => import('./views/PurchaseOrdersView').then(m => ({ default: m.PurchaseOrdersView })));
-const SettingsView = React.lazy(() => import('./views/SettingsView').then(m => ({ default: m.SettingsView })));
-const ProgressView = React.lazy(() => import('./views/SettingsView').then(m => ({ default: m.ProgressView })));
+const ReportsView = lazyView(() => import('./views/ReportsView').then(m => ({ default: m.ReportsView })));
+const JobBoardView = lazyView(() => import('./views/JobBoardView').then(m => ({ default: m.JobBoardView })));
+const DeliveriesView = lazyView(() => import('./views/DeliveriesView').then(m => ({ default: m.DeliveriesView })));
+const PurchaseOrdersView = lazyView(() => import('./views/PurchaseOrdersView').then(m => ({ default: m.PurchaseOrdersView })));
+const SettingsView = lazyView(() => import('./views/SettingsView').then(m => ({ default: m.SettingsView })));
+const ProgressView = lazyView(() => import('./views/SettingsView').then(m => ({ default: m.ProgressView })));
 import { VendorsManager } from './components/VendorsManager';
-const QualityView = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.QualityView })));
-const ReworkModal = React.lazy(() => import('./views/QualityView').then(m => ({ default: m.ReworkModal })));
-const LogsView = React.lazy(() => import('./views/LogsView').then(m => ({ default: m.LogsView })));
-const CustomersView = React.lazy(() => import('./views/CustomersView').then(m => ({ default: m.CustomersView })));
-const PricingView = React.lazy(() => import('./views/PricingView').then(m => ({ default: m.PricingView })));
+const QualityView = lazyView(() => import('./views/QualityView').then(m => ({ default: m.QualityView })));
+const ReworkModal = lazyView(() => import('./views/QualityView').then(m => ({ default: m.ReworkModal })));
+const LogsView = lazyView(() => import('./views/LogsView').then(m => ({ default: m.LogsView })));
+const CustomersView = lazyView(() => import('./views/CustomersView').then(m => ({ default: m.CustomersView })));
+const PricingView = lazyView(() => import('./views/PricingView').then(m => ({ default: m.PricingView })));
 
 /** base64 data URL → Blob (for uploading legacy/captured images to Storage). */
 function dataUrlToBlobApp(dataUrl: string): Blob | null {
@@ -71,6 +95,30 @@ const ViewLoader = () => (
     <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Loading…</p>
   </div>
 );
+
+/** Last-resort net under the lazy views: if a chunk still can't load after
+ *  lazyView's retry+reload (e.g. offline mid-deploy), show a reload button
+ *  instead of a silent blank screen. */
+class ViewErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(err: any) { console.error('[FabTrack] view failed to load:', err?.message || err); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-4 animate-fade-in text-center px-6">
+        <p className="text-white font-bold">This screen couldn't load.</p>
+        <p className="text-zinc-500 text-sm max-w-sm">Usually a fresh update was just published. Reload to grab the newest version.</p>
+        <button
+          onClick={() => { try { sessionStorage.removeItem('chunk_reload'); } catch {} window.location.reload(); }}
+          className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-bold text-sm"
+        >
+          Reload App
+        </button>
+      </div>
+    );
+  }
+}
 import { POScanner } from './components/POScanner';
 import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
 import { printTraveler } from './services/travelerPrint';
@@ -8146,6 +8194,7 @@ export default function App() {
         )}
 
         <div className="p-4 md:p-8 pb-24 md:pb-8">
+          <ViewErrorBoundary>
           <React.Suspense fallback={<ViewLoader />}>
           {view === 'admin-dashboard' && <AdminDashboard confirmAction={setConfirm} setView={setView} user={user} addToast={addToast} />}
           {view === 'admin-jobs' && <JobsView user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} />}
@@ -8207,6 +8256,7 @@ export default function App() {
           {view === 'admin-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={() => setView('admin-dashboard')} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           {view === 'employee-scan' && <EmployeeDashboard user={user} addToast={addToast} onLogout={handleLogout} notifBell={<NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />} />}
           </React.Suspense>
+          </ViewErrorBoundary>
         </div>
       </main>
 
