@@ -114,6 +114,27 @@ export const WeeklyReportView = () => {
 
   const hasAny = jobs.length > 0 || logs.length > 0;
 
+  // Turn a focus item into a tracked Shop Action — "ideas become assigned work."
+  // Deduped by sourceInsightId so re-clicking (or a re-computed week) can't
+  // pile up copies of the same item.
+  const trackedKeys = useMemo(
+    () => new Set(actions.filter(a => !a.done && a.sourceInsightId).map(a => a.sourceInsightId!)),
+    [actions],
+  );
+  const trackFocus = async (key: string, text: string) => {
+    if (trackedKeys.has(key)) return;
+    try {
+      await DB.saveShopAction({
+        id: crypto.randomUUID(),
+        title: text,
+        done: false,
+        createdAt: Date.now(),
+        source: 'brain',
+        sourceInsightId: key,
+      });
+    } catch { /* subscription will simply not reflect it; no crash */ }
+  };
+
   const doPrint = () => {
     const b = document.body;
     b.classList.add('print-report');
@@ -158,12 +179,28 @@ export const WeeklyReportView = () => {
               <h2 className="text-sm font-black text-white uppercase tracking-wider">Focus this week</h2>
             </div>
             <ul className="space-y-2">
-              {focus.map(f => (
-                <li key={f.key} className="flex items-start gap-2.5 text-sm">
-                  <span className={`mt-0.5 shrink-0 ${f.tone === 'red' ? 'text-red-400' : f.tone === 'amber' ? 'text-amber-400' : 'text-emerald-400'}`}>{FOCUS_ICON[f.icon]}</span>
-                  <span className="text-zinc-200 leading-snug">{f.text}</span>
-                </li>
-              ))}
+              {focus.map(f => {
+                const tracked = trackedKeys.has(f.key);
+                return (
+                  <li key={f.key} className="flex items-start gap-2.5 text-sm group">
+                    <span className={`mt-0.5 shrink-0 ${f.tone === 'red' ? 'text-red-400' : f.tone === 'amber' ? 'text-amber-400' : 'text-emerald-400'}`}>{FOCUS_ICON[f.icon]}</span>
+                    <span className="text-zinc-200 leading-snug flex-1">{f.text}</span>
+                    {f.icon !== 'all-clear' && (
+                      <button
+                        onClick={() => trackFocus(f.key, f.text)}
+                        disabled={tracked}
+                        className={`no-print shrink-0 text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-lg border transition-all ${
+                          tracked
+                            ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10 cursor-default'
+                            : 'text-zinc-400 border-white/10 hover:text-white hover:border-amber-500/40 hover:bg-amber-500/10 active:scale-95'
+                        }`}
+                      >
+                        {tracked ? '✓ Tracked' : '+ Track'}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
