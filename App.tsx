@@ -64,6 +64,7 @@ const SamplesView = lazyView(() => import('./SamplesView').then(m => ({ default:
 import { QuotesView } from './QuotesView';
 import { CustomerPortal } from './CustomerPortal';
 const ReportsView = lazyView(() => import('./views/ReportsView').then(m => ({ default: m.ReportsView })));
+const WeeklyReportView = lazyView(() => import('./views/WeeklyReportView').then(m => ({ default: m.WeeklyReportView })));
 const JobBoardView = lazyView(() => import('./views/JobBoardView').then(m => ({ default: m.JobBoardView })));
 const DeliveriesView = lazyView(() => import('./views/DeliveriesView').then(m => ({ default: m.DeliveriesView })));
 const PurchaseOrdersView = lazyView(() => import('./views/PurchaseOrdersView').then(m => ({ default: m.PurchaseOrdersView })));
@@ -8027,6 +8028,7 @@ export default function App() {
       { id: 'admin-scan',      l: 'Work Station', i: ScanLine },
     ]},
     { label: 'Admin', items: [
+      { id: 'admin-weekly',    l: 'Weekly Report', i: FileText },
       { id: 'admin-reports',   l: 'Reports',      i: Calculator },
       { id: 'admin-pricing',   l: 'Pricing',      i: DollarSign },
       { id: 'admin-team',      l: 'Team',         i: Users },
@@ -8257,6 +8259,7 @@ export default function App() {
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-settings' && <SettingsView addToast={addToast} userId={user?.id} />}
+          {view === 'admin-weekly' && <WeeklyReportView />}
           {view === 'admin-reports' && <ReportsView />}
           {view === 'admin-live' && <LiveFloorMonitor user={user} onBack={() => setView('admin-dashboard')} addToast={addToast} />}
           {view === 'admin-samples' && (

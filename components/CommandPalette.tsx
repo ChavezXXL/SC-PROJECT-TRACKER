@@ -79,6 +79,7 @@ export const CommandPalette: React.FC<Props> = ({ open, onClose, onNavigate, job
     { id: 'nav-samples',     label: 'Samples',      icon: Camera,          action: () => onNavigate('admin-samples'),   group: 'Navigate', keywords: ['photos', 'fai'] },
     { id: 'nav-quality',     label: 'Quality',      icon: AlertTriangle,   action: () => onNavigate('admin-quality'),   group: 'Navigate', keywords: ['rework', 'ncr'] },
     { id: 'nav-deliveries',  label: 'Deliveries',   icon: Truck,           action: () => onNavigate('admin-deliveries'),group: 'Navigate', keywords: ['driver', 'miles', 'gps'] },
+    { id: 'nav-weekly',      label: 'Weekly Report',icon: FileText,        action: () => onNavigate('admin-weekly'),    group: 'Navigate', keywords: ['owner', 'one page', 'summary', 'focus', 'pulse'] },
     { id: 'nav-reports',     label: 'Reports',      icon: Calculator,      action: () => onNavigate('admin-reports'),   group: 'Navigate', keywords: ['revenue', 'margin'] },
     { id: 'nav-team',        label: 'Team',         icon: Users,           action: () => onNavigate('admin-team'),      group: 'Navigate', keywords: ['workers', 'employees'] },
     { id: 'nav-scan',        label: 'Work Station', icon: ScanLine,        action: () => onNavigate('admin-scan'),      group: 'Navigate', keywords: ['kiosk'] },
