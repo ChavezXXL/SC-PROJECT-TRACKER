@@ -151,6 +151,7 @@ import { usePrompt } from './components/usePrompt';
 import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
+import { JobTimeline } from './components/JobTimeline';
 import { isDeveloper } from './utils/devMode';
 import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder, showTimerStarted, cancelTimerNotification, watchLiveTimerBadge } from './services/reminders';
 // mediaSession intentionally removed — hijacks music player controls in shop environments
@@ -7838,6 +7839,8 @@ export default function App() {
   const [allFullLogs, setAllFullLogs] = useState<TimeLog[]>([]);
   // Command palette — global Cmd+K / Ctrl+K
   const [paletteOpen, setPaletteOpen] = useCommandPalette();
+  // Palette job pick → the job's full Story (timeline modal) right here at root.
+  const [storyJob, setStoryJob] = useState<Job | null>(null);
   const { permission, requestPermission, alerts, markRead, markAllRead, clearAll } = useNotifications(allJobs, allActiveLogs, user, allFullLogs);
 
   // Subscribe globally for notification checks + settings.
@@ -8094,6 +8097,20 @@ export default function App() {
               </div>
               <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} align="left" />
             </div>
+
+            {/* Quick-Jump — visible entry point for the Cmd+K palette */}
+            <div className={`${sidebarCollapsed ? 'md:px-2 px-3' : 'px-3'}`}>
+              <button
+                onClick={() => { setPaletteOpen(true); setSidebarOpen(false); }}
+                aria-label="Search everything (Ctrl+K)"
+                className={`w-full flex items-center gap-2.5 rounded-xl border border-white/10 bg-zinc-900/60 hover:bg-zinc-800 hover:border-white/20 text-zinc-500 hover:text-zinc-300 transition-all ${sidebarCollapsed ? 'md:justify-center md:px-0 md:py-2.5 px-3.5 py-2.5' : 'px-3.5 py-2.5'}`}
+              >
+                <Search className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span className={`text-xs font-bold flex-1 text-left ${sidebarCollapsed ? 'md:hidden' : ''}`}>Search…</span>
+                <kbd className={`text-[9px] font-bold border border-white/10 rounded px-1.5 py-0.5 ${sidebarCollapsed ? 'md:hidden' : ''}`}>Ctrl K</kbd>
+              </button>
+            </div>
+
             <nav aria-label="Main navigation" className={`mt-2 ${sidebarCollapsed ? 'md:px-2 px-3' : 'px-3'}`}>
               {visibleGroups.map((group, gi) => (
                 <div key={group.label} className={gi > 0 ? 'mt-3' : ''}>
@@ -8190,6 +8207,14 @@ export default function App() {
               SC DEBURRING
             </div>
             <div className="flex items-center gap-2">
+              {/* Quick-Jump — search any job / customer / PO / screen */}
+              <button
+                aria-label="Search everything"
+                onClick={() => setPaletteOpen(true)}
+                className="p-2.5 rounded-xl border min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 transition-all bg-zinc-800/80 border-white/10 text-zinc-300 hover:text-white hover:bg-zinc-700"
+              >
+                <Search className="w-5 h-5" aria-hidden="true" />
+              </button>
               {/* Settings — one tap, always visible (was buried at the bottom of the drawer) */}
               <button
                 aria-label="Settings"
@@ -8289,7 +8314,17 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
           onNavigate={(v) => { setView(v as AppView); setPaletteOpen(false); }}
           jobs={allJobs}
+          onOpenJob={(jobId) => {
+            const j = allJobs.find(x => x.id === jobId);
+            if (j) setStoryJob(j); else setView('admin-jobs');
+            setPaletteOpen(false);
+          }}
         />
+      )}
+
+      {/* Palette job pick → full job story, from anywhere */}
+      {user && storyJob && (
+        <JobTimeline job={storyJob} logs={allFullLogs} stages={getStages(appSettings)} onClose={() => setStoryJob(null)} />
       )}
 
 
