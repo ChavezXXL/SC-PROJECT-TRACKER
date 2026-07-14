@@ -344,6 +344,43 @@
                   .no-print { display: none !important; }
                 }
 
+                /* Weekly Owner Report — ink-friendly one-pager.
+                   Triggered by body.print-report (set just before window.print()),
+                   so it never collides with the badge-sheet rule above. */
+                @media print {
+                  body.print-report { background: #fff !important; }
+                  body.print-report > * { visibility: hidden; }
+                  body.print-report #weekly-report,
+                  body.print-report #weekly-report * { visibility: visible !important; }
+                  body.print-report #weekly-report {
+                    position: absolute; left: 0; top: 0; right: 0;
+                    margin: 0 !important; padding: 0.25in !important; max-width: 100% !important;
+                  }
+                  /* Flip the dark theme to dark-ink-on-white */
+                  body.print-report #weekly-report * {
+                    color: #1f2937 !important;
+                    background-image: none !important;
+                    background-color: transparent !important;
+                    box-shadow: none !important;
+                    text-shadow: none !important;
+                    border-color: #d1d5db !important;
+                  }
+                  body.print-report #weekly-report h1,
+                  body.print-report #weekly-report h2,
+                  body.print-report #weekly-report h3,
+                  body.print-report #weekly-report p.text-white,
+                  body.print-report #weekly-report .text-white { color: #0b0f19 !important; }
+                  /* Cards get a hairline so the layout survives without fills */
+                  body.print-report #weekly-report [class*="rounded-2xl"] {
+                    border: 1px solid #e5e7eb !important; background: #fff !important;
+                    break-inside: avoid; page-break-inside: avoid;
+                  }
+                  /* Concentration bars: keep a visible fill in grayscale */
+                  body.print-report #weekly-report .h-2 > div { background: #6b7280 !important; }
+                  body.print-report .no-print { display: none !important; }
+                  body.print-report #weekly-report .animate-fade-in { animation: none !important; }
+                }
+
                 /* ── MASSIVE POLISH PASS ────────────────────────────────────── */
 
                 /* Global smoother transitions */

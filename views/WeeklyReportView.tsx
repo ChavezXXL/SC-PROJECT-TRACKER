@@ -119,8 +119,17 @@ export const WeeklyReportView = () => {
 
   const hasAny = jobs.length > 0 || logs.length > 0;
 
+  const doPrint = () => {
+    const b = document.body;
+    b.classList.add('print-report');
+    const cleanup = () => { b.classList.remove('print-report'); window.removeEventListener('afterprint', cleanup); };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(cleanup, 1500);   // fallback for browsers that skip afterprint
+    window.print();
+  };
+
   return (
-    <div className="max-w-5xl mx-auto animate-fade-in">
+    <div id="weekly-report" className="max-w-5xl mx-auto animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
         <div>
@@ -132,7 +141,7 @@ export const WeeklyReportView = () => {
           </p>
         </div>
         <button
-          onClick={() => window.print()}
+          onClick={doPrint}
           className="no-print bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-zinc-200 px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 active:scale-95 transition-all"
         >
           <Printer className="w-4 h-4" /> Print / Save PDF
