@@ -7,11 +7,11 @@
  *   <RiskCrewPanel/>   admin panel: tier + reasons + crew experience + override
  */
 import React from 'react';
-import { ShieldCheck, ShieldAlert, ShieldX, Star, CheckCircle2, User as UserIcon } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, ShieldX, Star, CheckCircle2, User as UserIcon, Wrench } from 'lucide-react';
 import type { Job } from '../types';
 import {
   type JobRisk, type Familiarity, type WorkerPartExperience, type RiskTier,
-  type PartRiskStats, computeJobRisk, partVeterans, TIER_LABEL,
+  type RiskIndex, computeJobRisk, partVeterans, partFamilyKey, TIER_LABEL,
 } from '../utils/jobRisk';
 
 const PILL: Record<RiskTier, string> = {
@@ -52,6 +52,27 @@ export const FamiliarityChip = ({ fam }: { fam: Familiarity }) => {
       </span>
     );
   }
+  if (fam.level === 'family') {
+    return (
+      <span
+        title={fam.familyParts?.length ? `You've run: ${fam.familyParts.join(', ')}` : undefined}
+        className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-300 bg-teal-500/10 border border-teal-500/25 px-1.5 py-0.5 rounded-full"
+      >
+        <CheckCircle2 className="w-3 h-3" /> You've run similar parts · ×{fam.familyRuns}
+      </span>
+    );
+  }
+  if (fam.level === 'ops') {
+    const top = fam.knownOps?.[0];
+    return (
+      <span
+        title={fam.knownOps?.map(o => `${o.op} ×${o.jobs}`).join(', ')}
+        className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-300 bg-sky-500/10 border border-sky-500/25 px-1.5 py-0.5 rounded-full"
+      >
+        <Wrench className="w-3 h-3" /> You know the ops{top ? ` · ${top.op} ×${top.jobs}` : ''}
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-full">
       <Star className="w-3 h-3" /> New to you
@@ -60,11 +81,28 @@ export const FamiliarityChip = ({ fam }: { fam: Familiarity }) => {
 };
 
 const vetsLine = (vets: WorkerPartExperience[]): string =>
-  vets.map(v => `${(v.userName || 'Someone').split(' ')[0]} (${v.runs} run${v.runs !== 1 ? 's' : ''})`).join(', ');
+  vets.map(v => `${(v.userName || 'Someone').split(' ')[0]} (${v.runs} run${v.runs !== 1 ? 's' : ''}${v.viaSimilar ? ', similar part' : ''})`).join(', ');
+
+/** One personal context line for yellow/red banners — what THIS worker brings. */
+const famContext = (fam: Familiarity, vets: WorkerPartExperience[]): React.ReactNode => {
+  if (fam.level === 'family') {
+    return <> · You've run similar parts ×{fam.familyRuns}{fam.familyParts?.length ? ` (${fam.familyParts.join(', ')})` : ''} — same concept.</>;
+  }
+  if (fam.level === 'ops') {
+    const tops = (fam.knownOps || []).map(o => `${o.op} ×${o.jobs}`).join(', ');
+    return <> · You know the ops from other parts ({tops}).</>;
+  }
+  if (fam.level === 'new' && vets.length > 0) {
+    return <> · New to you — ask {vetsLine(vets)}.</>;
+  }
+  return null;
+};
 
 /**
  * Worker-facing banner in the expanded job card. Shows only when there's
- * something to say: red/yellow tier, or a green job this worker hasn't done.
+ * something to say: red/yellow tier, or a green job this worker has NO
+ * connection to (exact, sibling-part, or operation experience all count —
+ * people who effectively know the work don't get nagged).
  */
 export const RiskBanner = ({ risk, fam, vets }: { risk: JobRisk; fam: Familiarity; vets: WorkerPartExperience[] }) => {
   if (risk.tier === 'green' && fam.level !== 'new') return null;
@@ -75,7 +113,7 @@ export const RiskBanner = ({ risk, fam, vets }: { risk: JobRisk; fam: Familiarit
         <p className="text-sm font-black text-red-300 flex items-center gap-1.5">
           <ShieldX className="w-4 h-4 shrink-0" /> RED JOB — {risk.guidance}
         </p>
-        <p className="text-xs text-red-200/80 mt-1">{risk.reasons[0]}</p>
+        <p className="text-xs text-red-200/80 mt-1">{risk.reasons[0]}{famContext(fam, [])}</p>
       </div>
     );
   }
@@ -87,12 +125,12 @@ export const RiskBanner = ({ risk, fam, vets }: { risk: JobRisk; fam: Familiarit
         </p>
         <p className="text-xs text-amber-200/80 mt-1">
           {risk.reasons[0]}
-          {fam.level === 'new' && vets.length > 0 && <> · New to you — ask {vetsLine(vets)}.</>}
+          {famContext(fam, vets)}
         </p>
       </div>
     );
   }
-  // Green, but this worker has never touched it.
+  // Green, and this worker has no connection to the part at all.
   return (
     <div className="mb-3 p-3 rounded-xl bg-sky-500/10 border border-sky-500/25">
       <p className="text-sm font-black text-sky-300 flex items-center gap-1.5">
@@ -113,12 +151,16 @@ export const RiskBanner = ({ risk, fam, vets }: { risk: JobRisk; fam: Familiarit
  */
 export const RiskCrewPanel = ({ job, index, onChange }: {
   job: Partial<Job>;
-  index: Map<string, PartRiskStats>;
+  index: RiskIndex;
   onChange: (patch: Partial<Job>) => void;
 }) => {
   if (!(job.partNumber || '').trim()) return null;
   const risk = computeJobRisk(job as Job, index);
   const vets = partVeterans(job.partNumber, index, undefined, 6);
+  const pnNorm = (job.partNumber || '').trim().toLowerCase();
+  const siblings = (index.families.get(partFamilyKey(job.partNumber))?.parts || [])
+    .filter(p => p.trim().toLowerCase() !== pnNorm)
+    .slice(0, 4);
   const current: RiskTier | 'auto' = job.riskOverride || 'auto';
 
   const btn = (val: RiskTier | 'auto', label: string, aria: string, cls: string) => (
@@ -168,22 +210,29 @@ export const RiskCrewPanel = ({ job, index, onChange }: {
           className="w-full bg-zinc-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-amber-500/40"
         />
       )}
+      {siblings.length > 0 && (
+        <p className="text-[11px] text-zinc-500 pt-1">
+          <span className="font-bold text-zinc-400">Similar parts on file:</span> {siblings.join(', ')}
+        </p>
+      )}
       {vets.length > 0 && (
         <div className="pt-2 border-t border-white/5">
-          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">Who's run this part</p>
+          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">
+            Who's run this part{vets[0]?.viaSimilar ? ' (via similar parts)' : ''}
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {vets.map(v => (
               <span key={v.userId} className="inline-flex items-center gap-1 text-[11px] font-bold text-zinc-300 bg-zinc-900 border border-white/10 px-2 py-1 rounded-lg">
                 <UserIcon className="w-3 h-3 text-zinc-500" />
                 {(v.userName || 'Unknown').split(' ')[0]}
-                <span className="text-zinc-500 font-medium">×{v.runs} · {Math.round(v.minutes / 60 * 10) / 10}h</span>
+                <span className="text-zinc-500 font-medium">×{v.runs} · {Math.round(v.minutes / 60 * 10) / 10}h{v.viaSimilar ? ' · similar' : ''}</span>
               </span>
             ))}
           </div>
         </div>
       )}
       {vets.length === 0 && (
-        <p className="text-[11px] text-amber-400/80 pt-1 border-t border-white/5">Nobody has logged time on this part yet.</p>
+        <p className="text-[11px] text-amber-400/80 pt-1 border-t border-white/5">Nobody has logged time on this part (or similar parts) yet.</p>
       )}
     </div>
   );

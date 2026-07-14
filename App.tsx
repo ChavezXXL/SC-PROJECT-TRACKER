@@ -2160,13 +2160,22 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             );
           })()}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredJobs.map(job => (
-              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
-                knownOps={[...new Set([...(opsMemory.byJob.get(job.id) || []), ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || [])])]}
-                risk={computeJobRisk(job, riskIndex)}
-                familiarity={workerFamiliarity(job.partNumber, riskIndex, user.id)}
-                vets={partVeterans(job.partNumber, riskIndex, user.id)} />
-            ))}
+            {filteredJobs.map(job => {
+              // Ops this job/part has actually used before (any worker) — feeds
+              // the picker AND the "you know these ops" familiarity check.
+              const jobKnownOps = [...new Set([
+                ...(opsMemory.byJob.get(job.id) || []),
+                ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || []),
+                ...((job.checklist || []).map(c => c.label)),
+              ])];
+              return (
+                <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
+                  knownOps={jobKnownOps}
+                  risk={computeJobRisk(job, riskIndex)}
+                  familiarity={workerFamiliarity(job.partNumber, riskIndex, user.id, jobKnownOps)}
+                  vets={partVeterans(job.partNumber, riskIndex, user.id)} />
+              );
+            })}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
         </div>
