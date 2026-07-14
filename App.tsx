@@ -27,6 +27,8 @@ import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
 import { ShopTrendsPanel } from './components/ShopTrendsPanel';
 import { ShopActionsPanel } from './components/ShopActionsPanel';
 import { FocusStrip } from './components/FocusStrip';
+import { RiskPill, FamiliarityChip, RiskBanner, RiskCrewPanel } from './components/RiskBadge';
+import { buildPartRiskIndex, computeJobRisk, workerFamiliarity, partVeterans, type JobRisk, type Familiarity, type WorkerPartExperience } from './utils/jobRisk';
 // ── Lazy views ────────────────────────────────────────────────────────────
 // Post-login screens load on demand — cuts the startup bundle roughly in half
 // so the login/dashboard paint much sooner. LiveFloorMonitor, CustomerPortal
@@ -1047,7 +1049,7 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
 };
 
 // --- JOB SELECTION CARD ---
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[], knownOps?: string[] }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast, activeLogs = [], knownOps = [] }) => {
+const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[], knownOps?: string[], risk?: JobRisk, familiarity?: Familiarity, vets?: WorkerPartExperience[] }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast, activeLogs = [], knownOps = [], risk, familiarity, vets = [] }) => {
   const [expanded, setExpanded] = useState(defaultExpanded || false);
   const [showAllOps, setShowAllOps] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
@@ -1084,7 +1086,8 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-0.5">PO Number</p>
             <h3 className="text-xl font-black text-white leading-tight">{job.poNumber}</h3>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 flex-wrap justify-end min-w-0">
+            {risk && <RiskPill risk={risk} />}
             {job.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">  URGENT</span>}
             {job.priority === 'high' && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">  HIGH</span>}
             {(job.jobNotes?.length || 0) > 0 && <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">📝 {job.jobNotes!.length} note{job.jobNotes!.length > 1 ? 's' : ''}</span>}
@@ -1107,6 +1110,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           )}
           <div className="text-sm text-zinc-500 space-y-1 min-w-0 flex-1">
           <p className="truncate">Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
+          {familiarity && <FamiliarityChip fam={familiarity} />}
           <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
@@ -1172,6 +1176,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
       </div>
       {expanded && (
         <div className="p-4 bg-zinc-950/50 border-t border-white/5 animate-fade-in">
+          {risk && familiarity && <RiskBanner risk={risk} fam={familiarity} vets={vets} />}
           {job.info && (
             <div className="mb-3 p-2 bg-zinc-900 rounded-lg text-xs text-zinc-400 border border-white/5">
               <span className="text-zinc-500 font-bold uppercase text-[10px]">Notes: </span>{job.info}
@@ -1507,6 +1512,15 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   const [resumeStarting, setResumeStarting] = useState(false);   // optimistic guard for one-tap "Jump back in"
   // Job memory: jobId → ops used before (recent first), partNumber → same.
   const [opsMemory, setOpsMemory] = useState<{ byJob: Map<string, string[]>; byPart: Map<string, string[]> }>({ byJob: new Map(), byPart: new Map() });
+  // Risk system inputs — unfiltered jobs (history lives in completed ones),
+  // all logs (everyone's — familiarity is per worker), and rework entries.
+  const [riskJobs, setRiskJobs] = useState<Job[]>([]);
+  const [riskLogsAll, setRiskLogsAll] = useState<TimeLog[]>([]);
+  const [riskRework, setRiskRework] = useState<ReworkEntry[]>([]);
+  // Deep log history (one-shot) — the live stream caps at 500 logs, which
+  // would make familiarity "forget" parts a worker ran months ago.
+  const [riskHistLogs, setRiskHistLogs] = useState<TimeLog[]>([]);
+  useEffect(() => { DB.fetchLogHistory().then(setRiskHistLogs).catch(() => {}); }, []);
   const activePanelRef = useRef<HTMLDivElement>(null);
   const [shouldScrollToTimer, setShouldScrollToTimer] = useState(false);
 
@@ -1579,13 +1593,25 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
         if (pn) push(byPart, pn, l.operation);
       }
       setOpsMemory({ byJob, byPart });
+      setRiskLogsAll(allLogs);
     });
     const unsubJobs = DB.subscribeJobs((allJobs) => {
       setJobs(allJobs.filter(j => j.status !== 'completed').reverse());
+      setRiskJobs(allJobs);
     });
     const unsubActiveLogs = DB.subscribeActiveLogs(setShopActiveLogs);
-    return () => { unsubSettings(); unsubLogs(); unsubJobs(); unsubActiveLogs(); };
+    const unsubRework = DB.subscribeRework(setRiskRework);
+    return () => { unsubSettings(); unsubLogs(); unsubJobs(); unsubActiveLogs(); unsubRework(); };
   }, [user.id]);
+
+  // Part history index for Green/Yellow/Red + "you've run this before".
+  // Live logs win over the one-shot history on id collisions (fresher fields).
+  const riskIndex = useMemo(() => {
+    const byId = new Map<string, TimeLog>();
+    for (const l of riskHistLogs) byId.set(l.id, l);
+    for (const l of riskLogsAll) byId.set(l.id, l);
+    return buildPartRiskIndex(riskJobs, [...byId.values()], riskRework);
+  }, [riskJobs, riskLogsAll, riskHistLogs, riskRework]);
 
   // ── Sync active timer state to Service Worker for lock-screen notification ──
   const prevLogIdRef = useRef<string | null>(null);
@@ -2136,7 +2162,10 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredJobs.map(job => (
               <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
-                knownOps={[...new Set([...(opsMemory.byJob.get(job.id) || []), ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || [])])]} />
+                knownOps={[...new Set([...(opsMemory.byJob.get(job.id) || []), ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || [])])]}
+                risk={computeJobRisk(job, riskIndex)}
+                familiarity={workerFamiliarity(job.partNumber, riskIndex, user.id)}
+                vets={partVeterans(job.partNumber, riskIndex, user.id)} />
             ))}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
@@ -4844,6 +4873,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const [calAdded, setCalAdded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cal_added_jobs') || '[]'); } catch { return []; } });
   const [printed, setPrinted] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('printed_jobs') || '[]'); } catch { return []; } });
+  // Part history index for the Green/Yellow/Red pills + Risk & Crew panel.
+  // Merged with one-shot deep history — the live stream caps at 500 logs.
+  const [adminHistLogs, setAdminHistLogs] = useState<TimeLog[]>([]);
+  useEffect(() => { DB.fetchLogHistory().then(setAdminHistLogs).catch(() => {}); }, []);
+  const adminRiskIndex = useMemo(() => {
+    const byId = new Map<string, TimeLog>();
+    for (const l of adminHistLogs) byId.set(l.id, l);
+    for (const l of allLogs) byId.set(l.id, l);
+    return buildPartRiskIndex(jobs, [...byId.values()], reworkEntries);
+  }, [jobs, allLogs, adminHistLogs, reworkEntries]);
   // Force-re-render once holiday cache is warm so bizDays cells show numbers.
   const [, setHolidayTick] = useState(0);
   useEffect(() => {
@@ -5900,6 +5939,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       <div className="flex flex-col gap-0.5 min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                         <span className="text-white font-black text-sm sm:text-xl">{j.poNumber}</span>
+                        {j.status !== 'completed' && <RiskPill risk={computeJobRisk(j, adminRiskIndex)} />}
                         {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
                         {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
                         {deliveredOnTime && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">ON TIME</span>}
@@ -6659,6 +6699,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   )}
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Priority Level</label><select className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50" value={editingJob.priority || 'normal'} onChange={e => setEditingJob({ ...editingJob, priority: e.target.value as any })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
                 </div>
+
+                {/* Green/Yellow/Red — live risk read on whatever's typed, crew
+                    experience, and the manual override. */}
+                <RiskCrewPanel
+                  job={editingJob}
+                  index={adminRiskIndex}
+                  onChange={patch => setEditingJob(prev => ({ ...prev, ...patch }))}
+                />
                 <div>
                   <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Notes / Special Instructions</label>
                   <textarea className="w-full bg-zinc-950 border border-white/10 rounded-xl p-4 text-white min-h-[140px] outline-none focus:ring-2 focus:ring-orange-500/50 resize-y leading-relaxed" value={editingJob.info || ''} onChange={e => setEditingJob({ ...editingJob, info: e.target.value })} placeholder="Enter any process details, material specs, or special requirements here..." rows={5} />

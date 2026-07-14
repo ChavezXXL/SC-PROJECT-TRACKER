@@ -666,6 +666,25 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
   return subscribeLogs((all) => cb(all.filter((l) => !l.endTime)));
 }
 
+/**
+ * One-shot DEEP log history (newest-first, default 5000). The live
+ * subscribeLogs stream caps at 500 for bandwidth — fine for dashboards, but
+ * the risk/familiarity engine needs the long memory ("Victor ran this part in
+ * January"). Fetch once per mount and merge with the live stream by id.
+ */
+export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
+  if (dbInstance) {
+    try {
+      const snap = await getDocs(query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(max)));
+      firebaseStatus = { connected: true };
+      return snap.docs.map((d: any) => d.data() as TimeLog);
+    } catch {
+      return readLS<TimeLog[]>(LS.logs, []);
+    }
+  }
+  return readLS<TimeLog[]>(LS.logs, []);
+}
+
 // UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
 /** All currently-open (not-yet-stopped) logs for a worker. Single-field
  *  query (auto-indexed); falls back to a full scan, then localStorage. */

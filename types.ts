@@ -224,6 +224,12 @@ export interface Job {
     laborHours:     number;
     snappedAt:      number;   // epoch ms
   };
+  // ── Risk tier (Green/Yellow/Red control system) ──
+  /** Manual tier override — set by admin when human judgment beats the data
+   *  (flight-critical part, unclear edge-break callout). Absent = auto. */
+  riskOverride?: 'green' | 'yellow' | 'red';
+  /** Optional one-line reason shown with the override. */
+  riskNote?: string;
   // ── Portal note (customer-facing) ──
   // Free-text human-friendly status update that shows on the customer portal.
   // Think "Shipping Friday EOD" or "On track for Tuesday — 2 parts left in QC."
