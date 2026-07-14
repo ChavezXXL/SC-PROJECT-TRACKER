@@ -23,7 +23,19 @@ import { computeShopTrends, weekStart, type TrendMetric } from '../utils/shopTre
 import { computeCustomerIntel } from '../utils/customerIntel';
 import { computePriceDoctor } from '../utils/priceDoctor';
 import { computeTimekeepingHealth } from '../utils/timekeepingHealth';
+import { computeWeeklyFocus, type FocusIcon } from '../utils/weeklyFocus';
 import { fmtMoneyK, fmtCurrency } from '../utils/format';
+
+const FOCUS_ICON: Record<FocusIcon, React.ReactNode> = {
+  'revenue-down': <TrendingDown className="w-3.5 h-3.5" />,
+  concentration: <UsersIcon className="w-3.5 h-3.5" />,
+  quiet: <TrendingDown className="w-3.5 h-3.5" />,
+  money: <DollarSign className="w-3.5 h-3.5" />,
+  health: <AlertTriangle className="w-3.5 h-3.5" />,
+  actions: <ClipboardCheck className="w-3.5 h-3.5" />,
+  rework: <AlertTriangle className="w-3.5 h-3.5" />,
+  'all-clear': <Target className="w-3.5 h-3.5" />,
+};
 
 const WEEK_MS = 7 * 86400000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -93,29 +105,12 @@ export const WeeklyReportView = () => {
   }, [openActions, now]);
   const topUnderpriced = doctor.parts.filter(p => p.verdict === 'underpriced' || p.verdict === 'thin').slice(0, 4);
 
-  // ── "Focus this week" — synthesize the few things that actually move money.
-  const focus = useMemo(() => {
-    const out: { icon: React.ReactNode; text: string; tone: 'red' | 'amber' | 'emerald' }[] = [];
-    const rev = trends.metrics.find(m => m.key === 'revenue');
-    if (rev && rev.deltaPct !== null && rev.deltaPct <= -10)
-      out.push({ icon: <TrendingDown className="w-3.5 h-3.5" />, tone: 'red', text: `Revenue is down ${Math.abs(rev.deltaPct).toFixed(0)}% vs your recent average — line up work to refill the week.` });
-    if (intel.topSharePct !== null && intel.topSharePct >= 40)
-      out.push({ icon: <UsersIcon className="w-3.5 h-3.5" />, tone: intel.topSharePct >= 60 ? 'red' : 'amber', text: `${intel.topShareName} is ${intel.topSharePct.toFixed(0)}% of revenue — one customer. Pull work from a second account to de-risk.` });
-    for (const p of goingQuiet)
-      out.push({ icon: <TrendingDown className="w-3.5 h-3.5" />, tone: 'amber', text: `${p.name} has gone quiet (${p.daysQuiet}d). A quick check-in call often re-opens the tap.` });
-    if (doctor.totalLeft90d > 500)
-      out.push({ icon: <DollarSign className="w-3.5 h-3.5" />, tone: 'amber', text: `~${fmtMoneyK(doctor.totalLeft90d)} left on the table over 90 days from underpriced parts — requote the top ${Math.min(topUnderpriced.length, 3)}.` });
-    if (health.criticalCount > 0)
-      out.push({ icon: <AlertTriangle className="w-3.5 h-3.5" />, tone: 'red', text: `${health.criticalCount} timekeeping issue${health.criticalCount > 1 ? 's' : ''} need a look — your labor numbers depend on clean clock data.` });
-    if (overdueActions > 0)
-      out.push({ icon: <ClipboardCheck className="w-3.5 h-3.5" />, tone: 'red', text: `${overdueActions} action${overdueActions > 1 ? 's are' : ' is'} overdue on your list — close them or move the date.` });
-    const rework = trends.metrics.find(m => m.key === 'rework');
-    if (rework && rework.current > 0 && rework.deltaPct !== null && rework.deltaPct >= 25)
-      out.push({ icon: <AlertTriangle className="w-3.5 h-3.5" />, tone: 'amber', text: `Rework is up ${rework.deltaPct.toFixed(0)}% — check the parts bouncing back before they eat the margin.` });
-    if (out.length === 0)
-      out.push({ icon: <Target className="w-3.5 h-3.5" />, tone: 'emerald', text: 'No red flags this week — revenue steady, one-customer risk in check, pricing healthy. Keep the pipeline full.' });
-    return out.slice(0, 6);
-  }, [trends, intel, goingQuiet, doctor, health, overdueActions, topUnderpriced]);
+  // ── "Focus this week" — from the shared engine, so the report and the
+  //    dashboard strip can never disagree.
+  const focus = useMemo(
+    () => computeWeeklyFocus({ trends, intel, doctor, health, openActions, now }).slice(0, 6),
+    [trends, intel, doctor, health, openActions, now],
+  );
 
   const hasAny = jobs.length > 0 || logs.length > 0;
 
@@ -163,9 +158,9 @@ export const WeeklyReportView = () => {
               <h2 className="text-sm font-black text-white uppercase tracking-wider">Focus this week</h2>
             </div>
             <ul className="space-y-2">
-              {focus.map((f, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-sm">
-                  <span className={`mt-0.5 shrink-0 ${f.tone === 'red' ? 'text-red-400' : f.tone === 'amber' ? 'text-amber-400' : 'text-emerald-400'}`}>{f.icon}</span>
+              {focus.map(f => (
+                <li key={f.key} className="flex items-start gap-2.5 text-sm">
+                  <span className={`mt-0.5 shrink-0 ${f.tone === 'red' ? 'text-red-400' : f.tone === 'amber' ? 'text-amber-400' : 'text-emerald-400'}`}>{FOCUS_ICON[f.icon]}</span>
                   <span className="text-zinc-200 leading-snug">{f.text}</span>
                 </li>
               ))}

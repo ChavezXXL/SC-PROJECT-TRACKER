@@ -26,6 +26,7 @@ import { CanWeTakeIt } from './components/CanWeTakeIt';
 import { TimekeepingHealthPanel } from './components/TimekeepingHealthPanel';
 import { ShopTrendsPanel } from './components/ShopTrendsPanel';
 import { ShopActionsPanel } from './components/ShopActionsPanel';
+import { FocusStrip } from './components/FocusStrip';
 // ── Lazy views ────────────────────────────────────────────────────────────
 // Post-login screens load on demand — cuts the startup bundle roughly in half
 // so the login/dashboard paint much sooner. LiveFloorMonitor, CustomerPortal
@@ -3138,6 +3139,17 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         );
       })()}
+
+      {/* 🎯 FOCUS THIS WEEK — the owner report's punchline, jumps to the full report */}
+      <FocusStrip
+        jobs={jobs}
+        logs={allLogs}
+        rework={reworkEntries}
+        actions={dashActions}
+        users={dashWorkers}
+        settings={shopSettings}
+        onOpen={() => setView('admin-weekly')}
+      />
 
       {/* 🛡 TIMEKEEPING HEALTH — payroll-data watchdog (only shows issues or "all clear") */}
       <TimekeepingHealthPanel
