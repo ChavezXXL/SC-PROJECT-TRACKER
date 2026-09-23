@@ -400,18 +400,58 @@ const COL = {
 // --------------------
 // JOBS
 // --------------------
+
+// ── Part-photo memory ─────────────────────────────────────────────
+// Photos are stored per JOB, but a part looks the same on every run — so a
+// new job for a repeat part used to render photo-less until someone
+// re-uploaded the same picture ("photo shows up sometimes and sometimes
+// not"). Enriching here, at the single subscription choke point, means every
+// view (board, lists, clock-in snapshot, traveler) inherits the part's best
+// known photo with no per-view changes. In-memory only — nothing is written
+// back to Firestore unless the user saves the job, which merely persists a
+// tiny Storage-URL string.
+const normPartPhotoKey = (pn?: string): string =>
+  (pn || '').trim().toLowerCase().replace(/\s+/g, '');
+
+function enrichJobsWithPartPhotos(list: Job[]): Job[] {
+  // Best photo per part: prefer a Storage URL over base64 (logs only snapshot
+  // URLs, and base64 bloats nothing further this way), then prefer newest.
+  const best = new Map<string, { url: string; at: number; isUrl: boolean }>();
+  for (const j of list) {
+    if (!j.partImage) continue;
+    const k = normPartPhotoKey(j.partNumber);
+    if (!k) continue;
+    const isUrl = !j.partImage.startsWith('data:');
+    const at = j.completedAt || j.createdAt || 0;
+    const cur = best.get(k);
+    if (!cur || (isUrl && !cur.isUrl) || (isUrl === cur.isUrl && at > cur.at)) {
+      best.set(k, { url: j.partImage, at, isUrl });
+    }
+  }
+  if (best.size === 0) return list;
+  let changed = false;
+  const out = list.map(j => {
+    if (j.partImage) return j;
+    const hit = best.get(normPartPhotoKey(j.partNumber));
+    if (!hit) return j;
+    changed = true;
+    return { ...j, partImage: hit.url };
+  });
+  return changed ? out : list;
+}
+
 export function subscribeJobs(cb: (jobs: Job[]) => void) {
   if (dbInstance) {
     const key = 'jobs:' + COL.jobs;
     return multicast<Job[]>(key, notify => {
       return retryingSnapshot(
         () => collection(dbInstance!, COL.jobs),
-        snap => { firebaseStatus = { connected: true }; notify(snap.docs.map(d => d.data() as Job)); },
-        () => notify(readLS<Job[]>(LS.jobs, [])),
+        snap => { firebaseStatus = { connected: true }; notify(enrichJobsWithPartPhotos(snap.docs.map(d => d.data() as Job))); },
+        () => notify(enrichJobsWithPartPhotos(readLS<Job[]>(LS.jobs, []))),
       );
     }, cb);
   }
-  return localSubscribe(() => readLS<Job[]>(LS.jobs, []), cb);
+  return localSubscribe(() => enrichJobsWithPartPhotos(readLS<Job[]>(LS.jobs, [])), cb);
 }
 
 export async function getJobById(id: string): Promise<Job | null> {
