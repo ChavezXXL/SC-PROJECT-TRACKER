@@ -175,6 +175,10 @@ export interface Job {
   jobIdsDisplay: string;
   poNumber: string;
   partNumber: string;
+  /** Drawing revision from the customer PO, e.g. "L". Optional and purely
+   *  additive — pre-existing jobs simply don't have it, and the PO-import
+   *  analytics fall back to scanning `info` for a "REV x" callout. */
+  revision?: string;
   customer?: string;
   priority?: JobPriority;
   quantity: number;
@@ -190,6 +194,10 @@ export interface Job {
   quoteAmount?: number;        // What the customer pays for this job ($)
   pricePerPart?: number;       // Per-unit rate — quoteAmount is auto-set to pricePerPart × quantity
   partImage?: string;           // Base64 data URL of the part photo (compressed JPEG)
+  /** UI-only, never written to Firestore. Set by subscribeJobs when this job
+   *  has no photo of its own and borrowed one from another run of the same
+   *  part number; saveJob() strips it (and the borrowed photo) before writing. */
+  photoInherited?: boolean;
   // ── Routing / Workflow ──
   currentStage?: string;       // stage id from settings.jobStages
   stageHistory?: StageHistoryEntry[];
@@ -241,6 +249,13 @@ export interface Job {
     updatedAt: number;
     updatedBy?: string;
   };
+  // ── Provenance (set only by the PO-import API; absent on hand-entered jobs) ──
+  /** Who/what created this job, e.g. "AI API / External Integration". */
+  createdBy?: string;
+  /** How it got here, e.g. "purchase-order-import". */
+  source?: string;
+  /** Ties the job back to its row in the `api_imports` audit collection. */
+  importId?: string;
 }
 
 /** A single checklist / routing operation within a job. */

@@ -435,7 +435,11 @@ function enrichJobsWithPartPhotos(list: Job[]): Job[] {
     const hit = best.get(normPartPhotoKey(j.partNumber));
     if (!hit) return j;
     changed = true;
-    return { ...j, partImage: hit.url };
+    // Tagged so saveJob() can strip it again. Several callers save with
+    // `{ ...job, oneField }`, which would otherwise persist a borrowed photo
+    // as this job's OWN copy — duplicating 126 KB of base64 per save and
+    // re-bloating the very docs this is meant to keep small.
+    return { ...j, partImage: hit.url, photoInherited: true } as Job;
   });
   return changed ? out : list;
 }
@@ -475,6 +479,15 @@ export async function getJobById(id: string): Promise<Job | null> {
 }
 
 export async function saveJob(job: Job) {
+  // Never persist a photo this job only BORROWED from another run of the same
+  // part (see enrichJobsWithPartPhotos). Callers commonly save with
+  // `{ ...job, oneField }`, so the tag has to be honored here at the single
+  // write choke point rather than at each call site. Copy first — mutating the
+  // caller's object would wipe the photo from the live UI.
+  if ((job as any).photoInherited) {
+    const { partImage, photoInherited, ...rest } = job as any;
+    job = rest as Job;
+  }
   if (dbInstance) {
       try {
         await setDoc(doc(dbInstance, COL.jobs, job.id), sanitize(job), { merge: true });
