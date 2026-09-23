@@ -558,7 +558,15 @@ async function resolveCoords(override?: { lat?: number; lon?: number }): Promise
       return { lat: pos.coords.latitude, lon: pos.coords.longitude, source: 'geolocation' };
     } catch { /* fall through to IP */ }
   }
-  // 3. IP lookup — no permission, no prompt, works on TVs.
+  // 3. IP lookup — no permission, no prompt, works on TVs. ipapi.co's free
+  //    tier has a low monthly cap; once it 402s (quota exceeded) it will
+  //    keep 402ing for the rest of the window, so back off for a few hours
+  //    instead of re-hitting it every 10 minutes from every device.
+  const COOLDOWN_KEY = 'fabtrack_ip_geo_cooldown';
+  try {
+    const until = Number(localStorage.getItem(COOLDOWN_KEY) || 0);
+    if (Date.now() < until) return null;
+  } catch {}
   try {
     const res = await fetch('https://ipapi.co/json/');
     if (res.ok) {
@@ -566,6 +574,8 @@ async function resolveCoords(override?: { lat?: number; lon?: number }): Promise
       if (typeof d.latitude === 'number' && typeof d.longitude === 'number') {
         return { lat: d.latitude, lon: d.longitude, source: 'ip' };
       }
+    } else {
+      try { localStorage.setItem(COOLDOWN_KEY, String(Date.now() + 6 * 3600_000)); } catch {}
     }
   } catch { /* network blocked, nothing we can do */ }
   return null;

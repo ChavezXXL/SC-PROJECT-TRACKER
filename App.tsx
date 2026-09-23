@@ -1111,7 +1111,13 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           <div className="text-sm text-zinc-500 space-y-1 min-w-0 flex-1">
           <p className="truncate">Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
           {familiarity && <FamiliarityChip fam={familiarity} />}
-          <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
+          {/* Job ID defaults to the PO number when nobody set a distinct one
+              (see handleSave) — showing it again right under the PO number
+              header is pure duplication for the common case, so only render
+              it when it's actually telling the worker something new. */}
+          {job.jobIdsDisplay && job.jobIdsDisplay !== job.poNumber && (
+            <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
+          )}
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
               {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
@@ -2634,8 +2640,10 @@ const INSIGHT_ICON: Record<string, React.ReactNode> = {
   part_overrun:  <TrendingDown  className="w-4 h-4" />,
 };
 
+const BRAIN_DEFAULT_SHOWN = 4;
 const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsight[]; setView: (v: string) => void; onMakeTask?: (insight: ShopInsight) => void }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(sessionStorage.getItem('brain_dismissed') || '[]')); }
     catch { return new Set(); }
@@ -2644,6 +2652,10 @@ const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsig
   const critCount = visible.filter(i => i.severity === 'critical').length;
   const warnCount = visible.filter(i => i.severity === 'warning').length;
   const posCount  = visible.filter(i => i.severity === 'positive').length;
+  // Criticals always shown; everything else caps to a handful so 18 insights
+  // don't turn into 18 full cards on first paint — expand to see the rest.
+  const shown = showAll ? visible : visible.filter((i, idx) => i.severity === 'critical' || idx < BRAIN_DEFAULT_SHOWN);
+  const hiddenCount = visible.length - shown.length;
 
   const dismiss = (id: string) => {
     const next = new Set(dismissed); next.add(id);
@@ -2688,7 +2700,7 @@ const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsig
       {/* Cards */}
       {!collapsed && (
         <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {visible.map(insight => {
+          {shown.map(insight => {
             const cfg = INSIGHT_SEVERITY_CONFIG[insight.severity];
             const icon = INSIGHT_ICON[insight.type];
             return (
@@ -2735,6 +2747,14 @@ const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsig
               </div>
             );
           })}
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="col-span-1 sm:col-span-2 text-xs font-bold text-violet-300 hover:text-violet-200 border border-dashed border-violet-500/25 hover:border-violet-500/40 rounded-xl py-2.5 transition-colors"
+            >
+              Show {hiddenCount} more insight{hiddenCount > 1 ? 's' : ''}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -3056,21 +3076,17 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         />
       )}
 
-      {/* ── Needs Attention — aggregated smart banner ── */}
+      {/* ── Needs Attention — aggregated smart banner ──
+          Scoped to signals that AREN'T already shown elsewhere on this page:
+          overdue lives in the KPI strip + Today's Attack Plan, stale jobs and
+          missing-quote-on-open-jobs live in Shop Brain, capacity/ETA lives in
+          the Weekly Capacity Forecast panel below. Showing the same fact
+          twice with two different numbers (different thresholds) read as a
+          bug, not two insights — so each signal gets exactly one home. */}
       {!attentionDismissed && (() => {
         const openRework = reworkEntries.filter(r => r.status !== 'resolved').length;
         const missingQuotes = jobs.filter(j => j.status === 'completed' && !(j.quoteAmount && j.quoteAmount > 0)).length;
         const longRunning = activeLogs.filter(l => l.startTime < Date.now() - 4 * 3600000).length;
-
-        // Brain: stale jobs
-        const STALE_MS = 48 * 3600000;
-        const now = Date.now();
-        const lastLogMs = new Map<string, number>();
-        allLogs.forEach(l => { const ts = l.endTime || l.startTime; if (ts && ts > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, ts); });
-        const staleCount = jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').filter(j => {
-          const last = lastLogMs.get(j.id) || 0;
-          return (now - j.createdAt) > STALE_MS && (now - last) > STALE_MS;
-        }).length;
 
         // Brain: over-budget active jobs
         const rate = shopSettings.shopRate || 0;
@@ -3078,19 +3094,6 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           const mins = allLogs.filter(l => l.jobId === j.id && !l.isSample).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           return (mins / 60) * rate > j.quoteAmount!;
         }).length : 0;
-
-        // Brain: ETA / capacity forecast — compute inline for the dashboard
-        const openJobs = jobs.filter(j => j.status !== 'completed');
-        const dashEtaMap = new Map<string, ReturnType<typeof computeJobETA>>();
-        for (const job of openJobs) {
-          const history = getPartHistory(job.partNumber || '', jobs, allLogs);
-          dashEtaMap.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
-        }
-        const workerCount = Math.max(1, dashWorkers.filter(w => w.isActive !== false).length || activeLogs.length || 1);
-        const activeWorkerCount = new Set(activeLogs.map(l => l.userId)).size;
-        const dashForecast = computeCapacityForecast(dashEtaMap, workerCount, activeWorkerCount);
-        const etaCriticalCount = [...dashEtaMap.values()].filter(e => e.riskLevel === 'critical' && !overdueJobs.find(j => j.id === e.jobId)).length;
-        const etaAtRiskCount = dashForecast.jobsAtRisk;
 
         // Customer duplicate detection — same normalizer as SettingsView.
         // Track UNIQUE original names per key (not job counts). After a
@@ -3110,7 +3113,6 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const dupGroupCount = [...custMap.values()].filter(v => v.size > 1).length;
 
         const items: { label: string; count: number; color: string; icon: any; onClick: () => void }[] = [];
-        if (overdueJobs.length > 0) items.push({ label: `${overdueJobs.length} overdue job${overdueJobs.length > 1 ? 's' : ''}`, count: overdueJobs.length, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
         if (dueSoonJobs.length > 0) items.push({ label: `${dueSoonJobs.length} due in 3 days`, count: dueSoonJobs.length, color: '#f97316', icon: Clock, onClick: () => setView('admin-jobs') });
         if (openRework > 0) items.push({ label: `${openRework} open rework issue${openRework > 1 ? 's' : ''}`, count: openRework, color: '#f59e0b', icon: AlertTriangle, onClick: () => setView('admin-quality') });
         if (longRunning > 0) items.push({ label: `${longRunning} timer${longRunning > 1 ? 's' : ''} running > 4h`, count: longRunning, color: '#eab308', icon: Clock, onClick: () => setView('admin-live') });
@@ -3118,10 +3120,6 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         if (dupGroupCount > 0) items.push({ label: `${dupGroupCount} possible customer duplicate${dupGroupCount > 1 ? 's' : ''}`, count: dupGroupCount, color: '#a855f7', icon: Users, onClick: () => setView('admin-settings') });
         if (missingQuotes > 0 && missingQuotes >= 5) items.push({ label: `${missingQuotes} completed jobs missing quote`, count: missingQuotes, color: '#3b82f6', icon: FileText, onClick: () => setView('admin-jobs') });
         if (overBudgetCount > 0) items.push({ label: `${overBudgetCount} job${overBudgetCount > 1 ? 's' : ''} over budget`, count: overBudgetCount, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
-        if (staleCount > 0) items.push({ label: `${staleCount} stale job${staleCount > 1 ? 's' : ''} — no activity 48h+`, count: staleCount, color: '#71717a', icon: Clock, onClick: () => setView('admin-jobs') });
-        if (etaAtRiskCount > 0) items.push({ label: `${etaAtRiskCount} job${etaAtRiskCount > 1 ? 's' : ''} behind pace`, count: etaAtRiskCount, color: '#f97316', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
-        if (dashForecast.overloaded) items.push({ label: `Shop ${Math.round(dashForecast.capacityPct)}% loaded this week`, count: 1, color: '#ef4444', icon: AlertTriangle, onClick: () => setView('admin-jobs') });
-        else if (dashForecast.capacityPct > 75 && dashForecast.totalRemainingHours > 0) items.push({ label: `Capacity at ${Math.round(dashForecast.capacityPct)}% this week`, count: 1, color: '#f59e0b', icon: Clock, onClick: () => setView('admin-jobs') });
         // Due-date clustering — multiple jobs sharing the same due date
         const dueDateMap = new Map<string, number>();
         jobs.filter(j => j.status !== 'completed' && j.dueDate).forEach(j => dueDateMap.set(j.dueDate!, (dueDateMap.get(j.dueDate!) || 0) + 1));

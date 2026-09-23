@@ -723,19 +723,44 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
  * One-shot DEEP log history (newest-first, default 5000). The live
  * subscribeLogs stream caps at 500 for bandwidth — fine for dashboards, but
  * the risk/familiarity engine needs the long memory ("Victor ran this part in
- * January"). Fetch once per mount and merge with the live stream by id.
+ * January").
+ *
+ * Shared across every caller in the tab (worker screen + admin Jobs view
+ * both want it) via a module-level cache: concurrent callers await the same
+ * in-flight read instead of issuing two ~5000-doc reads back to back, and a
+ * remount within the TTL reuses the cached result instead of re-fetching.
  */
+const LOG_HISTORY_TTL_MS = 10 * 60_000;
+let logHistoryCache: { at: number; max: number; data: TimeLog[] } | null = null;
+let logHistoryPromise: Promise<TimeLog[]> | null = null;
+
 export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
-  if (dbInstance) {
-    try {
-      const snap = await getDocs(query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(max)));
-      firebaseStatus = { connected: true };
-      return snap.docs.map((d: any) => d.data() as TimeLog);
-    } catch {
-      return readLS<TimeLog[]>(LS.logs, []);
-    }
+  if (logHistoryCache && logHistoryCache.max >= max && Date.now() - logHistoryCache.at < LOG_HISTORY_TTL_MS) {
+    return logHistoryCache.data;
   }
-  return readLS<TimeLog[]>(LS.logs, []);
+  if (logHistoryPromise) return logHistoryPromise;
+
+  logHistoryPromise = (async () => {
+    let data: TimeLog[];
+    if (dbInstance) {
+      try {
+        const snap = await getDocs(query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(max)));
+        firebaseStatus = { connected: true };
+        data = snap.docs.map((d: any) => d.data() as TimeLog);
+      } catch {
+        data = readLS<TimeLog[]>(LS.logs, []);
+      }
+    } else {
+      data = readLS<TimeLog[]>(LS.logs, []);
+    }
+    logHistoryCache = { at: Date.now(), max, data };
+    return data;
+  })();
+  try {
+    return await logHistoryPromise;
+  } finally {
+    logHistoryPromise = null;
+  }
 }
 
 // UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
@@ -1893,8 +1918,31 @@ export async function migrateLocalPhotosToFirestore(): Promise<void> {
 // re-checks each doc right before patching (another device may have done it),
 // patches ONLY the partImage field (updateDoc — never clobbers other edits),
 // and any failure just leaves that job on base64 until the next run.
+const MIGRATION_COOLDOWN_KEY = 'fabtrack_photo_migration_next';
+
+/**
+ * Every staff login (8s after mount) used to run this unconditionally: a full
+ * jobs-collection scan, every time, forever — including forever retrying
+ * uploads after the Storage bucket hit its quota, which can never succeed
+ * until the quota clears. That meant a pointless full scan + up to 10 doomed
+ * upload attempts on every device, every login, spamming the console.
+ *
+ * A per-device cooldown fixes both: skip the scan entirely until it's due,
+ * and back off hard (24h) the moment we see quota-exceeded rather than
+ * hammering it again on the next login a few minutes later.
+ */
+function migrationDue(): boolean {
+  try {
+    const next = Number(localStorage.getItem(MIGRATION_COOLDOWN_KEY) || 0);
+    return Date.now() >= next;
+  } catch { return true; }
+}
+function setMigrationCooldown(hours: number): void {
+  try { localStorage.setItem(MIGRATION_COOLDOWN_KEY, String(Date.now() + hours * 3600_000)); } catch {}
+}
+
 export async function migrateJobPartImagesToStorage(maxPerRun = 10): Promise<void> {
-  if (!dbInstance) return;
+  if (!dbInstance || !migrationDue()) return;
   try {
     const snap = await getDocs(collection(dbInstance, COL.jobs));
     const candidates: Job[] = [];
@@ -1902,10 +1950,11 @@ export async function migrateJobPartImagesToStorage(maxPerRun = 10): Promise<voi
       const j = d.data() as Job;
       if (j.partImage && j.partImage.startsWith('data:')) candidates.push(j);
     });
-    if (candidates.length === 0) return;
+    if (candidates.length === 0) { setMigrationCooldown(6); return; }
 
     const batch = candidates.slice(0, maxPerRun);
     console.log(`[FabTrack] Migrating ${batch.length}/${candidates.length} job part image(s) to Storage…`);
+    let migrated = 0, quotaExceeded = false;
     for (const job of batch) {
       try {
         // Re-check right before work — another device may have migrated it.
@@ -1917,13 +1966,22 @@ export async function migrateJobPartImagesToStorage(maxPerRun = 10): Promise<voi
         if (!blob) continue;
         const url = await uploadJobPartImage(blob, job.id);
         await updateDoc(doc(dbInstance!, COL.jobs, job.id), { partImage: url });
-        console.log(`[FabTrack] ✓ Part image → Storage for job ${job.jobIdsDisplay || job.id}`);
+        migrated++;
       } catch (e: any) {
+        if (String(e?.message || '').includes('quota-exceeded')) { quotaExceeded = true; break; }
         console.warn(`[FabTrack] Part-image migration failed for job ${job.id}:`, e?.message);
       }
     }
+    if (quotaExceeded) {
+      console.warn('[FabTrack] Storage quota exceeded — pausing part-photo migration for 24h. Free up space or upgrade the Firebase plan to resume.');
+      setMigrationCooldown(24);
+    } else {
+      if (migrated > 0) console.log(`[FabTrack] ✓ Migrated ${migrated}/${batch.length} part image(s) to Storage`);
+      setMigrationCooldown(migrated < batch.length ? 1 : 0.25);
+    }
   } catch (e: any) {
     console.warn('[FabTrack] Part-image migration skipped:', e?.message);
+    setMigrationCooldown(1);
   }
 }
 
