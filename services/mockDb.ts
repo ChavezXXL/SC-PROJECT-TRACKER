@@ -726,19 +726,31 @@ export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
 }
 
 // UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
-/** All currently-open (not-yet-stopped) logs for a worker. Single-field
- *  query (auto-indexed); falls back to a full scan, then localStorage. */
+/** All currently-open (not-yet-stopped) logs for a worker.
+ *
+ *  Runs on EVERY clock-in. Filtering on endTime server-side matters: a
+ *  userId-only query re-reads that worker's entire history (170+ docs for a
+ *  long-tenured worker) just to find the zero-or-one session still running.
+ *  Two equality clauses are served by merging the automatic single-field
+ *  indexes, so no composite index is needed. Falls back progressively to the
+ *  old userId-only query, then localStorage, so a missing index or an offline
+ *  device can never block a clock-in. */
 async function getOpenLogsForUser(userId: string): Promise<TimeLog[]> {
   if (dbInstance) {
     try {
-      const q = query(collection(dbInstance, COL.logs), where('userId', '==', userId));
+      const q = query(
+        collection(dbInstance, COL.logs),
+        where('userId', '==', userId),
+        where('endTime', '==', null),
+      );
       const snap = await getDocs(q);
-      return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => !l.endTime);
+      return snap.docs.map((d: any) => d.data() as TimeLog);
     } catch {
       try {
-        const snap = await getDocs(collection(dbInstance, COL.logs));
-        return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => l.userId === userId && !l.endTime);
-      } catch { return []; }
+        const q = query(collection(dbInstance, COL.logs), where('userId', '==', userId));
+        const snap = await getDocs(q);
+        return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => !l.endTime);
+      } catch { return readLS<TimeLog[]>(LS.logs, []).filter((l) => l.userId === userId && !l.endTime); }
     }
   }
   return readLS<TimeLog[]>(LS.logs, []).filter((l) => l.userId === userId && !l.endTime);
@@ -1427,13 +1439,20 @@ export async function sweepStaleLogs(): Promise<number> {
     const nowMs = Date.now();
 
     // ── Always gather active logs — needed for both sweeps below ──────
+    //
+    // QUOTA-CRITICAL: this runs every 60s on EVERY open device (App.tsx and
+    // LiveFloorMonitor each schedule it). A full-collection getDocs here read
+    // all ~1,600 log docs per sweep = ~98,000 reads/hour/device, which drained
+    // the entire 50k/day free quota in ~31 minutes and made the app unusable
+    // by mid-morning. startTimeLog always writes `endTime: null` (sanitize()
+    // preserves null, only stripping undefined), so an equality filter finds
+    // exactly the open sessions and costs one read per OPEN log — typically
+    // a handful, and zero when the floor is quiet.
     let activeLogs: TimeLog[] = [];
     if (dbInstance) {
       try {
-        const snap = await getDocs(collection(dbInstance, COL.logs));
-        activeLogs = snap.docs
-          .map((d: any) => d.data() as TimeLog)
-          .filter((l: TimeLog) => !l.endTime);
+        const snap = await getDocs(query(collection(dbInstance, COL.logs), where('endTime', '==', null)));
+        activeLogs = snap.docs.map((d: any) => d.data() as TimeLog);
       } catch (e) {
         console.warn('sweepStaleLogs: failed to read logs', e);
         return 0;
