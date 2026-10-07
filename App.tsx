@@ -7950,18 +7950,20 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('tv');
     if (urlToken) {
-      // Save TV mode so it survives browser restarts / tab closures
-      try { localStorage.setItem('fabtrack_tv', '1'); } catch {}
+      // Remember the link (the actual token — this used to store "1") so a
+      // TV whose browser restarts without the query string recovers.
+      try { localStorage.setItem('fabtrack_tv', urlToken); } catch {}
       return urlToken;
     }
     // localStorage recovery — TV browser restarted without the ?tv param
     try {
-      if (localStorage.getItem('fabtrack_tv') === '1') {
+      const saved = localStorage.getItem('fabtrack_tv');
+      if (saved) {
         // Restore the URL param so TvAutoReload reloads preserve it
         const p = new URLSearchParams(window.location.search);
-        p.set('tv', '1');
+        p.set('tv', saved);
         history.replaceState({}, '', `${window.location.pathname}?${p.toString()}`);
-        return '1';
+        return saved;
       }
     } catch {}
     return null;
@@ -8197,7 +8199,7 @@ export default function App() {
   // ── Customer Portal Mode ──
   // Standalone TV mode — no login needed, loads account data via token
   if (tvToken) {
-    return <TvAutoReload><LiveFloorMonitor standalone /></TvAutoReload>;
+    return <TvAutoReload><LiveFloorMonitor standalone tvToken={tvToken} /></TvAutoReload>;
   }
 
   if (portalCustomer) {

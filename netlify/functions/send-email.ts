@@ -46,6 +46,25 @@ function corsHeaders(origin?: string) {
   };
 }
 
+/** The shop's saved recap recipients (settings/system: recapEmail + recapEmailCC),
+ *  lowercased. null when settings can't be read — callers fail closed. */
+async function allowedRecapRecipients(): Promise<Set<string> | null> {
+  const apiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
+  try {
+    const res = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/settings/system?key=${apiKey}`);
+    if (!res.ok) return null;
+    const doc = await res.json() as any;
+    const str = (f: string) => (doc?.fields?.[f]?.stringValue || '') as string;
+    const list = [str('recapEmail'), ...str('recapEmailCC').split(',')]
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s.includes('@'));
+    return new Set(list);
+  } catch {
+    return null;
+  }
+}
+
 export const handler: Handler = async (event) => {
   const origin = (event.headers?.origin || event.headers?.Origin) as string | undefined;
   const JSON_HEADERS = corsHeaders(origin);
@@ -62,16 +81,14 @@ export const handler: Handler = async (event) => {
     return { statusCode: 405, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  // Optional shared-secret gate: when EMAIL_RELAY_SECRET is set in Netlify, every
-  // caller must send a matching x-fabtrack-key header. Off by default so existing
-  // flows keep working; turn it on to fully lock the relay to trusted callers.
+  // Callers holding EMAIL_RELAY_SECRET (trusted server code) may send anywhere.
+  // Everyone else — i.e. the browser — may only email the shop's OWN recap
+  // recipients from Settings. This endpoint used to send any subject/HTML to
+  // any address from the shop's verified sender, with no login: an open relay
+  // anyone could use to phish the shop's customers in the shop's name.
   const relaySecret = process.env.EMAIL_RELAY_SECRET;
-  if (relaySecret) {
-    const provided = (event.headers?.['x-fabtrack-key'] || event.headers?.['X-Fabtrack-Key']) as string | undefined;
-    if (provided !== relaySecret) {
-      return { statusCode: 401, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Unauthorized' }) };
-    }
-  }
+  const provided = (event.headers?.['x-fabtrack-key'] || event.headers?.['X-Fabtrack-Key']) as string | undefined;
+  const trusted = !!relaySecret && provided === relaySecret;
 
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -100,9 +117,23 @@ export const handler: Handler = async (event) => {
     };
   }
   // Cap recipients + payload so a single call can't fan out into a spam blast.
-  const recipients = Array.isArray(to) ? to : [to];
-  if (recipients.length > 10) {
-    return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Too many recipients (max 10)' }) };
+  const recipients: string[] = (Array.isArray(to) ? to : [to]).map((r: any) => String(r || '').trim()).filter(Boolean);
+  if (recipients.length === 0 || recipients.length > 10) {
+    return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Need 1–10 recipients' }) };
+  }
+  if (!trusted) {
+    const allowed = await allowedRecapRecipients();
+    if (!allowed) {
+      return { statusCode: 503, headers: JSON_HEADERS, body: JSON.stringify({ error: "Couldn't load the shop's email settings — try again." }) };
+    }
+    const blocked = recipients.filter(r => !allowed.has(r.toLowerCase()));
+    if (blocked.length) {
+      return {
+        statusCode: 403,
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ error: 'Recaps can only go to the recap email addresses saved in Settings. Save the address there first.' }),
+      };
+    }
   }
   if (String(html).length > 500_000) {
     return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Body too large' }) };
@@ -119,7 +150,7 @@ export const handler: Handler = async (event) => {
       },
       body: JSON.stringify({
         from,
-        to: Array.isArray(to) ? to : [to],
+        to: recipients,
         subject,
         html,
         ...(text ? { text } : {}),

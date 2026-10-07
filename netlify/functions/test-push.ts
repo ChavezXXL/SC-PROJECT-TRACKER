@@ -55,6 +55,13 @@ async function deleteDoc(col: string, id: string, apiKey: string, projectId: str
 }
 
 export const handler: Handler = async (event) => {
+  // Debug endpoint: pushes to EVERY subscribed device and returns user ids.
+  // It was open to anyone with the URL. Now it only runs with ?key= matching
+  // the FABTRACK_ADMIN_KEY env var — and is invisible (404) when that isn't set.
+  const adminKey = process.env.FABTRACK_ADMIN_KEY;
+  if (!adminKey || event.queryStringParameters?.key !== adminKey) {
+    return { statusCode: 404, headers: JSON_H, body: JSON.stringify({ error: 'Not found' }) };
+  }
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, headers: JSON_H, body: JSON.stringify({ error: 'GET only' }) };
   }

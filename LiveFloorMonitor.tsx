@@ -655,6 +655,10 @@ interface LiveFloorMonitorProps {
   onBack?: () => void;
   addToast?: (type: 'success' | 'error' | 'info', message: string) => void;
   standalone?: boolean; // true when accessed via ?tv=TOKEN URL (no login, no back button)
+  /** The ?tv= value from the URL; a standalone TV only shows data when it
+   *  matches settings.tvToken (any value used to work, so ?tv=1 showed the
+   *  whole live floor — workers, jobs, customers — to anyone). */
+  tvToken?: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1795,13 +1799,17 @@ const TvJobsBelt = React.memo(function TvJobsBelt({ jobs, stages, speed, showCus
   );
 });
 
-export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack, addToast: addToastProp, standalone }) => {
+export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack, addToast: addToastProp, standalone, tvToken }) => {
   const addToast = addToastProp || (() => {});
   const { confirm: confirmDialog, ConfirmHost } = useConfirm();
   const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
+  const [settings, setSettingsRaw] = useState<SystemSettings>(DB.getSettings());
+  // A standalone TV must not show anything until the real settings arrive —
+  // the local cache may not have the TV link token yet.
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const setSettings = useCallback((s: SystemSettings) => { setSettingsRaw(s); setSettingsLoaded(true); }, []);
   const [compact, setCompact] = useState(false);
   const [dimMode, setDimMode] = useState(false);
   // STANDALONE TV LINK (?tv=TOKEN): auto-enter slideshow on page load — the
@@ -2008,8 +2016,11 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     if (standalone) return; // standalone URL already has ?tv=1, don't double-add
     const params = new URLSearchParams(window.location.search);
     if (tvMode) {
-      if (!params.get('tv')) {
-        params.set('tv', '1');
+      const cur = params.get('tv');
+      if (!cur || (cur === '1' && settings.tvToken)) {
+        // The real link token, so a reload lands on a TV view that passes the
+        // link check (it used to write ?tv=1, which any visitor could use).
+        params.set('tv', settings.tvToken || '1');
         history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
       }
     } else {
@@ -2019,7 +2030,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         history.replaceState({}, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
       }
     }
-  }, [tvMode, standalone]);
+  }, [tvMode, standalone, settings.tvToken]);
 
   // ── Shift Alarms on TV — play bell sounds + show a brief visual flash.
   // The TV doesn't stop individual worker timers (that's each worker's device's
@@ -2418,6 +2429,28 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   }), [jobs]);
 
   const stages = React.useMemo(() => getStages(settings), [settings]);
+
+  // ── TV LINK CHECK (after every hook above — early returns must come last) ──
+  // A wall TV isn't signed in, so the link token is its only key. Nothing is
+  // shown until the shop's settings load, and only for the CURRENT link —
+  // "Reset link" in Settings now actually locks out the old one.
+  if (standalone) {
+    const msg = (title: string, body?: string) => (
+      <div className="fixed inset-0 bg-zinc-950 text-white flex items-center justify-center p-8 text-center">
+        <div className="max-w-xl">
+          <p className="text-3xl font-black">{title}</p>
+          {body && <p className="text-lg text-white/60 mt-4 leading-relaxed">{body}</p>}
+        </div>
+      </div>
+    );
+    if (!settingsLoaded) return msg('Connecting…');
+    if (!settings.tvToken || !tvToken || tvToken !== settings.tvToken) {
+      return msg(
+        'This TV link is out of date',
+        "On a computer that's signed in, go to Settings → TV Display, copy the TV link, and open it on this screen.",
+      );
+    }
+  }
 
   // ── TV MODE VIEW — full-screen immersive, auto-scroll, always-on clock + weather ──
   if (tvMode) {

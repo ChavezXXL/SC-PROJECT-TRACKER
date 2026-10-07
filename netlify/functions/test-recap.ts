@@ -70,6 +70,13 @@ async function fetchCollection(col: string, apiKey: string, projectId: string): 
 // ── Handler ────────────────────────────────────────────────────────────
 
 export const handler: Handler = async (event) => {
+  // Debug endpoint: emails the full shop recap and echoes the recipient/CC
+  // addresses. It was open to anyone with the URL. Now it only runs with ?key=
+  // matching FABTRACK_ADMIN_KEY — and is invisible (404) when that isn't set.
+  const adminKey = process.env.FABTRACK_ADMIN_KEY;
+  if (!adminKey || event.queryStringParameters?.key !== adminKey) {
+    return { statusCode: 404, headers: JSON_H, body: JSON.stringify({ error: 'Not found' }) };
+  }
   // Only allow GET (browser visit)
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, headers: JSON_H, body: JSON.stringify({ error: 'GET only' }) };

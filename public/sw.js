@@ -128,9 +128,21 @@ self.addEventListener('push', event => {
 });
 
 // ── Notification click ──────────────────────────────────────────────
+// Only ever open pages of THIS app. Push payloads come from endpoints and
+// subscription lists that outsiders can currently reach, so a pushed
+// notification could carry a link to a phishing site; tapping it opened that
+// site with the app's trust. Anything off-origin falls back to the home page.
+function safeAppUrl(raw) {
+  try {
+    const u = new URL(raw || '/', self.location.origin);
+    return u.origin === self.location.origin ? u.pathname + u.search + u.hash : '/';
+  } catch { return '/'; }
+}
+
 self.addEventListener('notificationclick', event => {
   const { action } = event;
-  const { url = '/', logId, userId } = event.notification.data || {};
+  const { logId, userId } = event.notification.data || {};
+  const url = safeAppUrl((event.notification.data || {}).url);
   event.notification.close();
 
   if (action && logId) {

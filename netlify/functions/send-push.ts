@@ -76,12 +76,18 @@ export const handler: Handler = async (event) => {
     return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Missing subscription.endpoint' }) };
   }
 
+  // This endpoint has no login yet (that needs the auth migration), so at
+  // least keep what it can deliver harmless: short plain text, and a tap that
+  // only opens a page of this app — an outside link here would be a phishing
+  // notification wearing the shop's name. (The service worker enforces the
+  // same rule on its side.)
+  const safeUrl = typeof url === 'string' && url.startsWith('/') && !url.startsWith('//') ? url : '/';
   const payload = JSON.stringify({
-    title: title || process.env.SHOP_NAME || 'FabTrack IO',
-    body: msgBody || '',
-    tag,
-    url,
-    actions,
+    title: String(title || process.env.SHOP_NAME || 'FabTrack IO').slice(0, 80),
+    body: String(msgBody || '').slice(0, 240),
+    tag: typeof tag === 'string' ? tag.slice(0, 80) : undefined,
+    url: safeUrl,
+    actions: Array.isArray(actions) ? actions.slice(0, 2) : undefined,
     logId,
     requireInteraction: !!requireInteraction,
   });
