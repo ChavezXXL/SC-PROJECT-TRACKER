@@ -193,11 +193,16 @@ export interface Job {
   jobNotes?: JobNote[];
   quoteAmount?: number;        // What the customer pays for this job ($)
   pricePerPart?: number;       // Per-unit rate — quoteAmount is auto-set to pricePerPart × quantity
-  partImage?: string;           // Base64 data URL of the part photo (compressed JPEG)
+  partImage?: string;           // Storage URL, or base64 data URL when Storage is unavailable
+  /** When this job's own photo was last set (ms). Decides which photo a repeat
+   *  part shows on its other runs — the most recently taken one wins. */
+  partImageAt?: number;
   /** UI-only, never written to Firestore. Set by subscribeJobs when this job
    *  has no photo of its own and borrowed one from another run of the same
    *  part number; saveJob() strips it (and the borrowed photo) before writing. */
   photoInherited?: boolean;
+  /** UI-only, never written. PO of the job a borrowed photo came from. */
+  photoFromPo?: string;
   // ── Routing / Workflow ──
   currentStage?: string;       // stage id from settings.jobStages
   stageHistory?: StageHistoryEntry[];

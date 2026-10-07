@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "dev:cf": "wrangler pages dev -- vite",
     "deploy:cf": "npm run build && wrangler pages deploy dist",
-    "cf:secret": "wrangler pages secret put"
+    "cf:secret": "wrangler pages secret put",
+    "test": "node tests/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.0",

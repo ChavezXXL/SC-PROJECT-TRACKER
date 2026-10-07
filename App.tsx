@@ -4857,7 +4857,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // check-offs. Only write the checklist when it actually changed here.
   // (Concurrent edits on BOTH sides remain last-write-wins on the array.)
   const checklistDirtyRef = useRef(false);
-  useEffect(() => { if (showModal) checklistDirtyRef.current = false; }, [showModal]);
+  // Same idea for the part photo: the modal's copy goes stale the moment it
+  // opens (another device, or the background Storage move, can change it), so
+  // only write the photo when it was actually changed in this modal session.
+  const photoDirtyRef = useRef(false);
+  useEffect(() => { if (showModal) { checklistDirtyRef.current = false; photoDirtyRef.current = false; } }, [showModal]);
   const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
@@ -5212,14 +5216,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     if (!file) return;
     if (!file.type.startsWith('image/')) { addToast('error', 'Please select an image file'); return; }
     try {
-      const compressed = await compressImage(file, 800, 0.6);
+      let partImage = await compressImage(file, 800, 0.6);
       // Check size — Firestore doc limit ~1MB, image should be well under
-      if (compressed.length > 500_000) {
-        const smaller = await compressImage(file, 500, 0.4);
-        setEditingJob({ ...editingJob, partImage: smaller });
-      } else {
-        setEditingJob({ ...editingJob, partImage: compressed });
-      }
+      if (partImage.length > 500_000) partImage = await compressImage(file, 500, 0.4);
+      // This job's OWN photo now. Clearing the borrowed-photo tag is the whole
+      // fix for "I replaced the photo and the old one came back": with the tag
+      // still set, saveJob() treated the new photo as borrowed and dropped it.
+      photoDirtyRef.current = true;
+      setEditingJob(prev => ({ ...prev, partImage, photoInherited: undefined, photoFromPo: undefined }));
       addToast('success', 'Part photo added');
     } catch {
       addToast('error', 'Failed to process image');
@@ -5281,17 +5285,33 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // Checklist: only persist when edited in this modal session, so a stale
     // snapshot can't wipe check-offs made from the floor card meanwhile.
     if (!checklistDirtyRef.current) delete (job as any).checklist;
-    // Part photo → Storage URL (base64 kept only as offline fallback). Keeps
-    // job docs tiny so snapshots stay fast for every device.
-    if (job.partImage && job.partImage.startsWith('data:')) {
-      try {
-        const blob = dataUrlToBlobApp(job.partImage);
-        if (blob) job.partImage = await DB.uploadJobPartImage(blob, job.id);
-      } catch { /* keep base64 — migration upgrades it later */ }
+    // Part photo: written ONLY when changed in this modal session. Writing the
+    // modal's copy unconditionally put a stale photo back over a newer one
+    // saved elsewhere while the editor was open.
+    const photoChanged = photoDirtyRef.current;
+    const clearPhoto = photoChanged && !editingJob.partImage && !!editingJob.id;
+    delete (job as any).photoInherited;
+    delete (job as any).photoFromPo;
+    if (!photoChanged) {
+      delete (job as any).partImage;
+      delete (job as any).partImageAt;
+    } else if (job.partImage) {
+      job.partImageAt = Date.now();
+      // Storage URL when Storage is available (keeps job docs tiny); otherwise
+      // the base64 stays on the job and the background move upgrades it later.
+      if (job.partImage.startsWith('data:')) {
+        try {
+          const blob = dataUrlToBlobApp(job.partImage);
+          if (blob) job.partImage = await DB.uploadJobPartImage(blob, job.id);
+        } catch { /* keep base64 */ }
+      }
     }
     try {
       const isNew = !editingJob.id;
       await DB.saveJob(job);
+      // A plain (merge) save can't delete a field — undefined is skipped — so
+      // a removed photo used to reappear. Delete it explicitly.
+      if (clearPhoto) await DB.setJobPhoto(job.id, null);
       setShowModal(false);
       setEditingJob({});
       if (isNew) {
@@ -5935,10 +5955,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                               // Upload to Storage (base64 fallback) — keeps job docs tiny
                               let partImage = compressed;
                               try { const b = dataUrlToBlobApp(compressed); if (b) partImage = await DB.uploadJobPartImage(b, j.id); } catch {}
-                              // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
-                              const { currentStage: _cs, stageHistory: _sh, ...jRest } = j;
-                              await DB.saveJob({ ...jRest, partImage });
-                              addToast('success', 'Photo added');
+                              // Photo fields only — the upload takes seconds, and saving the
+                              // whole job snapshot could revert edits made meanwhile.
+                              try { await DB.setJobPhoto(j.id, partImage); addToast('success', 'Photo added'); }
+                              catch { addToast('error', 'Could not save photo'); }
                             }}
                           />
                         </label>
@@ -6205,10 +6225,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             // Upload to Storage (base64 fallback) — keeps job docs tiny
                             let partImage = compressed;
                             try { const b = dataUrlToBlobApp(compressed); if (b) partImage = await DB.uploadJobPartImage(b, j.id); } catch {}
-                            // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
-                            const { currentStage: _cs, stageHistory: _sh, ...jRest } = j;
-                            await DB.saveJob({ ...jRest, partImage });
-                            addToast('success', 'Photo added');
+                            // Photo fields only — see the mobile camera above.
+                            try { await DB.setJobPhoto(j.id, partImage); addToast('success', 'Photo added'); }
+                            catch { addToast('error', 'Could not save photo'); }
                           }} />
                         </label>
                       )}
@@ -6485,7 +6504,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         <div className="px-3 py-1.5 bg-zinc-800/50 text-[10px] text-zinc-500 font-bold uppercase">Previous Parts — tap to auto-fill</div>
                         {partSuggestions.map(s => (
                           <button key={s.id} className="w-full text-left px-3 py-2.5 hover:bg-amber-500/10 border-t border-white/5 transition-colors" onClick={() => {
-                            setEditingJob({ ...editingJob, partNumber: s.partNumber, customer: s.customer || editingJob.customer, info: s.info || editingJob.info, specialInstructions: s.specialInstructions || editingJob.specialInstructions, partImage: s.partImage || editingJob.partImage });
+                            // No partImage copy: the part's current photo shows automatically
+                            // (photo memory), and a copied base64 would freeze an old photo onto
+                            // this job and add ~126 KB to it.
+                            setEditingJob({ ...editingJob, partNumber: s.partNumber, customer: s.customer || editingJob.customer, info: s.info || editingJob.info, specialInstructions: s.specialInstructions || editingJob.specialInstructions });
                             setPartSuggestions([]);
                           }}>
                             <span className="text-white font-bold text-sm">{s.partNumber}</span>
@@ -7025,26 +7047,49 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   Part Photo <span className="text-zinc-600 normal-case font-normal text-[10px]">(optional)</span>
                 </h4>
                 <input ref={imageInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
-                {editingJob.partImage ? (
-                  <div className="flex items-start gap-4">
-                    <div className="relative group">
-                      <img src={editingJob.partImage} alt="Part" className="w-32 h-32 object-cover rounded-xl border-2 border-cyan-500/30 cursor-pointer hover:border-cyan-400 transition-all" onClick={() => setLightboxImg(editingJob.partImage!)} />
-                      <button onClick={() => setEditingJob({ ...editingJob, partImage: undefined })}
-                        className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-400 text-white rounded-full p-1 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3.5 h-3.5" /></button>
+                {(() => {
+                  // Three honest states: this job's own photo, the part's photo on
+                  // file from another run (shown automatically, can't be "removed"
+                  // from here — it isn't this job's), or nothing yet.
+                  const own = editingJob.partImage && !editingJob.photoInherited ? editingJob.partImage : null;
+                  const onFile = own ? null
+                    : editingJob.photoInherited && editingJob.partImage
+                      ? { url: editingJob.partImage, po: editingJob.photoFromPo || '' }
+                      : DB.partPhotoFor(jobs, editingJob.partNumber, editingJob.id);
+                  if (own) return (
+                    <div className="flex items-start gap-4">
+                      <div className="relative">
+                        <img src={own} alt="Part" className="w-32 h-32 object-cover rounded-xl border-2 border-cyan-500/30 cursor-pointer hover:border-cyan-400 transition-all" onClick={() => setLightboxImg(own)} />
+                        <button type="button" aria-label="Remove photo"
+                          onClick={() => { photoDirtyRef.current = true; setEditingJob(prev => ({ ...prev, partImage: undefined })); }}
+                          className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-400 text-white rounded-full p-1.5 shadow-lg"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button type="button" onClick={() => imageInputRef.current?.click()} className="text-xs text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1"><Camera className="w-3.5 h-3.5" /> Replace Photo</button>
+                        <p className="text-[10px] text-zinc-600">Tap the photo to enlarge.</p>
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-2">
-                      <button onClick={() => imageInputRef.current?.click()} className="text-xs text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1"><Camera className="w-3.5 h-3.5" /> Replace Photo</button>
-                      <p className="text-[10px] text-zinc-600">Click image to enlarge. Hover to remove.</p>
+                  );
+                  if (onFile) return (
+                    <div className="flex items-start gap-4">
+                      <img src={onFile.url} alt="Part photo on file" className="w-32 h-32 object-cover rounded-xl border-2 border-dashed border-cyan-500/25 cursor-pointer opacity-90" onClick={() => setLightboxImg(onFile.url)} />
+                      <div className="flex flex-col gap-2 min-w-0">
+                        <p className="text-xs text-zinc-400 leading-snug">
+                          <span className="font-bold text-zinc-200">Photo on file</span> for this part{onFile.po ? ` (from PO ${onFile.po})` : ''} — shown on this job automatically.
+                        </p>
+                        <button type="button" onClick={() => imageInputRef.current?.click()} className="text-xs text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1"><Camera className="w-3.5 h-3.5" /> Take a new photo</button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <button onClick={() => imageInputRef.current?.click()}
-                    className="w-full border-2 border-dashed border-cyan-500/20 hover:border-cyan-500/40 rounded-xl p-6 flex flex-col items-center gap-2 text-cyan-400/60 hover:text-cyan-400 transition-all group">
-                    <Camera className="w-8 h-8 group-hover:scale-110 transition-transform" />
-                    <span className="font-bold text-sm">Add Part Photo</span>
-                    <span className="text-[10px] text-zinc-600">Take a photo or upload from gallery</span>
-                  </button>
-                )}
+                  );
+                  return (
+                    <button type="button" onClick={() => imageInputRef.current?.click()}
+                      className="w-full border-2 border-dashed border-cyan-500/20 hover:border-cyan-500/40 rounded-xl p-6 flex flex-col items-center gap-2 text-cyan-400/60 hover:text-cyan-400 transition-all group">
+                      <Camera className="w-8 h-8 group-hover:scale-110 transition-transform" />
+                      <span className="font-bold text-sm">Add Part Photo</span>
+                      <span className="text-[10px] text-zinc-600">Take a photo or upload from gallery</span>
+                    </button>
+                  );
+                })()}
               </div>
 
               {/* ── Worker QR Code — only for saved jobs ─────────────────────

@@ -12,11 +12,14 @@ import {
   updateDoc,
   arrayUnion,
   where,
+  deleteField,
+  runTransaction,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
+import { photoPartKey } from "../utils/partKey";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -137,48 +140,38 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ]);
 }
 
-export async function uploadSamplePhoto(file: File | Blob, sampleId: string): Promise<string> {
-  // NOTE: We attempt Firebase Storage upload regardless of dbInstance state.
-  // getStorage() uses the Firebase app singleton — it works as long as the
-  // Firebase app was initialised, even if the Firestore dbInstance is null.
+// Cloud Storage now requires the Firebase Blaze plan; on the free Spark plan
+// every upload fails with storage/quota-exceeded (HTTP 402). Once we've seen
+// that, skip Storage for a few hours so photo saves don't each wait on a doomed
+// upload before falling back to base64. Re-checks automatically, so upgrading
+// the plan takes effect on its own.
+const STORAGE_BLOCKED_KEY = 'fabtrack_storage_blocked_until';
+function storageBlocked(): boolean {
+  try { return Date.now() < Number(localStorage.getItem(STORAGE_BLOCKED_KEY) || 0); } catch { return false; }
+}
+
+async function uploadPhoto(folder: string, id: string, file: File | Blob, timeoutMs: number): Promise<string> {
+  if (storageBlocked()) throw new Error('Storage upload failed: storage unavailable (quota-exceeded)');
   try {
-    const storage = getStorage();
-    const path = `sample-photos/${sampleId}_${Date.now()}.jpg`;
-    const ref = storageRef(storage, path);
-    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 15_000, 'Storage upload');
+    // getStorage() uses the Firebase app singleton — works whenever the app
+    // initialised, even if the Firestore dbInstance is null.
+    const ref = storageRef(getStorage(), `${folder}/${id}_${Date.now()}.jpg`);
+    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), timeoutMs, 'Storage upload');
     return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
   } catch (e) {
-    throw new Error('Storage upload failed: ' + (e as any)?.message);
+    const msg = String((e as any)?.message || '');
+    if (msg.includes('quota-exceeded')) {
+      try { localStorage.setItem(STORAGE_BLOCKED_KEY, String(Date.now() + 6 * 3600_000)); } catch {}
+    }
+    throw new Error('Storage upload failed: ' + msg);
   }
 }
 
-/** Upload a job part photo to Firebase Storage. Part images used to live as
- *  base64 INSIDE the job document — every device re-downloaded every photo on
- *  every snapshot. Storage URLs keep job docs tiny and sync fast. */
-export async function uploadJobPartImage(file: File | Blob, jobId: string): Promise<string> {
-  try {
-    const storage = getStorage();
-    const path = `job-parts/${jobId}_${Date.now()}.jpg`;
-    const ref = storageRef(storage, path);
-    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 15_000, 'Storage upload');
-    return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
-  } catch (e) {
-    throw new Error('Storage upload failed: ' + (e as any)?.message);
-  }
-}
-
-/** Upload a customer-PO photo to Firebase Storage (separate path from samples). */
-export async function uploadCustomerPoPhoto(file: File | Blob, poId: string): Promise<string> {
-  try {
-    const storage = getStorage();
-    const path = `customer-pos/${poId}_${Date.now()}.jpg`;
-    const ref = storageRef(storage, path);
-    await withTimeout(uploadBytes(ref, file, { contentType: 'image/jpeg' }), 20_000, 'Storage upload');
-    return await withTimeout(getDownloadURL(ref), 10_000, 'Storage URL fetch');
-  } catch (e) {
-    throw new Error('Storage upload failed: ' + (e as any)?.message);
-  }
-}
+export const uploadSamplePhoto = (file: File | Blob, sampleId: string) => uploadPhoto('sample-photos', sampleId, file, 15_000);
+/** Part photos in Storage keep job docs tiny — embedded base64 makes every
+ *  device re-download every photo on every jobs sync. */
+export const uploadJobPartImage = (file: File | Blob, jobId: string) => uploadPhoto('job-parts', jobId, file, 15_000);
+export const uploadCustomerPoPhoto = (file: File | Blob, poId: string) => uploadPhoto('customer-pos', poId, file, 20_000);
 
 // --------------------
 // LOCAL STORAGE FALLBACK CONSTANTS
@@ -410,38 +403,84 @@ const COL = {
 // known photo with no per-view changes. In-memory only — nothing is written
 // back to Firestore unless the user saves the job, which merely persists a
 // tiny Storage-URL string.
-const normPartPhotoKey = (pn?: string): string =>
-  (pn || '').trim().toLowerCase().replace(/\s+/g, '');
+/** When a job's own photo was taken. Older photos predate partImageAt, so fall
+ *  back to the job's own timestamps — imperfect, but only until re-photographed. */
+const photoTakenAt = (j: Job): number => j.partImageAt || j.completedAt || j.createdAt || 0;
 
-function enrichJobsWithPartPhotos(list: Job[]): Job[] {
-  // Best photo per part: prefer a Storage URL over base64 (logs only snapshot
-  // URLs, and base64 bloats nothing further this way), then prefer newest.
-  const best = new Map<string, { url: string; at: number; isUrl: boolean }>();
+/** Exported for tests — pure. */
+export function enrichJobsWithPartPhotos(list: Job[]): Job[] {
+  // One photo per part: the most recently TAKEN one. (This used to prefer any
+  // Storage URL over a newer base64 photo, so a fresh photo could lose to an
+  // old one — the part kept showing its old picture after a re-shoot.)
+  // Placeholder part numbers ("N/A", "TBD") never pool: five N/A jobs are
+  // five different parts, and pooling showed one job's photo on another.
+  const best = new Map<string, { url: string; at: number; po: string }>();
   for (const j of list) {
     if (!j.partImage) continue;
-    const k = normPartPhotoKey(j.partNumber);
+    const k = photoPartKey(j.partNumber);
     if (!k) continue;
-    const isUrl = !j.partImage.startsWith('data:');
-    const at = j.completedAt || j.createdAt || 0;
+    const at = photoTakenAt(j);
     const cur = best.get(k);
-    if (!cur || (isUrl && !cur.isUrl) || (isUrl === cur.isUrl && at > cur.at)) {
-      best.set(k, { url: j.partImage, at, isUrl });
-    }
+    if (!cur || at > cur.at) best.set(k, { url: j.partImage, at, po: j.poNumber || '' });
   }
   if (best.size === 0) return list;
   let changed = false;
   const out = list.map(j => {
     if (j.partImage) return j;
-    const hit = best.get(normPartPhotoKey(j.partNumber));
+    const hit = best.get(photoPartKey(j.partNumber));
     if (!hit) return j;
     changed = true;
     // Tagged so saveJob() can strip it again. Several callers save with
     // `{ ...job, oneField }`, which would otherwise persist a borrowed photo
     // as this job's OWN copy — duplicating 126 KB of base64 per save and
     // re-bloating the very docs this is meant to keep small.
-    return { ...j, partImage: hit.url, photoInherited: true } as Job;
+    return { ...j, partImage: hit.url, photoInherited: true, photoFromPo: hit.po } as Job;
   });
   return changed ? out : list;
+}
+
+/** The photo a part currently shows (newest own photo across its jobs), for
+ *  previews — e.g. the job editor before a new job has been saved. */
+export function partPhotoFor(jobs: Job[], partNumber?: string, excludeJobId?: string): { url: string; po: string } | null {
+  const k = photoPartKey(partNumber);
+  if (!k) return null;
+  let best: { url: string; po: string; at: number } | null = null;
+  for (const j of jobs) {
+    if (j.id === excludeJobId || !j.partImage || j.photoInherited) continue;
+    if (photoPartKey(j.partNumber) !== k) continue;
+    const at = photoTakenAt(j);
+    if (!best || at > best.at) best = { url: j.partImage, po: j.poNumber || '', at };
+  }
+  return best ? { url: best.url, po: best.po } : null;
+}
+
+/**
+ * Set (or clear, with null) a job's OWN part photo. Writes only the photo
+ * fields — never the whole job — so a slow upload can't revert edits made to
+ * the job meanwhile, and clearing really deletes (a plain save can't: merge
+ * writes skip undefined, so a "removed" photo used to come straight back).
+ */
+export async function setJobPhoto(jobId: string, partImage: string | null): Promise<void> {
+  if (dbInstance) {
+    const fields = partImage
+      ? { partImage, partImageAt: Date.now() }
+      : { partImage: deleteField(), partImageAt: deleteField() };
+    try {
+      await updateDoc(doc(dbInstance, COL.jobs, jobId), fields as any);
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === jobId);
+  if (idx < 0) return;
+  if (partImage) {
+    jobs[idx] = { ...jobs[idx], partImage, partImageAt: Date.now() };
+  } else {
+    const { partImage: _p, partImageAt: _a, ...rest } = jobs[idx];
+    jobs[idx] = rest as Job;
+  }
+  writeLS(LS.jobs, jobs);
 }
 
 export function subscribeJobs(cb: (jobs: Job[]) => void) {
@@ -484,9 +523,9 @@ export async function saveJob(job: Job) {
   // `{ ...job, oneField }`, so the tag has to be honored here at the single
   // write choke point rather than at each call site. Copy first — mutating the
   // caller's object would wipe the photo from the live UI.
-  if ((job as any).photoInherited) {
-    const { partImage, photoInherited, ...rest } = job as any;
-    job = rest as Job;
+  if ((job as any).photoInherited || (job as any).photoFromPo !== undefined) {
+    const { partImage, photoInherited, photoFromPo, ...rest } = job as any;
+    job = (photoInherited ? rest : { ...rest, partImage }) as Job;
   }
   if (dbInstance) {
       try {
@@ -1944,36 +1983,52 @@ function setMigrationCooldown(hours: number): void {
 export async function migrateJobPartImagesToStorage(maxPerRun = 10): Promise<void> {
   if (!dbInstance || !migrationDue()) return;
   try {
-    const snap = await getDocs(collection(dbInstance, COL.jobs));
-    const candidates: Job[] = [];
-    snap.forEach(d => {
-      const j = d.data() as Job;
-      if (j.partImage && j.partImage.startsWith('data:')) candidates.push(j);
-    });
+    // Prefer the jobs the live subscription already holds — a fresh getDocs
+    // here re-downloaded the WHOLE collection (~28 MB with embedded photos)
+    // just to find candidates. Borrowed photos belong to another job; skip.
+    const live = _mc.get('jobs:' + COL.jobs) as MCEntry<Job[]> | undefined;
+    let pool: Job[];
+    if (live?.hasLast && Array.isArray(live.last)) {
+      pool = live.last;
+    } else {
+      const snap = await getDocs(collection(dbInstance, COL.jobs));
+      pool = snap.docs.map(d => d.data() as Job);
+    }
+    const candidates = pool.filter(j => !j.photoInherited && j.partImage?.startsWith('data:'));
     if (candidates.length === 0) { setMigrationCooldown(6); return; }
 
     const batch = candidates.slice(0, maxPerRun);
     console.log(`[FabTrack] Migrating ${batch.length}/${candidates.length} job part image(s) to Storage…`);
-    let migrated = 0, quotaExceeded = false;
+    let migrated = 0, storageBlocked = false;
     for (const job of batch) {
       try {
-        // Re-check right before work — another device may have migrated it.
-        const fresh = await getDoc(doc(dbInstance!, COL.jobs, job.id));
-        const cur = fresh.exists() ? (fresh.data() as Job) : null;
-        if (!cur?.partImage || !cur.partImage.startsWith('data:')) continue;
+        const ref = doc(dbInstance!, COL.jobs, job.id);
+        const fresh = await getDoc(ref);
+        const original = fresh.exists() ? (fresh.data() as Job).partImage : undefined;
+        if (!original || !original.startsWith('data:')) continue;   // another device got it
 
-        const blob = dataUrlToBlob(cur.partImage);
+        const blob = dataUrlToBlob(original);
         if (!blob) continue;
         const url = await uploadJobPartImage(blob, job.id);
-        await updateDoc(doc(dbInstance!, COL.jobs, job.id), { partImage: url });
-        migrated++;
+        // Compare-and-set: the upload takes seconds, and a new photo saved in
+        // that window must win. A blind updateDoc here put the OLD photo back
+        // over the new one ("my photo got replaced").
+        const swapped = await runTransaction(dbInstance!, async tx => {
+          const now = await tx.get(ref);
+          if (!now.exists() || (now.data() as Job).partImage !== original) return false;
+          tx.update(ref, { partImage: url });
+          return true;
+        });
+        if (swapped) migrated++;
       } catch (e: any) {
-        if (String(e?.message || '').includes('quota-exceeded')) { quotaExceeded = true; break; }
+        if (String(e?.message || '').includes('quota-exceeded')) { storageBlocked = true; break; }
         console.warn(`[FabTrack] Part-image migration failed for job ${job.id}:`, e?.message);
       }
     }
-    if (quotaExceeded) {
-      console.warn('[FabTrack] Storage quota exceeded — pausing part-photo migration for 24h. Free up space or upgrade the Firebase plan to resume.');
+    if (storageBlocked) {
+      // Firebase returns quota-exceeded for every upload when the project is on
+      // the free Spark plan — Cloud Storage requires the Blaze plan now.
+      console.warn('[FabTrack] Cloud Storage unavailable (project needs the Firebase Blaze plan) — pausing part-photo migration for 24h.');
       setMigrationCooldown(24);
     } else {
       if (migrated > 0) console.log(`[FabTrack] ✓ Migrated ${migrated}/${batch.length} part image(s) to Storage`);

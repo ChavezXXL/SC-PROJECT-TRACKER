@@ -26,6 +26,7 @@
  */
 
 import type { Job, TimeLog, ReworkEntry } from '../types';
+import { isPlaceholderPartNumber } from './partKey';
 
 export type RiskTier = 'green' | 'yellow' | 'red';
 
@@ -119,7 +120,9 @@ export interface RiskOptions {
 }
 
 const DAY = 86400000;
-const normPart = (pn?: string): string => (pn || '').trim().toLowerCase();
+// Placeholders ("N/A", "TBD") are '' — five N/A jobs are five different
+// parts, so they must not pool into "repeat part — 4 runs" history.
+const normPart = (pn?: string): string => isPlaceholderPartNumber(pn) ? '' : (pn || '').trim().toLowerCase();
 const normOp = (op?: string): string => (op || '').trim().toLowerCase();
 const logMins = (l: TimeLog): number =>
   l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
@@ -344,7 +347,9 @@ export function computeJobRisk(
     reasons.push(
       famProven
         ? `New variant of a proven family — ${siblingRuns} clean runs on siblings${famNote}`
-        : `First time running this part — no history yet${famNote}`,
+        : !pn
+          ? 'No real part number on file — no history to go on'
+          : `First time running this part — no history yet${famNote}`,
     );
   } else {
     // Has clean history — start green, degrade to yellow on soft flags.
