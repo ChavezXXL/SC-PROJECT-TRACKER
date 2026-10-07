@@ -3,7 +3,9 @@ import { Package, Clock, CheckCircle, Truck, AlertTriangle, Search, FileText, Ch
 import type { Job, SystemSettings, JobStage, Quote, QuoteViewEvent } from './types';
 import * as DB from './services/mockDb';
 import { stagesForCustomer } from './utils/stageRouting';
-import { parseDueDate } from './utils/date';
+import { fmt } from './utils/date';
+import { dueState } from './utils/dueDates';
+import { customerKey } from './utils/customers';
 
 /** Human-friendly "3 days ago" / "2 hrs ago" — for the "last updated" hint. */
 function relativeTime(ts: number): string {
@@ -159,19 +161,24 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
   // searching narrowed results below the "show input" threshold, causing the input to unmount.
   const customerJobsAll = React.useMemo(() => {
     if (!customerFilter) return [];
-    const cf = customerFilter.toLowerCase();
+    // EXACT customer match. This was a substring check, so a portal link like
+    // ?portal=a matched every customer with an "a" in its name and showed
+    // their POs, parts, quantities and due dates.
+    const cf = customerKey(customerFilter);
+    if (!cf) return [];
     return jobs
-      .filter(j => (j.customer?.toLowerCase().includes(cf)) || j.id.toLowerCase() === cf || j.poNumber.toLowerCase() === cf)
+      .filter(j => customerKey(j.customer) === cf || j.id.toLowerCase() === cf || (j.poNumber || '').trim().toLowerCase() === cf)
       .sort((a, b) => b.createdAt - a.createdAt);
   }, [jobs, customerFilter]);
 
   const customerJobs = React.useMemo(() => {
     if (!search.trim()) return customerJobsAll;
     const s = search.trim().toLowerCase();
+    // PO / part only — searching the shop's internal notes (`info`) let a
+    // customer probe what those notes say.
     return customerJobsAll.filter(j =>
       j.poNumber.toLowerCase().includes(s) ||
-      j.partNumber.toLowerCase().includes(s) ||
-      (j.info?.toLowerCase().includes(s) ?? false)
+      j.partNumber.toLowerCase().includes(s)
     );
   }, [customerJobsAll, search]);
 
@@ -496,7 +503,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                       settings.clientContacts?.[job.customer || ''],
                     );
                     const stageIdx = getStageIndex(job, custStages);
-                    const isOverdue = job.dueDate && (parseDueDate(job.dueDate)?.getTime() ?? 0) < Date.now();
+                    // Shared rule: on time through the end of the due day, and never
+                    // "OVERDUE" once shipped/closed (this flagged jobs at NOON on their
+                    // due day — in front of the customer).
+                    const isOverdue = dueState(job, { stages: custStages }) === 'overdue';
                     const portalNote = job.portalNote;
                     return (
                       <div key={job.id} className="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-5 space-y-4">
@@ -515,7 +525,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                           </div>
                           <div className="text-right shrink-0">
                             <p className="text-xs sm:text-sm text-zinc-500">Qty: <span className="text-white font-bold">{job.quantity}</span></p>
-                            {job.dueDate && <p className="text-[10px] sm:text-xs text-zinc-500">Due: <span className={isOverdue ? 'text-red-400' : 'text-zinc-300'}>{job.dueDate}</span></p>}
+                            {job.dueDate && <p className="text-[10px] sm:text-xs text-zinc-500">Due: <span className={isOverdue ? 'text-red-400' : 'text-zinc-300'}>{fmt(job.dueDate)}</span></p>}
                           </div>
                         </div>
 

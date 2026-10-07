@@ -7922,10 +7922,35 @@ export default function App() {
     }
   });
 
+  // The saved session never holds the PIN or pay rate (it used to store the
+  // whole user record in localStorage, readable by anyone at that device).
+  const toSession = (u: User | null): User | null => {
+    if (!u) return null;
+    const { pin: _pin, hourlyRate: _rate, ...safe } = u as any;
+    return safe as User;
+  };
   const [user, setUser] = useState<User | null>(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); }
+    try { return toSession(JSON.parse(localStorage.getItem('nexus_user') || 'null')); }
     catch (e) { return null; }
   });
+
+  // Re-check the saved session against the server once per app load. A
+  // deleted or deactivated account is logged out (it used to stay logged in
+  // forever), and the role always comes from the server — editing the
+  // saved session can no longer turn a worker into an admin.
+  const sessionCheckedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user || sessionCheckedRef.current === user.id) return;
+    sessionCheckedRef.current = user.id;
+    DB.verifySessionUser(user.id).then(res => {
+      if (res.status === 'gone') {
+        setUser(null);
+        addToast('error', 'Your account is no longer active — please sign in again.');
+      } else if (res.status === 'ok' && (res.user.role !== user.role || res.user.name !== user.name)) {
+        setUser(prev => prev ? { ...prev, role: res.user.role, name: res.user.name } : prev);
+      }
+    });
+  }, [user?.id]);
 
   const [view, setView] = useState<AppView>('login');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -8033,7 +8058,7 @@ export default function App() {
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem('nexus_user', JSON.stringify(user));
+      localStorage.setItem('nexus_user', JSON.stringify(toSession(user)));
       if (view === 'login') {
         // If there's a pending QR scan, go to jobs/workstation instead of default
         const pendingJob = sessionStorage.getItem('pending_jobId');
@@ -8103,7 +8128,7 @@ export default function App() {
     return (
       <>
         <PrintStyles />
-        <LoginView onLogin={setUser} addToast={addToast} />
+        <LoginView onLogin={u => setUser(toSession(u))} addToast={addToast} />
         <div className="fixed bottom-4 right-4 z-50 pointer-events-none">
           <div className="pointer-events-auto flex flex-col items-end gap-2">
             {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}

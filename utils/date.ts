@@ -4,13 +4,17 @@
 // inputs are also tolerated (e.g. from <input type="date">).
 // ═════════════════════════════════════════════════════════════════
 
-/** Format a date string for display. Converts ISO YYYY-MM-DD → MM/DD/YYYY.
- *  Returns '' for nullish, passes through anything already MM/DD/YYYY. */
+// Parsing lives in utils/dueDates.ts — ONE parser for every format, so the
+// helpers below can no longer disagree about the same string (dateNum used to
+// return 0 for an ISO date, making it "always overdue", while the server cron
+// treated the same string as never overdue).
+import { canonicalDue, dueNum, dueDateObj } from './dueDates';
+
+/** Format a date string for display as MM/DD/YYYY. Returns '' for nullish;
+ *  unreadable text passes through unchanged so nothing silently disappears. */
 export function fmt(d?: string | null): string {
   if (!d) return '';
-  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[2]}/${m[3]}/${m[1]}`;
-  return d;
+  return canonicalDue(d) || d;
 }
 
 /** Today as MM/DD/YYYY. */
@@ -19,47 +23,27 @@ export function todayFmt(): string {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
 }
 
-/** Normalize any incoming date string to MM/DD/YYYY.
- *  Accepts MM/DD/YYYY, YYYY-MM-DD, or anything Date() understands. */
+/** Normalize an incoming date to canonical MM/DD/YYYY (zero-padded).
+ *  Unreadable input is returned trimmed rather than dropped or guessed — the
+ *  old Date() fallback turned "Sep 20" into 09/20/2001. */
 export function normDate(raw: string | null | undefined): string {
   if (!raw) return '';
   const s = raw.trim();
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) return s;
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return iso[2] + '/' + iso[3] + '/' + iso[1];
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) {
-    return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
-  }
-  return s;
+  return canonicalDue(s) || s;
 }
 
-/** Convert MM/DD/YYYY → numeric YYYYMMDD for safe comparisons.
- *  (String comparison of MM/DD/YYYY is broken: "04/05/2026" < "12/31/2025".) */
-export function dateNum(mmddyyyy: string): number {
-  const m = mmddyyyy.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return 0;
-  return parseInt(m[3]) * 10000 + parseInt(m[1]) * 100 + parseInt(m[2]);
+/** Due date → YYYYMMDD number for comparisons; 0 when missing/unreadable.
+ *  Prefer dueState()/isOverdue() from utils/dueDates for lateness — a raw
+ *  `dateNum(d) < today` check treats unreadable dates (0) as overdue. */
+export function dateNum(raw: string): number {
+  return dueNum(raw);
 }
 
-/** Parse a due-date string (MM/DD/YYYY or YYYY-MM-DD) into a real Date at noon.
- *  Returns null for invalid/missing. */
+/** Due date → Date at local noon on that day (display/calendar placement).
+ *  Never compare it to Date.now() for lateness — that made jobs "overdue" at
+ *  noon on their due day. Use utils/dueDates. Returns null when unreadable. */
 export function parseDueDate(raw?: string | null): Date | null {
-  if (!raw) return null;
-  const s = raw.trim();
-  if (!s) return null;
-  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (us) {
-    const d = new Date(Number(us[3]), Number(us[1]) - 1, Number(us[2]), 12, 0, 0);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) {
-    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12, 0, 0);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
+  return dueDateObj(raw);
 }
 
 /** Format a timestamp as `YYYY-MM-DDTHH:MM` for <input type="datetime-local">. */

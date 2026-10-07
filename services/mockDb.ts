@@ -14,12 +14,14 @@ import {
   where,
   deleteField,
   runTransaction,
+  getDocFromServer,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
+import { setShopStages } from "../utils/dueDates";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -214,36 +216,25 @@ function writeLS<T>(key: string, value: T) {
   queueMicrotask(() => localSubscribers.forEach(n => { try { n(); } catch {} }));
 }
 
-function ensureSeedUsers() {
-  const users = readLS<User[]>(LS.users, []);
-  
-  // Generic demo users only — personal credentials removed for SaaS safety
-  const hardcodedAdmins: User[] = [
-    { id: "admin1", name: "Shop Manager", username: "admin", pin: "9999", role: "admin", isActive: true },
-    { id: "emp1", name: "Operator 1", username: "op1", pin: "1234", role: "employee", isActive: true },
-  ];
-
-  let changed = false;
-  const merged = [...users];
-
-  hardcodedAdmins.forEach(admin => {
-     const existingIndex = merged.findIndex(u => u.username.toLowerCase() === admin.username.toLowerCase());
-     if (existingIndex === -1) {
-         merged.push(admin);
-         changed = true;
-     } else {
-         const existing = merged[existingIndex];
-         if (existing.pin !== admin.pin || existing.role !== admin.role) {
-             merged[existingIndex] = { ...existing, pin: admin.pin, role: admin.role, isActive: true };
-             changed = true;
-         }
-     }
-  });
-
-  if (changed || users.length === 0) {
-      writeLS(LS.users, merged);
-  }
+// SECURITY: this file used to seed demo accounts — admin/9999 (role admin) and
+// op1/1234 — into every browser's localStorage, re-asserting PIN 9999 if anyone
+// changed it, and loginUser() checked that list whenever the real user list had
+// no match. So typing admin / 9999 on the live login page opened the full admin
+// app on any device, and the credentials were published in the repo. Seeding is
+// gone; this removes the accounts it already planted on devices that ran it.
+const SEEDED_BACKDOORS: Array<{ id: string; username: string; pin: string }> = [
+  { id: 'admin1', username: 'admin', pin: '9999' },
+  { id: 'emp1', username: 'op1', pin: '1234' },
+];
+function purgeSeedUsers(): void {
+  try {
+    const users = readLS<User[]>(LS.users, []);
+    const kept = users.filter(u => !SEEDED_BACKDOORS.some(s =>
+      u.id === s.id || ((u.username || '').trim().toLowerCase() === s.username && (u.pin || '').trim() === s.pin)));
+    if (kept.length !== users.length) writeLS(LS.users, kept);
+  } catch { /* storage unavailable — nothing to purge */ }
 }
+purgeSeedUsers();
 
 function localSubscribe<T>(getter: () => T, cb: (v: T) => void) {
   cb(getter());
@@ -1111,12 +1102,10 @@ export function subscribeUsers(cb: (users: User[]) => void) {
       },
       (err) => {
         handleError(err);
-        ensureSeedUsers();
         cb(readLS<User[]>(LS.users, []));
       }
     );
   }
-  ensureSeedUsers();
   return localSubscribe(() => readLS<User[]>(LS.users, []), cb);
 }
 
@@ -1130,7 +1119,6 @@ export async function saveUser(user: User) {
       }
       return;
   }
-  ensureSeedUsers();
   const users = readLS<User[]>(LS.users, []);
   const idx = users.findIndex((u) => u.id === user.id);
   if (idx >= 0) users[idx] = user;
@@ -1156,32 +1144,57 @@ export async function deleteUser(id: string) {
   writeLS(LS.users, users);
 }
 
+/**
+ * Re-check a saved session against the SERVER copy of the account (never the
+ * offline cache — a stale cache could wrongly log out a just-added worker).
+ * 'gone' = deleted or deactivated; 'unknown' = server unreachable (keep the
+ * session, don't punish a Wi-Fi blip).
+ */
+export async function verifySessionUser(id: string): Promise<{ status: 'ok'; user: User } | { status: 'gone' } | { status: 'unknown' }> {
+  if (!dbInstance || !id) return { status: 'unknown' };
+  try {
+    const snap: any = await Promise.race([
+      getDocFromServer(doc(dbInstance, COL.users, id)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+    ]);
+    if (!snap.exists()) return { status: 'gone' };
+    const u = snap.data() as User;
+    return u.isActive === false ? { status: 'gone' } : { status: 'ok', user: u };
+  } catch {
+    return { status: 'unknown' };
+  }
+}
+
 export async function loginUser(username: string, pin: string): Promise<User | null> {
   // Trim both inputs — mobile keyboards commonly append a trailing space,
   // which would otherwise fail an exact match. PINs stay case-sensitive (digits).
   const normalizedUser = username.trim().toLowerCase();
   const normalizedPin = pin.trim();
 
+  const matches = (u: User) =>
+    (u.username || '').trim().toLowerCase() === normalizedUser && (u.pin || '').trim() === normalizedPin && u.isActive !== false;
+
   if (dbInstance) {
-      try {
-        const q = query(collection(dbInstance, COL.users));
-        const snap: any = await Promise.race([
-            getDocs(q),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Cloud timeout")), 5000))
-        ]);
-        firebaseStatus = { connected: true };
-        const users = snap.docs.map((d: any) => d.data() as User);
-        const found = users.find((u: User) => u.username.trim().toLowerCase() === normalizedUser && u.pin.trim() === normalizedPin && u.isActive !== false);
-        if (found) return found;
-      } catch (e) {
-        console.warn("Firebase Login failed (Network/Config/Timeout), falling back to Local Storage:", e);
-      }
+    // The shop's real user list is the ONLY place a login can match. No local
+    // fallback: "no match" means wrong credentials, and an unreachable
+    // database is an error to show — not a reason to check some other list.
+    let users: User[];
+    try {
+      const snap: any = await Promise.race([
+        getDocs(query(collection(dbInstance, COL.users))),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+      ]);
+      firebaseStatus = { connected: true };
+      users = snap.docs.map((d: any) => d.data() as User);
+    } catch (e) {
+      console.warn('[FabTrack] Login lookup failed:', e);
+      throw new Error("Can't reach the server — check the Wi-Fi and try again.");
+    }
+    return users.find(matches) || null;
   }
 
-  ensureSeedUsers();
-  const users = readLS<User[]>(LS.users, []);
-  const found = users.find(u => u.username.trim().toLowerCase() === normalizedUser && u.pin.trim() === normalizedPin && u.isActive !== false);
-  return found || null;
+  // Local-only mode (no database configured): real local accounts only.
+  return readLS<User[]>(LS.users, []).find(matches) || null;
 }
 
 // --------------------
@@ -1221,6 +1234,7 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
     if (!s.customOperations) s.customOperations = fallback.customOperations;
     if (s.autoLunchPauseEnabled === undefined) s.autoLunchPauseEnabled = false;
     if (!s.clients) s.clients = [];
+    setShopStages(s.jobStages);   // due-date rules learn which stages mean "shipped"
     return s;
   };
 
