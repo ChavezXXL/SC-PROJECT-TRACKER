@@ -8,7 +8,9 @@ import { Columns3, Search, ArrowRight, GripVertical, Settings as SettingsIcon } 
 
 import { Job, SystemSettings, TimeLog, User, PurchaseOrder } from '../types';
 import * as DB from '../services/mockDb';
-import { dateNum, todayFmt } from '../utils/date';
+import { dateNum, fmt } from '../utils/date';
+import { dueState } from '../utils/dueDates';
+import { useShipDate, resolveShipAt } from '../components/useShipDate';
 import { uniqueCustomers } from '../utils/customers';
 import { calcJobProfit, buildProfitSnapshot } from '../utils/jobProfit';
 import { getStages, getJobStage, getNextStage, useIsMobile } from '../App';
@@ -28,6 +30,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
   const [workers, setWorkers] = useState<User[]>([]);
   const [allPOs, setAllPOs] = useState<PurchaseOrder[]>([]);
   const isMobile = useIsMobile();
+  const { askShipDate, ShipDateHost } = useShipDate();
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
@@ -39,8 +42,6 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
   }, []);
 
   const stages = getStages(shopSettings);
-  const todayN = dateNum(todayFmt());
-  const in3N = dateNum(new Date(Date.now() + 3 * 86400000).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
 
   // Unique customers for filter — case/whitespace-insensitive dedup
   // so "ACME" and "acme " aren't two separate filter entries.
@@ -115,8 +116,17 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
     if (!target) return;
     const current = getJobStage(job, stages);
     if (current.id === target.id) return;
+    // Dropping into a complete column asks when it actually shipped (cancel =
+    // the card stays put). On-time is judged by that date, not this drag.
+    let shippedAt: number | undefined;
+    if (target.isComplete) {
+      const lastWork = await DB.lastWorkEndForJob(job.id);
+      const choice = await askShipDate({ count: 1, label: `PO ${job.poNumber}`, lastWorkMs: lastWork });
+      if (!choice) return;
+      shippedAt = await resolveShipAt(choice, async () => lastWork);
+    }
     try {
-      await DB.advanceJobStage(jobId, target.id, user.id, user.name, !!target.isComplete);
+      await DB.advanceJobStage(jobId, target.id, user.id, user.name, !!target.isComplete, shippedAt);
       // Auto-lock a profit snapshot when dragged into a completed column —
       // mirrors handleCompleteWithSnapshot in JobsView so board-completed jobs
       // get the same margin grade instead of silently skipping it.
@@ -128,7 +138,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
           try { jobLogs = await DB.getLogsForJob(job.id); } catch {}
           const breakdown = calcJobProfit(job, jobLogs, workers, shopSettings, allPOs);
           const snapshot = buildProfitSnapshot(breakdown);
-          await DB.completeJobWithSnapshot(job.id, job.materialCost ?? 0, snapshot);
+          await DB.completeJobWithSnapshot(job.id, job.materialCost ?? 0, snapshot, shippedAt);
           const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin' : breakdown.grade === 'good' ? '🔵 Good' : breakdown.grade === 'tight' ? '🟡 Tight' : '🔴 Loss';
           addToast('success', `${job.poNumber} → ${target.label} — ${gradeMsg}`);
           return;
@@ -145,13 +155,11 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
     const s = getJobStage(j, stages);
     return !s.isComplete;
   }).length;
-  const overdueCount = jobs.filter(j => {
-    const s = getJobStage(j, stages);
-    return !s.isComplete && j.dueDate && dateNum(j.dueDate) < todayN;
-  }).length;
+  const overdueCount = jobs.filter(j => dueState(j, { stages }) === 'overdue').length;
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {ShipDateHost}
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -294,8 +302,9 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
                   </div>
                 )}
                 {list.map(j => {
-                  const isOverdue = !stage.isComplete && j.dueDate && dateNum(j.dueDate) < todayN;
-                  const isDueSoon = !stage.isComplete && !isOverdue && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3N;
+                  const _due = dueState(j, { stages });
+                  const isOverdue = _due === 'overdue';
+                  const isDueSoon = _due === 'today' || _due === 'soon';
                   const next = getNextStage(j, stages);
 
                   // ── Stage time badge ────────────────────────────────────────
@@ -378,7 +387,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
                           <span className="font-mono font-bold">{j.quantity || '—'}</span>
                           <span>×</span>
                           {j.dueDate ? (
-                            <span className={`font-mono font-bold tabular ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>{j.dueDate.slice(5)}</span>
+                            <span className={`font-mono font-bold tabular ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>{fmt(j.dueDate).slice(0, 5)}</span>
                           ) : <span className="text-zinc-700">no due</span>}
                         </div>
                         {next && (

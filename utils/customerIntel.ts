@@ -12,20 +12,10 @@
 
 import type { Job, TimeLog } from '../types';
 import { customerKey } from './customers';
+import { shippedOnTime } from './dueDates';
 
 const WEEK_MS = 7 * 86400000;
 
-const dueNum = (due?: string): number => {
-  const m = (due || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return 0;
-  const mo = +m[1], da = +m[2];
-  if (mo < 1 || mo > 12 || da < 1 || da > 31) return 0;
-  return (+m[3]) * 10000 + mo * 100 + da;
-};
-const msYmd = (ms: number): number => {
-  const d = new Date(ms);
-  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-};
 const logMins = (l: TimeLog): number =>
   l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
 
@@ -121,10 +111,11 @@ export function computeCustomerIntel(
       if (j.completedAt >= d90) { a.revenue90d += rev; a.jobsCompleted90d++; }
       const wi = Math.floor((j.completedAt - weekStart0) / WEEK_MS);
       if (wi >= 0 && wi < weeks) a.weekly[wi] += rev;
-      const due = dueNum(j.dueDate);
-      if (due > 0) {
+      // Shared rule: the ship date when recorded, not the Complete click.
+      const onTime = shippedOnTime(j);
+      if (onTime !== null) {
         a.dueDone++;
-        if (msYmd(j.completedAt) <= due) a.onTimeDone++;
+        if (onTime) a.onTimeDone++;
       }
       if (j.profitSnapshot && Number.isFinite(j.profitSnapshot.marginPct)) {
         a.marginSum += j.profitSnapshot.marginPct;

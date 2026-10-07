@@ -14,6 +14,7 @@
 
 import type { Job, TimeLog, SystemSettings } from '../types';
 import { computeOperationRates } from './rateLearning';
+import { isPlaceholderPartNumber } from './partKey';
 
 export type PriceVerdict = 'underpriced' | 'thin' | 'healthy' | 'no-price';
 
@@ -67,7 +68,7 @@ export function computePriceDoctor(
   const byPart = new Map<string, Job[]>();
   for (const j of jobs) {
     const pn = (j.partNumber || '').trim().toLowerCase();
-    if (!pn) continue;
+    if (!pn || isPlaceholderPartNumber(pn)) continue;   // "N/A" jobs aren't one part
     const arr = byPart.get(pn) || [];
     arr.push(j);
     byPart.set(pn, arr);

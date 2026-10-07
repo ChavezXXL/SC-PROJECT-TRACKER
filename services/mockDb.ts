@@ -21,7 +21,7 @@ import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "fire
 import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
-import { setShopStages } from "../utils/dueDates";
+import { setShopStages, isShippedStageId } from "../utils/dueDates";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -616,10 +616,14 @@ export async function completeJobWithSnapshot(
   id: string,
   materialCost: number,
   snapshot: NonNullable<Job['profitSnapshot']>,
+  /** When the job actually left the shop (from the ship-date dialog). On-time
+   *  is judged by this; completedAt only records when someone clicked. */
+  shippedAt?: number,
 ) {
   const completedAt = Date.now();
   const updates: any = { status: 'completed', completedAt, profitSnapshot: snapshot };
   if (materialCost > 0) updates.materialCost = materialCost;
+  if (shippedAt) updates.shippedAt = shippedAt;
   if (dbInstance) {
     try {
       await updateDoc(doc(dbInstance, COL.jobs, id), updates);
@@ -667,7 +671,7 @@ export async function addJobNote(jobId: string, text: string, userId: string, us
 export async function reopenJob(id: string) {
   if (dbInstance) {
       try {
-         await updateDoc(doc(dbInstance, COL.jobs, id), { status: "pending", completedAt: null } as any);
+         await updateDoc(doc(dbInstance, COL.jobs, id), { status: "pending", completedAt: null, shippedAt: null } as any);
          firebaseStatus = { connected: true };
       } catch (e) {
          throw handleError(e);
@@ -678,13 +682,13 @@ export async function reopenJob(id: string) {
   const idx = jobs.findIndex((j) => j.id === id);
   if (idx >= 0) {
     const j = jobs[idx] as any;
-    jobs[idx] = { ...j, status: "pending", completedAt: null } as Job;
+    jobs[idx] = { ...j, status: "pending", completedAt: null, shippedAt: null } as Job;
     writeLS(LS.jobs, jobs);
   }
 }
 
 // Advance a job to the next workflow stage
-export async function advanceJobStage(id: string, stageId: string, userId: string, userName: string, isComplete?: boolean) {
+export async function advanceJobStage(id: string, stageId: string, userId: string, userName: string, isComplete?: boolean, shippedAt?: number) {
   const updates: any = {
     currentStage: stageId,
     stageHistory: arrayUnion({ stageId, timestamp: Date.now(), userId, userName }),
@@ -692,6 +696,9 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
   if (isComplete) {
     updates.status = 'completed';
     updates.completedAt = Date.now();
+    // Keep a ship date already recorded by a Shipped stage unless the user
+    // just told us a different one.
+    if (shippedAt) updates.shippedAt = shippedAt;
   } else {
     // Moving to ANY non-complete stage must drop the job out of 'completed' and
     // clear the locked snapshot — otherwise dragging a done job back to QC
@@ -699,9 +706,10 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
     updates.status = stageId === 'pending' ? 'pending' : 'in-progress';
     updates.completedAt = null;
     updates.profitSnapshot = null;
-  }
-  if (stageId === 'shipped') {
-    updates.shippedAt = Date.now();
+    // Entering a Shipped stage (built-in id OR a custom stage named "Shipped" —
+    // only the built-in id used to count) records the ship date; moving back
+    // to any other open stage means it hasn't shipped.
+    updates.shippedAt = isShippedStageId(stageId) ? (shippedAt || Date.now()) : null;
   }
   if (dbInstance) {
     try {
@@ -719,9 +727,11 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
     jobs[idx] = {
       ...j, currentStage: stageId, stageHistory: history,
       ...(isComplete
-        ? { status: 'completed', completedAt: Date.now() }
-        : { status: stageId === 'pending' ? 'pending' : 'in-progress', completedAt: null, profitSnapshot: null }),
-      ...(stageId === 'shipped' ? { shippedAt: Date.now() } : {}),
+        ? { status: 'completed', completedAt: Date.now(), ...(shippedAt ? { shippedAt } : {}) }
+        : {
+            status: stageId === 'pending' ? 'pending' : 'in-progress', completedAt: null, profitSnapshot: null,
+            shippedAt: isShippedStageId(stageId) ? (shippedAt || Date.now()) : null,
+          }),
     } as Job;
     writeLS(LS.jobs, jobs);
   }
@@ -2277,6 +2287,32 @@ export function nextPurchaseOrderNumber(list: PurchaseOrder[]): string {
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return `PO-${year}-${String(max + 1).padStart(4, '0')}`;
+}
+
+/** Correct a completed job's ship date (job editor "Shipped On"). Writes only
+ *  that field, so it can't revert anything else. */
+export async function setJobShippedAt(jobId: string, shippedAt: number): Promise<void> {
+  if (dbInstance) {
+    try {
+      await updateDoc(doc(dbInstance, COL.jobs, jobId), { shippedAt });
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === jobId);
+  if (idx >= 0) { jobs[idx] = { ...jobs[idx], shippedAt }; writeLS(LS.jobs, jobs); }
+}
+
+/** When work on a job last ended (latest real session), or null — the "day the
+ *  work finished" choice in the ship-date dialog. */
+export async function lastWorkEndForJob(jobId: string): Promise<number | null> {
+  try {
+    const logs = await getLogsForJob(jobId);
+    let last = 0;
+    for (const l of logs) if (!l.isSample && l.endTime && l.endTime > last) last = l.endTime;
+    return last || null;
+  } catch { return null; }
 }
 
 /** Every log for a job — UNLIMITED (the live subscription caps at 500). Used

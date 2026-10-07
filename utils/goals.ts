@@ -5,6 +5,7 @@
 // ═════════════════════════════════════════════════════════════════
 
 import type { ShopGoal, Job, TimeLog, GoalPeriod } from '../types';
+import { onTimeRate } from './dueDates';
 
 /** Get the start timestamp of the period (day / week / month / quarter / year). */
 function goalPeriodStart(period: GoalPeriod): number {
@@ -47,15 +48,10 @@ export function computeGoalProgress(
     case 'on-time-delivery': {
       // Require completedAt to be a real timestamp — some jobs may reach a complete
       // stage via stage-advance without setting completedAt.
-      const completed = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && j.dueDate);
-      if (completed.length === 0) { current = 0; break; }
-      const onTime = completed.filter(j => {
-        const m = j.dueDate!.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-        if (!m) return false;
-        const due = new Date(+m[3], +m[1] - 1, +m[2], 23, 59, 59).getTime();
-        return (j.completedAt as number) <= due + 86400000;
-      }).length;
-      current = Math.round((onTime / completed.length) * 100);
+      // Shared rule — this goal alone gave a full extra day of grace, so the
+      // goal and the dashboard disagreed about the same jobs.
+      const r = onTimeRate(jobs.filter(j => j.status === 'completed' && (j.shippedAt || j.completedAt || 0) >= cutoff));
+      current = r.pct ?? 0;
       break;
     }
     case 'rework-count':

@@ -27,6 +27,7 @@ import { matchJobForPo, isJobComplete, resolveStages } from '../../utils/poOrgan
 // Weekly Pulse (Monday digest) — same pure trend brain the dashboard panel uses.
 import { computeShopTrends, fmtTrendValue, fmtTrendDelta } from '../../utils/shopTrends';
 import { computeCustomerIntel } from '../../utils/customerIntel';
+import { dueState } from '../../utils/dueDates';
 
 export const config: Config = {
   schedule: '*/10 * * * *',   // every 10 minutes — early-exits outside send windows
@@ -146,17 +147,6 @@ function inWindow(target: string, nowHHMM: string): boolean {
   return Math.min(diff, 1440 - diff) <= 5;
 }
 
-/** Job dueDate is "MM/DD/YYYY" — convert to comparable YYYYMMDD number. */
-function dueNum(due: string): number {
-  const m = due.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return 99991231;
-  return parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
-}
-
-/** Today as YYYYMMDD number in tz. */
-function todayNum(tz: string): number {
-  return parseInt(dateStrInTz(Date.now(), tz).replace(/-/g, ''), 10);
-}
 
 const logMins = (l: any): number =>
   typeof l.durationSeconds === 'number' && l.durationSeconds >= 0
@@ -253,9 +243,12 @@ export default async function handler() {
 
       const jobs = await fetchCollection('jobs', apiKey, projectId);
       const open = jobs.filter((j: any) => j.status !== 'completed');
-      const tNum = todayNum(tz);
-      const dueToday = open.filter((j: any) => j.dueDate && dueNum(j.dueDate) === tNum);
-      const overdue  = open.filter((j: any) => j.dueDate && dueNum(j.dueDate) < tNum);
+      // Same rule as every screen, in the shop's timezone. This used to count a
+      // job in a Shipped stage as overdue, and treat an ISO-format due date as
+      // never overdue (the app treated the same string as always overdue).
+      const dueOpts = { tz, stages: settings.jobStages };
+      const dueToday = open.filter((j: any) => dueState(j, dueOpts) === 'today');
+      const overdue  = open.filter((j: any) => dueState(j, dueOpts) === 'overdue');
 
       // Yesterday's labor — completed logs whose end fell on yesterday (tz-aware)
       const yesterday = dateStrInTz(Date.now() - 86_400_000, tz);

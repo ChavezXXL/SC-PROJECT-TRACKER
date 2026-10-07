@@ -13,6 +13,7 @@
  */
 
 import type { Job, TimeLog, ReworkEntry } from '../types';
+import { shippedOnTime } from './dueDates';
 
 const WEEK_MS = 7 * 86400000;
 
@@ -25,18 +26,6 @@ export function weekStart(ms: number): number {
   return d.getTime() - back * 86400000;
 }
 
-/** MM/DD/YYYY → comparable yyyymmdd number (0 = unparseable). */
-function dueNum(due?: string): number {
-  const m = (due || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return 0;
-  const mo = +m[1], da = +m[2];
-  if (mo < 1 || mo > 12 || da < 1 || da > 31) return 0;
-  return (+m[3]) * 10000 + mo * 100 + da;
-}
-function msToYmd(ms: number): number {
-  const d = new Date(ms);
-  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-}
 
 const logMins = (l: TimeLog): number =>
   l.durationSeconds != null && l.durationSeconds >= 0
@@ -137,10 +126,11 @@ export function computeShopTrends(
     if (!b) continue;
     b.revenue += rev;
     b.jobsCompleted++;
-    const due = dueNum(j.dueDate);
-    if (due > 0) {
+    // Shared rule: judged by the ship date when recorded, not the Complete click.
+    const onTime = shippedOnTime(j);
+    if (onTime !== null) {
       b.dueDone++;
-      if (msToYmd(j.completedAt) <= due) b.onTimeDone++;
+      if (onTime) b.onTimeDone++;
     }
     if (j.profitSnapshot && Number.isFinite(j.profitSnapshot.marginPct)) {
       b.marginSum += j.profitSnapshot.marginPct;
@@ -173,6 +163,13 @@ export function computeShopTrends(
   const liveBase = base.filter(b => b.revenue > 0 || b.laborHours > 0 || b.jobsCompleted > 0);
   const nBase = Math.max(1, liveBase.length);
   const avg = (f: (b: WeekBucket) => number) => liveBase.reduce((a, b) => a + f(b), 0) / nBase;
+  /** Average of a RATE over the weeks that have one — a week with no
+   *  due-dated jobs has no on-time rate; counting it as 0% dragged the
+   *  baseline down and faked "on-time improved". */
+  const avgRate = (f: (b: WeekBucket) => number) => {
+    const vals = liveBase.map(f).filter(Number.isFinite);
+    return vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : NaN;
+  };
 
   const pct = (curV: number, baseV: number): number | null =>
     baseV > 0.0001 ? ((curV - baseV) / baseV) * 100 : (curV > 0 ? null : 0);
@@ -204,8 +201,8 @@ export function computeShopTrends(
     mk('revenue', 'Revenue / wk', 'money', cur.revenue, avg(b => b.revenue), true, buckets.map(b => b.revenue)),
     mk('hours', 'Labor hours / wk', 'hours', cur.laborHours, avg(b => b.laborHours), null, buckets.map(b => b.laborHours)),
     mk('jobs', 'Jobs shipped / wk', 'count', cur.jobsCompleted, avg(b => b.jobsCompleted), true, buckets.map(b => b.jobsCompleted)),
-    mk('ontime', 'On-time rate', 'pct', onTimeRate(cur), avg(b => (Number.isFinite(onTimeRate(b)) ? onTimeRate(b) : 0)), true, buckets.map(b => (Number.isFinite(onTimeRate(b)) ? onTimeRate(b) : 0)), true),
-    mk('margin', 'Avg margin', 'pct', marginAvg(cur), avg(b => (Number.isFinite(marginAvg(b)) ? marginAvg(b) : 0)), true, buckets.map(b => (Number.isFinite(marginAvg(b)) ? marginAvg(b) : 0)), true),
+    mk('ontime', 'On-time rate', 'pct', onTimeRate(cur), avgRate(onTimeRate), true, buckets.map(b => (Number.isFinite(onTimeRate(b)) ? onTimeRate(b) : 0)), true),
+    mk('margin', 'Avg margin', 'pct', marginAvg(cur), avgRate(marginAvg), true, buckets.map(b => (Number.isFinite(marginAvg(b)) ? marginAvg(b) : 0)), true),
     mk('rework', 'Rework / wk', 'count', cur.reworkCount, avg(b => b.reworkCount), false, buckets.map(b => b.reworkCount)),
   ];
   // Biggest movement first; flat metrics sink.

@@ -33,6 +33,8 @@ import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds } from './services
 import { computeJobETA, RISK_COLORS } from './utils/jobETA';
 import type { JobETA, JobRiskLevel } from './utils/jobETA';
 import { getPartHistory } from './utils/partHistory';
+import { parseDueDate } from './utils/date';
+import { dueState, daysUntilDue, onTimeRate } from './utils/dueDates';
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
@@ -62,27 +64,10 @@ function getJobStage(job: Job, stages: JobStage[]): JobStage {
   return stages.find(s => s.id === mapped) || stages[0];
 }
 
-// ── DUE DATE HELPERS ── robust against MM/DD/YYYY, YYYY-MM-DD, blanks, or garbage strings
-function parseDueDate(raw?: string | null): Date | null {
-  if (!raw) return null;
-  const s = raw.trim();
-  if (!s) return null;
-  // MM/DD/YYYY
-  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (us) {
-    const d = new Date(Number(us[3]), Number(us[1]) - 1, Number(us[2]), 12, 0, 0);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  // YYYY-MM-DD (ISO)
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) {
-    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12, 0, 0);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  // Fallback native parse
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
-}
+// ── DUE DATE HELPERS ── the shared parser + rules (utils/dueDates, imported
+// above). This file had its own copy that returned NOON on the due day, and
+// the TV compared that to the clock — so after lunch a job due today counted
+// as both "Due Today" and "Overdue".
 
 /** Shared auto-scroll hook for TV lists. Seamless infinite loop.
  *  Rebuilt for TV-grade smoothness + zero cumulative drift:
@@ -221,10 +206,9 @@ function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | '
 /** Returns { dueText, daysLeft, overdue, urgency } — dueText is pretty for TV, like "Apr 25" */
 function formatDueForTv(raw?: string | null): { dueText: string; daysLeft: number | null; overdue: boolean; urgency: 'late' | 'today' | 'soon' | 'normal' | 'none' } {
   const due = parseDueDate(raw);
-  if (!due) return { dueText: '', daysLeft: null, overdue: false, urgency: 'none' };
-  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
-  const startDue = new Date(due); startDue.setHours(0, 0, 0, 0);
-  const daysLeft = Math.round((startDue.getTime() - startToday.getTime()) / 86400000);
+  const daysLeft = daysUntilDue(raw);
+  if (!due || daysLeft === null) return { dueText: '', daysLeft: null, overdue: false, urgency: 'none' };
+  const startToday = new Date();
   const overdue = daysLeft < 0;
   const urgency: 'late' | 'today' | 'soon' | 'normal' = overdue ? 'late' : daysLeft === 0 ? 'today' : daysLeft <= 3 ? 'soon' : 'normal';
   // Friendly label: "Apr 25", include year only if far future/past
@@ -916,14 +900,11 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
   // Jobs completed this week
   const completedThisWeek = jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= weekStart.getTime());
   const completedCount = completedThisWeek.length;
-  // On-time count
-  const onTimeCount = completedThisWeek.filter(j => {
-    const d = parseDueDate(j.dueDate);
-    if (!d || !j.completedAt) return false;
-    d.setHours(23, 59, 59, 999); // end-of-day on the due date (no extra grace)
-    return j.completedAt <= d.getTime();
-  }).length;
-  const onTimePct = completedCount > 0 ? Math.round((onTimeCount / completedCount) * 100) : 0;
+  // On-time — shared rule (ship date when recorded). Jobs with no readable due
+  // date are left out; they used to count as LATE in this percentage.
+  const otWeek = onTimeRate(completedThisWeek);
+  const onTimeCount = otWeek.onTime;
+  const onTimePct = otWeek.pct ?? 0;
   // Top customer — uses shared helper that normalizes case/whitespace
   // so "ACME " and "ACME" aggregate together.
   const customerCounts = countByCustomer(completedThisWeek);
@@ -956,7 +937,7 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
           <div className="bg-gradient-to-br from-cyan-500/15 to-cyan-500/[0.02] border border-cyan-500/20 rounded-2xl p-4 text-center">
             <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">On-Time</p>
             <p className="text-4xl font-black text-white tabular mt-1.5">{onTimePct}<span className="text-xl text-white/50">%</span></p>
-            <p className="text-[9px] text-white/40 mt-0.5">{onTimeCount} of {completedCount}</p>
+            <p className="text-[9px] text-white/40 mt-0.5">{onTimeCount} of {otWeek.judged}</p>
           </div>
           {showRevenue && (
             <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-4 text-center">
@@ -1417,16 +1398,10 @@ const TvTodaySlide = React.memo(function TvTodaySlide({ jobs, allLogs, openJobs,
   const activeHours   = activeLogs.filter(l => l.startTime >= todayMs).reduce((a, l) => a + DB.getWorkingElapsedMs(l) / 3_600_000, 0);
   const totalHours    = finishedHours + activeHours;
 
-  const overdueCount = openJobs.filter(j => {
-    const d = parseDueDate(j.dueDate);
-    return d && d.getTime() < Date.now();
-  }).length;
-
-  const dueTodayCount = openJobs.filter(j => {
-    const d = parseDueDate(j.dueDate);
-    if (!d) return false;
-    return d.getTime() >= todayMs && d.getTime() < todayMs + 86_400_000;
-  }).length;
+  // Shared rule: a job due today is "due today" until midnight — never also
+  // "overdue" (this compared noon-on-the-due-day to the clock).
+  const overdueCount = openJobs.filter(j => dueState(j) === 'overdue').length;
+  const dueTodayCount = openJobs.filter(j => dueState(j) === 'today').length;
 
   const pipelineValue = openJobs.reduce((a, j) =>
     a + (j.quoteAmount || (j.pricePerPart || 0) * (j.quantity || 1)), 0);
@@ -2453,10 +2428,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const jobsForBelt = openJobs;
     const currentSlide = configuredTvSlides[tvSlideIdx] || configuredTvSlides[0];
 
-    const overdueCount = openJobs.filter(j => {
-      const d = parseDueDate(j.dueDate);
-      return d && d.getTime() < Date.now();
-    }).length;
+    const overdueCount = openJobs.filter(j => dueState(j) === 'overdue').length;
 
     const renderSlide = (slide: TvSlide) => {
       switch (slide.type) {

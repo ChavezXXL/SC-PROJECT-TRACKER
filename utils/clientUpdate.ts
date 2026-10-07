@@ -30,6 +30,7 @@
 import type { Job, JobStage, SystemSettings } from '../types';
 import { getJobStage } from '../App';
 import { fmt, dateNum, todayFmt, parseDueDate } from './date';
+import { dueState, daysUntilDue } from './dueDates';
 
 export interface ClientUpdateContext {
   customer: string;
@@ -148,23 +149,24 @@ function stageName(job: Job, stages: JobStage[]): string {
 }
 
 function etaNote(job: Job): string {
-  if (!job.dueDate) return 'no due date';
-  const due = dateNum(job.dueDate);
-  const today = dateNum(todayFmt());
-  if (due < today) return `overdue since ${fmt(job.dueDate)}`;
-  const daysOut = Math.round(((parseDueDate(job.dueDate)?.getTime() ?? 0) - Date.now()) / 86_400_000);
-  if (daysOut <= 0) return `due today`;
-  if (daysOut <= 3) return `due ${fmt(job.dueDate)} · ${daysOut}d left`;
+  // Shared rule. This text goes to CUSTOMERS — it used to say "overdue since…"
+  // about jobs that had already shipped.
+  const s = dueState(job);
+  if (s === 'closed') return job.shippedAt ? `shipped ${new Date(job.shippedAt).toLocaleDateString('en-US')}` : 'complete';
+  if (s === 'none') return 'no due date';
+  if (s === 'overdue') return `overdue since ${fmt(job.dueDate)}`;
+  const d = daysUntilDue(job.dueDate)!;
+  if (d === 0) return 'due today';
+  if (d <= 3) return `due ${fmt(job.dueDate)} · ${d}d left`;
   return `due ${fmt(job.dueDate)}`;
 }
 
 function filterJobs(jobs: Job[], stages: JobStage[], filter?: ClientUpdateTemplate['filter']): Job[] {
   if (!filter || filter === 'all') return jobs;
-  const today = dateNum(todayFmt());
   const weekAgo = Date.now() - 7 * 86_400_000;
   switch (filter) {
     case 'urgent':  return jobs.filter(j => j.priority === 'urgent');
-    case 'overdue': return jobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < today);
+    case 'overdue': return jobs.filter(j => dueState(j, { stages }) === 'overdue');
     case 'ready':   return jobs.filter(j => j.status === 'completed' && (j.completedAt || 0) >= weekAgo);
     case 'open':    return jobs.filter(j => j.status !== 'completed');
     default:        return jobs;

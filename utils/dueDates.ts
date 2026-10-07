@@ -60,6 +60,12 @@ export function dueNum(raw?: string | null): number {
   return p ? ymdNum(p) : 0;
 }
 
+/** Value for an <input type="date"> ("YYYY-MM-DD"), or '' when missing/unreadable. */
+export function toDateInput(raw?: string | null): string {
+  const p = parseYmd(raw);
+  return p ? `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}` : '';
+}
+
 /** Canonical stored form "MM/DD/YYYY", or '' when missing/unreadable. */
 export function canonicalDue(raw?: string | null): string {
   const p = parseYmd(raw);
@@ -105,6 +111,14 @@ export function isClosedStage(stage?: Pick<JobStage, 'id' | 'label' | 'isComplet
 // stages without threading the list through dozens of screens.
 let shopStages: JobStage[] | undefined;
 export function setShopStages(stages?: JobStage[]): void { shopStages = stages?.length ? stages : undefined; }
+
+/** A not-complete stage that means "shipped": the built-in 'shipped' id, or a
+ *  custom stage named "Ship"/"Shipped" (custom ids look like stage_<ts>). */
+export function isShippedStageId(stageId: string): boolean {
+  if (stageId === 'shipped') return true;
+  const s = shopStages?.find(x => x.id === stageId);
+  return !!s && !s.isComplete && /^ship(ped)?$/i.test((s.label || '').trim());
+}
 
 /** Closed = finished from the customer's point of view: completed, or in a shipped/complete stage. */
 export function isJobClosed(job: Pick<Job, 'status' | 'currentStage'>, stages?: JobStage[]): boolean {

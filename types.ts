@@ -206,7 +206,15 @@ export interface Job {
   // ── Routing / Workflow ──
   currentStage?: string;       // stage id from settings.jobStages
   stageHistory?: StageHistoryEntry[];
+  // ── Due-date history ──
+  /** The FIRST due date promised. Set the first time the due date changes, so
+   *  reschedules never erase the original promise. */
+  originalDueDate?: string;
+  /** Every due-date change, oldest first. */
+  dueDateHistory?: { from: string; to: string; at: number; by?: string }[];
   // ── Shipping ──
+  /** When the job actually left the shop (asked when it's completed). On-time
+   *  is judged by this; completedAt only records when someone clicked. */
   shippedAt?: number;
   shippingMethod?: string;     // 'pickup' | 'standard' | 'express' | 'fedex' | 'ups' | custom
   trackingNumber?: string;

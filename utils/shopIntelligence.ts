@@ -20,6 +20,8 @@
 import type { Job, TimeLog, User, SystemSettings, PurchaseOrder } from '../types';
 import { calcJobProfit } from './jobProfit';
 import { customerKey } from './customers';
+import { shippedOnTime } from './dueDates';
+import { isPlaceholderPartNumber } from './partKey';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -130,7 +132,7 @@ export function computeInsights(
   const byPart = new Map<string, Job[]>();
   for (const j of quotedCompleted) {
     const pn = (j.partNumber || '').trim().toLowerCase();
-    if (!pn) continue;
+    if (!pn || isPlaceholderPartNumber(pn)) continue;   // "N/A" jobs aren't one part
     if (!byPart.has(pn)) byPart.set(pn, []);
     byPart.get(pn)!.push(j);
   }
@@ -381,24 +383,19 @@ export function computeInsights(
   // A customer whose jobs ship late again and again — a scheduling / credibility
   // risk the margin-based customer_risk check doesn't catch. Date-only compare.
   {
-    const ymd = (ms: number) => { const d = new Date(ms); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
-    const dueYmd = (due?: string) => {
-      const m = (due || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (!m) return 0;
-      const mo = +m[1], da = +m[2];
-      if (mo < 1 || mo > 12 || da < 1 || da > 31) return 0;   // reject 13/32/2024 etc.
-      return (+m[3]) * 10000 + mo * 100 + da;
-    };
+    // Shared rule: judged by the ship date when recorded. Judged by the
+    // Complete click, bulk close-outs (~3 days after the work) made customers
+    // look chronically late — "S&H 91% late" was partly close-out delay.
     const lateByCust = new Map<string, { name: string; late: number; total: number }>();
     for (const j of completedJobs) {
-      const due = dueYmd(j.dueDate);
-      if (!due || !j.completedAt) continue;
+      const onTime = shippedOnTime(j);
+      if (onTime === null) continue;
       const c = (j.customer || '').trim();
       if (!c) continue;
       const key = customerKey(c) || c.toLowerCase();
       const e = lateByCust.get(key) || { name: c, late: 0, total: 0 };
       e.total++;
-      if (ymd(j.completedAt) > due) e.late++;
+      if (!onTime) e.late++;
       lateByCust.set(key, e);
     }
     lateByCust.forEach((e, key) => {

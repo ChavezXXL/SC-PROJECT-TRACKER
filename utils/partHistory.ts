@@ -16,7 +16,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import type { Job, TimeLog } from '../types';
-import { parseDueDate } from './date';
+import { shippedOnTime } from './dueDates';
 
 export interface PartHistory {
   partNumber: string;
@@ -41,6 +41,8 @@ export interface PartRun {
   totalHours: number;
   hoursPerUnit: number;
   onTime: boolean;
+  /** False when the run couldn't be judged (no readable due date). */
+  onTimeKnown: boolean;
   primaryWorker?: string;        // name of the worker who logged the most time
 }
 
@@ -69,9 +71,10 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
     // On-time: completed by END-OF-DAY on the due date (matches the OTD/scorecard
     // logic everywhere else). The old `+ 86400000` gave an extra ~12-24h of grace,
     // counting next-day deliveries as on time and overstating performance.
-    const due = parseDueDate(job.dueDate);
-    const dueEnd = due ? (due.setHours(23, 59, 59, 999), due.getTime()) : null;
-    const onTime = !!(dueEnd != null && job.completedAt && job.completedAt <= dueEnd);
+    // Shared rule (ship date when recorded). null = no readable due date —
+    // left out of the on-time rate below instead of counted late.
+    const onTimeJudged = shippedOnTime(job);
+    const onTime = onTimeJudged === true;
     // Primary worker = user who logged the most time
     const byWorker = new Map<string, { name: string; mins: number }>();
     jobLogs.forEach(l => {
@@ -95,6 +98,7 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
       totalHours,
       hoursPerUnit,
       onTime,
+      onTimeKnown: onTimeJudged !== null,
       primaryWorker,
     };
   }).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
@@ -104,8 +108,9 @@ export function getPartHistory(partNumber: string, jobs: Job[], logs: TimeLog[])
   const totalHours = runs.reduce((a, r) => a + r.totalHours, 0);
   const avgHoursPerUnit = totalUnits > 0 ? totalHours / totalUnits : 0;
   const avgJobHours = runsWithTime.length > 0 ? totalHours / runsWithTime.length : 0;
-  const onTimeRuns = runs.filter(r => r.onTime).length;
-  const onTimeRate = runs.length > 0 ? Math.round((onTimeRuns / runs.length) * 100) : 0;
+  const judgedRuns = runs.filter(r => r.onTimeKnown);
+  const onTimeRuns = judgedRuns.filter(r => r.onTime).length;
+  const onTimeRate = judgedRuns.length > 0 ? Math.round((onTimeRuns / judgedRuns.length) * 100) : 0;
 
   // Best worker = lowest avg hours/unit across runs where they were primary
   const workerStats = new Map<string, { name: string; userId: string; totalUnits: number; totalHours: number; runs: number }>();

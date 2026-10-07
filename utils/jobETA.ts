@@ -21,6 +21,7 @@
 import type { Job, TimeLog } from '../types';
 import type { PartHistory } from './partHistory';
 import { parseDueDate } from './date';
+import { daysUntilDue as calendarDaysUntilDue } from './dueDates';
 
 export type JobRiskLevel = 'critical' | 'at-risk' | 'watch' | 'on-track' | 'no-data';
 
@@ -50,8 +51,9 @@ export interface CapacityForecast {
 /** Working hours per day assumption (adjustable via settings in future). */
 const WORKDAY_HOURS = 8;
 
-/** Days considered "watch" range when no ETA data available. */
-const WATCH_DAYS = 2;
+/** Days considered "watch" range when no ETA data available — the same 3-day
+ *  "due soon" window every other screen uses (this one alone used 2). */
+const WATCH_DAYS = 3;
 
 // ── Core ETA for a single job ─────────────────────────────────────────
 
@@ -100,12 +102,15 @@ export function computeJobETA(
     expectedHours = history.avgHoursPerUnit * job.quantity;
   }
 
-  // ── Due date
+  // ── Due date. Lateness/labels use the shared calendar-day rule (on time
+  // through the END of the due day). The fractional value below is only for
+  // the capacity math (days of work left vs. days until due) — and it now
+  // measures to end of day, not noon, which flagged jobs "overdue" at lunch.
   const dueDate = parseDueDate(job.dueDate);
-  const daysUntilDue = dueDate
-    ? (dueDate.getTime() - now) / 86_400_000
-    : null;
-  const isOverdue = dueDate ? dueDate.getTime() < now : false;
+  const dueEnd = dueDate ? new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate(), 23, 59, 59, 999).getTime() : null;
+  const daysUntilDue = dueEnd !== null ? (dueEnd - now) / 86_400_000 : null;
+  const calDays = calendarDaysUntilDue(job.dueDate, now);   // 0 = today, <0 = late
+  const isOverdue = calDays !== null && calDays < 0;
 
   // ── Derived metrics
   const pctComplete = expectedHours && expectedHours > 0
@@ -119,13 +124,13 @@ export function computeJobETA(
   let riskLevel: JobRiskLevel;
   let riskReason: string;
 
-  /** Format a days-remaining value as a human string. Sub-1-day = "today". */
-  const fmtDue = (d: number) => d < 1 ? 'today' : `in ${Math.ceil(d)}d`;
+  /** Due label from CALENDAR days — after noon, a job due tomorrow used to
+   *  read "Due today" because <24 fractional hours remained. */
+  const fmtDue = (_d: number) => calDays === null ? '' : calDays <= 0 ? 'today' : calDays === 1 ? 'tomorrow' : `in ${calDays}d`;
 
   if (isOverdue) {
     riskLevel = 'critical';
-    const daysLate = Math.abs(daysUntilDue!);
-    riskReason = daysLate < 1 ? 'Overdue (today)' : `${Math.ceil(daysLate)}d overdue`;
+    riskReason = `${-calDays!}d overdue`;
   } else if (daysUntilDue !== null && daysUntilDue <= WATCH_DAYS && expectedHours === null) {
     // No prediction data but due very soon
     riskLevel = 'watch';

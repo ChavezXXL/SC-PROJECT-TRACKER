@@ -137,6 +137,7 @@ import { FeatureGate } from './backend/FeatureGate';
 import { TrialBanner } from './components/TrialBanner';
 // Pure helpers — extracted to utils/ so each file has a single responsibility
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins, parseDueDate } from './utils/date';
+import { dueState, shippedOnTime, onTimeRate, compareByDue, dueLabel, toDateInput } from './utils/dueDates';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { getSampleEstimateForPart, suggestHoursFromSample, getAggregatedSampleEstimate, suggestHoursFromAggregated } from './utils/sampleEstimate';
@@ -152,6 +153,7 @@ import type { ShopInsight } from './utils/shopIntelligence';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { RecentStageMoves } from './components/RecentStageMoves';
 import { usePrompt } from './components/usePrompt';
+import { useShipDate, resolveShipAt, type ShipChoice } from './components/useShipDate';
 import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
@@ -328,15 +330,13 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any, fullLog
   useEffect(() => {
     const check = () => {
       const today = todayFmt();
-      const todayN = dateNum(today);
-      const in2DaysN = dateNum(new Date(Date.now() + 2 * 86400000).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
       const activeJobs = jobs.filter(j => j.status !== 'completed');
 
       let changed = false;
       const addTag = (tag: string) => { notifiedRef.current.add(tag); changed = true; };
 
-      // Overdue jobs
-      activeJobs.filter(j => j.dueDate && dateNum(j.dueDate) < todayN).forEach(j => {
+      // Overdue jobs — shared rule (shipped/closed jobs never alert)
+      activeJobs.filter(j => dueState(j) === 'overdue').forEach(j => {
         const tag = `overdue-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           addTag(tag);
@@ -344,8 +344,8 @@ const useNotifications = (jobs: Job[], activeLogs: TimeLog[], user: any, fullLog
         }
       });
 
-      // Due within 2 days
-      activeJobs.filter(j => j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in2DaysN).forEach(j => {
+      // Due today or soon — same window as the "Due Soon" badge on job cards
+      activeJobs.filter(j => { const s = dueState(j); return s === 'today' || s === 'soon'; }).forEach(j => {
         const tag = `due-soon-${j.id}-${today}`;
         if (!notifiedRef.current.has(tag)) {
           addTag(tag);
@@ -1065,11 +1065,9 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
       }
     }
   }, [defaultExpanded]);
-  const today = todayFmt();
-  const todayN = dateNum(today);
-  const in3DaysN = dateNum(new Date(Date.now() + 3 * 86400000).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
-  const isOverdue = job.dueDate && dateNum(job.dueDate) < todayN;
-  const isDueSoon = job.dueDate && dateNum(job.dueDate) >= todayN && dateNum(job.dueDate) <= in3DaysN;
+  const due = dueState(job);
+  const isOverdue = due === 'overdue';
+  const isDueSoon = due === 'today' || due === 'soon';
   const priorityColors: Record<string, string> = {
     urgent: 'border-red-500/40 bg-red-500/5',
     high: 'border-orange-500/30 bg-orange-500/5',
@@ -1120,7 +1118,10 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           )}
           {job.dueDate && (
             <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
-              {isOverdue ? ' OVERDUE:' : isDueSoon ? ' Due Soon:' : 'Due:'} {normDate(job.dueDate)}
+              {due === 'overdue' ? `OVERDUE · ${dueLabel(job.dueDate)} (${fmt(job.dueDate)})`
+                : due === 'today' ? `Due TODAY · ${fmt(job.dueDate)}`
+                : due === 'soon' ? `Due soon · ${fmt(job.dueDate)}`
+                : `Due ${fmt(job.dueDate)}`}
             </p>
           )}
           {/* Who's clocked in on this job right now */}
@@ -1901,13 +1902,19 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   // Search only the fields a worker would actually type — the old version
   // JSON.stringify'd EVERY job (including base64 part images!) on EVERY
   // keystroke, which froze the search box on shops with photo-heavy jobs.
+  // Most urgent first: overdue (most late at the top), then soonest due,
+  // undated last. This list was in raw database order, so the job that was
+  // due today could sit below twenty that weren't.
   const filteredJobs = useMemo(() => {
     const q = (search || '').trim().toLowerCase();
-    if (!q) return jobs;
-    return jobs.filter(j =>
+    const list = !q ? jobs : jobs.filter(j =>
       [j.poNumber, j.partNumber, j.customer, j.jobIdsDisplay, j.info, j.specialInstructions]
         .filter(Boolean).join(' ').toLowerCase().includes(q)
     );
+    return [...list].sort((a, b) => {
+      const urgent = (j: Job) => (j.priority === 'urgent' ? 0 : 1);
+      return compareByDue(a, b) || urgent(a) - urgent(b);
+    });
   }, [jobs, search]);
 
   // One-tap "jump back in": the worker's most recent job+operation combos that
@@ -2819,28 +2826,19 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const today = todayFmt();
   const todayN = dateNum(today);
   const in3DaysN = dateNum(new Date(Date.now() + 3 * 86400000).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
-  const overdueJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < todayN);
-  const dueSoonJobs = jobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3DaysN);
+  const overdueJobs = jobs.filter(j => dueState(j) === 'overdue');
+  const dueSoonJobs = jobs.filter(j => { const s = dueState(j); return s === 'today' || s === 'soon'; });
 
   // ── Pipeline value — total quote $ across all open jobs
   const pipelineValue = jobs
     .filter(j => j.status !== 'completed' && (j.quoteAmount || 0) > 0)
     .reduce((a, j) => a + (j.quoteAmount || 0), 0);
 
-  // ── On-time delivery rate (rolling 90 days of completed jobs with due dates)
+  // ── On-time delivery rate (rolling 90 days). Shared rule: judged by the
+  // ship date when recorded (else the Complete click); jobs with no readable
+  // due date are left out instead of counted late.
   const ninetyDaysAgo = Date.now() - 90 * 86400000;
-  const recentCompleted = jobs.filter(j =>
-    j.status === 'completed' && j.completedAt && j.completedAt > ninetyDaysAgo && j.dueDate
-  );
-  const onTimeCount = recentCompleted.filter(j => {
-    const dueD = parseDueDate(j.dueDate!);
-    if (!dueD) return false;
-    dueD.setHours(23, 59, 59, 999);
-    return j.completedAt! <= dueD.getTime();
-  }).length;
-  const onTimePct = recentCompleted.length > 0
-    ? Math.round((onTimeCount / recentCompleted.length) * 100)
-    : null;
+  const onTimePct = onTimeRate(jobs.filter(j => j.status === 'completed' && (j.shippedAt || j.completedAt || 0) > ninetyDaysAgo)).pct;
 
   const todayStartMs = new Date(); (todayStartMs as any).setHours(0,0,0,0); const todayMs = todayStartMs.getTime();
 
@@ -3113,6 +3111,10 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const dupGroupCount = [...custMap.values()].filter(v => v.size > 1).length;
 
         const items: { label: string; count: number; color: string; icon: any; onClick: () => void }[] = [];
+        // Open jobs with no (or unreadable) due date can't be tracked at all —
+        // quote→job conversions arrive this way on purpose, so say so.
+        const noDueCount = jobs.filter(j => dueState(j) === 'none').length;
+        if (noDueCount > 0) items.push({ label: `${noDueCount} open job${noDueCount > 1 ? 's' : ''} with no due date`, count: noDueCount, color: '#ef4444', icon: Calendar, onClick: () => setView('admin-jobs') });
         if (dueSoonJobs.length > 0) items.push({ label: `${dueSoonJobs.length} due in 3 days`, count: dueSoonJobs.length, color: '#f97316', icon: Clock, onClick: () => setView('admin-jobs') });
         if (openRework > 0) items.push({ label: `${openRework} open rework issue${openRework > 1 ? 's' : ''}`, count: openRework, color: '#f59e0b', icon: AlertTriangle, onClick: () => setView('admin-quality') });
         if (longRunning > 0) items.push({ label: `${longRunning} timer${longRunning > 1 ? 's' : ''} running > 4h`, count: longRunning, color: '#eab308', icon: Clock, onClick: () => setView('admin-live') });
@@ -3696,15 +3698,10 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
         // ── On-Time Delivery (OTD) — rolling 30 days ──
         const otdWindow = Date.now() - 30 * 86400000;
-        const otdJobs = completedJobs.filter(j => j.dueDate && j.completedAt && j.completedAt >= otdWindow);
-        const otdOnTime = otdJobs.filter(j => {
-          const dueD = parseDueDate(j.dueDate!);
-          if (!dueD) return false;
-          dueD.setHours(23, 59, 59, 999);
-          return (j.completedAt || 0) <= dueD.getTime();
-        }).length;
-        const otdPct = otdJobs.length > 0 ? Math.round((otdOnTime / otdJobs.length) * 100) : null;
-        const otdLate = otdJobs.length - otdOnTime;
+        const otd = onTimeRate(completedJobs.filter(j => (j.shippedAt || j.completedAt || 0) >= otdWindow));
+        const otdOnTime = otd.onTime;
+        const otdPct = otd.pct;
+        const otdLate = otd.judged - otd.onTime;
 
         // Active jobs with live costs (estimated vs actual)
         const activeJobsWithCosts = jobs.filter(j => j.status !== 'completed' && j.quoteAmount).map(j => {
@@ -3740,7 +3737,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                   {otdPct === null ? '—' : `${otdPct}%`}
                 </p>
                 <p className="text-[10px] text-zinc-600 truncate">
-                  {otdJobs.length === 0 ? 'No data (30d)' : `${otdOnTime}/${otdJobs.length} on time · 30d`}
+                  {otd.judged === 0 ? 'No data (30d)' : `${otdOnTime}/${otd.judged} on time · 30d`}
                 </p>
                 {otdPct !== null && (
                   <div className="mt-1.5 h-1 rounded-full bg-zinc-800 overflow-hidden">
@@ -4310,12 +4307,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           if (wLogs.length === 0) continue;
           const totalMins = wLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
           const jobIds = new Set(wLogs.map(l => l.jobId));
-          const completedForW = jobs.filter(j => j.status === 'completed' && jobIds.has(j.id) && j.dueDate && j.completedAt);
-          const onTime = completedForW.filter(j => { const dueD = parseDueDate(j.dueDate!); if (!dueD) return false; dueD.setHours(23,59,59,999); return j.completedAt! <= dueD.getTime(); }).length;
+          const otW = onTimeRate(jobs.filter(j => j.status === 'completed' && jobIds.has(j.id)));
+          const onTime = otW.onTime;
           const todayStart = new Date(); todayStart.setHours(0,0,0,0);
           const todayLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= todayStart.getTime());
           const activeMinsToday = todayLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-          statMap.set(w.id, { id: w.id, name: w.name, jobsDone: jobIds.size, totalMins, onTime, late: completedForW.length - onTime, activeMinsToday, workerRate: (w as any).hourlyRate || rate });
+          statMap.set(w.id, { id: w.id, name: w.name, jobsDone: jobIds.size, totalMins, onTime, late: otW.judged - onTime, activeMinsToday, workerRate: (w as any).hourlyRate || rate });
         }
         const workers30 = [...statMap.values()].sort((a, b) => b.totalMins - a.totalMins);
         if (workers30.length === 0) return null;
@@ -4861,7 +4858,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // opens (another device, or the background Storage move, can change it), so
   // only write the photo when it was actually changed in this modal session.
   const photoDirtyRef = useRef(false);
-  useEffect(() => { if (showModal) { checklistDirtyRef.current = false; photoDirtyRef.current = false; } }, [showModal]);
+  const shipDirtyRef = useRef(false);   // "Shipped On" corrected in this session
+  useEffect(() => { if (showModal) { checklistDirtyRef.current = false; photoDirtyRef.current = false; shipDirtyRef.current = false; } }, [showModal]);
   const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
@@ -4881,6 +4879,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [timeBreakdownJobId, setTimeBreakdownJobId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const { prompt: promptInput, PromptHost: JobCompletePromptHost } = usePrompt();
+  const { askShipDate, ShipDateHost } = useShipDate();
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const [calAdded, setCalAdded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cal_added_jobs') || '[]'); } catch { return []; } });
   const [printed, setPrinted] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('printed_jobs') || '[]'); } catch { return []; } });
@@ -5282,6 +5281,27 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // worker clock-in / board drag) while the modal was open and erase history.
     delete (job as any).currentStage;
     delete (job as any).stageHistory;
+    // Same for the job's lifecycle: status/completion are written the moment
+    // they change (stage buttons → advanceJobStage / complete flow). Writing
+    // the modal's copy again meant a job completed on another device while
+    // this editor was open got flipped back to in-progress on Save.
+    if (editingJob.id) {
+      delete (job as any).status;
+      delete (job as any).completedAt;
+      delete (job as any).profitSnapshot;
+      delete (job as any).shippedAt;
+      // Due-date history, compared against the LIVE job (not the modal's copy):
+      // a moved date keeps the original promise and logs the change.
+      const live = jobs.find(x => x.id === editingJob.id);
+      const before = normDate(live?.dueDate || '');
+      if (live && before && job.dueDate && before !== job.dueDate) {
+        job.originalDueDate = live.originalDueDate || before;
+        job.dueDateHistory = [...(live.dueDateHistory || []), { from: before, to: job.dueDate, at: Date.now(), by: user?.name }];
+      } else {
+        delete (job as any).originalDueDate;
+        delete (job as any).dueDateHistory;
+      }
+    }
     // Checklist: only persist when edited in this modal session, so a stale
     // snapshot can't wipe check-offs made from the floor card meanwhile.
     if (!checklistDirtyRef.current) delete (job as any).checklist;
@@ -5312,6 +5332,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       // A plain (merge) save can't delete a field — undefined is skipped — so
       // a removed photo used to reappear. Delete it explicitly.
       if (clearPhoto) await DB.setJobPhoto(job.id, null);
+      if (shipDirtyRef.current && editingJob.id && editingJob.shippedAt) await DB.setJobShippedAt(job.id, editingJob.shippedAt);
       setShowModal(false);
       setEditingJob({});
       if (isNew) {
@@ -5333,18 +5354,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // understated cost / overstated margin permanently.
     let jobLogs = allLogs.filter(l => l.jobId === j.id);
     try { jobLogs = await DB.getLogsForJob(j.id); } catch { /* fall back to capped set */ }
+    // Ask when it actually shipped — on-time is judged by that, not this click.
+    let lastWork = 0;
+    for (const l of jobLogs) if (!l.isSample && l.endTime && l.endTime > lastWork) lastWork = l.endTime;
+    const choice = await askShipDate({ count: 1, label: `PO ${j.poNumber}`, lastWorkMs: lastWork || null });
+    if (!choice) return;
+    const shippedAt = await resolveShipAt(choice, async () => lastWork || null);
     const breakdown = calcJobProfit(j, jobLogs, workers, shopSettings, allPOs);
     const snapshot = buildProfitSnapshot(breakdown);
     if (completedStage) {
-      await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true);
+      await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true, shippedAt);
     }
-    await DB.completeJobWithSnapshot(j.id, j.materialCost ?? 0, snapshot);
+    await DB.completeJobWithSnapshot(j.id, j.materialCost ?? 0, snapshot, shippedAt);
     if (editingJob.id === j.id) {
       setEditingJob(prev => ({ ...prev, status: 'completed', currentStage: completedStage?.id || prev.currentStage, profitSnapshot: snapshot }));
     }
     const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin!' : breakdown.grade === 'good' ? '🔵 Good job' : breakdown.grade === 'tight' ? '🟡 Tight margin' : '🔴 Loss';
-    addToast('success', `✅ "${j.poNumber}" complete — ${gradeMsg}`);
-  }, [allLogs, workers, shopSettings, allPOs, user, editingJob]);
+    const onTime = shippedOnTime({ dueDate: j.dueDate, shippedAt });
+    addToast('success', `✅ "${j.poNumber}" complete${onTime === true ? ' — on time' : onTime === false ? ' — late' : ''} · ${gradeMsg}`);
+  }, [allLogs, workers, shopSettings, allPOs, user, editingJob, askShipDate]);
 
   return (
     <div className="space-y-6">
@@ -5436,7 +5464,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         const pendingCount = allMonthJobs.filter(j => j.status === 'pending').length;
         const inProgressCount = allMonthJobs.filter(j => j.status === 'in-progress').length;
         const completedCount = allMonthJobs.filter(j => j.status === 'completed').length;
-        const overdueCount = allMonthJobs.filter(j => j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < dateNum(todayStr)).length;
+        const overdueCount = allMonthJobs.filter(j => dueState(j) === 'overdue').length;
 
         const selectedDayJobs = calSelectedDay ? (jobsByDay[calSelectedDay] || []) : [];
         const selectedDateStr = calSelectedDay ? new Date(yr, mo, calSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
@@ -5543,7 +5571,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   ) : (
                     <div className="space-y-2">
                       {selectedDayJobs.map(j => {
-                        const isOverdue = j.status !== 'completed' && dateNum(j.dueDate) < dateNum(todayStr);
+                        const isOverdue = dueState(j) === 'overdue';
                         const jobLogs = allLogs.filter(l => l.jobId === j.id);
                         const totalMins = jobLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
                         return (
@@ -5720,10 +5748,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         {/* Results count */}
         <div className="flex items-center gap-2 text-xs text-zinc-500">
           <span>{filteredJobs.length} job{filteredJobs.length !== 1 ? 's' : ''} shown</span>
-          {filteredJobs.filter(j => j.dueDate && dateNum(j.dueDate) < todayN && j.status !== 'completed').length > 0 && (
+          {filteredJobs.filter(j => dueState(j) === 'overdue').length > 0 && (
             <span className="text-red-400 font-bold flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              {filteredJobs.filter(j => j.dueDate && dateNum(j.dueDate) < todayN && j.status !== 'completed').length} overdue
+              {filteredJobs.filter(j => dueState(j) === 'overdue').length} overdue
             </span>
           )}
         </div>
@@ -5776,15 +5804,24 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             onClick={async () => {
               const stages = getStages(shopSettings);
               const ids: string[] = Array.from(selectedJobIds);
-              await Promise.all(ids.map(async id => {
-                const job = jobs.find(x => x.id === id);
-                if (!job) return;
-                const next = getNextStage(job, stages);
-                if (next) {
-                  await DB.advanceJobStage(id, next.id, user.id, user.name, next.isComplete);
-                }
+              const plan = ids
+                .map(id => { const job = jobs.find(x => x.id === id); return job ? { id, next: getNextStage(job, stages) } : null; })
+                .filter((p): p is { id: string; next: JobStage } => !!p && !!p.next);
+              // Bulk close-outs are where on-time went wrong: jobs finished days
+              // earlier were stamped "completed" today. Ask once for the batch.
+              const completing = plan.filter(p => p.next.isComplete);
+              let choice: ShipChoice | null = null;
+              if (completing.length) {
+                choice = await askShipDate({ count: completing.length });
+                if (!choice) return;
+              }
+              await Promise.all(plan.map(async ({ id, next }) => {
+                const shippedAt = next.isComplete && choice
+                  ? await resolveShipAt(choice, () => DB.lastWorkEndForJob(id))
+                  : undefined;
+                await DB.advanceJobStage(id, next.id, user.id, user.name, next.isComplete, shippedAt);
               }));
-              addToast('success', `Advanced ${ids.length} job${ids.length > 1 ? 's' : ''} to next stage`);
+              addToast('success', `Advanced ${plan.length} job${plan.length !== 1 ? 's' : ''} to next stage`);
               setSelectedJobIds(new Set());
             }}
             className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-3 py-1 rounded-lg flex items-center gap-1"
@@ -5865,13 +5902,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           </thead>
           <tbody className="divide-y divide-white/5">
             {filteredJobs.map(j => {
-              const isOverdue = j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) < todayN;
-              const isDueSoon = j.status !== 'completed' && j.dueDate && dateNum(j.dueDate) >= todayN && dateNum(j.dueDate) <= in3DaysN;
+              const _due = dueState(j);
+              const isOverdue = _due === 'overdue';
+              const isDueSoon = _due === 'today' || _due === 'soon';
               // Historical on-time / late for completed jobs
-              const _dueD = j.dueDate ? parseDueDate(j.dueDate) : null;
-              const _dueMs = _dueD ? (_dueD.setHours(23,59,59,999), _dueD.getTime()) : null;
-              const deliveredLate = j.status === 'completed' && _dueMs != null && j.completedAt != null && j.completedAt > _dueMs;
-              const deliveredOnTime = j.status === 'completed' && _dueMs != null && j.completedAt != null && j.completedAt <= _dueMs;
+              const _shipOk = j.status === 'completed' ? shippedOnTime(j) : null;
+              const deliveredLate = _shipOk === false;
+              const deliveredOnTime = _shipOk === true;
               // Brain signals
               const isStale = staleJobIds.has(j.id);
               const budget = jobBudgetMap.get(j.id);
@@ -6242,14 +6279,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   <td className="p-3 sm:p-4 hidden md:table-cell"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
                   <td className={`p-2 sm:p-4 sm:whitespace-nowrap text-[11px] sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
                     <div className="font-mono font-bold">{fmt(j.dueDate)}</div>
-                    {j.dueDate && j.status !== 'completed' && (() => {
-                      const bizDays = businessDaysUntilSync(j.dueDate);
+                    {j.dueDate && _due !== 'closed' && _due !== 'none' && (() => {
+                      // Late/today come from the shared rule (calendar days). Business
+                      // days are only for the countdown: a due date that fell on a
+                      // weekend counted 0 business days and read "due today" while late.
+                      const bizDays = _due === 'overdue' || _due === 'today' ? null : businessDaysUntilSync(j.dueDate);
                       const isHol = j.dueDate ? isHolidaySync(j.dueDate) : false;
                       return (
                         <div className="flex flex-col gap-0.5 mt-0.5">
+                          {_due === 'overdue' && <span className="text-[9px] font-bold text-red-500">{dueLabel(j.dueDate)}</span>}
+                          {_due === 'today' && <span className="text-[9px] font-bold text-orange-400">due today</span>}
                           {bizDays !== null && (
-                            <span className={`text-[9px] font-bold ${bizDays < 0 ? 'text-red-500' : bizDays <= 2 ? 'text-orange-400' : 'text-zinc-600'}`}>
-                              {bizDays < 0 ? `${Math.abs(bizDays)}bd late` : bizDays === 0 ? 'due today' : `${bizDays} biz days`}
+                            <span className={`text-[9px] font-bold ${bizDays <= 2 ? 'text-orange-400' : 'text-zinc-600'}`}>
+                              {bizDays > 0 ? `${bizDays} biz day${bizDays === 1 ? '' : 's'}` : dueLabel(j.dueDate)}
                             </span>
                           )}
                           {isHol && (
@@ -6272,14 +6314,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             {nextStage && (
                               <button
                                 aria-label={`Advance ${j.poNumber || 'job'} to ${nextStage.label}`}
-                                onClick={() => confirm({
-                                title: `Advance to ${nextStage.label}`,
-                                message: `Move this job to "${nextStage.label}"?`,
-                                onConfirm: async () => {
-                                  await DB.advanceJobStage(j.id, nextStage.id, user.id, user.name, nextStage.isComplete);
-                                  addToast('success', `Job advanced to ${nextStage.label}`);
-                                }
-                              })}
+                                onClick={() => nextStage.isComplete
+                                  // Completing goes through the one complete flow: asks the ship
+                                  // date and locks the profit snapshot (this arrow skipped both).
+                                  ? handleCompleteWithSnapshot(j)
+                                  : confirm({
+                                      title: `Advance to ${nextStage.label}`,
+                                      message: `Move this job to "${nextStage.label}"?`,
+                                      onConfirm: async () => {
+                                        await DB.advanceJobStage(j.id, nextStage.id, user.id, user.name, false);
+                                        addToast('success', `Job advanced to ${nextStage.label}`);
+                                      }
+                                    })}
                                 className="p-2 rounded-lg transition-colors hover:text-white"
                                 style={{ background: `${nextStage.color}15`, color: nextStage.color }}
                                 title={`Advance to ${nextStage.label}`}>
@@ -6696,7 +6742,40 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     setEditingJob({ ...editingJob, ...updates });
                   }} placeholder="0" /></div>
                   <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived ? (editingJob.dateReceived.includes('/') ? `${editingJob.dateReceived.split('/')[2]}-${editingJob.dateReceived.split('/')[0].padStart(2,'0')}-${editingJob.dateReceived.split('/')[1].padStart(2,'0')}` : editingJob.dateReceived) : ''} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dueDate ? (editingJob.dueDate.includes('/') ? `${editingJob.dueDate.split('/')[2]}-${editingJob.dueDate.split('/')[0].padStart(2,'0')}-${editingJob.dueDate.split('/')[1].padStart(2,'0')}` : editingJob.dueDate) : ''} onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} /></div>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label>
+                    <input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      value={toDateInput(editingJob.dueDate)}
+                      onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} />
+                    {/* The first promise is kept when a date moves — reschedules no
+                        longer erase what the customer was originally told. */}
+                    {editingJob.originalDueDate && normDate(editingJob.originalDueDate) !== normDate(editingJob.dueDate) && (
+                      <p className="text-[11px] text-amber-300/80 mt-1.5 ml-1">
+                        Originally promised {fmt(editingJob.originalDueDate)}
+                        {(editingJob.dueDateHistory?.length || 0) > 0 && ` · moved ${editingJob.dueDateHistory!.length}×`}
+                      </p>
+                    )}
+                    {!editingJob.dueDate && editingJob.status !== 'completed' && (
+                      <p className="text-[11px] text-red-400/90 mt-1.5 ml-1">No due date — set one so this job shows up in overdue tracking.</p>
+                    )}
+                  </div>
+                  {editingJob.id && editingJob.status === 'completed' && (
+                    <div>
+                      <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Shipped On</label>
+                      <input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50"
+                        value={(() => { const t = editingJob.shippedAt || editingJob.completedAt; if (!t) return ''; const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()}
+                        max={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()}
+                        onChange={e => {
+                          const m = e.target.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                          if (!m) return;
+                          shipDirtyRef.current = true;
+                          setEditingJob(prev => ({ ...prev, shippedAt: new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() }));
+                        }} />
+                      <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">
+                        {editingJob.shippedAt ? 'On-time is judged by this date.' : 'Not recorded — using the day it was marked complete. Fix it here if it shipped earlier.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -7279,6 +7358,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       {reworkModal && <React.Suspense fallback={null}><ReworkModal entry={reworkModal} jobs={jobs} user={user} onClose={() => setReworkModal(null)} addToast={addToast} /></React.Suspense>}
       {PromptHost}
       {JobCompletePromptHost}
+      {ShipDateHost}
     </div>
   );
 };
