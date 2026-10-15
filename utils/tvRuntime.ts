@@ -245,7 +245,44 @@ const SESSION_KEY = 'fabtrack_tv_session';
 let exitReason = '';
 
 /** Call right before a planned reload/redirect so the next start knows why. */
-export function setTvExitReason(reason: string): void { exitReason = reason; }
+export function setTvExitReason(reason: string): void {
+  exitReason = reason;
+  if (reason) tvEvent(`exit: ${reason}`, true);
+}
+
+// ── Flight recorder ──────────────────────────────────────────────────
+// The last few dozen things the TV did (slides, data, photos, memory,
+// screen covered, errors), kept on the device and reported by the NEXT
+// start — so if the board dies, we can see what it was doing right before.
+const LOG_KEY = 'fabtrack_tv_log';
+const LOG_MAX = 40;
+let logLines: string[] = [];
+let logOn = false;
+let logTimer: ReturnType<typeof setTimeout> | null = null;
+
+const hms = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+function flushTvLog(): void {
+  if (logTimer) { clearTimeout(logTimer); logTimer = null; }
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(logLines)); } catch {}
+}
+
+/** Note what the wall TV is doing. A no-op outside a real TV session. */
+export function tvEvent(msg: string, urgent = false): void {
+  if (!logOn) return;
+  logLines.push(`${hms()} ${msg}`.slice(0, 160));
+  if (logLines.length > LOG_MAX) logLines = logLines.slice(-LOG_MAX);
+  if (urgent) flushTvLog();
+  else if (!logTimer) logTimer = setTimeout(flushTvLog, 5000);
+}
+
+/** The previous session's last lines, oldest first (for the check-in). */
+export function readPrevTvLog(raw: string | null, lines = 15): string {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr.slice(-lines).join(' · ').slice(0, 1500) : '';
+  } catch { return ''; }
+}
 
 const clockLabel = (ms: number) =>
   new Date(ms).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -265,9 +302,13 @@ export function describePrevSession(raw: string | null): string {
  * Start tracking this session. Returns the previous session's ending and a
  * stop function. Never throws.
  */
-export function startTvSession(startedAt: number): { previous: string; stop: () => void } {
-  let previous = '';
+export function startTvSession(startedAt: number): { previous: string; previousLog: string; stop: () => void } {
+  let previous = '', previousLog = '';
   try { previous = describePrevSession(localStorage.getItem(SESSION_KEY)); } catch {}
+  try { previousLog = readPrevTvLog(localStorage.getItem(LOG_KEY)); } catch {}
+  logLines = [];
+  logOn = true;
+  tvEvent(`start · ${memoryLabel() || 'memory n/a'}`, true);
   let hiddenAt: number | null = null;
   // Once the page is leaving, nothing may overwrite the exit stamp: a reload
   // fires "pagehide" and THEN "visibilitychange → hidden", and that second
@@ -280,13 +321,15 @@ export function startTvSession(startedAt: number): { previous: string; stop: () 
     } catch {}
   };
   save();
-  const beat = window.setInterval(() => save(), 60_000);
+  const beat = window.setInterval(() => { save(); tvEvent(`alive · ${memoryLabel() || ''}`); }, 60_000);
   const onVis = () => {
     hiddenAt = document.visibilityState === 'hidden' ? Date.now() : null;
     save();
+    tvEvent(hiddenAt ? 'screen hidden (covered or switched away)' : 'screen visible again', true);
   };
   const onHide = () => {
     save({ exit: exitReason || (window as any).__fabtrackExitReason || 'page closed or reloaded', exitAt: Date.now() });
+    if (!leaving) tvEvent(`pagehide (${exitReason || (window as any).__fabtrackExitReason || 'closed or reloaded'})`, true);
     leaving = true;
   };
   // Back from the browser's back/forward cache: the session goes on.
@@ -296,7 +339,10 @@ export function startTvSession(startedAt: number): { previous: string; stop: () 
   window.addEventListener('pageshow', onShow);
   return {
     previous,
+    previousLog,
     stop: () => {
+      logOn = false;
+      flushTvLog();
       window.clearInterval(beat);
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pagehide', onHide);

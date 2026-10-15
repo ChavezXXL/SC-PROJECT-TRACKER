@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { Job, TeamBirthday } from '../types';
 import { dueNum, isJobClosed } from '../utils/dueDates';
 import { getHolidays, type HolidayRecord } from '../services/holidays';
+import { tvEvent } from '../utils/tvRuntime';
 
 // ── Aerospace News ───────────────────────────────────────────────────
 // Headlines from netlify/functions/news (a fixed list of public feeds).
@@ -19,8 +20,9 @@ function loadNews(): Promise<void> {
     .then(r => (r.ok ? r.json() : null))
     .then((j: any) => {
       if (j && Array.isArray(j.items)) newsCache = { fetchedAt: Date.now(), updatedAt: Number(j.updatedAt) || Date.now(), items: j.items };
+      tvEvent(`news ${j && Array.isArray(j.items) ? j.items.length + ' headlines' : 'unavailable'}`);
     })
-    .catch(() => { /* keep showing the last headlines */ })
+    .catch(() => { tvEvent('news failed'); /* keep showing the last headlines */ })
     .finally(() => { newsLoading = null; });
   return newsLoading;
 }

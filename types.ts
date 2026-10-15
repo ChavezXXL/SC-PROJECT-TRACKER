@@ -1025,6 +1025,8 @@ export interface TvDevice {
   prevExit?: string;       // how the previous session ended (planned reload, or stopped without closing)
   lastError?: string;      // last uncaught error on the TV
   startsToday?: number;    // page starts today — a crash/reload loop shows up here
+  prevLog?: string;        // flight recorder: the previous session's last moments
+  jobsLoaded?: number;     // jobs the TV is holding (open + recently finished)
 }
 
 /** Short-lived pairing: the TV shows a 6-digit code, the office types it in. */

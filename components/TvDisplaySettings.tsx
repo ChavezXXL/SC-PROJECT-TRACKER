@@ -201,6 +201,12 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
           {d.prevExit && /stopped without closing|screen error/i.test(d.prevExit) && (
             <p className="text-[11px] text-amber-400/90 mt-1">Last restart: {d.prevExit}</p>
           )}
+          {d.prevLog && d.prevExit && /stopped without closing|screen error/i.test(d.prevExit) && (
+            <details className="mt-1">
+              <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">What it was doing before that</summary>
+              <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed break-words">{d.prevLog}</p>
+            </details>
+          )}
           {(d.startsToday || 0) > 3 && <p className="text-[11px] text-amber-400/90 mt-1">Restarted {d.startsToday} times today.</p>}
           {responding && d.visible === false && <p className="text-[11px] text-amber-400/90 mt-1">The board is covered — the TV is showing its screensaver or home screen.</p>}
           {responding && d.wakeLock === false && d.visible !== false && (

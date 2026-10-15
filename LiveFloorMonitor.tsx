@@ -38,7 +38,7 @@ import { dueState, daysUntilDue, onTimeRate, isJobClosed, compareByDue } from '.
 import {
   getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, getSavedTvToken, clearTvToken, appBuild, describeDevice,
   isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, startKeepAwakeVideo, installBackTrap, newTvToken,
-  setTvExitReason, startTvSession, memoryLabel,
+  setTvExitReason, startTvSession, memoryLabel, tvEvent,
 } from './utils/tvRuntime';
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm } from './components/TvScreens';
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
@@ -2334,12 +2334,15 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // Health for the office list: how the last session ended, the last error,
   // and how many times the page started today (a crash loop shows up there).
   const prevExitRef = useRef('');
+  const prevLogRef = useRef('');
+  const jobsCountRef = useRef(0);
   const lastErrorRef = useRef('');
   const startsTodayRef = useRef(0);
   useEffect(() => {
     if (!standalone || isPreview) return;
     const session = startTvSession(startedAtRef.current);
     prevExitRef.current = session.previous;
+    prevLogRef.current = session.previousLog;
     try {
       const day = new Date().toDateString();
       const prev = JSON.parse(localStorage.getItem('fabtrack_tv_starts') || '{}');
@@ -2349,6 +2352,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     } catch {}
     const note = (msg: string) => {
       lastErrorRef.current = `${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} ${msg}`.slice(0, 200);
+      tvEvent(`error: ${msg}`, true);
     };
     const onError = (e: ErrorEvent) => note(e.message || 'error');
     const onRejection = (e: PromiseRejectionEvent) => note(String((e.reason && (e.reason.message || e.reason)) || 'rejection'));
@@ -2433,6 +2437,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       wakeLock: wakeHeldRef.current,
       visible: document.visibilityState === 'visible',
       prevExit: prevExitRef.current || undefined,
+      prevLog: prevLogRef.current || undefined,
+      jobsLoaded: jobsCountRef.current,
       lastError: lastErrorRef.current || undefined,
       startsToday: startsTodayRef.current || undefined,
     });
@@ -2508,6 +2514,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const t = setTimeout(() => { setTvExitReason('retry — no internet at start'); try { window.location.reload(); } catch {} }, 120_000);
     return () => clearTimeout(t);
   }, [standalone, settingsLoaded]);
+
+  // Flight recorder: what data the TV holds, and which slide is up.
+  jobsCountRef.current = jobs.length;
+  useEffect(() => { if (standalone) tvEvent(`jobs ${jobs.length} · logs ${allLogs.length} · live ${activeLogs.length}`); }, [standalone, jobs.length, allLogs.length, activeLogs.length]);
 
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
@@ -3007,7 +3017,11 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         default: return 'Slide';
       }
     };
-    if (currentSlide) slideLabelRef.current = slideLabel(currentSlide);
+    if (currentSlide) {
+      const label = slideLabel(currentSlide);
+      if (standalone && label !== slideLabelRef.current) tvEvent(`slide ${label}`);
+      slideLabelRef.current = label;
+    }
 
     return (
       <div className="fixed inset-0 z-[9999] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 text-white overflow-hidden">

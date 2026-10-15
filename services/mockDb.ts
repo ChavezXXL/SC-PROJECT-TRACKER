@@ -1429,6 +1429,12 @@ export function getSettings(): SystemSettings {
   return settings;
 }
 
+// True once a live settings listener has delivered the server's copy. From
+// then on the local copy stays current, so the once-a-minute sweep no longer
+// downloads the whole settings document — ≈376 KB with the logo inside it,
+// every minute, on every open screen (wall TVs included).
+let settingsLive = false;
+
 export function subscribeSettings(cb: (settings: SystemSettings) => void): () => void {
   const fallback: SystemSettings = {
     lunchStart: "12:00",
@@ -1458,6 +1464,7 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
           const data = snap.data();
           const merged = merge(data);
           writeLS(LS.settings, merged);
+          if (!snap.metadata?.fromCache) settingsLive = true;
           cb(merged);
         } else {
           cb(merge(readLS(LS.settings, fallback)));
@@ -1773,7 +1780,7 @@ export async function sweepStaleLogs(): Promise<number> {
     // localStorage, which can be stale/empty on a fresh device before the
     // first snapshot lands, making the cutoff wrong. Fall back to cache.
     let settings = getSettings();
-    if (dbInstance) {
+    if (dbInstance && !settingsLive) {
       try {
         const sSnap = await getDoc(doc(dbInstance, COL.settings, 'system'));
         if (sSnap.exists()) settings = { ...settings, ...(sSnap.data() as any) };

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { tvEvent } from '../utils/tvRuntime';
 
 /**
  * Part photo for the wall TV — people on the floor know a part by sight long
@@ -17,6 +18,12 @@ const MAX_KEPT = 400;
 // Streaming sticks (Fire TV) have 1–2 GB for everything; use smaller copies there.
 const LOW_MEMORY = typeof navigator !== 'undefined' && ((navigator as any).deviceMemory ?? 8) <= 2;
 let queue: Promise<unknown> = Promise.resolve();       // one photo at a time — keeps the scroll smooth
+let madeCount = 0, madeTimer: ReturnType<typeof setTimeout> | null = null;
+const noteMade = () => {                                 // flight recorder: one line per batch
+  madeCount++;
+  if (madeTimer) clearTimeout(madeTimer);
+  madeTimer = setTimeout(() => { tvEvent(`photos ready ${madeCount}`); madeTimer = null; }, 3000);
+};
 
 // Cheap identity for a long data URL: its length plus its end (the end of the
 // JPEG data differs between photos; the start is the same JPEG header).
@@ -80,6 +87,7 @@ function useSmallPhoto(src: string | undefined, requestedPx: number): string | u
         if (small.size >= MAX_KEPT) { const oldest = small.keys().next().value; if (oldest !== undefined) small.delete(oldest); }
         small.set(key, out);
         pending.delete(key);
+        noteMade();
         return out;
       });
       pending.set(key, p);

@@ -1,4 +1,4 @@
-import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason } from '../utils/tvRuntime';
+import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason, tvEvent, readPrevTvLog } from '../utils/tvRuntime';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -135,6 +135,16 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   fire('dvisibilitychange');
   const s3 = startTvSession(3000);
   ok('killed while covered → stopped without closing + screen hidden', s3.previous.startsWith('stopped without closing') && s3.previous.includes('screen hidden since'));
+
+  // Flight recorder: what the killed session was doing comes back at the next start.
+  tvEvent('slide Open Jobs');
+  tvEvent('photos ready 19', true);
+  const s4 = startTvSession(4000);
+  ok('previous session log is reported', s4.previousLog.includes('slide Open Jobs') && s4.previousLog.includes('photos ready 19'));
+  ok('…and the new session starts a fresh log', readPrevTvLog(store.get('fabtrack_tv_log') ?? null).includes('start') && !readPrevTvLog(store.get('fabtrack_tv_log') ?? null).includes('Open Jobs'));
+  ok('log keeps only the last lines', (() => { for (let i = 0; i < 60; i++) tvEvent(`e${i}`, true); return JSON.parse(store.get('fabtrack_tv_log') || '[]').length === 40; })());
+  ok('readPrevTvLog survives junk', readPrevTvLog('{bad') === '' && readPrevTvLog(null) === '');
+  s4.stop();
 
   g.localStorage = saved.localStorage; g.window = saved.window; g.document = saved.document;
 }
