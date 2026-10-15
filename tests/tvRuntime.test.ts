@@ -1,4 +1,4 @@
-import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock } from '../utils/tvRuntime';
+import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession } from '../utils/tvRuntime';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -91,6 +91,18 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   ok('noon shop time is not quiet', !isTvQuiet(nightly, new Date(Date.UTC(2026, 9, 16, 16, 0)), 'America/New_York'));
   const back = tvQuietUntil({ ...nightly, days: [0, 6] }, new Date(fri7pmNY), 'America/New_York');
   ok('weekend quiet in New York → back Monday 5:00 AM New York time', !!back && back.getTime() === Date.UTC(2026, 9, 19, 9, 0));
+}
+
+// ── How the previous TV session ended (office health line) ────────
+{
+  const t = new Date(2026, 9, 15, 11, 8).getTime();
+  ok('first start → nothing to report', describePrevSession(null) === '');
+  ok('unreadable record → nothing to report', describePrevSession('{oops') === '');
+  ok('planned reload names its reason', describePrevSession(JSON.stringify({ startedAt: t - 3600_000, lastBeat: t, exit: 'nightly refresh', exitAt: t })).startsWith('nightly refresh ('));
+  const crash = describePrevSession(JSON.stringify({ startedAt: t - 3600_000, lastBeat: t }));
+  ok('no exit stamp → stopped without closing', crash.startsWith('stopped without closing'));
+  ok('…with the last time it was alive', crash.includes('last alive'));
+  ok('screensaver/home screen is mentioned when the page was hidden', describePrevSession(JSON.stringify({ startedAt: t - 3600_000, lastBeat: t, hiddenAt: t - 60_000 })).includes('screen hidden since'));
 }
 
 // ── Device names for the office list ──────────────────────────────

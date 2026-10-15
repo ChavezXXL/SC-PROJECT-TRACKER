@@ -153,7 +153,7 @@ import { ShopFlowMap } from './components/ShopFlowMap';
 import { RecentStageMoves } from './components/RecentStageMoves';
 import { usePrompt } from './components/usePrompt';
 import { useShipDate, resolveShipAt, type ShipChoice } from './components/useShipDate';
-import { saveTvToken, getSavedTvToken } from './utils/tvRuntime';
+import { saveTvToken, getSavedTvToken, setTvExitReason } from './utils/tvRuntime';
 import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
@@ -8136,7 +8136,10 @@ class TvAutoReload extends React.Component<{ children: React.ReactNode }, { cras
   state = { crashed: false, countdown: 10 };
   private timer: number | undefined;
   static getDerivedStateFromError() { return { crashed: true }; }
-  componentDidCatch(err: unknown) { console.error('[FabTrack TV] screen crashed — reloading', err); }
+  componentDidCatch(err: unknown) {
+    console.error('[FabTrack TV] screen crashed — reloading', err);
+    setTvExitReason(`screen error: ${String((err as any)?.message || err).slice(0, 120)}`);
+  }
   componentDidUpdate(_p: unknown, prev: { crashed: boolean }) {
     if (this.state.crashed && !prev.crashed) {
       this.timer = window.setInterval(() => {

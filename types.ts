@@ -1003,6 +1003,14 @@ export interface TvDevice {
   identifyAt?: number;     // office asked this TV to show its name
   revoked?: boolean;       // office disconnected it — TV forgets its link
   hidden?: boolean;        // removed from the office list (kept so a switched-off TV still finds the disconnect)
+  // Health, so "the TV just went away" can be explained afterwards:
+  mem?: string;            // browser memory in use / allowed, e.g. "182/512 MB" (Chromium only)
+  deviceMemory?: number;   // device RAM in GB, rounded (Chromium only)
+  wakeLock?: boolean;      // holding the keep-the-screen-on lock
+  visible?: boolean;       // board on screen (false = covered by a screensaver or home screen)
+  prevExit?: string;       // how the previous session ended (planned reload, or stopped without closing)
+  lastError?: string;      // last uncaught error on the TV
+  startsToday?: number;    // page starts today — a crash/reload loop shows up here
 }
 
 /** Short-lived pairing: the TV shows a 6-digit code, the office types it in. */

@@ -233,3 +233,69 @@ export function describeDevice(ua: string = navigator.userAgent): string {
   if (/Linux/i.test(ua)) return 'Linux PC';
   return 'Browser';
 }
+
+// ── Why did the last TV session end? ─────────────────────────────────
+// A wall TV that "just went away" can't tell anyone why. Each session keeps
+// a heartbeat in this device's storage, and a planned reload (nightly
+// refresh, office command, app update…) stamps its reason on the way out.
+// The next start reads it back: no reason means the browser stopped without
+// closing the page — it crashed or ran out of memory, was closed, or the
+// device went to sleep.
+const SESSION_KEY = 'fabtrack_tv_session';
+let exitReason = '';
+
+/** Call right before a planned reload/redirect so the next start knows why. */
+export function setTvExitReason(reason: string): void { exitReason = reason; }
+
+const clockLabel = (ms: number) =>
+  new Date(ms).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+/** What happened to the previous session, in words (or '' on a first start). */
+export function describePrevSession(raw: string | null): string {
+  if (!raw) return '';
+  try {
+    const p = JSON.parse(raw);
+    if (p.exit) return `${p.exit} (${clockLabel(p.exitAt || p.lastBeat)})`;
+    const hidden = p.hiddenAt ? `; screen hidden since ${clockLabel(p.hiddenAt)}` : '';
+    return `stopped without closing — crash, out of memory, browser closed or device asleep (last alive ${clockLabel(p.lastBeat || p.startedAt)}${hidden})`;
+  } catch { return ''; }
+}
+
+/**
+ * Start tracking this session. Returns the previous session's ending and a
+ * stop function. Never throws.
+ */
+export function startTvSession(startedAt: number): { previous: string; stop: () => void } {
+  let previous = '';
+  try { previous = describePrevSession(localStorage.getItem(SESSION_KEY)); } catch {}
+  let hiddenAt: number | null = null;
+  const save = (extra: Record<string, unknown> = {}) => {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ startedAt, lastBeat: Date.now(), ...(hiddenAt ? { hiddenAt } : {}), ...extra }));
+    } catch {}
+  };
+  save();
+  const beat = window.setInterval(() => save(), 60_000);
+  const onVis = () => {
+    hiddenAt = document.visibilityState === 'hidden' ? Date.now() : null;
+    save();
+  };
+  const onHide = () => save({ exit: exitReason || (window as any).__fabtrackExitReason || 'page closed or reloaded', exitAt: Date.now() });
+  document.addEventListener('visibilitychange', onVis);
+  window.addEventListener('pagehide', onHide);
+  return {
+    previous,
+    stop: () => {
+      window.clearInterval(beat);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pagehide', onHide);
+    },
+  };
+}
+
+/** Memory in use / allowed (Chromium browsers only), e.g. "182/512 MB". */
+export function memoryLabel(): string | undefined {
+  const m = (performance as any)?.memory;
+  if (!m || !m.jsHeapSizeLimit) return undefined;
+  return `${Math.round(m.usedJSHeapSize / 1048576)}/${Math.round(m.jsHeapSizeLimit / 1048576)} MB`;
+}

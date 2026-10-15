@@ -14,6 +14,8 @@ import React, { useEffect, useState } from 'react';
 const small = new Map<string, string>();               // key → small copy ('' = unreadable)
 const pending = new Map<string, Promise<string>>();
 const MAX_KEPT = 400;
+// Streaming sticks (Fire TV) have 1–2 GB for everything; use smaller copies there.
+const LOW_MEMORY = typeof navigator !== 'undefined' && ((navigator as any).deviceMemory ?? 8) <= 2;
 let queue: Promise<unknown> = Promise.resolve();       // one photo at a time — keeps the scroll smooth
 
 // Cheap identity for a long data URL: its length plus its end (the end of the
@@ -39,7 +41,12 @@ function shrink(src: string, px: number): Promise<string> {
         const ctx = c.getContext('2d');
         if (!ctx) return finish(src);
         ctx.drawImage(img, 0, 0, c.width, c.height);
-        finish(c.toDataURL('image/jpeg', 0.82));
+        const out = c.toDataURL('image/jpeg', LOW_MEMORY ? 0.75 : 0.82);
+        // Free the full-size picture and the canvas now, not whenever the
+        // browser gets around to it — matters on a 1 GB TV stick.
+        c.width = 0; c.height = 0;
+        img.src = '';
+        finish(out);
       } catch { finish(src); }
     };
     img.onload = () => {
@@ -59,7 +66,8 @@ function shrink(src: string, px: number): Promise<string> {
   return p;
 }
 
-function useSmallPhoto(src: string | undefined, px: number): string | undefined {
+function useSmallPhoto(src: string | undefined, requestedPx: number): string | undefined {
+  const px = LOW_MEMORY ? Math.round(requestedPx * 0.7) : requestedPx;
   const isData = !!src && src.startsWith('data:');
   const key = isData ? keyFor(src!, px) : '';
   const [, bump] = useState(0);

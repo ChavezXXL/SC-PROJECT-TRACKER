@@ -38,6 +38,7 @@ import { dueState, daysUntilDue, onTimeRate, isJobClosed, compareByDue } from '.
 import {
   getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, getSavedTvToken, clearTvToken, appBuild, describeDevice,
   isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, startKeepAwakeVideo, installBackTrap, newTvToken,
+  setTvExitReason, startTvSession, memoryLabel,
 } from './utils/tvRuntime';
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm } from './components/TvScreens';
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
@@ -2030,6 +2031,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   //      signal to the browser that this tab is actively rendering. Without
   //      rAF, TV browsers (Samsung Tizen, LG webOS, Fire TV, Chromecast)
   //      classify the tab as idle after ~10 min and kill its JS timers.
+  const wakeHeldRef = useRef(false);
   useEffect(() => {
     if (!tvMode) return;
     let lock: any = null;
@@ -2045,7 +2047,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           try { await lock.release(); } catch {}
         }
         lock = await wl.request('screen');
-        lock?.addEventListener?.('release', () => { lock = null; });
+        wakeHeldRef.current = !!lock;
+        lock?.addEventListener?.('release', () => { lock = null; wakeHeldRef.current = false; });
       } catch { /* browser doesn't support it — fine, TV just won't force-awake */ }
     };
     acquire();
@@ -2279,7 +2282,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode) return;
     const delay = msUntilDailyRefresh(settings.tvRefreshHour ?? 3, Date.now(), shopTz);
-    const id = setTimeout(() => { try { window.location.reload(); } catch {} }, delay);
+    const id = setTimeout(() => { setTvExitReason('nightly refresh'); try { window.location.reload(); } catch {} }, delay);
     return () => clearTimeout(id);
   }, [tvMode, settings.tvRefreshHour, shopTz]);
 
@@ -2302,7 +2305,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       // reloading then could leave the wall on an error page. Reload only
       // once the app's own server answers.
       fetch(`/manifest.json?alive=${Date.now()}`, { cache: 'no-store' })
-        .then(r => { if (r.ok) window.location.reload(); })
+        .then(r => { if (r.ok) { setTvExitReason('reconnect after 10 min without live data'); window.location.reload(); } })
         .catch(() => { /* still offline — keep showing the last data */ });
     }, 60_000);
     return () => window.clearInterval(id);
@@ -2312,6 +2315,35 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // last seen 1 min ago"), and follow commands sent from Settings.
   const deviceId = React.useMemo(() => getTvDeviceId(), []);
   const startedAtRef = useRef(Date.now());
+  // Health for the office list: how the last session ended, the last error,
+  // and how many times the page started today (a crash loop shows up there).
+  const prevExitRef = useRef('');
+  const lastErrorRef = useRef('');
+  const startsTodayRef = useRef(0);
+  useEffect(() => {
+    if (!standalone || isPreview) return;
+    const session = startTvSession(startedAtRef.current);
+    prevExitRef.current = session.previous;
+    try {
+      const day = new Date().toDateString();
+      const prev = JSON.parse(localStorage.getItem('fabtrack_tv_starts') || '{}');
+      const n = prev.day === day ? (Number(prev.n) || 0) + 1 : 1;
+      localStorage.setItem('fabtrack_tv_starts', JSON.stringify({ day, n }));
+      startsTodayRef.current = n;
+    } catch {}
+    const note = (msg: string) => {
+      lastErrorRef.current = `${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} ${msg}`.slice(0, 200);
+    };
+    const onError = (e: ErrorEvent) => note(e.message || 'error');
+    const onRejection = (e: PromiseRejectionEvent) => note(String((e.reason && (e.reason.message || e.reason)) || 'rejection'));
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      session.stop();
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, [standalone, isPreview]);
   const [deviceDoc, setDeviceDoc] = useState<TvDevice | null | undefined>(undefined); // undefined = not loaded yet
   const [identifyName, setIdentifyName] = useState<string | null>(null);
   // The TV's own saved link wins over an outdated one in the address: a TV
@@ -2351,6 +2383,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       if (reloadAt > handledReload) {
         handledReload = reloadAt;
         try { localStorage.setItem(RELOAD_KEY, String(reloadAt)); } catch {}
+        setTvExitReason('refresh sent from the office');
         try { window.location.reload(); } catch {}
         return;
       }
@@ -2379,6 +2412,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       agent: describeDevice(),
       build: appBuild(),
       slide: slideLabelRef.current,
+      mem: memoryLabel(),
+      deviceMemory: (navigator as any).deviceMemory,
+      wakeLock: wakeHeldRef.current,
+      visible: document.visibilityState === 'visible',
+      prevExit: prevExitRef.current || undefined,
+      lastError: lastErrorRef.current || undefined,
+      startsToday: startsTodayRef.current || undefined,
     });
     checkIn();
     const id = window.setInterval(checkIn, 5 * 60_000);
@@ -2443,12 +2483,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!standalone || isPreview || !deviceDoc?.revoked) return;
     clearTvToken();
+    setTvExitReason('disconnected from the office');
     try { window.location.replace('/tv'); } catch {}
   }, [standalone, isPreview, deviceDoc?.revoked]);
   // Stuck on "Connecting…" (no internet when the TV booted, nothing cached) → retry the whole page.
   useEffect(() => {
     if (!standalone || settingsLoaded) return;
-    const t = setTimeout(() => { try { window.location.reload(); } catch {} }, 120_000);
+    const t = setTimeout(() => { setTvExitReason('retry — no internet at start'); try { window.location.reload(); } catch {} }, 120_000);
     return () => clearTimeout(t);
   }, [standalone, settingsLoaded]);
 

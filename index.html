@@ -576,6 +576,7 @@
                   if (document.visibilityState === 'visible' && busy()) { setTimeout(reloadWhenIdle, 15000); return; }
                   reloaded = true;
                   console.log('[SW] New version active — reloading…');
+                  window.__fabtrackExitReason = 'app update';   // a wall TV logs why it restarted
                   window.location.reload();
                 };
                 navigator.serviceWorker.addEventListener('controllerchange', reloadWhenIdle);

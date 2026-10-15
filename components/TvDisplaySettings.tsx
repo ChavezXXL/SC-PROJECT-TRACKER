@@ -195,8 +195,17 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
             </p>
           )}
           <p className="text-xs mt-0.5"><span className={`font-bold ${toneText}`}>{st.label}</span> <span className="text-zinc-500">· {st.detail}</span></p>
-          {facts && <p className="text-[11px] text-zinc-600 mt-1">{facts}</p>}
+          {facts && <p className="text-[11px] text-zinc-600 mt-1">{facts}{d.mem ? ` · memory ${d.mem}` : ''}</p>}
           {outdated && <p className="text-[11px] text-amber-400 mt-1 font-bold">Running an older version — press Refresh to update it.</p>}
+          {/* Health — so "the TV just went away" can be explained afterwards. */}
+          {d.prevExit && /stopped without closing|screen error/i.test(d.prevExit) && (
+            <p className="text-[11px] text-amber-400/90 mt-1">Last restart: {d.prevExit}</p>
+          )}
+          {(d.startsToday || 0) > 3 && <p className="text-[11px] text-amber-400/90 mt-1">Restarted {d.startsToday} times today.</p>}
+          {responding && d.visible === false && <p className="text-[11px] text-amber-400/90 mt-1">The board is covered — the TV is showing its screensaver or home screen.</p>}
+          {responding && d.wakeLock === false && d.visible !== false && (
+            <p className="text-[11px] text-zinc-500 mt-1">This TV's browser won't hold the screen on by itself — set the TV's own sleep and screensaver to Never (tips below).</p>
+          )}
         </div>
         <div className="flex flex-wrap gap-1.5">
           {responding && (
@@ -408,6 +417,9 @@ function SetupTips({ openWhenReady, refreshHour }: { openWhenReady: boolean | nu
         </Tip>
         <Tip title="Come back after a power cut">
           Set the TV browser's home page to <span className="font-mono text-amber-300">{tvHomeUrl().replace(/^https?:\/\//, '')}</span>. Most reliable: a Fire TV Stick or Android TV box with a kiosk browser app (for example Fully Kiosk Browser) set to open that address when it starts.
+        </Tip>
+        <Tip title="On a Fire TV">
+          Settings → <b className="text-zinc-200">Display &amp; Sounds</b> → <b className="text-zinc-200">Screensaver</b> → Start Time: <b className="text-zinc-200">Never</b>, and set <b className="text-zinc-200">Sleep</b> to Never if your model has it. The Fire TV can close the Silk browser when memory runs low — a kiosk browser app (Fully Kiosk Browser) reopens the board by itself if that happens.
         </Tip>
         <Tip title="A mouse jiggler is fine">
           Keeping a USB mouse jiggler plugged in so the TV never sleeps? Good — the board ignores those small nudges, so the Exit button and cursor stay hidden. Nothing on the board closes without a click and a second confirm.
