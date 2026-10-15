@@ -481,7 +481,7 @@ export async function setJobPhoto(jobId: string, partImage: string | null): Prom
       ? { partImage, partImageAt: Date.now() }
       : { partImage: deleteField(), partImageAt: deleteField() };
     try {
-      await updateDoc(doc(dbInstance, COL.jobs, jobId), fields as any);
+      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), fields as any));
       firebaseStatus = { connected: true };
     } catch (e) { throw handleError(e); }
     return;
@@ -532,7 +532,13 @@ export async function getJobById(id: string): Promise<Job | null> {
   return jobs.find((j) => j.id === id) || null;
 }
 
-export async function saveJob(job: Job) {
+/**
+ * Save a job (merge). `clear` lists fields to DELETE in the same write — a
+ * merge skips undefined, so a price, budget or tracking number emptied in the
+ * editor used to come straight back. Resolves 'queued' when offline (the save
+ * is on this device and syncs later) instead of hanging.
+ */
+export async function saveJob(job: Job, opts: { clear?: string[] } = {}): Promise<'saved' | 'queued'> {
   // Never persist a photo this job only BORROWED from another run of the same
   // part (see enrichJobsWithPartPhotos). Callers commonly save with
   // `{ ...job, oneField }`, so the tag has to be honored here at the single
@@ -542,23 +548,65 @@ export async function saveJob(job: Job) {
     const { partImage, photoInherited, photoFromPo, ...rest } = job as any;
     job = (photoInherited ? rest : { ...rest, partImage }) as Job;
   }
+  const clear = (opts.clear || []).filter(f => (job as any)[f] === undefined);
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.jobs, job.id), sanitize(job), { merge: true });
+        const payload = sanitize(job);
+        for (const f of clear) payload[f] = deleteField();
+        const result = await settleWrite(setDoc(doc(dbInstance, COL.jobs, job.id), payload, { merge: true }));
         firebaseStatus = { connected: true };
+        return result;
       } catch (e) {
         throw handleError(e);
       }
-      return;
   }
   const jobs = readLS<Job[]>(LS.jobs, []);
   const idx = jobs.findIndex((j) => j.id === job.id);
   // Merge (not replace) so fields intentionally omitted by the caller — e.g.
   // currentStage/stageHistory, which only advanceJobStage should write — keep
   // their existing values instead of being wiped. Matches Firestore merge:true.
-  if (idx >= 0) jobs[idx] = { ...jobs[idx], ...job };
-  else jobs.push(job);
+  // Like Firestore, an undefined field is skipped (only `clear` deletes).
+  if (idx >= 0) {
+    const merged: any = { ...jobs[idx], ...sanitize(job) };
+    for (const f of clear) delete merged[f];
+    jobs[idx] = merged;
+  } else jobs.push(job);
   writeLS(LS.jobs, jobs);
+  return 'saved';
+}
+
+/**
+ * Change just these fields of a job; `undefined` deletes a field. Prefer this
+ * to saveJob({ ...job, field }) — re-saving a whole job from a copy that may be
+ * stale reverted edits made elsewhere meanwhile (and re-sent its photo).
+ */
+export async function updateJobFields(jobId: string, changes: Partial<Job>): Promise<'saved' | 'queued'> {
+  const keys = Object.keys(changes);
+  if (!keys.length) return 'saved';
+  if (dbInstance) {
+    const payload: Record<string, unknown> = {};
+    for (const k of keys) {
+      const v = (changes as any)[k];
+      payload[k] = v === undefined ? deleteField() : sanitize(v);
+    }
+    try {
+      const result = await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), payload as any));
+      firebaseStatus = { connected: true };
+      return result;
+    } catch (e) { throw handleError(e); }
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === jobId);
+  if (idx >= 0) {
+    const next: any = { ...jobs[idx] };
+    for (const k of keys) {
+      const v = (changes as any)[k];
+      if (v === undefined) delete next[k]; else next[k] = v;
+    }
+    jobs[idx] = next;
+    writeLS(LS.jobs, jobs);
+  }
+  return 'saved';
 }
 
 // Rename customer on every matching job. Case-sensitive match for `oldNames`.
@@ -601,10 +649,10 @@ export async function deleteJob(id: string) {
         // labor-cost and worker-hour reports. (Previously only the localStorage
         // branch cascaded; Firestore left orphans behind.)
         try {
-          const snap = await getDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', id)));
-          await Promise.all(snap.docs.map((d: any) => deleteDoc(d.ref)));
+          const snap = await queryDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', id)));
+          await settleWrite(Promise.all(snap.docs.map((d: any) => deleteDoc(d.ref))));
         } catch (e) { console.warn('deleteJob: log cascade failed', e); }
-        await deleteDoc(doc(dbInstance, COL.jobs, id));
+        await settleWrite(deleteDoc(doc(dbInstance, COL.jobs, id)));
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -621,7 +669,7 @@ export async function completeJob(id: string) {
   const completedAt = Date.now();
   if (dbInstance) {
       try {
-        await updateDoc(doc(dbInstance, COL.jobs, id), { status: "completed", completedAt } as any);
+        await settleWrite(updateDoc(doc(dbInstance, COL.jobs, id), { status: "completed", completedAt } as any));
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -650,7 +698,7 @@ export async function completeJobWithSnapshot(
   if (shippedAt) updates.shippedAt = shippedAt;
   if (dbInstance) {
     try {
-      await updateDoc(doc(dbInstance, COL.jobs, id), updates);
+      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, id), updates));
       firebaseStatus = { connected: true };
     } catch (e) { throw handleError(e); }
     return;
@@ -695,7 +743,7 @@ export async function addJobNote(jobId: string, text: string, userId: string, us
 export async function reopenJob(id: string) {
   if (dbInstance) {
       try {
-         await updateDoc(doc(dbInstance, COL.jobs, id), { status: "pending", completedAt: null, shippedAt: null } as any);
+         await settleWrite(updateDoc(doc(dbInstance, COL.jobs, id), { status: "pending", completedAt: null, shippedAt: null } as any));
          firebaseStatus = { connected: true };
       } catch (e) {
          throw handleError(e);
@@ -737,7 +785,7 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
   }
   if (dbInstance) {
     try {
-      await updateDoc(doc(dbInstance, COL.jobs, id), updates);
+      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, id), updates));
       firebaseStatus = { connected: true };
     } catch (e) { throw handleError(e); }
     return;
@@ -2628,7 +2676,7 @@ export function nextPurchaseOrderNumber(list: PurchaseOrder[]): string {
 export async function setJobShippedAt(jobId: string, shippedAt: number): Promise<void> {
   if (dbInstance) {
     try {
-      await updateDoc(doc(dbInstance, COL.jobs, jobId), { shippedAt });
+      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), { shippedAt }));
       firebaseStatus = { connected: true };
     } catch (e) { throw handleError(e); }
     return;

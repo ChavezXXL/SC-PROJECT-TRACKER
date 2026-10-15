@@ -2270,17 +2270,39 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 // Esc-to-cancel for keyboard users. Responsive: full-bleed on mobile, centered
 // card on tablet+. Natural height — buttons never clip on short viewports.
 const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { if (isOpen) { setBusy(false); setError(''); } }, [isOpen]);
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-      if (e.key === 'Enter') { onConfirm(); onCancel(); }
-    };
+    // Escape cancels. Enter is left to whichever button has focus (Confirm,
+    // to start with): a window-wide Enter ran the action twice, and ran it
+    // even when Cancel had focus.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [isOpen, onConfirm, onCancel]);
+  }, [isOpen, onCancel]);
+
+  // Runs once, waits for the result, and stays open on failure — it used to
+  // close straight away, so a failed delete looked like it had worked. A slow
+  // action (no internet) closes after a few seconds and finishes on its own.
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await Promise.race([
+        Promise.resolve(onConfirm?.()),
+        new Promise(res => setTimeout(res, 8000)),
+      ]);
+      onCancel();
+    } catch {
+      setError("That didn't go through — check the internet and try again.");
+      setBusy(false);
+    }
+  };
 
   if (!isOpen) return null;
   return createPortal(
@@ -2299,17 +2321,20 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
             <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" aria-hidden="true" /> {title}
           </h3>
           <p className="text-zinc-400 text-sm mb-5 sm:mb-6">{message}</p>
+          {error && <p role="alert" className="text-sm font-semibold text-red-400 -mt-3 mb-4">{error}</p>}
           <div className="flex justify-end gap-2 sm:gap-3">
             <button type="button" onClick={onCancel} className="text-zinc-400 hover:text-white text-sm font-semibold px-3 sm:px-4 py-2">
               Cancel
             </button>
             <button
               type="button"
-              onClick={() => { onConfirm(); onCancel(); }}
-              className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-red-900/20"
+              onClick={run}
+              disabled={busy}
+              aria-busy={busy}
+              className="bg-red-600 hover:bg-red-500 disabled:opacity-60 disabled:cursor-wait text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-red-900/20"
               autoFocus
             >
-              Confirm
+              {busy ? 'Working…' : error ? 'Try again' : 'Confirm'}
             </button>
           </div>
         </div>
@@ -3344,7 +3369,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                     {eta.remainingHours !== null && (
                       <p className="text-[12px] font-black text-white tabular">{eta.remainingHours.toFixed(1)}h<span className="text-zinc-600 font-bold text-[10px]"> left</span></p>
                     )}
-                    {j.dueDate && <p className="text-[10px] text-zinc-500 font-mono tabular">{j.dueDate.slice(0, 5)}</p>}
+                    {j.dueDate && <p className="text-[10px] text-zinc-500 font-mono tabular">{fmt(j.dueDate).slice(0, 5)}</p>}
                   </div>
                 </button>
               );
@@ -3364,11 +3389,12 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">In progress</p></div>
           <Briefcase className="text-zinc-600 w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
         </div>
-        {/* Overdue */}
-        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10' : 'bg-zinc-900/50 border-white/5'}`}>
-          <div className="min-w-0"><p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-2xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] mt-0.5 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>Past due</p></div>
+        {/* Overdue — tap to open Jobs filtered to the overdue ones */}
+        <button type="button" onClick={() => openJobsFiltered('overdue', setView)} title="Show the overdue jobs"
+          className={`card-shine hover-lift-glow text-left p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10 hover:bg-red-500/15' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0"><p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-2xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] mt-0.5 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>{overdueJobs.length > 0 ? 'Tap to see them' : 'Past due'}</p></div>
           <AlertTriangle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
-        </div>
+        </button>
         {/* Floor Staff */}
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
           <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Floor Staff</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">Clocked in</p></div>
@@ -4876,6 +4902,20 @@ const PartImageLightbox = ({ src, onClose }: { src: string, onClose: () => void 
 
 
 // --- ADMIN: JOBS ---
+// Due-date quick filter for the Jobs list. The dashboard's Overdue tile sets
+// a one-time starting filter here before switching to Jobs.
+type DueFilter = 'all' | 'overdue' | 'today' | 'week';
+let pendingJobsDueFilter: DueFilter | null = null;
+function openJobsFiltered(due: DueFilter, setView: (v: AppView) => void) {
+  pendingJobsDueFilter = due;
+  setView('admin-jobs');
+}
+const matchesDueFilter = (j: Job, f: DueFilter): boolean => {
+  if (f === 'all') return true;
+  const st = dueState(j, f === 'week' ? { soonDays: 7 } : {});
+  return f === 'overdue' ? st === 'overdue' : f === 'today' ? st === 'today' : st === 'today' || st === 'soon';
+};
+
 const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, initialTab, calendarOnly }: any) => {
   const { prompt: askName, PromptHost } = usePrompt();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -4887,10 +4927,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [search, setSearch] = useState('');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterDue, setFilterDue] = useState<DueFilter>(() => pendingJobsDueFilter || 'all');
+  useEffect(() => { pendingJobsDueFilter = null; }, []);
   const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'newest' | 'oldest'>('dueDate');
   const [showFilters, setShowFilters] = useState(false);
   // Jobs R1 #4: Saved filter views (stored in localStorage per admin — no Firestore dep)
-  type SavedView = { id: string; name: string; search: string; priority: string; status: string; sortBy: typeof sortBy; tab: 'active' | 'completed' };
+  type SavedView = { id: string; name: string; search: string; priority: string; status: string; sortBy: typeof sortBy; tab: 'active' | 'completed'; due?: DueFilter };
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
     try { return JSON.parse(localStorage.getItem('jobs_saved_views') || '[]'); } catch { return []; }
   });
@@ -4911,7 +4953,29 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // only write the photo when it was actually changed in this modal session.
   const photoDirtyRef = useRef(false);
   const shipDirtyRef = useRef(false);   // "Shipped On" corrected in this session
-  useEffect(() => { if (showModal) { checklistDirtyRef.current = false; photoDirtyRef.current = false; shipDirtyRef.current = false; } }, [showModal]);
+  // Attachments too — and they're inline files, so re-sending them on every
+  // save was also slow.
+  const attachmentsDirtyRef = useRef(false);
+  // The job as it was when the editor opened: a field emptied in this session
+  // is deleted on save (see saveEditedJob).
+  const openedJobRef = useRef<Partial<Job>>({});
+  const savingJobRef = useRef(false);
+  const [savingJob, setSavingJob] = useState(false);
+  // The hours estimate this editor filled in (null = none, or the person typed
+  // their own). While the field still holds it, it follows the quantity — it
+  // used to freeze at whatever quantity was typed first.
+  const autoHoursRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (showModal) {
+      checklistDirtyRef.current = false; photoDirtyRef.current = false; shipDirtyRef.current = false;
+      attachmentsDirtyRef.current = false;
+      openedJobRef.current = editingJob;
+      autoHoursRef.current = null;
+    }
+    // Snapshot only when the editor opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showModal]);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
@@ -5044,8 +5108,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       const isCompleted = j.status === 'completed';
       if (activeTab === 'active' && isCompleted) return false;
       if (activeTab === 'completed' && !isCompleted) return false;
-      if (filterPriority !== 'all' && j.priority !== filterPriority) return false;
+      // No priority set shows as Normal everywhere, so the Normal filter includes it.
+      if (filterPriority !== 'all' && (j.priority || 'normal') !== filterPriority) return false;
       if (filterStatus !== 'all' && j.status !== filterStatus) return false;
+      if (activeTab !== 'completed' && !matchesDueFilter(j, filterDue)) return false;
       if (search) {
         const s = search.toLowerCase();
         return (j.poNumber || '').toLowerCase().includes(s) ||
@@ -5065,7 +5131,17 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       const bd = b.dueDate ? dateNum(b.dueDate) : 99991231;
       return ad - bd;
     });
-  }, [jobs, search, activeTab, filterPriority, filterStatus, sortBy]);
+  }, [jobs, search, activeTab, filterPriority, filterStatus, filterDue, sortBy]);
+
+  // Counts for the due chips — open jobs, the shared due rule.
+  const dueCounts = useMemo(() => {
+    const open = jobs.filter(j => j.status !== 'completed');
+    return {
+      overdue: open.filter(j => matchesDueFilter(j, 'overdue')).length,
+      today: open.filter(j => matchesDueFilter(j, 'today')).length,
+      week: open.filter(j => matchesDueFilter(j, 'week')).length,
+    };
+  }, [jobs]);
 
   const stats = useMemo(() => {
     const { startOfWeek, startOfMonth, startOfYear } = getDates();
@@ -5078,7 +5154,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   }, [jobs]);
 
   // Count active filters
-  const activeFilterCount = [filterPriority !== 'all', filterStatus !== 'all', sortBy !== 'dueDate'].filter(Boolean).length;
+  const activeFilterCount = [filterPriority !== 'all', filterStatus !== 'all', filterDue !== 'all', sortBy !== 'dueDate'].filter(Boolean).length;
 
   // ── SHOP BRAIN — per-job intelligence ──────────────────────────────────────
   // Stale: active job with no time log (or last log) older than 48h
@@ -5187,7 +5263,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     //    it scales with quantity. Falls back to job-level avg from
     //    priceSuggestion when no rate samples exist. Runs as soon as part
     //    number + quantity are typed — customer not required.
-    if (!editingJob.expectedHours && editingJob.partNumber && (editingJob.quantity || 0) > 0) {
+    const hoursAreAuto = autoHoursRef.current !== null && editingJob.expectedHours === autoHoursRef.current;
+    if ((!editingJob.expectedHours || hoursAreAuto) && editingJob.partNumber && (editingJob.quantity || 0) > 0) {
       const rateEst = getRateBreakdownForJob(editingJob, allLogs, shopSettings.rateBuffer ?? 1.15);
       if (rateEst && rateEst.hasData && rateEst.totalHours > 0) {
         patch.expectedHours = parseFloat(rateEst.totalHours.toFixed(1));
@@ -5219,13 +5296,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           }
         }
       }
+      if (patch.expectedHours !== undefined) {
+        if (hoursAreAuto) {
+          // Re-estimated for a new quantity: update quietly (no toast per keystroke).
+          filled.length = 0;
+          if (patch.expectedHours === editingJob.expectedHours) delete patch.expectedHours;
+        }
+        if (patch.expectedHours !== undefined) autoHoursRef.current = patch.expectedHours;
+      }
     }
     // Price/instructions still need customer+part match (priceSuggestion)
     if (!priceSuggestion) {
-      if (Object.keys(patch).length > 0) {
-        setEditingJob(prev => ({ ...prev, ...patch }));
-        addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
-      }
+      if (Object.keys(patch).length > 0) setEditingJob(prev => ({ ...prev, ...patch }));
+      if (filled.length > 0) addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
       return;
     }
     // 2. Price per part — last paid rate
@@ -5241,11 +5324,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       patch.specialInstructions = lastInstr;
       filled.push('instructions');
     }
-    if (Object.keys(patch).length > 0) {
-      setEditingJob(prev => ({ ...prev, ...patch }));
-      // Make the magic visible so the user knows to hit Save to keep it.
-      addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
-    }
+    if (Object.keys(patch).length > 0) setEditingJob(prev => ({ ...prev, ...patch }));
+    // Make the magic visible so the user knows to hit Save to keep it.
+    if (filled.length > 0) addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [priceSuggestion?.poNumber, editingJob.partNumber, editingJob.quantity]);
 
@@ -5283,8 +5364,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   };
 
   const handleSave = async () => {
+    // One save at a time: a double-tap on "Create Job" made two jobs.
+    if (savingJobRef.current) return;
     if (!editingJob.poNumber || !editingJob.partNumber) return addToast('error', 'PO and Part Number required');
     if ((editingJob.expectedHours ?? 0) < 0) return addToast('error', 'Expected hours must be 0 or positive');
+    savingJobRef.current = true;
+    setSavingJob(true);
+    try { await saveEditedJob(); } finally { savingJobRef.current = false; setSavingJob(false); }
+  };
+
+  const saveEditedJob = async () => {
     const today = new Date();
     // Format as MM/DD/YYYY — the app's canonical date format.
     // The old ISO-string approach produced YYYY-MM-DD which broke every dateNum() comparison.
@@ -5304,7 +5393,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       priority: editingJob.priority || 'normal',
       dueDate: normDate(editingJob.dueDate) || '',
       info: editingJob.info || '',
-      status: editingJob.status || 'in-progress',
+      status: editingJob.status || 'pending',   // first clock-in moves it to In Progress
       dateReceived: normDate(editingJob.dateReceived) || localDate,
       createdAt: editingJob.createdAt || Date.now(),
       quoteAmount: editingJob.quoteAmount || undefined,
@@ -5357,6 +5446,22 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // Checklist: only persist when edited in this modal session, so a stale
     // snapshot can't wipe check-offs made from the floor card meanwhile.
     if (!checklistDirtyRef.current) delete (job as any).checklist;
+    if (editingJob.id) {
+      // Notes are only ever ADDED (DB.addJobNote, arrayUnion). Writing the
+      // editor's copy erased any note a worker added while it was open.
+      delete (job as any).jobNotes;
+      if (!attachmentsDirtyRef.current) delete (job as any).attachments;
+    }
+    // Fields emptied in THIS session are deleted — a merge save skips
+    // undefined, so an emptied price, budget or tracking number came back.
+    // Compared with the job as the editor opened it, so a value set elsewhere
+    // meanwhile (e.g. material cost at close-out) is left alone.
+    const opened = openedJobRef.current as Record<string, unknown>;
+    const hadValue = (v: unknown) => v !== undefined && v !== null && v !== '' && v !== 0;
+    const clear = editingJob.id
+      ? (['quoteAmount', 'pricePerPart', 'expectedHours', 'materialCost', 'shippingMethod', 'trackingNumber', 'shippingNotes', 'portalNote'] as const)
+          .filter(f => (job as any)[f] === undefined && hadValue(opened[f]))
+      : [];
     // Part photo: written ONLY when changed in this modal session. Writing the
     // modal's copy unconditionally put a stale photo back over a newer one
     // saved elsewhere while the editor was open.
@@ -5380,20 +5485,22 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     }
     try {
       const isNew = !editingJob.id;
-      await DB.saveJob(job);
+      const result = await DB.saveJob(job, { clear: [...clear] });
       // A plain (merge) save can't delete a field — undefined is skipped — so
       // a removed photo used to reappear. Delete it explicitly.
       if (clearPhoto) await DB.setJobPhoto(job.id, null);
       if (shipDirtyRef.current && editingJob.id && editingJob.shippedAt) await DB.setJobShippedAt(job.id, editingJob.shippedAt);
       setShowModal(false);
       setEditingJob({});
-      if (isNew) {
+      if (result === 'queued') {
+        addToast('info', `${isNew ? 'Job created' : 'Saved'} on this device — it syncs when the internet is back.`);
+      } else if (isNew) {
         addToast('success', '✅ Job created — click it to add stages, shipping & checklist.');
       } else {
         addToast('success', 'Job saved');
       }
     }
-    catch (e) { addToast('error', 'Save Failed'); }
+    catch (e) { addToast('error', "Couldn't save — check the internet and try again. Your changes are still here."); }
   };
 
   // ── Complete a job — locks a profit snapshot immediately, no prompt needed.
@@ -5414,10 +5521,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const shippedAt = await resolveShipAt(choice, async () => lastWork || null, j.shippedAt);
     const breakdown = calcJobProfit(j, jobLogs, workers, shopSettings, allPOs);
     const snapshot = buildProfitSnapshot(breakdown);
-    if (completedStage) {
-      await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true, shippedAt);
+    try {
+      if (completedStage) {
+        await DB.advanceJobStage(j.id, completedStage.id, user.id, user.name, true, shippedAt);
+      }
+      await DB.completeJobWithSnapshot(j.id, j.materialCost ?? 0, snapshot, shippedAt);
+    } catch {
+      // Used to fail silently — the job just stayed open with no word why.
+      addToast('error', `Couldn't complete PO ${j.poNumber} — check the internet and try again.`);
+      return;
     }
-    await DB.completeJobWithSnapshot(j.id, j.materialCost ?? 0, snapshot, shippedAt);
     if (editingJob.id === j.id) {
       setEditingJob(prev => ({ ...prev, status: 'completed', currentStage: completedStage?.id || prev.currentStage, profitSnapshot: snapshot }));
     }
@@ -5682,12 +5795,35 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           </button>
         </div>
 
+        {/* Due-date quick filters — one tap, always visible (due dates come first) */}
+        {activeTab === 'active' && (
+          <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filter by due date">
+            {([
+              { key: 'overdue', label: 'Overdue', count: dueCounts.overdue, on: 'bg-red-500/20 border-red-500/50 text-red-300', off: 'border-red-500/25 text-red-400 hover:bg-red-500/10' },
+              { key: 'today', label: 'Due today', count: dueCounts.today, on: 'bg-orange-500/20 border-orange-500/50 text-orange-200', off: 'border-orange-500/25 text-orange-300 hover:bg-orange-500/10' },
+              { key: 'week', label: 'Next 7 days', count: dueCounts.week, on: 'bg-amber-500/20 border-amber-500/50 text-amber-200', off: 'border-amber-500/20 text-amber-300 hover:bg-amber-500/10' },
+            ] as const).map(c => (
+              <button
+                key={c.key}
+                type="button"
+                aria-pressed={filterDue === c.key}
+                onClick={() => setFilterDue(filterDue === c.key ? 'all' : c.key)}
+                className={`min-h-[32px] px-3 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors ${filterDue === c.key ? c.on : c.count ? c.off : 'border-white/5 text-zinc-600 hover:text-zinc-400'}`}
+              >
+                {c.label}
+                <span className="tabular font-black">{c.count}</span>
+                {filterDue === c.key && <X className="w-3 h-3" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* ── Saved Views Bar (Jobs R1 #4) ── */}
         {(savedViews.length > 0 || activeFilterCount > 0 || search) && (
           <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-white/5">
             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest shrink-0">📌 Views</span>
             {savedViews.map(v => {
-              const isActive = v.search === search && v.priority === filterPriority && v.status === filterStatus && v.sortBy === sortBy && v.tab === activeTab;
+              const isActive = v.search === search && v.priority === filterPriority && v.status === filterStatus && (v.due || 'all') === filterDue && v.sortBy === sortBy && v.tab === activeTab;
               return (
                 <button
                   key={v.id}
@@ -5695,6 +5831,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     setSearch(v.search);
                     setFilterPriority(v.priority);
                     setFilterStatus(v.status);
+                    setFilterDue(v.due || 'all');
                     setSortBy(v.sortBy);
                     setActiveTab(v.tab);
                   }}
@@ -5719,7 +5856,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     confirmLabel: 'Save view',
                   });
                   if (!name) return;
-                  const v: SavedView = { id: `v_${Date.now()}`, name, search, priority: filterPriority, status: filterStatus, sortBy, tab: (activeTab as string) === 'calendar' ? 'active' : (activeTab as 'active' | 'completed') };
+                  const v: SavedView = { id: `v_${Date.now()}`, name, search, priority: filterPriority, status: filterStatus, due: filterDue, sortBy, tab: (activeTab as string) === 'calendar' ? 'active' : (activeTab as 'active' | 'completed') };
                   setSavedViews([...savedViews, v]);
                 }}
                 className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1"
@@ -5788,7 +5925,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             {/* Clear Filters */}
             {activeFilterCount > 0 && (
               <div className="flex flex-col justify-end">
-                <button onClick={() => { setFilterPriority('all'); setFilterStatus('all'); setSortBy('dueDate'); }}
+                <button onClick={() => { setFilterPriority('all'); setFilterStatus('all'); setFilterDue('all'); setSortBy('dueDate'); }}
                   className="px-3 py-1 text-xs text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/10 transition-colors font-bold">
                   Clear Filters
                 </button>
@@ -5831,17 +5968,24 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               <button
                 key={p}
                 type="button"
+                disabled={bulkBusy}
                 onClick={async () => {
+                  if (bulkBusy) return;
                   const ids: string[] = Array.from(selectedJobIds);
-                  await Promise.all(ids.map(id => {
-                    const job = jobs.find(x => x.id === id);
-                    if (!job) return Promise.resolve();
-                    // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
-                    const { currentStage: _cs, stageHistory: _sh, ...jobRest } = job;
-                    return DB.saveJob({ ...jobRest, priority: p });
-                  }));
-                  addToast('success', `Set ${ids.length} job${ids.length > 1 ? 's' : ''} to ${p}`);
-                  setSelectedJobIds(new Set());
+                  setBulkBusy(true);
+                  try {
+                    // Just the priority — re-saving whole jobs from this list's
+                    // copies could undo edits made elsewhere meanwhile.
+                    const results = await Promise.allSettled(ids.map(id => DB.updateJobFields(id, { priority: p })));
+                    const failedIds = ids.filter((_, i) => results[i].status === 'rejected');
+                    if (failedIds.length) {
+                      addToast('error', `Couldn't change ${failedIds.length} of ${ids.length} — they're still selected, try again.`);
+                      setSelectedJobIds(new Set(failedIds));
+                    } else {
+                      addToast('success', `Set ${ids.length} job${ids.length > 1 ? 's' : ''} to ${p}`);
+                      setSelectedJobIds(new Set());
+                    }
+                  } finally { setBulkBusy(false); }
                 }}
                 className={`text-[11px] font-bold px-2 py-1 rounded capitalize ${p === 'urgent' ? 'text-red-400 hover:bg-red-500/10' : p === 'high' ? 'text-orange-400 hover:bg-orange-500/10' : p === 'low' ? 'text-zinc-500 hover:bg-zinc-700' : 'text-zinc-400 hover:bg-zinc-700'}`}
               >
@@ -5853,12 +5997,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           {/* Batch: advance to next stage */}
           <button
             type="button"
+            disabled={bulkBusy}
             onClick={async () => {
+              // A second click while the first was still saving advanced jobs twice.
+              if (bulkBusy) return;
+              setBulkBusy(true);
+              try {
               const stages = getStages(shopSettings);
               const ids: string[] = Array.from(selectedJobIds);
               const plan = ids
                 .map(id => { const job = jobs.find(x => x.id === id); return job ? { id, next: getNextStage(job, stages) } : null; })
                 .filter((p): p is { id: string; next: JobStage } => !!p && !!p.next);
+              if (!plan.length) { addToast('info', 'Nothing to advance — those jobs are already at their last stage.'); return; }
               // Bulk close-outs are where on-time went wrong: jobs finished days
               // earlier were stamped "completed" today. Ask once for the batch.
               const completing = plan.filter(p => p.next.isComplete);
@@ -5870,14 +6020,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                 });
                 if (!choice) return;
               }
-              await Promise.all(plan.map(async ({ id, next }) => {
+              const results = await Promise.allSettled(plan.map(async ({ id, next }) => {
                 const shippedAt = next.isComplete && choice
                   ? await resolveShipAt(choice, () => DB.lastWorkEndForJob(id), jobs.find(x => x.id === id)?.shippedAt)
                   : undefined;
                 await DB.advanceJobStage(id, next.id, user.id, user.name, next.isComplete, shippedAt);
               }));
-              addToast('success', `Advanced ${plan.length} job${plan.length !== 1 ? 's' : ''} to next stage`);
-              setSelectedJobIds(new Set());
+              const failedIds = plan.filter((_, i) => results[i].status === 'rejected').map(x => x.id);
+              if (failedIds.length) {
+                addToast('error', `Advanced ${plan.length - failedIds.length} of ${plan.length} — ${failedIds.length} couldn't be saved and are still selected. Try again.`);
+                setSelectedJobIds(new Set(failedIds));
+              } else {
+                addToast('success', `Advanced ${plan.length} job${plan.length !== 1 ? 's' : ''} to next stage`);
+                setSelectedJobIds(new Set());
+              }
+              } finally { setBulkBusy(false); }
             }}
             className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 px-3 py-1 rounded-lg flex items-center gap-1"
           >
@@ -6843,20 +7000,20 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   {user.role === 'admin' && (
                     <div>
                       <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Customer Name</label>
-                      {allClients.length > 0 ? (
-                        <select
-                          className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50"
-                          value={editingJob.customer || ''}
-                          onChange={e => setEditingJob({ ...editingJob, customer: e.target.value })}
-                        >
-                          <option value="">— Select a client —</option>
-                          {allClients.map(c => (
-                            <option key={c} value={c}>{c}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50" value={editingJob.customer || ''} onChange={e => setEditingJob({ ...editingJob, customer: e.target.value })} placeholder="Client or Company Name" />
-                      )}
+                      {/* Suggestions from the client list, but a new customer can still be
+                          typed (the strict dropdown couldn't take one, and showed a job
+                          whose customer wasn't on the list as blank). */}
+                      <input
+                        list="job-customer-options"
+                        autoComplete="off"
+                        className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-orange-500/50"
+                        value={editingJob.customer || ''}
+                        onChange={e => { const customer = e.target.value; setEditingJob(prev => ({ ...prev, customer })); }}
+                        placeholder={allClients.length ? 'Start typing — pick from your clients' : 'Client or Company Name'}
+                      />
+                      <datalist id="job-customer-options">
+                        {allClients.map(c => <option key={c} value={c} />)}
+                      </datalist>
                       {allClients.length === 0 && <p className="text-xs text-zinc-500 mt-1">💡 Add clients in <span className="text-purple-400 font-bold">Settings → Clients</span> to get a dropdown here.</p>}
                     </div>
                   )}
@@ -7162,14 +7319,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               {/* ── Operation Checklist — always visible, saved with job ── */}
               <JobChecklistSection
                 job={editingJob as Job}
-                onUpdate={(items) => { checklistDirtyRef.current = true; setEditingJob({ ...editingJob, checklist: items }); }}
+                onUpdate={(items) => { checklistDirtyRef.current = true; setEditingJob(prev => ({ ...prev, checklist: items })); }}
                 user={user}
               />
 
               {/* ── Attachments / Blueprints — always visible, saved with job ── */}
               <JobAttachmentsSection
                 job={editingJob as Job}
-                onUpdate={(atts) => setEditingJob({ ...editingJob, attachments: atts })}
+                onUpdate={(atts) => { attachmentsDirtyRef.current = true; setEditingJob(prev => ({ ...prev, attachments: atts })); }}
                 user={user}
                 addToast={addToast}
               />
@@ -7269,8 +7426,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             </div>
             <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3 sticky bottom-0 z-10">
               <button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
-              <button onClick={handleSave} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-900/20 flex items-center gap-2 transition-all">
-                {editingJob.id ? <><Save className="w-4 h-4" /> Save Changes</> : <>Create Job <ArrowRight className="w-4 h-4" /></>}
+              <button onClick={handleSave} disabled={savingJob} aria-busy={savingJob} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-60 disabled:cursor-wait text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-900/20 flex items-center gap-2 transition-all">
+                {savingJob ? 'Saving…' : editingJob.id ? <><Save className="w-4 h-4" /> Save Changes</> : <>Create Job <ArrowRight className="w-4 h-4" /></>}
               </button>
             </div>
             </div>
@@ -8271,8 +8428,8 @@ export default function App() {
       <>
         <PrintStyles />
         <LoginView onLogin={u => setUser(toSession(u))} addToast={addToast} />
-        <div className="fixed bottom-4 right-4 z-50 pointer-events-none">
-          <div className="pointer-events-auto flex flex-col items-end gap-2">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto z-[500] pointer-events-none">
+          <div className="pointer-events-none flex flex-col items-stretch sm:items-end gap-2">
             {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}
           </div>
         </div>
@@ -8488,7 +8645,7 @@ export default function App() {
               <div className="relative w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/30">
                 <Sparkles className="w-4 h-4 text-white" aria-hidden="true" />
               </div>
-              SC DEBURRING
+              <span className="truncate max-w-[45vw] uppercase">{appSettings.companyName || 'FabTrack IO'}</span>
             </div>
             <div className="flex items-center gap-2">
               {/* Quick-Jump — search any job / customer / PO / screen */}
@@ -8583,8 +8740,10 @@ export default function App() {
      {/* AI POScanner removed — kept the file in repo so we can re-enable
          later as a Shop OS-tier feature. For now, manual entry is faster
          and free vs. paying Gemini per scan. */}
-            <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
-        <div className="pointer-events-auto flex flex-col items-end gap-2">
+            {/* Above every dialog (editor z-200, confirms z-400) — a toast about
+                a failed save used to sit hidden behind the editor it was about. */}
+            <div className="fixed bottom-4 left-4 right-4 sm:bottom-6 sm:left-auto sm:right-6 z-[500] pointer-events-none">
+        <div className="pointer-events-none flex flex-col items-stretch sm:items-end gap-2">
           {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}
         </div>
       </div>

@@ -270,6 +270,27 @@ const TvDueBlock = ({ raw }: { raw?: string | null }) => {
   );
 };
 
+// Solid due stamp for a photo's corner — tinted boxes can't be read over a photo.
+const DUE_STAMP = {
+  late:   'bg-red-600 text-white',
+  today:  'bg-orange-500 text-black',
+  soon:   'bg-amber-400 text-black',
+  normal: 'bg-zinc-950/85 text-white border border-white/15',
+} as const;
+const TvDueStamp = ({ raw }: { raw?: string | null }) => {
+  const { dueText, daysLeft, urgency } = formatDueForTv(raw);
+  if (!dueText || daysLeft === null || urgency === 'none') {
+    return <span className="block rounded-lg bg-zinc-950/85 text-white/60 italic px-2 py-1 shadow-lg" style={{ fontSize: 'clamp(0.6rem, 0.8vw, 0.8rem)' }}>No due date</span>;
+  }
+  return (
+    <div className={`rounded-xl shadow-lg text-center ${DUE_STAMP[urgency]}`} style={{ padding: 'clamp(0.2rem, 0.4vw, 0.4rem) clamp(0.45rem, 0.8vw, 0.75rem)' }}>
+      <p className="font-black uppercase tracking-widest opacity-80" style={{ fontSize: 'clamp(0.5rem, 0.6vw, 0.6rem)' }}>Due</p>
+      <p className="font-black tabular leading-tight whitespace-nowrap" style={{ fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>{dueText}</p>
+      <p className="font-bold tabular whitespace-nowrap" style={{ fontSize: 'clamp(0.6rem, 0.8vw, 0.8rem)' }}>{daysWords(daysLeft, urgency)}</p>
+    </div>
+  );
+};
+
 // One-line due chip for cards that are already busy (Live Workers).
 const TvDueChip = ({ raw }: { raw?: string | null }) => {
   const { dueText, daysLeft, urgency } = formatDueForTv(raw);
@@ -1900,12 +1921,11 @@ const TvJobsBelt = React.memo(function TvJobsBelt({ jobs, stages, speed, showCus
         <div className="relative w-full shrink-0" style={{ paddingTop: '56%' }}>
           <TvPartPhoto src={j.partImage} px={440} frameless />
           <div className="absolute top-2 left-2 right-2 flex items-center gap-1.5 flex-wrap"><TvJobBadges job={j} overdue={overdue} /></div>
+          {/* Due date on the photo's corner, so PO and part number get the full width below. */}
+          <div className="absolute bottom-2 right-2"><TvDueStamp raw={j.dueDate} /></div>
         </div>
         <div className="flex-1 flex flex-col gap-2" style={{ padding: 'clamp(0.625rem, 1vw, 1rem)' }}>
-          <div className="flex items-start justify-between gap-2">
-            {text(j)}
-            <TvDueBlock raw={j.dueDate} />
-          </div>
+          {text(j)}
           {crewLine(j)}
           <div className="mt-auto">{stageBar(j)}</div>
         </div>

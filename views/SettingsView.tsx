@@ -1939,13 +1939,13 @@ const PortalNoteRow: React.FC<{ job: Job; addToast: any }> = ({ job, addToast })
   const save = async () => {
     setSaving(true);
     try {
-      const next: Job = {
-        ...job,
+      // Only the note — re-saving the whole job from this row's copy could undo
+      // an edit made elsewhere. An emptied note is deleted, not left behind.
+      await DB.updateJobFields(job.id, {
         portalNote: text.trim()
           ? { text: text.trim(), expectedDate: expectedDate.trim() || undefined, updatedAt: Date.now() }
           : undefined,
-      };
-      await DB.saveJob(next);
+      });
       addToast('success', `Update saved · ${job.poNumber}`);
     } catch {
       addToast('error', 'Save failed');
@@ -1957,7 +1957,7 @@ const PortalNoteRow: React.FC<{ job: Job; addToast: any }> = ({ job, addToast })
   const clearNote = async () => {
     setSaving(true);
     try {
-      await DB.saveJob({ ...job, portalNote: undefined });
+      await DB.updateJobFields(job.id, { portalNote: undefined });   // really deletes it (a merge save skipped undefined)
       setText('');
       setExpectedDate('');
       addToast('info', `Update cleared · ${job.poNumber}`);

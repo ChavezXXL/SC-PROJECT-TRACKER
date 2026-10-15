@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { ShopAction, User } from '../types';
 import * as DB from '../services/mockDb';
+import { useConfirm } from './useConfirm';
 
 const todayYmd = (): number => {
   const d = new Date();
@@ -36,6 +37,7 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
   const [owner, setOwner] = useState('');
   const [due, setDue] = useState('');
   const [showDone, setShowDone] = useState(false);
+  const { confirm, ConfirmHost } = useConfirm();
 
   const tYmd = todayYmd();
   const { open, done } = useMemo(() => {
@@ -78,6 +80,9 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
     catch { addToast('error', 'Update failed'); }
   };
   const remove = async (a: ShopAction) => {
+    // The delete button sits right beside the row — on a tablet one stray tap
+    // deleted an action with no way back.
+    if (!(await confirm({ title: 'Delete this action?', message: a.title, confirmLabel: 'Delete' }))) return;
     try { await DB.deleteShopAction(a.id); } catch { addToast('error', 'Delete failed'); }
   };
 
@@ -104,7 +109,7 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
             )}
           </div>
         </div>
-        <button onClick={() => remove(a)} aria-label="Delete action" className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0">
+        <button onClick={() => remove(a)} aria-label="Delete action" className="opacity-60 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -113,6 +118,7 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
 
   return (
     <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+      {ConfirmHost}
       <button onClick={toggle} className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-colors">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-violet-500/15 border border-violet-500/30 flex items-center justify-center shrink-0">
