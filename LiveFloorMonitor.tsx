@@ -24,7 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { Job, TimeLog, SystemSettings, TvSlide, TvSlideType, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice } from './types';
+import { Job, TimeLog, SystemSettings, TvSlide, TvSlideType, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice, TeamBirthday } from './types';
 import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
@@ -43,6 +43,8 @@ import {
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm } from './components/TvScreens';
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
 import { TvPartPhoto } from './components/TvPartPhoto';
+import { TvNewsSlide, TvCalendarSlide, TvBirthdaySlide } from './components/TvExtraSlides';
+import { tipForPass, TIP_KIND_LABEL } from './utils/safetyTips';
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
@@ -756,6 +758,7 @@ type LeaderRow = { userId: string; name: string; hours: number; jobs: number; se
 // Stable empty-array ref for the Goals slide — `settings.shopGoals || []` would
 // mint a new array every render and defeat TvGoalsSlide's React.memo.
 const EMPTY_GOALS: ShopGoal[] = [];
+const EMPTY_BIRTHDAYS: TeamBirthday[] = [];
 
 // Default TV slides live in utils/tvSlides.ts (shared with Settings).
 
@@ -1097,7 +1100,7 @@ const TvFlowMapSlide = React.memo(function TvFlowMapSlide({ jobs, stages, active
 });
 
 // Safety slide — full-screen, bold, attention-grabbing
-const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, icon, cycleInfo }) => {
+const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number }; kicker?: string }> = ({ title, body, color, icon, cycleInfo, kicker }) => {
   const palette: Record<string, { from: string; border: string; text: string }> = {
     red: { from: 'from-red-500/20', border: 'border-red-500/40', text: 'text-red-400' },
     yellow: { from: 'from-yellow-500/20', border: 'border-yellow-500/40', text: 'text-yellow-400' },
@@ -1116,7 +1119,7 @@ const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; i
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
         <div className="relative">
           <p className={`font-black uppercase tracking-[0.4em] ${p.text} mb-[clamp(0.75rem,1.5vw,1.5rem)] flex items-center justify-center gap-3`} style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
-            <span>⚠ Safety Reminder</span>
+            <span>⚠ {kicker || 'Safety Reminder'}</span>
             {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
           </p>
           <div className="mb-[clamp(0.75rem,1.5vw,1.5rem)]" style={{ fontSize: 'clamp(3rem, 8vw, 7rem)' }}>{icon || '⚠️'}</div>
@@ -2657,8 +2660,27 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const id = q.get('slide'), type = q.get('type');
     return id || type ? { id, type } : null;
   }, [isPreview]);
+  // dayKey ticks over at midnight so day/week windows roll correctly during
+  // multi-day TV runtime. weekStart is memoized on it — a STABLE Date identity
+  // is what lets React.memo'd slides (WeeklyStats) skip fade/chrome re-renders.
+  const [dayKey, setDayKey] = useState(() => new Date().toDateString());
+  useEffect(() => {
+    const i = window.setInterval(() => {
+      const k = new Date().toDateString();
+      setDayKey(prev => (prev === k ? prev : k));
+    }, 60_000);
+    return () => window.clearInterval(i);
+  }, []);
+  // Whose birthday is it today? (Settings → TV Display → Birthdays)
+  const todaysBirthdays = React.useMemo(() => {
+    const d = new Date();
+    return (settings.birthdays || EMPTY_BIRTHDAYS).filter(b => b.month === d.getMonth() + 1 && b.day === d.getDate()).map(b => b.name.trim()).filter(Boolean);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.birthdays, dayKey]);
   const configuredTvSlides = React.useMemo(() => {
-    const lineup = effectiveTvSlides(settings.tvSlides);
+    let lineup = effectiveTvSlides(settings.tvSlides);
+    // On someone's birthday the board opens its loop with a Happy Birthday slide.
+    if (todaysBirthdays.length) lineup = [{ id: 'auto-birthday', type: 'birthday', enabled: true }, ...lineup];
     if (!previewPick) return lineup;
     const i = lineup.findIndex(s => s.id === previewPick.id);
     if (i >= 0) return i === 0 ? lineup : [...lineup.slice(i), ...lineup.slice(0, i)];
@@ -2667,7 +2689,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     if (!type || !(type === 'stats' || Object.prototype.hasOwnProperty.call(TV_SLIDE_CATALOG, type))) return lineup;
     const first: TvSlide = saved ? { ...saved, enabled: true } : { id: 'preview-slide', type: type as TvSlideType, enabled: true };
     return [first, ...lineup];
-  }, [settings.tvSlides, previewPick]);
+  }, [settings.tvSlides, previewPick, todaysBirthdays]);
   // Keep the ref in sync so the keyboard handler can read the count without re-binding
   slideCountRef.current = configuredTvSlides.length;
 
@@ -2739,18 +2761,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
 
   // ── WEEKLY LEADERBOARD DATA ───────────────────────────────────
-  // dayKey ticks over at midnight so day/week windows roll correctly during
-  // multi-day TV runtime. weekStart is memoized on it — a STABLE Date identity
-  // is what lets React.memo'd slides (WeeklyStats) skip fade/chrome re-renders;
-  // the old `new Date()` per render defeated the memo entirely.
-  const [dayKey, setDayKey] = useState(() => new Date().toDateString());
-  useEffect(() => {
-    const i = window.setInterval(() => {
-      const k = new Date().toDateString();
-      setDayKey(prev => (prev === k ? prev : k));
-    }, 60_000);
-    return () => window.clearInterval(i);
-  }, []);
+  // (dayKey — declared above with the lineup — ticks over at midnight.)
   const weekStart = React.useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() - d.getDay());
@@ -2941,14 +2952,27 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'flow-map':
           return <TvFlowMapSlide jobs={jobs} stages={stages} activeLogs={activeLogs} />;
         case 'safety': {
-          // Safety slide cycles through multiple messages — one per TV rotation
+          // One message per pass. With the tip library on (the default) the
+          // shop's own messages alternate with the built-in safety, FOD and
+          // quality tips, which start at a different tip each day.
           const msgs = (slide.messages && slide.messages.length > 0)
             ? slide.messages
             : [{ id: 'legacy', title: slide.title, body: slide.body, color: slide.color, icon: slide.icon }];
           const i = (slideCycleCounts[slide.id] || 1) - 1;
-          const m = msgs[i % msgs.length];
-          return <TvSafetySlide title={m.title} body={m.body} color={m.color} icon={m.icon} cycleInfo={msgs.length > 1 ? { current: (i % msgs.length) + 1, total: msgs.length } : undefined} />;
+          if (slide.tipLibrary !== false && i % 2 === 1) {
+            const t = tipForPass((i - 1) / 2);
+            return <TvSafetySlide title={t.title} body={t.body} color={t.color} icon={t.icon} kicker={TIP_KIND_LABEL[t.kind]} />;
+          }
+          const own = slide.tipLibrary !== false ? Math.floor(i / 2) : i;
+          const m = msgs[own % msgs.length];
+          return <TvSafetySlide title={m.title} body={m.body} color={m.color} icon={m.icon} cycleInfo={msgs.length > 1 ? { current: (own % msgs.length) + 1, total: msgs.length } : undefined} />;
         }
+        case 'news':
+          return <TvNewsSlide pass={(slideCycleCounts[slide.id] || 1) - 1} />;
+        case 'calendar':
+          return <TvCalendarSlide jobs={jobs} birthdays={settings.birthdays || EMPTY_BIRTHDAYS} />;
+        case 'birthday':
+          return <TvBirthdaySlide names={todaysBirthdays} />;
         case 'message': {
           // Announcement slide cycles through multiple messages
           const msgs = (slide.messages && slide.messages.length > 0)
@@ -2975,6 +2999,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'stats-week': case 'stats': return 'Week Stats';
         case 'goals': return 'Goals';
         case 'flow-map': return 'Shop Flow';
+        case 'news': return 'Aerospace News';
+        case 'calendar': return 'Calendar';
+        case 'birthday': return 'Happy Birthday';
         case 'safety': return slide.title || 'Safety';
         case 'message': return slide.title || 'Message';
         default: return 'Slide';

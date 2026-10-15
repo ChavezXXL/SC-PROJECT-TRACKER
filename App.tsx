@@ -5641,6 +5641,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           const past = dateNum(`${String(mo+1).padStart(2,'0')}/${String(d).padStart(2,'0')}/${yr}`) < dateNum(todayStr);
           const selected = calSelectedDay === d;
           const hasOverdue = dayJobs.some(j => dueState(j) === 'overdue');   // same rule as the Overdue count
+          const bdays = (shopSettings.birthdays || []).filter(b => b.month === mo + 1 && b.day === d).map(b => b.name.trim().split(/\s+/)[0]);
           cells.push(
             <div key={d} onClick={() => setCalSelectedDay(selected ? null : d)}
               className={`min-h-[80px] md:min-h-[110px] border p-1.5 md:p-2 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
@@ -5653,6 +5654,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </div>
                 )}
               </div>
+              {bdays.length > 0 && <p className="text-[10px] font-bold text-pink-300 truncate mb-0.5" title={`Birthday: ${bdays.join(', ')}`}>🎂 {bdays.join(', ')}</p>}
               <div className="space-y-0.5 overflow-hidden max-h-[64px]">
                 {dayJobs.slice(0, 4).map(j => (
                   <div key={j.id} className="flex items-center gap-1 text-[10px] truncate">

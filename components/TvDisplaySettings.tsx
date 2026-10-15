@@ -10,7 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, CheckCircle, ChevronDown, ChevronUp, Cloud, Copy, ExternalLink, Eye, Layers,
+  AlertTriangle, Cake, CheckCircle, ChevronDown, ChevronUp, Cloud, Copy, ExternalLink, Eye, Layers,
   Lightbulb, Lock, MapPin, Monitor, Moon, Pencil, Plus, RefreshCw, Trash2, Tv, Unplug, X,
 } from 'lucide-react';
 import type { SystemSettings, TvDevice, TvSlide, SlideMessage } from '../types';
@@ -753,6 +753,10 @@ function SlideMessagesEditor({ slide, onUpdate, confirm }: { slide: TvSlide; onU
 
   return (
     <div className="space-y-2">
+      {isSafety && (
+        <SwitchRow label="Mix in built-in tips" checked={slide.tipLibrary !== false} onChange={v => onUpdate({ tipLibrary: v })}
+          desc="40 safety, FOD and quality tips written for an aerospace shop take turns with your own messages — a different tip each time." />
+      )}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">{messages.length} message{messages.length === 1 ? '' : 's'} · one per pass</p>
         <div className="flex gap-1.5">
@@ -923,6 +927,21 @@ function SlidesCard({ settings, setSettings, set, confirm, addToast, onPreview }
       </div>
 
       {!custom && <p className="text-xs text-zinc-500 mb-2">This is the built-in lineup — change anything and it becomes yours.</p>}
+      {(() => {
+        const missing = (['news', 'calendar', 'safety'] as const).filter(t => !rows.some(r => r.type === t));
+        if (!missing.length) return null;
+        return (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-500/25 bg-sky-500/5 p-2.5">
+            <p className="text-xs text-sky-200 min-w-0">
+              <b>New for the TV:</b> {missing.map(t => TV_SLIDE_CATALOG[t].label).join(', ')}{missing.includes('calendar') ? ' (with team birthdays)' : ''}.
+            </p>
+            <Btn tone="primary" onClick={() => {
+              edit(list => [...list, ...missing.map((type, i) => ({ id: `${type}_${Date.now()}_${i}`, type, enabled: true } as TvSlide))]);
+              addToast('success', `Added ${missing.length} slide${missing.length === 1 ? '' : 's'} at the end`);
+            }}><Plus className="w-3.5 h-3.5" aria-hidden="true" />Add {missing.length === 1 ? 'it' : 'them'}</Btn>
+          </div>
+        );
+      })()}
       {allOff && (
         <p className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />Every slide is switched off — the TV shows the built-in lineup until you switch one on.
@@ -996,6 +1015,58 @@ function SlidesCard({ settings, setSettings, set, confirm, addToast, onPreview }
   );
 }
 
+// ── Birthdays ────────────────────────────────────────────────────────
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function BirthdaysCard({ settings, set }: { settings: SystemSettings; set: Patch }) {
+  const list = settings.birthdays || [];
+  const [name, setName] = useState('');
+  const [month, setMonth] = useState(() => new Date().getMonth() + 1);
+  const [day, setDay] = useState(1);
+  const daysIn = new Date(2024, month, 0).getDate();    // a leap year, so Feb 29 is allowed
+  const add = () => {
+    const n = name.trim();
+    if (!n) return;
+    const next = [...list, { id: `b_${Date.now()}`, name: n.slice(0, 40), month, day: Math.min(day, daysIn) }]
+      .sort((a, b) => a.month - b.month || a.day - b.day);
+    set({ birthdays: next });
+    setName('');
+  };
+  return (
+    <Card anchor="tv-birthdays" icon={<Cake className="w-4 h-4" />} title="Birthdays"
+      desc="On the TV calendar, and the board says happy birthday on the day. Month and day only — no year.">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <input aria-label="Name" placeholder="Name" maxLength={40} value={name} onChange={e => setName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add(); }} className={`${inputCls} flex-1 min-w-[9rem]`} />
+        <select aria-label="Birthday month" value={month} onChange={e => setMonth(Number(e.target.value))} className={selectCls}>
+          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+        </select>
+        <select aria-label="Birthday day" value={Math.min(day, daysIn)} onChange={e => setDay(Number(e.target.value))} className={selectCls}>
+          {Array.from({ length: daysIn }, (_, i) => <option key={i} value={i + 1}>{i + 1}</option>)}
+        </select>
+        <Btn tone="primary" disabled={!name.trim()} onClick={add}><Plus className="w-3.5 h-3.5" aria-hidden="true" />Add</Btn>
+      </div>
+      {list.length === 0 ? (
+        <p className="text-xs text-zinc-500">No birthdays yet — add your team and the TV celebrates them.</p>
+      ) : (
+        <ul className="divide-y divide-white/5">
+          {list.map(b => (
+            <li key={b.id} className="flex items-center justify-between gap-2 py-1.5">
+              <span className="text-sm text-white truncate min-w-0">🎂 {b.name}</span>
+              <span className="flex items-center gap-1 shrink-0">
+                <span className="text-xs text-zinc-400 tabular">{MONTHS[b.month - 1]} {b.day}</span>
+                <button type="button" aria-label={`Remove ${b.name}'s birthday`} onClick={() => set({ birthdays: list.filter(x => x.id !== b.id) })}
+                  className="w-8 h-8 flex items-center justify-center rounded-md text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // ── The tab ──────────────────────────────────────────────────────────
 
 export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: {
@@ -1044,6 +1115,7 @@ export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: 
         <div className="space-y-4">
           <ScreenCard settings={settings} set={set} />
           <ScheduleCard settings={settings} set={set} now={now} />
+          <BirthdaysCard settings={settings} set={set} />
           <WeatherCard settings={settings} set={set} addToast={addToast} />
           <PrivacyCard settings={settings} set={set} />
           <LiveFloorCard settings={settings} set={set} />

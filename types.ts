@@ -768,6 +768,7 @@ export interface SystemSettings {
   machines?: string[];          // e.g. ["Bench 1", "Belt Sander", "Vibratory Tumbler 2"]
   // Slideshow
   tvSlides?: TvSlide[];        // Ordered list of slides for TV rotation
+  birthdays?: TeamBirthday[];  // TV calendar + a happy-birthday slide on the day
   tvSlideDuration?: number;    // Default seconds per slide (default 15)
   tvSlideshowEnabled?: boolean; // Enable slideshow rotation
   tvToken?: string;            // Unique token for shareable TV URL (?tv=TOKEN)
@@ -930,6 +931,9 @@ export type TvSlideType =
   | 'flow-map'       // Visual flow of jobs through each workflow stage
   | 'safety'         // Safety message with big icon
   | 'message'        // Custom announcement
+  | 'news'           // Aerospace headlines (netlify/functions/news)
+  | 'calendar'       // Month calendar: jobs due, holidays, birthdays
+  | 'birthday'       // Added by the TV itself on someone's birthday (not in the catalog)
   | 'stats';         // Legacy simple stats (kept for backward compat)
 
 // ── SHOP GOALS ─ customizable targets every shop can define
@@ -984,6 +988,16 @@ export interface TvSlide {
   leaderboardMetric?: 'hours' | 'jobs' | 'mixed';   // default 'mixed'
   leaderboardPeriod?: 'today' | 'week' | 'month';   // default 'week'
   leaderboardCount?: number;                         // how many to show, default 5
+  // Safety slides: mix in the built-in safety / FOD / quality tips (default on)
+  tipLibrary?: boolean;
+}
+
+/** A team birthday for the TV calendar — month and day only, never the year. */
+export interface TeamBirthday {
+  id: string;
+  name: string;
+  month: number;   // 1–12
+  day: number;     // 1–31
 }
 
 /** A wall TV that checks in every few minutes, so the office can see it's

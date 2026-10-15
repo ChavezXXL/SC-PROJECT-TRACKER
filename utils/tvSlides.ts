@@ -14,7 +14,10 @@ export interface TvSlideMeta {
   single: boolean;
 }
 
-export const TV_SLIDE_CATALOG: Record<Exclude<TvSlideType, 'stats'>, TvSlideMeta> = {
+/** Slides the office can add. 'stats' is legacy; 'birthday' is added by the TV itself on the day. */
+export type CatalogSlideType = Exclude<TvSlideType, 'stats' | 'birthday'>;
+
+export const TV_SLIDE_CATALOG: Record<CatalogSlideType, TvSlideMeta> = {
   today:         { label: "Today's Score", desc: 'Jobs done, hours, due today, overdue — the day at a glance', icon: '🎯', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400', single: true },
   'attack-plan': { label: 'Attack Plan', desc: 'Ranked "run these in this order" — risk first, then due date', icon: '⚡', color: 'bg-orange-500/15 border-orange-500/30 text-orange-400', single: true },
   workers:       { label: 'Live Workers', desc: 'Who is running what right now, with timers', icon: '👷', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400', single: true },
@@ -25,13 +28,17 @@ export const TV_SLIDE_CATALOG: Record<Exclude<TvSlideType, 'stats'>, TvSlideMeta
   'stats-week':  { label: 'Weekly Stats', desc: 'Hours, jobs and sessions with a daily bar graph', icon: '📊', color: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400', single: true },
   weather:       { label: 'Weather', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400', single: true },
   'flow-map':    { label: 'Shop Flow Map', desc: 'Jobs moving through each stage, with live workers', icon: '🗺️', color: 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400', single: true },
+  calendar:      { label: 'Calendar', desc: 'This month — jobs due each day, holidays and team birthdays', icon: '📅', color: 'bg-sky-500/15 border-sky-500/30 text-sky-400', single: true },
+  news:          { label: 'Aerospace News', desc: 'Latest aviation, aerospace and space headlines — updates by itself', icon: '📰', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400', single: true },
   safety:        { label: 'Safety Message', desc: 'Big, bold safety reminders that rotate', icon: '⚠️', color: 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400', single: false },
   message:       { label: 'Announcement', desc: 'Your own messages — title, text and color', icon: '📢', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400', single: false },
 };
 
 /** Old slides saved as 'stats' still show (as Weekly Stats). */
 export function slideMeta(type: TvSlideType): TvSlideMeta {
-  return type === 'stats' ? TV_SLIDE_CATALOG['stats-week'] : (TV_SLIDE_CATALOG[type] || TV_SLIDE_CATALOG.message);
+  if (type === 'stats') return TV_SLIDE_CATALOG['stats-week'];
+  if (type === 'birthday') return { label: 'Happy Birthday', desc: 'Shown on the day', icon: '🎂', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400', single: true };
+  return TV_SLIDE_CATALOG[type] || TV_SLIDE_CATALOG.message;
 }
 
 /** The built-in lineup the TV shows when nothing is customized. Module-level
@@ -45,6 +52,9 @@ export const DEFAULT_TV_SLIDES: TvSlide[] = [
   { id: 'default-leaderboard-week', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
   { id: 'default-goals', type: 'goals', enabled: true },
   { id: 'default-stats-week', type: 'stats-week', enabled: true },
+  { id: 'default-calendar', type: 'calendar', enabled: true },
+  { id: 'default-news', type: 'news', enabled: true },
+  { id: 'default-safety', type: 'safety', enabled: true },
   { id: 'default-weather', type: 'weather', enabled: true },
 ];
 
