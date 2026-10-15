@@ -8656,14 +8656,14 @@ export default function App() {
               >
                 <Search className="w-5 h-5" aria-hidden="true" />
               </button>
-              {/* Settings — one tap, always visible (was buried at the bottom of the drawer) */}
-              <button
+              {/* Settings — one tap (was buried at the bottom of the drawer). Admin-only, like the sidebar entry. */}
+              {user?.role === 'admin' && <button
                 aria-label="Settings"
                 onClick={() => setView('admin-settings')}
                 className={`p-2.5 rounded-xl border min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 transition-all ${view === 'admin-settings' ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800/80 border-white/10 text-zinc-300 hover:text-white hover:bg-zinc-700'}`}
               >
                 <Settings className="w-5 h-5" aria-hidden="true" />
-              </button>
+              </button>}
               <NotificationBell permission={permission} requestPermission={requestPermission} userId={user?.id} alerts={alerts} markRead={markRead} markAllRead={markAllRead} clearAll={clearAll} />
             </div>
           </div>
@@ -8697,7 +8697,14 @@ export default function App() {
           {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
           {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
-          {view === 'admin-settings' && <SettingsView addToast={addToast} userId={user?.id} />}
+          {/* Settings are admin-only (the sidebar already hid them from managers;
+              the phone header button and in-app links didn't). */}
+          {view === 'admin-settings' && (user?.role === 'admin'
+            ? <SettingsView addToast={addToast} userId={user?.id} />
+            : <div className="max-w-md mx-auto mt-16 text-center px-4">
+                <p className="text-lg font-bold text-white">Settings are for the shop admin</p>
+                <p className="text-sm text-zinc-400 mt-2">Ask the owner to change shop settings.</p>
+              </div>)}
           {view === 'admin-weekly' && <WeeklyReportView />}
           {view === 'admin-reports' && <ReportsView />}
           {view === 'admin-live' && <LiveFloorMonitor user={user} onBack={() => setView('admin-dashboard')} addToast={addToast} />}
