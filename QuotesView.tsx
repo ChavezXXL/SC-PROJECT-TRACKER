@@ -270,8 +270,10 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     setBillTo(emptyContact());
     setShipTo(emptyContact());
     setShipToDifferent(false);
-    const nextNum = DB.getNextQuoteNumber(quotes, settings.quotePrefix);
-    setForm({ jobDescription: '', notes: '', terms: settings.defaultPaymentTerms || 'Net 30', validUntil: '', markupPct: 25, discountPct: 0, taxRate: settings.taxRate || 0, quoteNumber: nextNum });
+    const nextNum = DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber);
+    // Defaults come from Settings → Documents. A 0 / blank markup means "use 25%"
+    // — an accidental 0 must never quietly price every new quote at cost.
+    setForm({ jobDescription: '', notes: '', terms: settings.defaultPaymentTerms || 'Net 30', validUntil: '', markupPct: settings.defaultMarkup || 25, discountPct: settings.defaultDiscount || 0, taxRate: settings.taxRate || 0, quoteNumber: nextNum });
     const pf: Record<string, string> = {};
     (settings.customProjectFields || ['Purchase Order', 'Part No.']).forEach(f => pf[f] = '');
     setProjectFields(pf);
@@ -388,9 +390,8 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       createdAt: Date.now(),
     };
     const templates = [...(settings.quoteTemplates || []), template];
-    const updated = { ...settings, quoteTemplates: templates };
-    setSettings(updated);
-    DB.saveSettings(updated);
+    setSettings({ ...settings, quoteTemplates: templates });
+    DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
     addToast('success', `Template "${label}" saved`);
   };
 
@@ -407,9 +408,8 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     }));
     // Bump lastUsedAt so the most-used templates float to the top
     const templates = (settings.quoteTemplates || []).map(t => t.id === tpl.id ? { ...t, lastUsedAt: Date.now() } : t);
-    const updated = { ...settings, quoteTemplates: templates };
-    setSettings(updated);
-    DB.saveSettings(updated);
+    setSettings({ ...settings, quoteTemplates: templates });
+    DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
     setShowTemplatePicker(false);
     addToast('success', `Loaded template "${tpl.label}"`);
   };
@@ -424,9 +424,8 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     });
     if (!ok) return;
     const templates = (settings.quoteTemplates || []).filter(t => t.id !== id);
-    const updated = { ...settings, quoteTemplates: templates };
-    setSettings(updated);
-    DB.saveSettings(updated);
+    setSettings({ ...settings, quoteTemplates: templates });
+    DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
   };
 
   // Add a line item from a saved Process Template — pre-fills description, unit,
@@ -527,7 +526,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
 
     const quote: Quote = {
       id: editing?.id || `QT-${Date.now()}`,
-      quoteNumber: form.quoteNumber || editing?.quoteNumber || DB.getNextQuoteNumber(quotes, settings.quotePrefix),
+      quoteNumber: form.quoteNumber || editing?.quoteNumber || DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber),
       customer: billTo.name,
       billTo,
       shipTo: shipToDifferent ? shipTo : undefined,
@@ -556,7 +555,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       // Auto-save client contact info for next time
       if (billTo.name && (billTo.email || billTo.phone || billTo.address || billTo.contactPerson)) {
         const updatedContacts = { ...(settings.clientContacts || {}), [billTo.name]: billTo };
-        DB.saveSettings({ ...settings, clientContacts: updatedContacts });
+        DB.saveSettingsChanges({ clientContacts: updatedContacts });
       }
       addToast('success', editing ? 'Quote updated' : `Quote ${quote.quoteNumber} created`);
       setShowModal(false);
@@ -700,7 +699,7 @@ ${settings.companyPhone || ''}`.trim()
   };
 
   const duplicateQuote = async (q: Quote) => {
-    const dup: Quote = { ...q, id: `QT-${Date.now()}`, quoteNumber: DB.getNextQuoteNumber(quotes, settings.quotePrefix), status: 'draft', createdAt: Date.now(), sentAt: undefined, acceptedAt: undefined, declinedAt: undefined, linkedJobId: undefined };
+    const dup: Quote = { ...q, id: `QT-${Date.now()}`, quoteNumber: DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber), status: 'draft', createdAt: Date.now(), sentAt: undefined, acceptedAt: undefined, declinedAt: undefined, linkedJobId: undefined };
     await DB.saveQuote(dup);
     addToast('success', `Duplicated as ${dup.quoteNumber}`);
     setActionMenuId(null);
@@ -1103,7 +1102,7 @@ ${settings.companyPhone || ''}`.trim()
                       if (!c.name) return;
                       const updatedContacts = { ...(settings.clientContacts || {}), [c.name]: c };
                       setSettings({ ...settings, clientContacts: updatedContacts });
-                      DB.saveSettings({ ...settings, clientContacts: updatedContacts });
+                      DB.saveSettingsChanges({ clientContacts: updatedContacts });
                       addToast('success', `Saved contact info for ${c.name}`);
                     }}
                   />

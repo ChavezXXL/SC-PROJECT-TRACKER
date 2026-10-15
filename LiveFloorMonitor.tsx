@@ -24,7 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, GoalPeriod } from './types';
+import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice } from './types';
 import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
@@ -35,6 +35,12 @@ import type { JobETA, JobRiskLevel } from './utils/jobETA';
 import { getPartHistory } from './utils/partHistory';
 import { parseDueDate } from './utils/date';
 import { dueState, daysUntilDue, onTimeRate } from './utils/dueDates';
+import {
+  getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, clearTvToken, appBuild, describeDevice,
+  isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, startKeepAwakeVideo, installBackTrap, newTvToken,
+} from './utils/tvRuntime';
+import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm } from './components/TvScreens';
+import { effectiveTvSlides } from './utils/tvSlides';
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
@@ -671,19 +677,7 @@ type LeaderRow = { userId: string; name: string; hours: number; jobs: number; se
 // mint a new array every render and defeat TvGoalsSlide's React.memo.
 const EMPTY_GOALS: ShopGoal[] = [];
 
-// Default TV slides — module-scoped so the memoized slide list keeps a stable
-// identity (an inline array would reset the rotation timer on settings pushes).
-const DEFAULT_TV_SLIDES: TvSlide[] = [
-  { id: 'default-today', type: 'today', enabled: true },                             // Today's scorecard — FIRST
-  { id: 'default-attack-plan', type: 'attack-plan', enabled: true },                 // Ranked run order for the floor
-  { id: 'default-workers', type: 'workers', enabled: true },                         // Live workers (full-screen)
-  { id: 'default-at-risk', type: 'at-risk', enabled: true },                         // Jobs predicted to be late
-  { id: 'default-jobs', type: 'jobs', enabled: true },                               // All open jobs (full-screen)
-  { id: 'default-leaderboard-week', type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
-  { id: 'default-goals', type: 'goals', enabled: true },
-  { id: 'default-stats-week', type: 'stats-week', enabled: true },
-  { id: 'default-weather', type: 'weather', enabled: true },
-];
+// Default TV slides live in utils/tvSlides.ts (shared with Settings).
 
 // Leaderboard — ranked workers, big podium + medal bars
 const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period, count, metric, speed }: {
@@ -1085,11 +1079,12 @@ const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; 
 // ── AT-RISK JOBS slide — jobs predicted to miss their due date ────────
 // Memoized: the ETA computation walks every open job × every log — it must NOT
 // re-run on every parent fade/chrome re-render, only when data actually changes.
-const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeLogs, speed = 'normal' }: {
+const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeLogs, speed = 'normal', showCustomers = true }: {
   jobs: Job[];
   allLogs: TimeLog[];
   activeLogs: TimeLog[];
   speed?: 'slow' | 'normal' | 'fast' | 'off';
+  showCustomers?: boolean;   // Settings → TV → Privacy
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -1179,7 +1174,7 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
                         <p className="font-black text-white truncate" style={{ fontSize: 'clamp(1rem, 2vw, 1.5rem)' }}>
                           {job.poNumber} {job.partNumber ? `· ${job.partNumber}` : ''}
                         </p>
-                        {job.customer && <p className="text-white/50 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' }}>{job.customer}</p>}
+                        {showCustomers && job.customer && <p className="text-white/50 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' }}>{job.customer}</p>}
                       </div>
 
                       {/* ETA data */}
@@ -1245,11 +1240,12 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
 // Same ranking as the admin dashboard's Attack Plan: risk level first
 // (critical → at-risk → watch → on-track), then earliest due date, then
 // priority. #1 glows orange — that's the job that should never sit idle.
-const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs, activeLogs, speed = 'normal' }: {
+const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs, activeLogs, speed = 'normal', showCustomers = true }: {
   jobs: Job[];
   allLogs: TimeLog[];
   activeLogs: TimeLog[];
   speed?: 'slow' | 'normal' | 'fast' | 'off';
+  showCustomers?: boolean;   // Settings → TV → Privacy
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -1350,7 +1346,7 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
                     )}
                   </div>
                   <p className="text-white/50 truncate mt-0.5" style={{ fontSize: 'clamp(0.65rem, 0.95vw, 0.85rem)' }}>
-                    {[job.customer, eta.riskReason].filter(Boolean).join(' — ')}
+                    {[showCustomers ? job.customer : '', eta.riskReason].filter(Boolean).join(' — ')}
                   </p>
                 </div>
 
@@ -1810,6 +1806,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // the local cache may not have the TV link token yet.
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const setSettings = useCallback((s: SystemSettings) => { setSettingsRaw(s); setSettingsLoaded(true); }, []);
+  // Opened from the office's "Preview TV" button — behaves like the TV, but
+  // doesn't save the link, report in, or trap the Back button on that laptop.
+  const isPreview = React.useMemo(() => new URLSearchParams(window.location.search).get('preview') === '1', []);
   const [compact, setCompact] = useState(false);
   const [dimMode, setDimMode] = useState(false);
   // STANDALONE TV LINK (?tv=TOKEN): auto-enter slideshow on page load — the
@@ -2058,69 +2057,183 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     return () => clearInterval(id);
   }, []);
 
-  // ── Wake Lock — keeps the TV screen and browser tab alive 24/7.
-  // Screen Wake Lock API prevents the OS/browser from sleeping the tab.
-  // Falls back gracefully on browsers that don't support it (Smart TVs, Safari).
+  // (Wake lock + rAF keepalive live in the single tvMode effect above — this
+  // file used to run a second copy of each for standalone TVs.)
+
+  // ── Keep the panel awake where Wake Lock isn't honored (most built-in TV
+  // browsers): a tiny always-playing muted video, which TV OSes treat as
+  // content on screen and so don't start the screensaver / auto-off timer.
   useEffect(() => {
-    if (!standalone) return;
-    let lock: WakeLockSentinel | null = null;
-    const acquire = async () => {
-      try {
-        if ('wakeLock' in navigator) {
-          lock = await (navigator as any).wakeLock.request('screen');
-        }
-      } catch { /* browser denied — non-fatal */ }
-    };
-    acquire();
-    // Re-acquire when tab becomes visible again (lock is released on hide)
-    const onVis = () => { if (document.visibilityState === 'visible') acquire(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      lock?.release().catch(() => {});
-    };
-  }, [standalone]);
+    if (!tvMode) return;
+    return startKeepAwakeVideo();
+  }, [tvMode]);
 
-  // ── Keepalive for standalone TV URL — rAF loop + auto-reload safety net.
-  // requestAnimationFrame is the only signal browsers unconditionally respect
-  // as "active rendering." DOM read/writes alone aren't enough on Samsung Tizen,
-  // LG webOS, Fire TV, and older Chromium TV builds — they all kill JS timers
-  // after ~10 min of no rAF activity regardless of setInterval heartbeats.
+  // ── A remote's Back button must not leave the TV page.
   useEffect(() => {
-    if (!standalone) return;
+    if (!standalone || isPreview) return;
+    return installBackTrap();
+  }, [standalone, isPreview]);
 
-    // rAF loop — runs 24/7 while the page is open, prevents every known
-    // form of browser tab throttling and culling on TV platforms.
-    let rafId = 0;
-    let lastWrite = 0;
-    const loop = (ts: number) => {
-      // Write a timestamp to a data-attr every 10 s — cheap but meaningful DOM work.
-      if (ts - lastWrite > 10_000) {
-        lastWrite = ts;
-        try { document.body.dataset.tvAlive = String(Math.floor(ts / 1000)); } catch {}
-      }
-      rafId = requestAnimationFrame(loop);
-    };
-    rafId = requestAnimationFrame(loop);
-
-    // Auto-reload after 6 hours — resets Firebase connection, clears memory,
-    // gives a fresh start. TV typically runs 8-12 h/day so one reload mid-shift
-    // is fine and far better than a stale or dead display.
-    const reloadTimer = setTimeout(() => { try { window.location.reload(); } catch {} }, 6 * 60 * 60 * 1000);
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      clearTimeout(reloadTimer);
-    };
-  }, [standalone]);
-
-  // Auto-reload for interactive tvMode (non-standalone) — same reason as above.
-  // Only fires if the user has been in TV mode for 6 continuous hours.
+  // ── Daily refresh at a quiet hour (default 3 AM) — fresh connection, fresh
+  // memory, latest app version. This used to reload every 6 hours, which put
+  // a blank "Connecting…" moment on the wall in the middle of a shift.
   useEffect(() => {
-    if (!tvMode || standalone) return;
-    const id = setTimeout(() => { try { window.location.reload(); } catch {} }, 6 * 60 * 60 * 1000);
+    if (!tvMode) return;
+    const delay = msUntilDailyRefresh(settings.tvRefreshHour ?? 3);
+    const id = setTimeout(() => { try { window.location.reload(); } catch {} }, delay);
     return () => clearTimeout(id);
-  }, [tvMode, standalone]);
+  }, [tvMode, settings.tvRefreshHour]);
+
+  // ── Live connection status — shown on screen, and a watchdog: if the TV
+  // has internet but hasn't been getting live data for 10 minutes, the data
+  // connection is stuck (happens after long sleeps) → refresh to recover.
+  const [sync, setSync] = useState<{ online: boolean; synced: boolean }>({ online: true, synced: true });
+  useEffect(() => DB.subscribeSyncStatus(setSync), []);
+  const isLive = sync.online && sync.synced;
+  const [downSince, setDownSince] = useState<number | null>(null);
+  useEffect(() => {
+    if (isLive) { setDownSince(null); return; }
+    setDownSince(prev => prev ?? Date.now());
+  }, [isLive]);
+  useEffect(() => {
+    if (!tvMode || downSince === null) return;
+    const id = window.setInterval(() => {
+      if (navigator.onLine !== false && Date.now() - downSince > 10 * 60_000) {
+        try { window.location.reload(); } catch {}
+      }
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [tvMode, downSince]);
+
+  // ── Office ↔ TV: check in every 5 minutes (so Settings can show "online,
+  // last seen 1 min ago"), and follow commands sent from Settings.
+  const deviceId = React.useMemo(() => getTvDeviceId(), []);
+  const startedAtRef = useRef(Date.now());
+  const [deviceDoc, setDeviceDoc] = useState<TvDevice | null | undefined>(undefined); // undefined = not loaded yet
+  const [identifyName, setIdentifyName] = useState<string | null>(null);
+  const linkValid = !!standalone && !!tvToken && !!settings.tvToken && tvToken === settings.tvToken;
+  const reportsIn = linkValid && !isPreview;
+  useEffect(() => {
+    if (!reportsIn) return;
+    // A command runs when it's newer than the last one this TV handled —
+    // never by comparing with the TV's own clock: TV clocks drift, and one
+    // running a few minutes slow kept refreshing itself over and over. The
+    // handled refresh is remembered across the reload it causes.
+    const RELOAD_KEY = 'fabtrack_tv_reload_seen';
+    let handledReload: number | null = null;     // null = take the first look as "nothing pending"
+    try { const v = localStorage.getItem(RELOAD_KEY); if (v) handledReload = Number(v) || 0; } catch {}
+    let handledIdentify: number | null = null;
+    let identifyTimer: number | undefined;
+    const unsub = DB.subscribeTvDevice(deviceId, d => {
+      setDeviceDoc(d);
+      const reloadAt = d?.reloadAt || 0, identifyAt = d?.identifyAt || 0;
+      if (handledReload === null) handledReload = reloadAt;
+      if (handledIdentify === null) handledIdentify = identifyAt;
+      if (!d) return;
+      if (d.name) saveTvName(d.name);
+      if (reloadAt > handledReload) {
+        handledReload = reloadAt;
+        try { localStorage.setItem(RELOAD_KEY, String(reloadAt)); } catch {}
+        try { window.location.reload(); } catch {}
+        return;
+      }
+      if (identifyAt > handledIdentify) {
+        handledIdentify = identifyAt;
+        setIdentifyName(d.name || getSavedTvName());
+        window.clearTimeout(identifyTimer);
+        identifyTimer = window.setTimeout(() => setIdentifyName(null), 10_000);
+      }
+    });
+    return () => { unsub(); window.clearTimeout(identifyTimer); };
+  }, [reportsIn, deviceId]);
+  const slideLabelRef = useRef('');
+  const isNewDevice = deviceDoc === null;
+  useEffect(() => {
+    // Wait until our row has loaded, so a name set in the office isn't
+    // overwritten by this TV's old local name.
+    if (!reportsIn || deviceDoc === undefined || deviceDoc?.revoked) return;
+    const checkIn = () => DB.tvCheckIn({
+      id: deviceId,
+      ...(isNewDevice ? { name: getSavedTvName() } : {}),
+      startedAt: startedAtRef.current,
+      online: navigator.onLine !== false,
+      synced: sync.synced,
+      screen: `${window.screen?.width || window.innerWidth}×${window.screen?.height || window.innerHeight}`,
+      agent: describeDevice(),
+      build: appBuild(),
+      slide: slideLabelRef.current,
+    });
+    checkIn();
+    const id = window.setInterval(checkIn, 5 * 60_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportsIn, deviceDoc === undefined, isNewDevice, deviceDoc?.revoked, sync.online, sync.synced]);
+
+  // ── TV look: text size (rem scale for screens read from across the shop).
+  useEffect(() => {
+    if (!tvMode) return;
+    const px = settings.tvTextSize === 'xl' ? '20px' : settings.tvTextSize === 'large' ? '18px' : '';
+    const prev = document.documentElement.style.fontSize;
+    document.documentElement.style.fontSize = px;
+    return () => { document.documentElement.style.fontSize = prev; };
+  }, [tvMode, settings.tvTextSize]);
+
+  // ── Burn-in guard: drift the whole picture a few pixels every 2 minutes so
+  // no edge sits on the same pixels all day (matters on OLED panels).
+  const [drift, setDrift] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    if (!tvMode || settings.tvBurnInGuard === false) { setDrift({ x: 0, y: 0 }); return; }
+    const id = window.setInterval(() => setDrift({ x: Math.round(Math.random() * 8 - 4), y: Math.round(Math.random() * 6 - 3) }), 120_000);
+    return () => window.clearInterval(id);
+  }, [tvMode, settings.tvBurnInGuard]);
+
+  // ── Quiet hours: re-checked every minute.
+  const [minuteOfDay, setMinuteOfDay] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
+  useEffect(() => {
+    const id = window.setInterval(() => { const d = new Date(); setMinuteOfDay(d.getHours() * 60 + d.getMinutes()); }, 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  // minuteOfDay is in the deps only to re-check as the clock moves.
+  const quietUntil = React.useMemo(() => {
+    const now = new Date();
+    if (!isTvQuiet(settings.tvQuietHours, now)) return null;
+    const until = tvQuietUntil(settings.tvQuietHours, now);
+    return until ? resumeLabel(until, now) : '';
+  }, [settings.tvQuietHours, minuteOfDay]);
+  const quiet = quietUntil !== null;
+
+  const [exitConfirm, setExitConfirm] = useState(false);
+  const stayOnTv = useCallback(() => setExitConfirm(false), []);
+
+  // "TV Mode ↗" buttons: show the board in a new tab, as a preview. A full TV
+  // link would turn this computer into a wall TV for good (it remembers the
+  // link and opens the board on every visit). Real TVs connect at /tv with a
+  // code from Settings → TV Display.
+  const openTvMode = async () => {
+    let token = settings.tvToken;
+    if (!token) {
+      token = newTvToken();
+      try { await DB.saveSettingsChanges({ tvToken: token }); }
+      catch { addToast('error', "Couldn't create the TV link — try again"); return; }
+    }
+    window.open(`/tv?tv=${encodeURIComponent(token)}&preview=1`, '_blank', 'noopener');
+  };
+
+  // Disconnected from the office → forget the link for good and start over at
+  // the plain /tv address (the connect code). Leaving the link in the address
+  // bar brought the board back on the next reload — or as soon as the office
+  // removed this TV from its list.
+  useEffect(() => {
+    if (!standalone || isPreview || !deviceDoc?.revoked) return;
+    clearTvToken();
+    try { window.location.replace('/tv'); } catch {}
+  }, [standalone, isPreview, deviceDoc?.revoked]);
+  // Stuck on "Connecting…" (no internet when the TV booted, nothing cached) → retry the whole page.
+  useEffect(() => {
+    if (!standalone || settingsLoaded) return;
+    const t = setTimeout(() => { try { window.location.reload(); } catch {} }, 120_000);
+    return () => clearTimeout(t);
+  }, [standalone, settingsLoaded]);
 
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
@@ -2263,18 +2376,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // DEFAULT_TV_SLIDES (each tab gets its own dedicated full-screen slide).
   // Users can customize in Settings → TV Display → Slides.
   // Dedup enabled slides by id (prevents "same slide shows twice" bugs from legacy configs)
-  const configuredTvSlides = React.useMemo(() => {
-    const enabled = (settings.tvSlides || []).filter(s => s.enabled);
-    if (enabled.length === 0) return DEFAULT_TV_SLIDES;
-    const seen = new Set<string>();
-    const deduped: TvSlide[] = [];
-    for (const s of enabled) {
-      if (seen.has(s.id)) continue;
-      seen.add(s.id);
-      deduped.push(s);
-    }
-    return deduped;
-  }, [settings.tvSlides]);
+  const configuredTvSlides = React.useMemo(() => effectiveTvSlides(settings.tvSlides), [settings.tvSlides]);
   // Keep the ref in sync so the keyboard handler can read the count without re-binding
   slideCountRef.current = configuredTvSlides.length;
 
@@ -2435,19 +2537,39 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // shown until the shop's settings load, and only for the CURRENT link —
   // "Reset link" in Settings now actually locks out the old one.
   if (standalone) {
-    const msg = (title: string, body?: string) => (
-      <div className="fixed inset-0 bg-zinc-950 text-white flex items-center justify-center p-8 text-center">
-        <div className="max-w-xl">
-          <p className="text-3xl font-black">{title}</p>
-          {body && <p className="text-lg text-white/60 mt-4 leading-relaxed">{body}</p>}
+    // A link this TV already used (cached settings) is enough to show the
+    // cached board while offline — no dead "Connecting…" screen after a
+    // power cut that also took the internet down.
+    const cachedOk = !!tvToken && settings.tvToken === tvToken;
+    if (!settingsLoaded && !cachedOk) {
+      return (
+        <div className="fixed inset-0 bg-zinc-950 text-white flex items-center justify-center p-8 text-center">
+          <div className="max-w-xl">
+            <p className="text-3xl font-black">Connecting…</p>
+            <p className="text-lg text-white/50 mt-4">Waiting for the internet. This screen retries by itself.</p>
+          </div>
         </div>
-      </div>
-    );
-    if (!settingsLoaded) return msg('Connecting…');
-    if (!settings.tvToken || !tvToken || tvToken !== settings.tvToken) {
-      return msg(
-        'This TV link is out of date',
-        "On a computer that's signed in, go to Settings → TV Display, copy the TV link, and open it on this screen.",
+      );
+    }
+    if (!isPreview && (deviceDoc?.revoked || !linkValid)) {
+      return (
+        <TvPairScreen
+          deviceId={deviceId}
+          reason={deviceDoc?.revoked ? 'disconnected' : tvToken ? 'outdated' : 'new'}
+          onPaired={async (token, name) => {
+            saveTvToken(token);
+            saveTvName(name);
+            try { await DB.tvCheckIn({ id: deviceId, name, revoked: false }); } catch {}
+            window.location.replace(`/tv?tv=${encodeURIComponent(token)}`);
+          }}
+        />
+      );
+    }
+    if (isPreview && !linkValid) {
+      return (
+        <div className="fixed inset-0 bg-zinc-950 text-white flex items-center justify-center p-8 text-center">
+          <p className="text-2xl font-black">This preview link is out of date — open the preview again from Settings.</p>
+        </div>
       );
     }
   }
@@ -2462,15 +2584,41 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const currentSlide = configuredTvSlides[tvSlideIdx] || configuredTvSlides[0];
 
     const overdueCount = openJobs.filter(j => dueState(j) === 'overdue').length;
+    const dueTodayCount = openJobs.filter(j => dueState(j) === 'today').length;
+
+    // Overlays that sit above everything (including the quiet-hours clock).
+    const overlays = (
+      <>
+        {identifyName && <TvIdentifyOverlay name={identifyName} />}
+        {exitConfirm && (
+          <TvExitConfirm
+            onStay={stayOnTv}
+            onExit={() => {
+              // Forget the link so this browser opens normally next time.
+              clearTvToken();
+              window.location.href = '/';
+            }}
+          />
+        )}
+      </>
+    );
+
+    if (quiet && !isPreview) {
+      return <>{<TvQuietScreen companyName={settings.companyName} resumes={quietUntil || undefined} />}{overlays}</>;
+    }
+
+    // Edge margin: real TVs crop 2–5% of the picture ("overscan").
+    const fit = settings.tvScreenFit || 'small';
+    const safe = fit === 'none' ? { v: '0vh', h: '0vw' } : fit === 'large' ? { v: '4vh', h: '5vw' } : { v: '2vh', h: '2.5vw' };
 
     const renderSlide = (slide: TvSlide) => {
       switch (slide.type) {
         case 'today':
           return <TvTodaySlide jobs={jobs} allLogs={allLogs} openJobs={openJobs} activeLogs={activeLogs} showRevenue={settings.tvShowRevenue === true} />;
         case 'attack-plan':
-          return <TvAttackPlanSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} />;
+          return <TvAttackPlanSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} />;
         case 'at-risk':
-          return <TvAtRiskSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} />;
+          return <TvAtRiskSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} />;
         case 'workers':
           // Full-screen live workers view — no jobs belt on this slide. Jobs get their own 'jobs' slide.
           return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={false} />;
@@ -2539,6 +2687,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         default: return 'Slide';
       }
     };
+    if (currentSlide) slideLabelRef.current = slideLabel(currentSlide);
 
     return (
       <div className="fixed inset-0 z-[9999] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 text-white overflow-hidden">
@@ -2555,7 +2704,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             physical edge. Explicit top/right/bottom/left (not the `inset`
             shorthand) for older smart-TV browsers. Hard-coded on purpose —
             no settings dependency. */}
-        <div className="absolute overflow-hidden" style={{ top: '2vh', bottom: '2vh', left: '2.5vw', right: '2.5vw' }}>
+        {overlays}
+        <div className="absolute overflow-hidden" style={{ top: safe.v, bottom: safe.v, left: safe.h, right: safe.h, transform: drift.x || drift.y ? `translate(${drift.x}px, ${drift.y}px)` : undefined, transition: 'transform 4s ease-in-out' }}>
         {/* ── Shift Alarm Banner ── pops up when an alarm fires, auto-dismisses */}
         {tvAlarmBanner && (
           <div className="absolute top-0 left-0 right-0 z-[10002] flex items-center justify-center pointer-events-none animate-fade-in">
@@ -2585,10 +2735,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           <button
             aria-label="Exit TV Mode"
             onClick={() => {
-              if (standalone) {
-                // Clear localStorage flag so the browser doesn't auto-re-enter TV mode
-                try { localStorage.removeItem('fabtrack_tv'); } catch {}
-                window.location.href = window.location.pathname;
+              if (isPreview) {
+                // Preview tab from Settings — nothing saved, just close it.
+                window.close();
+                window.location.href = '/';
+              } else if (standalone) {
+                // A wall TV must not leave on one stray remote press.
+                setExitConfirm(true);
               } else {
                 setTvMode(false);
               }
@@ -2632,25 +2785,31 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           >
             {/* Left — shop */}
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              {settings.companyLogo && <img src={settings.companyLogo} alt="" className="object-contain shrink-0" style={{ height: 'clamp(1.75rem, 3.5vw, 3rem)' }} />}
+              {settings.tvCompanyHeader !== false && settings.companyLogo && <img src={settings.companyLogo} alt="" className="object-contain shrink-0" style={{ height: 'clamp(1.75rem, 3.5vw, 3rem)' }} />}
               <div className="min-w-0">
-                {settings.companyName && <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1rem, 1.8vw, 1.5rem)' }}>{settings.companyName}</p>}
-                <div className="flex items-center gap-2 mt-0.5">
-                  <Radio className="w-3 h-3 text-red-500 animate-pulse shrink-0" aria-hidden="true" />
-                  <span className="font-black text-white/60 uppercase tracking-[0.3em] truncate" style={{ fontSize: 'clamp(0.55rem, 0.7vw, 0.7rem)' }}>Live Shop Floor</span>
-                </div>
+                {settings.tvCompanyHeader !== false && settings.companyName && <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1rem, 1.8vw, 1.5rem)' }}>{settings.companyName}</p>}
+                {/* Truthful status: the old pulsing "LIVE" dot stayed on even
+                    when the TV had lost its connection hours ago. */}
+                {settings.tvShowConnection !== false ? (
+                  <div className="mt-1"><TvConnectionBadge online={sync.online} synced={sync.synced} downSince={downSince} /></div>
+                ) : (
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <Radio className="w-3 h-3 text-red-500 animate-pulse shrink-0" aria-hidden="true" />
+                    <span className="font-black text-white/60 uppercase tracking-[0.3em] truncate" style={{ fontSize: 'clamp(0.55rem, 0.7vw, 0.7rem)' }}>Live Shop Floor</span>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Center — clock */}
-            <div className="shrink-0 text-center">
+            {settings.tvShowClock !== false && <div className="shrink-0 text-center">
               <LiveClock size="huge" />
               <p className="text-white/40 font-semibold mt-1 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.875rem)' }}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-            </div>
+            </div>}
 
             {/* Right — stats + weather */}
             <div className="shrink-0 flex items-center gap-3 sm:gap-5 min-w-0 flex-1 justify-end flex-wrap">
-              <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 1.2vw, 1.25rem)' }}>
+              {settings.tvShowStats !== false && <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 1.2vw, 1.25rem)' }}>
                 <div className="text-center">
                   <div className="flex items-center gap-1 justify-center">
                     <Users className="w-3 h-3 sm:w-4 sm:h-4 text-emerald-400 shrink-0" aria-hidden="true" />
@@ -2674,6 +2833,18 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                   </div>
                   <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Open</p>
                 </div>
+                {dueTodayCount > 0 && (
+                  <>
+                    <div className="w-px h-8 bg-white/10" />
+                    <div className="text-center">
+                      <div className="flex items-center gap-1 justify-center">
+                        <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-amber-400 shrink-0" aria-hidden="true" />
+                        <span className="font-black text-amber-300 tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{dueTodayCount}</span>
+                      </div>
+                      <p className="font-black text-amber-400/70 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Due Today</p>
+                    </div>
+                  </>
+                )}
                 {overdueCount > 0 && (
                   <>
                     <div className="w-px h-8 bg-white/10" />
@@ -2686,7 +2857,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                     </div>
                   </>
                 )}
-              </div>
+              </div>}
               {/* Weather — compact inline */}
               {settings.tvShowWeather !== false && <TVWeather lat={settings.weatherLat} lon={settings.weatherLon} />}
             </div>
@@ -2760,7 +2931,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             </button>
             <button
               aria-label="Enter TV Mode"
-              onClick={() => window.open(window.location.pathname + '?tv=1', '_blank', 'noopener')}
+              onClick={openTvMode}
               className="ml-1 px-3 py-2 rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-amber-900/40 min-h-[36px] transition-all"
               title="Open TV Mode in a new tab — persistent, fullscreen, no accidental exits"
             >
@@ -2813,7 +2984,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         {activeLogs.length > 0 && (
           <div className="px-4 pt-4 max-w-3xl mx-auto">
             <button
-              onClick={() => window.open(window.location.pathname + '?tv=1', '_blank', 'noopener')}
+              onClick={openTvMode}
               className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/5 border border-amber-500/20 hover:border-amber-500/40 hover:from-amber-500/15 hover:to-orange-500/10 transition-all text-left group"
             >
               <div className="flex items-center gap-3 min-w-0">
@@ -2842,7 +3013,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
               <h2 className="text-white/60 font-bold text-xl mb-2">Floor is quiet</h2>
               <p className="text-white/20 text-sm max-w-xs mb-6">When workers start timers, their live activity will appear here.</p>
               <button
-                onClick={() => window.open(window.location.pathname + '?tv=1', '_blank', 'noopener')}
+                onClick={openTvMode}
                 className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-sm font-bold flex items-center gap-2 shadow-lg shadow-amber-900/40 transition-all"
               >
                 <Maximize2 className="w-4 h-4" aria-hidden="true" /> TV Slideshow ↗

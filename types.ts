@@ -771,6 +771,15 @@ export interface SystemSettings {
   tvSlideDuration?: number;    // Default seconds per slide (default 15)
   tvSlideshowEnabled?: boolean; // Enable slideshow rotation
   tvToken?: string;            // Unique token for shareable TV URL (?tv=TOKEN)
+  // ── TV screen (how it looks + behaves on the wall) ──
+  tvTextSize?: 'normal' | 'large' | 'xl';     // for screens read from across the shop
+  tvScreenFit?: 'none' | 'small' | 'large';   // edge margin for TVs that crop the picture
+  tvBurnInGuard?: boolean;                    // default true — drift the picture a few px
+  tvShowConnection?: boolean;                 // default true — "Live / Reconnecting" badge
+  /** Clock-only screen outside these hours (saves the panel overnight).
+   *  `days` = whole quiet days, 0 = Sunday … 6 = Saturday (e.g. weekends). */
+  tvQuietHours?: { enabled: boolean; start: string; end: string; days?: number[] }; // "18:00" → "05:00"
+  tvRefreshHour?: number;                     // daily refresh, 0-23 (default 3 = 3 AM)
   // ── Customizable Shop Goals (per-company targets) ──
   shopGoals?: ShopGoal[];
   // ── Shop Profile (set during onboarding wizard — tailors the app per industry) ──
@@ -975,6 +984,34 @@ export interface TvSlide {
   leaderboardMetric?: 'hours' | 'jobs' | 'mixed';   // default 'mixed'
   leaderboardPeriod?: 'today' | 'week' | 'month';   // default 'week'
   leaderboardCount?: number;                         // how many to show, default 5
+}
+
+/** A wall TV that checks in every few minutes, so the office can see it's
+ *  connected and send it commands (refresh, show its name, disconnect). */
+export interface TvDevice {
+  id: string;
+  name: string;
+  lastSeen: number;        // last check-in (ms)
+  startedAt: number;       // when the TV screen last (re)loaded
+  online: boolean;         // browser reports a network connection
+  synced: boolean;         // getting live data from the server (not its cached copy)
+  screen?: string;         // e.g. "1920×1080"
+  agent?: string;          // short browser / device description
+  build?: string;          // app version the TV is running
+  slide?: string;          // slide on screen at the last check-in
+  reloadAt?: number;       // office asked this TV to refresh
+  identifyAt?: number;     // office asked this TV to show its name
+  revoked?: boolean;       // office disconnected it — TV forgets its link
+}
+
+/** Short-lived pairing: the TV shows a 6-digit code, the office types it in. */
+export interface TvPairing {
+  code: string;
+  deviceId: string;
+  createdAt: number;
+  status: 'waiting' | 'approved';
+  token?: string;
+  name?: string;
 }
 
 export interface ToastMessage {

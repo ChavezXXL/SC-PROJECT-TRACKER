@@ -154,6 +154,7 @@ import { ShopFlowMap } from './components/ShopFlowMap';
 import { RecentStageMoves } from './components/RecentStageMoves';
 import { usePrompt } from './components/usePrompt';
 import { useShipDate, resolveShipAt, type ShipChoice } from './components/useShipDate';
+import { saveTvToken, getSavedTvToken } from './utils/tvRuntime';
 import { OperationsStageMapper } from './components/OperationsStageMapper';
 import { ClientUpdateGenerator } from './components/ClientUpdateGenerator';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
@@ -7916,58 +7917,61 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
 // ── TvAutoReload — hooks global error events and auto-reloads after 10s if
 // a JS error fires while the TV is in standalone mode. Simpler than a class
 // error boundary and handles async/network crashes class EBs miss.
-const TvAutoReload: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [crashed, setCrashed] = useState(false);
-  const [countdown, setCountdown] = useState(10);
-  useEffect(() => {
-    const onErr = () => setCrashed(true);
-    window.addEventListener('error', onErr);
-    window.addEventListener('unhandledrejection', onErr);
-    return () => { window.removeEventListener('error', onErr); window.removeEventListener('unhandledrejection', onErr); };
-  }, []);
-  useEffect(() => {
-    if (!crashed) return;
-    const id = setInterval(() => setCountdown(n => { if (n <= 1) { window.location.reload(); } return n - 1; }), 1000);
-    return () => clearInterval(id);
-  }, [crashed]);
-  if (crashed) return (
-    <div className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-center gap-6 text-white">
-      <div className="text-6xl animate-pulse">📡</div>
-      <h1 className="text-3xl font-black">Reconnecting…</h1>
-      <p className="text-zinc-400 text-lg">Display will refresh in <span className="text-white font-bold">{countdown}s</span></p>
-      <button onClick={() => window.location.reload()} className="mt-2 px-6 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl font-bold text-sm">Reload now</button>
-    </div>
-  );
-  return <>{children}</>;
-};
+// It is a real error boundary now: it reloads only when the TV screen itself
+// crashed. It used to treat ANY background error — a failed sound, a dropped
+// network request, a browser extension — as a crash and blank the wall with
+// "Reconnecting…" and a reload, which is one way a TV "switched out" mid-day.
+class TvAutoReload extends React.Component<{ children: React.ReactNode }, { crashed: boolean; countdown: number }> {
+  state = { crashed: false, countdown: 10 };
+  private timer: number | undefined;
+  static getDerivedStateFromError() { return { crashed: true }; }
+  componentDidCatch(err: unknown) { console.error('[FabTrack TV] screen crashed — reloading', err); }
+  componentDidUpdate(_p: unknown, prev: { crashed: boolean }) {
+    if (this.state.crashed && !prev.crashed) {
+      this.timer = window.setInterval(() => {
+        this.setState(s => {
+          if (s.countdown <= 1) window.location.reload();
+          return { countdown: s.countdown - 1 };
+        });
+      }, 1000);
+    }
+  }
+  componentWillUnmount() { if (this.timer) window.clearInterval(this.timer); }
+  render() {
+    if (!this.state.crashed) return this.props.children;
+    return (
+      <div className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-center gap-6 text-white">
+        <div className="text-6xl animate-pulse">📡</div>
+        <h1 className="text-3xl font-black">Reconnecting…</h1>
+        <p className="text-zinc-400 text-lg">Display will refresh in <span className="text-white font-bold">{this.state.countdown}s</span></p>
+        <button onClick={() => window.location.reload()} className="mt-2 px-6 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl font-bold text-sm">Reload now</button>
+      </div>
+    );
+  }
+}
 
 export default function App() {
-  // ── TV mode detection ───────────────────────────────────────────────
-  // Priority: URL param (?tv=1) → localStorage fallback (persists across browser restarts)
-  // When detected via URL, write to localStorage so Smart TV browsers that lose
-  // the query string on restart can recover automatically.
-  const [tvToken] = useState<string | null>(() => {
+  // ── TV screen detection ─────────────────────────────────────────────
+  // "/tv" is the one address a wall TV needs: it remembers its link after a
+  // one-time pairing code. Older "?tv=TOKEN" links keep working. A TV browser
+  // that restarts on "/" with a saved link goes straight back to the board.
+  // "&preview=1" (Settings → Preview) shows the board without saving anything.
+  const [tvRoute] = useState<{ active: boolean; token: string | null }>(() => {
     const params = new URLSearchParams(window.location.search);
+    const isTvPath = /^\/tv\/?$/.test(window.location.pathname);
+    const preview = params.get('preview') === '1';
     const urlToken = params.get('tv');
-    if (urlToken) {
-      // Remember the link (the actual token — this used to store "1") so a
-      // TV whose browser restarts without the query string recovers.
-      try { localStorage.setItem('fabtrack_tv', urlToken); } catch {}
-      return urlToken;
+    const realUrlToken = urlToken && urlToken !== '1' ? urlToken : null;   // "1" was the old placeholder
+    if (realUrlToken && !preview) saveTvToken(realUrlToken);
+    const saved = getSavedTvToken();
+    if (isTvPath || urlToken) return { active: true, token: realUrlToken || (preview ? null : saved) };
+    if (saved) {
+      try { history.replaceState({}, '', `/tv?tv=${encodeURIComponent(saved)}`); } catch {}
+      return { active: true, token: saved };
     }
-    // localStorage recovery — TV browser restarted without the ?tv param
-    try {
-      const saved = localStorage.getItem('fabtrack_tv');
-      if (saved) {
-        // Restore the URL param so TvAutoReload reloads preserve it
-        const p = new URLSearchParams(window.location.search);
-        p.set('tv', saved);
-        history.replaceState({}, '', `${window.location.pathname}?${p.toString()}`);
-        return saved;
-      }
-    } catch {}
-    return null;
+    return { active: false, token: null };
   });
+  const tvToken = tvRoute.token;
 
   // Check for Customer Portal mode
   // Supports both legacy (?portal=CUSTOMER_NAME) and short slug (?c=slug)
@@ -8198,7 +8202,7 @@ export default function App() {
 
   // ── Customer Portal Mode ──
   // Standalone TV mode — no login needed, loads account data via token
-  if (tvToken) {
+  if (tvRoute.active) {
     return <TvAutoReload><LiveFloorMonitor standalone tvToken={tvToken} /></TvAutoReload>;
   }
 
@@ -8568,7 +8572,7 @@ export default function App() {
           }}
           onSkip={() => {
             setAppSettings({ ...appSettings, onboardingComplete: true });
-            DB.saveSettings({ ...appSettings, onboardingComplete: true });
+            DB.saveSettingsChanges({ onboardingComplete: true });
           }}
         />
       )}

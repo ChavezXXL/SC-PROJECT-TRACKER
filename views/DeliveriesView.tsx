@@ -395,7 +395,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           onCancel={() => setCreating(false)}
           onSave={async (d, updatedContacts) => {
             await DB.saveDelivery(d);
-            if (updatedContacts) await DB.saveSettings({ ...settings, clientContacts: updatedContacts });
+            if (updatedContacts) await DB.saveSettingsChanges({ clientContacts: updatedContacts });
             setCreating(false);
             addToast('success', `Run ${d.runNumber} created — ${d.stops.length} stops`);
           }}
@@ -413,7 +413,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
             onCancel={() => setEditingId(null)}
             onSave={async (updated, updatedContacts) => {
               await DB.saveDelivery(updated);
-              if (updatedContacts) await DB.saveSettings({ ...settings, clientContacts: updatedContacts });
+              if (updatedContacts) await DB.saveSettingsChanges({ clientContacts: updatedContacts });
               setEditingId(null);
               addToast('success', `Saved ${updated.runNumber}`);
             }}

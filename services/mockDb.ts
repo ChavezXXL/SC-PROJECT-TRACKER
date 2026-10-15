@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction, TvDevice, TvPairing } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
 import { setShopStages, isShippedStageId } from "../utils/dueDates";
@@ -379,6 +379,8 @@ const COL = {
   get notes()             { return colPath(getTenantId(), "notes"); },
   get customerPos()       { return colPath(getTenantId(), "customer_pos"); },
   get shopActions()       { return colPath(getTenantId(), "shop_actions"); },
+  get tvDevices()         { return colPath(getTenantId(), "tv_devices"); },
+  get tvPairing()         { return colPath(getTenantId(), "tv_pairing"); },
 };
 
 // --------------------
@@ -1271,6 +1273,48 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
   return localSubscribe(() => merge(readLS(LS.settings, fallback)), cb);
 }
 
+/**
+ * Save only the settings fields that changed. `undefined` really deletes the
+ * field. (A whole-document merge write can't delete — sanitize() drops
+ * undefined and merge keeps the old value — so "clear the revenue goal",
+ * "remove this slug", "reset this pipeline" all came back after a reload.)
+ * Writing only changed fields also stops this device from overwriting
+ * settings another device changed in the meantime. Each changed top-level
+ * field is replaced whole (nested maps included), so removed map keys stick.
+ */
+export async function saveSettingsChanges(changes: Partial<Record<keyof SystemSettings, unknown>>): Promise<void> {
+  const keys = Object.keys(changes);
+  if (keys.length === 0) return;
+  const cached = readLS<any>(LS.settings, {});
+  for (const k of keys) {
+    const v = (changes as any)[k];
+    if (v === undefined) delete cached[k]; else cached[k] = v;
+  }
+  if (dbInstance) {
+    const ref = doc(dbInstance, COL.settings, 'system');
+    const payload: Record<string, unknown> = {};
+    for (const k of keys) {
+      const v = (changes as any)[k];
+      payload[k] = v === undefined ? deleteField() : sanitize(v);
+    }
+    try {
+      await updateDoc(ref, payload);
+    } catch (e: any) {
+      if (/not-found|No document/i.test(String(e?.code || '') + String(e?.message || ''))) {
+        // First save for a brand-new shop — create the doc (deletes are moot).
+        const created: Record<string, unknown> = {};
+        for (const k of keys) { const v = (changes as any)[k]; if (v !== undefined) created[k] = sanitize(v); }
+        await setDoc(ref, created, { merge: true });
+      } else {
+        writeLS(LS.settings, cached);   // keep the edit on this device
+        throw handleError(e);
+      }
+    }
+    firebaseStatus = { connected: true };
+  }
+  writeLS(LS.settings, cached);
+}
+
 export async function saveSettings(settings: SystemSettings) {
   if (dbInstance) {
     try {
@@ -1745,10 +1789,13 @@ export async function deleteQuote(id: string) {
   writeLS(LS.quotes, readLS<Quote[]>(LS.quotes, []).filter(q => q.id !== id));
 }
 
-export function getNextQuoteNumber(quotes: Quote[], prefix?: string): string {
+/** Next quote number: one past the highest so far, but never below `startAt`
+ *  (Settings → Documents → "Start numbering at", e.g. to carry on from the
+ *  numbers in an old system). */
+export function getNextQuoteNumber(quotes: Quote[], prefix?: string, startAt?: number): string {
   const pfx = prefix || 'Q-';
   const nums = quotes.map(q => parseInt(q.quoteNumber?.replace(/\D/g, '') || '0', 10)).filter(n => !isNaN(n));
-  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+  const next = Math.max(nums.length > 0 ? Math.max(...nums) + 1 : 1, Math.floor(Number(startAt)) || 1);
   return `${pfx}${String(next).padStart(3, '0')}`;
 }
 
@@ -1893,6 +1940,139 @@ export async function deleteShopAction(id: string): Promise<void> {
     return;
   }
   writeLS(LS_SHOP_ACTIONS, readLS<ShopAction[]>(LS_SHOP_ACTIONS, []).filter(a => a.id !== id));
+}
+
+// ── TV DISPLAYS ───────────────────────────────────────────────────────
+// Wall TVs aren't signed in, so these are how the office can see them and
+// reach them: a live "am I getting server data?" signal, a check-in every few
+// minutes, a few remote commands, and a 6-digit pairing code so nobody has to
+// type a long link on a TV remote.
+
+/**
+ * Is this device getting live server data, or showing its cached copy?
+ * A metadata-only listener on the small settings doc; Firestore shares the
+ * watch target with subscribeSettings, so this adds no reads.
+ */
+export function subscribeSyncStatus(cb: (s: { online: boolean; synced: boolean }) => void): () => void {
+  let synced = !dbInstance;   // local-only mode has nothing to sync
+  const emit = () => cb({ online: typeof navigator === 'undefined' || navigator.onLine !== false, synced });
+  window.addEventListener('online', emit);
+  window.addEventListener('offline', emit);
+  let unsub = () => {};
+  if (dbInstance) {
+    try {
+      unsub = onSnapshot(doc(dbInstance, COL.settings, 'system'), { includeMetadataChanges: true },
+        (snap: any) => { synced = !snap.metadata.fromCache; emit(); },
+        () => { synced = false; emit(); });
+    } catch { synced = false; }
+  }
+  emit();
+  return () => { unsub(); window.removeEventListener('online', emit); window.removeEventListener('offline', emit); };
+}
+
+/** TV check-in (merge) — creates the device row on first call. */
+export async function tvCheckIn(device: Partial<TvDevice> & { id: string }): Promise<void> {
+  if (!dbInstance) return;
+  try {
+    await setDoc(doc(dbInstance, COL.tvDevices, device.id), sanitize({ ...device, lastSeen: Date.now() }), { merge: true });
+  } catch { /* a missed check-in only makes the office view stale */ }
+}
+
+/** The TV listens to its own row for office commands. */
+export function subscribeTvDevice(id: string, cb: (d: TvDevice | null) => void): () => void {
+  if (!dbInstance) return () => {};
+  return retryingSnapshot(
+    () => doc(dbInstance!, COL.tvDevices, id),
+    (snap: any) => cb(snap.exists() ? ({ ...snap.data(), id } as TvDevice) : null),
+    () => {},
+  );
+}
+
+/** Settings: every TV that has checked in, most recently seen first. */
+export function subscribeTvDevices(cb: (list: TvDevice[]) => void): () => void {
+  if (!dbInstance) { cb([]); return () => {}; }
+  return retryingSnapshot(
+    () => collection(dbInstance!, COL.tvDevices),
+    (snap: any) => cb(snap.docs.map((d: any) => ({ ...d.data(), id: d.id }) as TvDevice).sort((a: TvDevice, b: TvDevice) => (b.lastSeen || 0) - (a.lastSeen || 0))),
+    () => {},
+  );
+}
+
+/** Office → TV: refresh, show its name on screen, or disconnect it. */
+export async function sendTvCommand(id: string, cmd: 'reload' | 'identify' | 'disconnect'): Promise<void> {
+  if (!dbInstance) return;
+  const patch = cmd === 'reload' ? { reloadAt: Date.now() } : cmd === 'identify' ? { identifyAt: Date.now() } : { revoked: true };
+  try { await updateDoc(doc(dbInstance, COL.tvDevices, id), patch); }
+  catch (e) { throw handleError(e); }
+}
+
+export async function renameTvDevice(id: string, name: string): Promise<void> {
+  if (!dbInstance) return;
+  try { await updateDoc(doc(dbInstance, COL.tvDevices, id), { name: name.trim().slice(0, 40) || 'TV' }); }
+  catch (e) { throw handleError(e); }
+}
+
+/** Remove a TV from the list (one that's gone for good). A TV that is still
+ *  running reappears at its next check-in — use 'disconnect' to unpair it. */
+export async function removeTvDevice(id: string): Promise<void> {
+  if (!dbInstance) return;
+  try { await deleteDoc(doc(dbInstance, COL.tvDevices, id)); }
+  catch (e) { throw handleError(e); }
+}
+
+const TV_PAIR_TTL_MS = 15 * 60_000;
+
+/** TV side: claim a fresh 6-digit code and wait for the office to enter it. */
+export async function startTvPairing(deviceId: string): Promise<string> {
+  // Self-cleaning: codes left behind by TVs that were switched off mid-pairing
+  // (a page closing can't finish its own cleanup) are deleted here.
+  if (dbInstance) {
+    try {
+      const stale = await getDocs(query(collection(dbInstance, COL.tvPairing), where('createdAt', '<', Date.now() - TV_PAIR_TTL_MS)));
+      await Promise.all(stale.docs.map((d: any) => deleteDoc(d.ref).catch(() => {})));
+    } catch { /* best effort */ }
+  }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    if (!dbInstance) return code;
+    const ref = doc(dbInstance, COL.tvPairing, code);
+    const existing = await getDoc(ref).catch(() => null);
+    const live = existing?.exists() && Date.now() - ((existing.data() as TvPairing).createdAt || 0) < TV_PAIR_TTL_MS;
+    if (live) continue;
+    const pairing: TvPairing = { code, deviceId, createdAt: Date.now(), status: 'waiting' };
+    await setDoc(ref, pairing);
+    return code;
+  }
+  throw new Error('Could not create a pairing code');
+}
+
+export function subscribeTvPairing(code: string, cb: (p: TvPairing | null) => void): () => void {
+  if (!dbInstance) return () => {};
+  return retryingSnapshot(
+    () => doc(dbInstance!, COL.tvPairing, code),
+    (snap: any) => cb(snap.exists() ? (snap.data() as TvPairing) : null),
+    () => {},
+  );
+}
+
+export async function endTvPairing(code: string): Promise<void> {
+  if (!dbInstance) return;
+  try { await deleteDoc(doc(dbInstance, COL.tvPairing, code)); } catch { /* expires on its own */ }
+}
+
+/** Office side: hand the TV link to the TV showing this code. */
+export async function approveTvPairing(code: string, token: string, name: string): Promise<'ok' | 'not-found' | 'expired'> {
+  if (!dbInstance) return 'not-found';
+  const clean = code.replace(/\D/g, '');
+  if (clean.length !== 6) return 'not-found';
+  const ref = doc(dbInstance, COL.tvPairing, clean);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return 'not-found';
+  const p = snap.data() as TvPairing;
+  if (p.status !== 'waiting') return 'not-found';
+  if (Date.now() - (p.createdAt || 0) > TV_PAIR_TTL_MS) return 'expired';
+  await updateDoc(ref, { status: 'approved', token, name: name.trim().slice(0, 40) || 'Shop TV' });
+  return 'ok';
 }
 
 // ── localStorage → Firestore photo migration ──────────────────────────

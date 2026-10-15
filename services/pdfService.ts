@@ -19,14 +19,12 @@ export function safeImgSrc(url?: string): string {
   return /^(https?:\/\/|data:image\/)/i.test(u) ? u : '';
 }
 
-function openPrintWindow(html: string, title: string) {
-  const win = window.open('', '_blank', 'width=850,height=1100');
-  if (!win) return;
-  // CSP neutralizes the document.write XSS sink: no script-src means inline
-  // <script> AND inline event handlers (onerror=...) and javascript: URLs in
-  // any user field can't execute. Static print docs need no scripts —
-  // win.print() is invoked from the parent window below, not inline.
-  win.document.write(`<!DOCTYPE html><html><head><title>${esc(title)}</title>
+/** The complete printable page. CSP neutralizes the document.write XSS sink:
+ *  no script-src means inline <script>, inline event handlers (onerror=...)
+ *  and javascript: URLs in any user field can't execute. Static print docs
+ *  need no scripts — win.print() is invoked from the parent window. */
+function docShell(html: string, title: string): string {
+  return `<!DOCTYPE html><html><head><title>${esc(title)}</title>
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http: blob:; style-src 'unsafe-inline'; font-src data: https:;">
     <style>
       @page { margin: 0.45in; size: letter portrait; }
@@ -117,7 +115,13 @@ function openPrintWindow(html: string, title: string) {
         .sig-section { margin-top:16px !important; }
       }
     </style>
-  </head><body>${html}</body></html>`);
+  </head><body>${html}</body></html>`;
+}
+
+function openPrintWindow(html: string, title: string) {
+  const win = window.open('', '_blank', 'width=850,height=1100');
+  if (!win) return;
+  win.document.write(docShell(html, title));
   win.document.close();
   setTimeout(() => { win.print(); }, 400);
 }
@@ -139,142 +143,197 @@ function formatDate(ts?: number | string): string {
     : d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
 }
 
-// ── Quote PDF ──
+/** Escaped, keeping line breaks (addresses, descriptions). */
+function escLines(v: unknown): string {
+  return esc(v).replace(/\r?\n/g, '<br/>');
+}
 
-export function printQuotePDF(quote: Quote, settings: SystemSettings) {
-  const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([,v]) => v) : [];
+/** Money with 2 decimals — a missing number prints $0.00 instead of crashing the print. */
+function money(n: unknown): string {
+  return (Number(n) || 0).toFixed(2);
+}
 
-  const html = `<div class="page">
-    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
+// Settings → Documents, applied to quotes and invoices. These switches used
+// to change only the preview inside Settings — the printed PDF ignored them.
+function docOptions(settings: SystemSettings) {
+  return {
+    accent: /^#[0-9a-f]{3,8}$/i.test(settings.accentColor || '') ? settings.accentColor! : '#2563eb',
+    qty: settings.showQtyCol !== false,
+    unit: settings.showUnitCol !== false,
+    rate: settings.showRateCol !== false,
+    terms: settings.showTermsOnDocs !== false,
+    validUntil: settings.showDueDateOnDocs !== false,
+    signatures: settings.showSignatureLines !== false,
+    watermark: (settings.watermark || '').trim().slice(0, 24),
+  };
+}
+type DocOptions = ReturnType<typeof docOptions>;
 
+function docTheme(o: DocOptions): string {
+  return `<style>
+      .info-label, .client-label, .field-label, .comments-label, .sig-company, .page-num, thead th { color:${o.accent}; }
+      thead th { border-bottom-color:${o.accent}; }
+    </style>
+    ${o.watermark ? `<div aria-hidden="true" style="position:fixed;top:42%;left:-10%;right:-10%;z-index:-1;text-align:center;font-size:110px;font-weight:900;letter-spacing:10px;color:rgba(0,0,0,0.07);transform:rotate(-30deg)">${esc(o.watermark)}</div>` : ''}`;
+}
+
+function docHeader(settings: SystemSettings, docType: string): string {
+  const logo = safeImgSrc(settings.companyLogo);
+  return `${logo ? `<img src="${esc(logo)}" class="company-logo-center" />` : ''}
     <div class="doc-header">
       <div class="company-left">
-        <div class="company-name">${settings.companyName || 'Company Name'}</div>
+        <div class="company-name">${esc(settings.companyName || 'Company Name')}</div>
       </div>
-      <div class="doc-type">Quote</div>
-    </div>
+      <div class="doc-type">${docType}</div>
+    </div>`;
+}
+
+function companyContact(settings: SystemSettings, withEmail = false): string {
+  return [
+    settings.companyAddress ? escLines(settings.companyAddress) : '',
+    settings.companyPhone ? esc(settings.companyPhone) : '',
+    withEmail && settings.companyEmail ? esc(settings.companyEmail) : '',
+  ].filter(Boolean).join('<br/>');
+}
+
+function contactBlock(label: string, name: unknown, lines: unknown[]): string {
+  return `<div class="client-block">
+        <div class="client-label">${label}</div>
+        <div class="client-name">${esc(name)}</div>
+        ${lines.filter(Boolean).map(l => `<div class="client-detail">${escLines(l)}</div>`).join('')}
+      </div>`;
+}
+
+function projectFieldsBlock(fields: [string, unknown][]): string {
+  return fields.length > 0 ? `<div class="fields-grid">
+      ${fields.map(([k, v]) => `<div class="field-row"><div class="field-label">${esc(k)}</div><div class="field-value">${esc(v)}</div></div>`).join('')}
+    </div>` : '';
+}
+
+function lineItemsTable(items: Quote['items'], o: DocOptions): string {
+  return `<table>
+      <thead>
+        <tr><th>Description</th>${o.qty ? '<th class="center">Qty</th>' : ''}${o.unit ? '<th class="center">Unit</th>' : ''}${o.rate ? '<th class="right">Rate</th>' : ''}<th class="right">Amount</th></tr>
+      </thead>
+      <tbody>
+        ${items.map(item => `<tr>
+          <td>${escLines(item.description)}</td>
+          ${o.qty ? `<td class="center">${esc(item.qty)}</td>` : ''}
+          ${o.unit ? `<td class="center">${esc(item.unit || 'ea')}</td>` : ''}
+          ${o.rate ? `<td class="right">$${money(item.unitPrice)}</td>` : ''}
+          <td class="right bold">$${money(item.total)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function quoteTotals(quote: Quote, grandLabel: string, withDeposit: boolean): string {
+  return `<div class="totals-wrap">
+      <div class="totals">
+        <div class="total-row"><span class="total-label">Subtotal</span><span class="total-value">$${money(quote.subtotal)}</span></div>
+        ${quote.markupPct ? `<div class="total-row"><span class="total-label">Markup (${esc(quote.markupPct)}%)</span><span class="total-value">+$${money(quote.subtotal * quote.markupPct / 100)}</span></div>` : ''}
+        ${quote.discountAmt ? `<div class="total-row discount"><span class="total-label">Discount (${esc(quote.discountPct || 0)}%)</span><span class="total-value">-$${money(quote.discountAmt)}</span></div>` : ''}
+        ${quote.taxAmt ? `<div class="total-row"><span class="total-label">Tax (${esc(quote.taxRate || 0)}%)</span><span class="total-value">+$${money(quote.taxAmt)}</span></div>` : ''}
+        <div class="total-row grand"><span>${grandLabel}</span><span>$${money(quote.total)}</span></div>
+        ${withDeposit && quote.depositRequired && quote.depositAmt ? `<div class="total-row deposit"><span>Deposit Due (${esc(quote.depositPct || 50)}%)</span><span>$${money(quote.depositAmt)}</span></div>` : ''}
+      </div>
+    </div>`;
+}
+
+function signatureLines(signer: unknown, otherParty: string, otherLine: string): string {
+  return `<div class="sig-section">
+      <div class="sig-block">
+        <div class="sig-company">${esc(signer)}</div>
+        <div class="sig-line">Authorized Signature</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-company">${esc(otherParty)}</div>
+        <div class="sig-line">${esc(otherLine)}</div>
+      </div>
+    </div>`;
+}
+
+// ── Quote PDF ──
+
+export function quoteHtml(quote: Quote, settings: SystemSettings): string {
+  const o = docOptions(settings);
+  const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([, v]) => v) : [];
+
+  const html = `${docTheme(o)}<div class="page">
+    ${docHeader(settings, 'Quote')}
 
     <div class="info-grid">
       <div class="info-left">
-        <div class="info-row"><span class="info-label">Quote No:</span><span class="info-value">${quote.quoteNumber}</span></div>
-        <div class="info-row"><span class="info-label">Date:</span><span class="info-value">${formatDate(quote.createdAt)}</span></div>
-        ${quote.validUntil ? `<div class="info-row"><span class="info-label">Valid Until:</span><span class="info-value">${quote.validUntil}</span></div>` : ''}
-        <div class="info-row"><span class="info-label">Status:</span><span class="info-value">${quote.status.toUpperCase()}</span></div>
+        <div class="info-row"><span class="info-label">Quote No:</span><span class="info-value">${esc(quote.quoteNumber)}</span></div>
+        <div class="info-row"><span class="info-label">Date:</span><span class="info-value">${esc(formatDate(quote.createdAt))}</span></div>
+        ${o.validUntil && quote.validUntil ? `<div class="info-row"><span class="info-label">Valid Until:</span><span class="info-value">${esc(formatDate(quote.validUntil))}</span></div>` : ''}
+        <div class="info-row"><span class="info-label">Status:</span><span class="info-value">${esc(String(quote.status || '').toUpperCase())}</span></div>
       </div>
       <div class="info-right">
-        <div class="info-right-text">
-          ${settings.companyAddress || ''}<br/>
-          ${settings.companyPhone ? settings.companyPhone + '<br/>' : ''}
-        </div>
+        <div class="info-right-text">${companyContact(settings)}</div>
       </div>
     </div>
 
     <div style="display:grid;grid-template-columns:${quote.shipTo?.name ? '1fr 1fr' : '1fr'};gap:12px;margin-bottom:16px">
-      <div class="client-block">
-        <div class="client-label">Bill To</div>
-        <div class="client-name">${quote.billTo?.name || quote.customer}</div>
-        ${quote.billTo?.contactPerson ? `<div class="client-detail">${quote.billTo.contactPerson}</div>` : ''}
-        ${quote.billTo?.email ? `<div class="client-detail">${quote.billTo.email}</div>` : ''}
-        ${quote.billTo?.phone ? `<div class="client-detail">${quote.billTo.phone}</div>` : ''}
-        ${quote.billTo?.address ? `<div class="client-detail">${quote.billTo.address}</div>` : ''}
-      </div>
-      ${quote.shipTo?.name ? `<div class="client-block">
-        <div class="client-label">Ship To</div>
-        <div class="client-name">${quote.shipTo.name}</div>
-        ${quote.shipTo.contactPerson ? `<div class="client-detail">${quote.shipTo.contactPerson}</div>` : ''}
-        ${quote.shipTo.address ? `<div class="client-detail">${quote.shipTo.address}</div>` : ''}
-        ${quote.shipTo.phone ? `<div class="client-detail">${quote.shipTo.phone}</div>` : ''}
-      </div>` : ''}
+      ${contactBlock('Bill To', quote.billTo?.name || quote.customer, [quote.billTo?.contactPerson, quote.billTo?.email, quote.billTo?.phone, quote.billTo?.address])}
+      ${quote.shipTo?.name ? contactBlock('Ship To', quote.shipTo.name, [quote.shipTo.contactPerson, quote.shipTo.address, quote.shipTo.phone]) : ''}
     </div>
 
-    ${projectFields.length > 0 ? `<div class="fields-grid">
-      ${projectFields.map(([k, v]) => `<div class="field-row"><div class="field-label">${k}</div><div class="field-value">${v}</div></div>`).join('')}
-    </div>` : ''}
+    ${projectFieldsBlock(projectFields)}
 
-    ${quote.jobDescription ? `<div class="scope-block"><div class="scope-label">Scope of Work</div><div class="scope-text">${quote.jobDescription}</div></div>` : ''}
+    ${quote.jobDescription ? `<div class="scope-block"><div class="scope-label">Scope of Work</div><div class="scope-text">${escLines(quote.jobDescription)}</div></div>` : ''}
 
-    <table>
-      <thead>
-        <tr><th>Description</th><th class="center">Qty</th><th class="center">Unit</th><th class="right">Rate</th><th class="right">Amount</th></tr>
-      </thead>
-      <tbody>
-        ${quote.items.map(item => `<tr>
-          <td>${item.description}</td>
-          <td class="center">${item.qty}</td>
-          <td class="center">${item.unit || 'ea'}</td>
-          <td class="right">$${item.unitPrice.toFixed(2)}</td>
-          <td class="right bold">$${item.total.toFixed(2)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
+    ${lineItemsTable(quote.items, o)}
 
-    <div class="totals-wrap">
-      <div class="totals">
-        <div class="total-row"><span class="total-label">Subtotal</span><span class="total-value">$${quote.subtotal.toFixed(2)}</span></div>
-        ${quote.markupPct ? `<div class="total-row"><span class="total-label">Markup (${quote.markupPct}%)</span><span class="total-value">+$${(quote.subtotal * quote.markupPct / 100).toFixed(2)}</span></div>` : ''}
-        ${quote.discountAmt ? `<div class="total-row discount"><span class="total-label">Discount (${quote.discountPct || 0}%)</span><span class="total-value">-$${quote.discountAmt.toFixed(2)}</span></div>` : ''}
-        ${quote.taxAmt ? `<div class="total-row"><span class="total-label">Tax (${quote.taxRate || 0}%)</span><span class="total-value">+$${quote.taxAmt.toFixed(2)}</span></div>` : ''}
-        <div class="total-row grand"><span>Total</span><span>$${quote.total.toFixed(2)}</span></div>
-        ${quote.depositRequired && quote.depositAmt ? `<div class="total-row deposit"><span>Deposit Due (${quote.depositPct || 50}%)</span><span>$${quote.depositAmt.toFixed(2)}</span></div>` : ''}
-      </div>
-    </div>
+    ${quoteTotals(quote, 'Total', true)}
 
-    ${quote.notes ? `<div class="comments-block"><div class="comments-label">Comments</div><div class="comments-text">${quote.notes}</div></div>` : ''}
-    ${quote.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${quote.terms}</div></div>` : ''}
+    ${quote.notes ? `<div class="comments-block"><div class="comments-label">Comments</div><div class="comments-text">${esc(quote.notes)}</div></div>` : ''}
+    ${o.terms && quote.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${esc(quote.terms)}</div></div>` : ''}
 
-    <div class="sig-section">
-      <div class="sig-block">
-        <div class="sig-company">${settings.companyName || 'Company'}</div>
-        <div class="sig-line">Authorized Signature</div>
-      </div>
-      <div class="sig-block">
-        <div class="sig-company">Client's signature</div>
-        <div class="sig-line">Acceptance Signature</div>
-      </div>
-    </div>
+    ${o.signatures ? signatureLines(settings.companyName || 'Company', "Client's signature", 'Acceptance Signature') : ''}
 
     <div class="page-num">1 / 1</div>
   </div>`;
-  openPrintWindow(html, `Quote ${quote.quoteNumber}`);
+  return html;
+}
+
+export function printQuotePDF(quote: Quote, settings: SystemSettings) {
+  openPrintWindow(quoteHtml(quote, settings), `Quote ${quote.quoteNumber}`);
+}
+
+/** The exact page a quote prints as — Settings → Documents shows this as its preview. */
+export function quoteDocument(quote: Quote, settings: SystemSettings): string {
+  return docShell(quoteHtml(quote, settings), `Quote ${quote.quoteNumber}`);
 }
 
 // ── Packing Slip PDF ──
 
-export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
+export function packingSlipHtml(job: Job, settings: SystemSettings): string {
+  const coc = 'CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.';
   const html = `<div class="page">
-    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
-
-    <div class="doc-header">
-      <div class="company-left">
-        <div class="company-name">${settings.companyName || 'Company Name'}</div>
-      </div>
-      <div class="doc-type">Packing Slip</div>
-    </div>
+    ${docHeader(settings, 'Packing Slip')}
 
     <div class="info-grid">
       <div class="info-left">
-        <div class="info-row"><span class="info-label">Invoice No:</span><span class="info-value">${job.jobIdsDisplay || job.id.slice(-8)}</span></div>
-        <div class="info-row"><span class="info-label">Date:</span><span class="info-value">${formatDate(job.shippedAt || Date.now())}</span></div>
+        <div class="info-row"><span class="info-label">Invoice No:</span><span class="info-value">${esc(job.jobIdsDisplay || job.id.slice(-8))}</span></div>
+        <div class="info-row"><span class="info-label">Date:</span><span class="info-value">${esc(formatDate(job.shippedAt || Date.now()))}</span></div>
       </div>
       <div class="info-right">
-        <div class="info-right-text">
-          ${settings.companyAddress || ''}<br/>
-          ${settings.companyPhone ? settings.companyPhone + '<br/>' : ''}
-        </div>
+        <div class="info-right-text">${companyContact(settings)}</div>
       </div>
     </div>
 
     <div class="client-block">
       <div class="client-label">Client</div>
-      <div class="client-name">${job.customer || 'Customer'}</div>
+      <div class="client-name">${esc(job.customer || 'Customer')}</div>
     </div>
 
     <div class="fields-grid">
-      <div class="field-row"><div class="field-label">Purchase Order</div><div class="field-value">${job.poNumber}</div></div>
-      <div class="field-row"><div class="field-label">Part No.</div><div class="field-value">${job.partNumber}</div></div>
-      <div class="field-row"><div class="field-label">Job No.</div><div class="field-value">${job.jobIdsDisplay || ''}</div></div>
-      ${job.shippingMethod ? `<div class="field-row"><div class="field-label">Ship Method</div><div class="field-value">${job.shippingMethod}</div></div>` : ''}
-      ${job.trackingNumber ? `<div class="field-row"><div class="field-label">Tracking No.</div><div class="field-value">${job.trackingNumber}</div></div>` : ''}
+      <div class="field-row"><div class="field-label">Purchase Order</div><div class="field-value">${esc(job.poNumber)}</div></div>
+      <div class="field-row"><div class="field-label">Part No.</div><div class="field-value">${esc(job.partNumber)}</div></div>
+      <div class="field-row"><div class="field-label">Job No.</div><div class="field-value">${esc(job.jobIdsDisplay || '')}</div></div>
+      ${job.shippingMethod ? `<div class="field-row"><div class="field-label">Ship Method</div><div class="field-value">${esc(job.shippingMethod)}</div></div>` : ''}
+      ${job.trackingNumber ? `<div class="field-row"><div class="field-label">Tracking No.</div><div class="field-value">${esc(job.trackingNumber)}</div></div>` : ''}
     </div>
 
     <table>
@@ -283,36 +342,28 @@ export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
       </thead>
       <tbody>
         <tr>
-          <td>${job.info || job.partNumber}<br/><span style="font-size:10px;color:#6b7280">${job.specialInstructions ? 'DEBURR COMPLETE PER PO' : ''}</span></td>
-          <td class="right bold">${job.quantity}</td>
+          <td>${escLines(job.info || job.partNumber)}<br/><span style="font-size:10px;color:#6b7280">${job.specialInstructions ? 'DEBURR COMPLETE PER PO' : ''}</span></td>
+          <td class="right bold">${esc(job.quantity)}</td>
         </tr>
       </tbody>
     </table>
 
-    ${(job.specialInstructions || job.info) ? `<div class="comments-block">
+    <div class="comments-block">
       <div class="comments-label">Comments</div>
-      <div class="comments-text">CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.${job.specialInstructions ? '\n\n' + job.specialInstructions : ''}</div>
-    </div>` : `<div class="comments-block">
-      <div class="comments-label">Comments</div>
-      <div class="comments-text">CERTIFICATE OF CONFORMANCE: This is to certify that all processes conform to applicable Specifications, Drawings, Contracts, and/or Order Requirements unless otherwise specified.</div>
-    </div>`}
-
-    ${job.shippingNotes ? `<div class="notes-block"><div class="notes-label">Shipping Notes</div><div class="notes-text">${job.shippingNotes}</div></div>` : ''}
-
-    <div class="sig-section">
-      <div class="sig-block">
-        <div class="sig-company">${settings.companyName || 'Company'}</div>
-        <div class="sig-line">Authorized Signature</div>
-      </div>
-      <div class="sig-block">
-        <div class="sig-company">Client's signature</div>
-        <div class="sig-line">Acceptance Signature</div>
-      </div>
+      <div class="comments-text">${coc}${job.specialInstructions ? '\n\n' + esc(job.specialInstructions) : ''}</div>
     </div>
+
+    ${job.shippingNotes ? `<div class="notes-block"><div class="notes-label">Shipping Notes</div><div class="notes-text">${escLines(job.shippingNotes)}</div></div>` : ''}
+
+    ${signatureLines(settings.companyName || 'Company', "Client's signature", 'Acceptance Signature')}
 
     <div class="page-num">1 / 1</div>
   </div>`;
-  openPrintWindow(html, `Packing Slip - ${job.poNumber}`);
+  return html;
+}
+
+export function printPackingSlipPDF(job: Job, settings: SystemSettings) {
+  openPrintWindow(packingSlipHtml(job, settings), `Packing Slip - ${job.poNumber}`);
 }
 
 // ── Job Traveler PDF ──
@@ -344,55 +395,32 @@ export function printPurchaseOrderPDF(po: PurchaseOrder, settings: SystemSetting
     + po.items.reduce((a, i) => a + (i.attachments?.length || 0), 0);
 
   const html = `<div class="page">
-    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
-
-    <div class="doc-header">
-      <div class="company-left">
-        <div class="company-name">${settings.companyName || 'Company Name'}</div>
-      </div>
-      <div class="doc-type">Purchase Order</div>
-    </div>
+    ${docHeader(settings, 'Purchase Order')}
 
     <div class="info-grid">
       <div class="info-left">
-        <div class="info-row"><span class="info-label">PO Number:</span><span class="info-value" style="font-weight:700">${po.poNumber}</span></div>
-        <div class="info-row"><span class="info-label">Ordered:</span><span class="info-value">${formatDate(po.orderedDate)}</span></div>
-        ${po.requiredDate ? `<div class="info-row"><span class="info-label">Required By:</span><span class="info-value" style="color:#dc2626;font-weight:700">${po.requiredDate}</span></div>` : ''}
-        ${po.expectedDate ? `<div class="info-row"><span class="info-label">Expected:</span><span class="info-value">${po.expectedDate}</span></div>` : ''}
+        <div class="info-row"><span class="info-label">PO Number:</span><span class="info-value" style="font-weight:700">${esc(po.poNumber)}</span></div>
+        <div class="info-row"><span class="info-label">Ordered:</span><span class="info-value">${esc(formatDate(po.orderedDate))}</span></div>
+        ${po.requiredDate ? `<div class="info-row"><span class="info-label">Required By:</span><span class="info-value" style="color:#dc2626;font-weight:700">${esc(po.requiredDate)}</span></div>` : ''}
+        ${po.expectedDate ? `<div class="info-row"><span class="info-label">Expected:</span><span class="info-value">${esc(po.expectedDate)}</span></div>` : ''}
       </div>
       <div class="info-right">
-        <div class="info-right-text">
-          ${settings.companyAddress || ''}<br/>
-          ${settings.companyPhone ? settings.companyPhone + '<br/>' : ''}
-          ${settings.companyEmail || ''}
-        </div>
+        <div class="info-right-text">${companyContact(settings, true)}</div>
       </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-      <div class="client-block">
-        <div class="client-label">Vendor</div>
-        <div class="client-name">${po.vendorName}</div>
-        ${po.vendorContact?.name ? `<div class="client-detail">${po.vendorContact.name}</div>` : ''}
-        ${po.vendorContact?.email ? `<div class="client-detail">${po.vendorContact.email}</div>` : ''}
-        ${po.vendorContact?.phone ? `<div class="client-detail">${po.vendorContact.phone}</div>` : ''}
-        ${po.vendorContact?.address ? `<div class="client-detail">${po.vendorContact.address}</div>` : ''}
-      </div>
-      ${po.billTo ? `<div class="client-block">
-        <div class="client-label">Bill To / Ship To</div>
-        <div class="client-name">${po.billTo.name}</div>
-        ${po.billTo.address ? `<div class="client-detail">${po.billTo.address}</div>` : ''}
-        ${po.billTo.phone ? `<div class="client-detail">${po.billTo.phone}</div>` : ''}
-      </div>` : ''}
+      ${contactBlock('Vendor', po.vendorName, [po.vendorContact?.name, po.vendorContact?.email, po.vendorContact?.phone, po.vendorContact?.address])}
+      ${po.billTo ? contactBlock('Bill To / Ship To', po.billTo.name, [po.billTo.address, po.billTo.phone]) : ''}
     </div>
 
     ${po.qualityRequirements && po.qualityRequirements.length > 0 ? `
     <div class="special-block" style="border-color:#10b981;background:#f0fdf4">
       <div class="special-label" style="color:#065f46">✓ Quality Requirements</div>
-      <div class="special-text" style="color:#064e3b">${po.qualityRequirements.map(r => `• ${r}`).join(' &nbsp; ')}</div>
+      <div class="special-text" style="color:#064e3b">${po.qualityRequirements.map(r => `• ${esc(r)}`).join(' &nbsp; ')}</div>
     </div>` : ''}
 
-    ${po.instructions ? `<div class="notes-block"><div class="notes-label">Special Instructions</div><div class="notes-text">${po.instructions}</div></div>` : ''}
+    ${po.instructions ? `<div class="notes-block"><div class="notes-label">Special Instructions</div><div class="notes-text">${escLines(po.instructions)}</div></div>` : ''}
 
     <table>
       <thead>
@@ -410,137 +438,88 @@ export function printPurchaseOrderPDF(po: PurchaseOrder, settings: SystemSetting
         ${po.items.map((item, i) => `<tr>
           <td style="text-align:center;color:#6b7280">${i + 1}</td>
           <td>
-            <strong>${item.description}</strong>
-            ${item.instructions ? `<div style="font-size:10px;color:#6b7280;margin-top:2px;font-style:italic">${item.instructions}</div>` : ''}
-            ${item.qualityReqs && item.qualityReqs.length > 0 ? `<div style="font-size:9px;color:#059669;margin-top:2px">✓ ${item.qualityReqs.join(' · ')}</div>` : ''}
+            <strong>${escLines(item.description)}</strong>
+            ${item.instructions ? `<div style="font-size:10px;color:#6b7280;margin-top:2px;font-style:italic">${escLines(item.instructions)}</div>` : ''}
+            ${item.qualityReqs && item.qualityReqs.length > 0 ? `<div style="font-size:9px;color:#059669;margin-top:2px">✓ ${item.qualityReqs.map(r => esc(r)).join(' · ')}</div>` : ''}
             ${item.attachments && item.attachments.length > 0 ? `<div style="font-size:9px;color:#2563eb;margin-top:2px">📎 ${item.attachments.length} file${item.attachments.length !== 1 ? 's' : ''} attached</div>` : ''}
           </td>
-          <td style="font-size:10px;color:#374151">${item.partNumber || '—'}</td>
-          <td class="center">${item.quantity}</td>
-          <td class="center">${item.unit || 'ea'}</td>
-          <td class="right">$${item.unitPrice.toFixed(2)}</td>
-          <td class="right bold">$${item.total.toFixed(2)}</td>
+          <td style="font-size:10px;color:#374151">${esc(item.partNumber || '—')}</td>
+          <td class="center">${esc(item.quantity)}</td>
+          <td class="center">${esc(item.unit || 'ea')}</td>
+          <td class="right">$${money(item.unitPrice)}</td>
+          <td class="right bold">$${money(item.total)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
 
     <div class="totals-wrap">
       <div class="totals">
-        <div class="total-row"><span class="total-label">Subtotal</span><span class="total-value">$${po.subtotal.toFixed(2)}</span></div>
-        ${po.taxAmt ? `<div class="total-row"><span class="total-label">Tax (${(po.taxRate || 0).toFixed(1)}%)</span><span class="total-value">$${po.taxAmt.toFixed(2)}</span></div>` : ''}
-        ${po.shippingAmt ? `<div class="total-row"><span class="total-label">Shipping</span><span class="total-value">$${po.shippingAmt.toFixed(2)}</span></div>` : ''}
-        <div class="total-row grand"><span>Total</span><span>$${po.total.toFixed(2)}</span></div>
+        <div class="total-row"><span class="total-label">Subtotal</span><span class="total-value">$${money(po.subtotal)}</span></div>
+        ${po.taxAmt ? `<div class="total-row"><span class="total-label">Tax (${(po.taxRate || 0).toFixed(1)}%)</span><span class="total-value">$${money(po.taxAmt)}</span></div>` : ''}
+        ${po.shippingAmt ? `<div class="total-row"><span class="total-label">Shipping</span><span class="total-value">$${money(po.shippingAmt)}</span></div>` : ''}
+        <div class="total-row grand"><span>Total</span><span>$${money(po.total)}</span></div>
       </div>
     </div>
 
-    ${po.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${po.terms}</div></div>` : ''}
+    ${po.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${esc(po.terms)}</div></div>` : ''}
 
     ${attachmentCount > 0 ? `<div class="notes-block" style="background:#eff6ff;border-color:#bfdbfe"><div class="notes-label" style="color:#1e40af">📎 Attachments</div><div class="notes-text" style="color:#1e3a8a">This PO references ${attachmentCount} attached file${attachmentCount !== 1 ? 's' : ''}. See accompanying email or file transfer for drawings / specs.</div></div>` : ''}
 
     <div class="sig-section">
       <div class="sig-block">
-        <div class="sig-company">${settings.companyName || 'Purchaser'}</div>
-        <div class="sig-line">Authorized By${po.approvedByName ? ` — ${po.approvedByName}` : ''}</div>
+        <div class="sig-company">${esc(settings.companyName || 'Purchaser')}</div>
+        <div class="sig-line">Authorized By${po.approvedByName ? ` — ${esc(po.approvedByName)}` : ''}</div>
       </div>
       <div class="sig-block">
-        <div class="sig-company">${po.vendorName}</div>
+        <div class="sig-company">${esc(po.vendorName)}</div>
         <div class="sig-line">Vendor Acknowledgment</div>
       </div>
     </div>
 
-    <div class="page-num">PO ${po.poNumber} · 1 / 1</div>
+    <div class="page-num">PO ${esc(po.poNumber)} · 1 / 1</div>
   </div>`;
   openPrintWindow(html, `PO ${po.poNumber}`);
 }
 
-export function printInvoicePDF(quote: Quote, job: Job | null, settings: SystemSettings) {
-  const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([,v]) => v) : [];
+export function invoiceHtml(quote: Quote, job: Job | null, settings: SystemSettings): string {
+  const o = docOptions(settings);
+  const projectFields = quote.projectFields ? Object.entries(quote.projectFields).filter(([, v]) => v) : [];
 
-  const html = `<div class="page">
-    ${safeImgSrc(settings.companyLogo) ? `<img src="${esc(safeImgSrc(settings.companyLogo))}" class="company-logo-center" />` : ''}
-
-    <div class="doc-header">
-      <div class="company-left">
-        <div class="company-name">${settings.companyName || 'Company Name'}</div>
-      </div>
-      <div class="doc-type">Invoice</div>
-    </div>
+  const html = `${docTheme(o)}<div class="page">
+    ${docHeader(settings, 'Invoice')}
 
     <div class="info-grid">
       <div class="info-left">
-        <div class="info-row"><span class="info-label">Invoice No:</span><span class="info-value">${quote.quoteNumber}</span></div>
-        <div class="info-row"><span class="info-label">Date:</span><span class="info-value">${formatDate(Date.now())}</span></div>
-        ${job ? `<div class="info-row"><span class="info-label">PO Number:</span><span class="info-value">${job.poNumber}</span></div>` : ''}
+        <div class="info-row"><span class="info-label">Invoice No:</span><span class="info-value">${esc(quote.quoteNumber)}</span></div>
+        <div class="info-row"><span class="info-label">Date:</span><span class="info-value">${esc(formatDate(Date.now()))}</span></div>
+        ${job ? `<div class="info-row"><span class="info-label">PO Number:</span><span class="info-value">${esc(job.poNumber)}</span></div>` : ''}
       </div>
       <div class="info-right">
-        <div class="info-right-text">
-          ${settings.companyAddress || ''}<br/>
-          ${settings.companyPhone ? settings.companyPhone + '<br/>' : ''}
-        </div>
+        <div class="info-right-text">${companyContact(settings)}</div>
       </div>
     </div>
 
     <div style="display:grid;grid-template-columns:${quote.shipTo?.name ? '1fr 1fr' : '1fr'};gap:12px;margin-bottom:16px">
-      <div class="client-block">
-        <div class="client-label">Bill To</div>
-        <div class="client-name">${quote.billTo?.name || quote.customer}</div>
-        ${quote.billTo?.contactPerson ? `<div class="client-detail">${quote.billTo.contactPerson}</div>` : ''}
-        ${quote.billTo?.email ? `<div class="client-detail">${quote.billTo.email}</div>` : ''}
-        ${quote.billTo?.phone ? `<div class="client-detail">${quote.billTo.phone}</div>` : ''}
-        ${quote.billTo?.address ? `<div class="client-detail">${quote.billTo.address}</div>` : ''}
-      </div>
-      ${quote.shipTo?.name ? `<div class="client-block">
-        <div class="client-label">Ship To</div>
-        <div class="client-name">${quote.shipTo.name}</div>
-        ${quote.shipTo.contactPerson ? `<div class="client-detail">${quote.shipTo.contactPerson}</div>` : ''}
-        ${quote.shipTo.address ? `<div class="client-detail">${quote.shipTo.address}</div>` : ''}
-      </div>` : ''}
+      ${contactBlock('Bill To', quote.billTo?.name || quote.customer, [quote.billTo?.contactPerson, quote.billTo?.email, quote.billTo?.phone, quote.billTo?.address])}
+      ${quote.shipTo?.name ? contactBlock('Ship To', quote.shipTo.name, [quote.shipTo.contactPerson, quote.shipTo.address]) : ''}
     </div>
 
-    ${projectFields.length > 0 ? `<div class="fields-grid">
-      ${projectFields.map(([k, v]) => `<div class="field-row"><div class="field-label">${k}</div><div class="field-value">${v}</div></div>`).join('')}
-    </div>` : ''}
+    ${projectFieldsBlock(projectFields)}
 
-    <table>
-      <thead>
-        <tr><th>Description</th><th class="center">Qty</th><th class="center">Unit</th><th class="right">Rate</th><th class="right">Amount</th></tr>
-      </thead>
-      <tbody>
-        ${quote.items.map(item => `<tr>
-          <td>${item.description}</td>
-          <td class="center">${item.qty}</td>
-          <td class="center">${item.unit || 'ea'}</td>
-          <td class="right">$${item.unitPrice.toFixed(2)}</td>
-          <td class="right bold">$${item.total.toFixed(2)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
+    ${lineItemsTable(quote.items, o)}
 
-    <div class="totals-wrap">
-      <div class="totals">
-        <div class="total-row"><span class="total-label">Subtotal</span><span class="total-value">$${quote.subtotal.toFixed(2)}</span></div>
-        ${quote.markupPct ? `<div class="total-row"><span class="total-label">Markup (${quote.markupPct}%)</span><span class="total-value">+$${(quote.subtotal * quote.markupPct / 100).toFixed(2)}</span></div>` : ''}
-        ${quote.discountAmt ? `<div class="total-row discount"><span class="total-label">Discount (${quote.discountPct || 0}%)</span><span class="total-value">-$${quote.discountAmt.toFixed(2)}</span></div>` : ''}
-        ${quote.taxAmt ? `<div class="total-row"><span class="total-label">Tax (${quote.taxRate || 0}%)</span><span class="total-value">+$${quote.taxAmt.toFixed(2)}</span></div>` : ''}
-        <div class="total-row grand"><span>Amount Due</span><span>$${quote.total.toFixed(2)}</span></div>
-      </div>
-    </div>
+    ${quoteTotals(quote, 'Amount Due', false)}
 
-    ${quote.notes ? `<div class="comments-block"><div class="comments-label">Comments</div><div class="comments-text">${quote.notes}</div></div>` : ''}
-    ${quote.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${quote.terms}</div></div>` : ''}
+    ${quote.notes ? `<div class="comments-block"><div class="comments-label">Comments</div><div class="comments-text">${esc(quote.notes)}</div></div>` : ''}
+    ${o.terms && quote.terms ? `<div class="comments-block"><div class="comments-label">Terms & Conditions</div><div class="comments-text">${esc(quote.terms)}</div></div>` : ''}
 
-    <div class="sig-section">
-      <div class="sig-block">
-        <div class="sig-company">${settings.companyName || 'Company'}</div>
-        <div class="sig-line">Authorized Signature</div>
-      </div>
-      <div class="sig-block">
-        <div class="sig-company">Client's signature</div>
-        <div class="sig-line">Acceptance Signature</div>
-      </div>
-    </div>
+    ${o.signatures ? signatureLines(settings.companyName || 'Company', "Client's signature", 'Acceptance Signature') : ''}
 
     <div class="page-num">1 / 1</div>
   </div>`;
-  openPrintWindow(html, `Invoice - ${quote.quoteNumber}`);
+  return html;
+}
+
+export function printInvoicePDF(quote: Quote, job: Job | null, settings: SystemSettings) {
+  openPrintWindow(invoiceHtml(quote, job, settings), `Invoice - ${quote.quoteNumber}`);
 }

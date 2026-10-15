@@ -17,11 +17,11 @@ import {
   Calendar, Camera, CheckCircle, CheckCircle2, ChevronDown, ChevronRight,
   ChevronUp, Clock, Cloud, Copy, Edit2, Eye, FileText, Image, Info, Link2, Mail, MapPin, Maximize2,
   MessageSquare, Phone, Play, Plus, Printer, Radio, RotateCcw, Save, Search, Settings, Share2,
-  Trash2, Users, X, Zap,
+  Trash2, Tv, Users, X, Zap,
 } from 'lucide-react';
 
 import type {
-  Job, TimeLog, SystemSettings, TvSlide, SlideMessage, ShopGoal, GoalMetric,
+  Job, TimeLog, SystemSettings, Quote, ShopGoal, GoalMetric,
   GoalPeriod, ProcessTemplate, QuoteSnippet, QuoteTemplate, User, JobStage,
   ShiftAlarm, ShiftAlarmSound, Vendor,
 } from '../types';
@@ -44,36 +44,20 @@ import { sendTestEmail, getEmailJsConfig } from '../services/emailNotify';
 import { clearAllAlerts } from '../utils/overBudget';
 import { getStages, DEFAULT_STAGES } from '../App';
 import { buildTravelerBlobUrl, printTraveler } from '../services/travelerPrint';
+import { quoteDocument } from '../services/pdfService';
 import { sendDailyRecap } from '../utils/sendDailyRecap';
+import { Toggle } from '../components/Toggle';
+import { TvDisplaySettings } from '../components/TvDisplaySettings';
+
+const STAGE_COLORS = [
+  { hex: '#71717a', name: 'Gray' }, { hex: '#3b82f6', name: 'Blue' }, { hex: '#f59e0b', name: 'Amber' },
+  { hex: '#8b5cf6', name: 'Purple' }, { hex: '#06b6d4', name: 'Cyan' }, { hex: '#10b981', name: 'Green' },
+  { hex: '#ef4444', name: 'Red' }, { hex: '#ec4899', name: 'Pink' }, { hex: '#f97316', name: 'Orange' },
+];
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
   l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
-
-/** iOS-style toggle switch — replaces all native checkboxes in Settings. */
-const Toggle = ({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex w-10 h-6 rounded-full transition-colors duration-200 shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 ${
-      checked ? 'bg-amber-500' : 'bg-zinc-700 hover:bg-zinc-600'
-    }`}
-  >
-    <span
-      className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-        checked ? 'translate-x-5' : 'translate-x-1'
-      }`}
-    />
-  </button>
-);
 
 const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: string }) => {
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
@@ -396,13 +380,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
           <div key={alarm.id} className={`rounded-xl border p-3 transition-colors ${alarm.enabled ? 'border-white/10 bg-zinc-800/30' : 'border-white/5 bg-zinc-900/40 opacity-70'}`}>
             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
               {/* Enabled toggle */}
-              <input
-                type="checkbox"
-                aria-label={`Enable alarm: ${alarm.label}`}
-                checked={alarm.enabled}
-                onChange={e => update(idx, { enabled: e.target.checked })}
-                className="w-4 h-4 rounded accent-blue-500 shrink-0"
-              />
+              <Toggle checked={alarm.enabled} onChange={v => update(idx, { enabled: v })} label={`Alarm on: ${alarm.label}`} />
 
               {/* Label */}
               <input
@@ -475,20 +453,20 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
                 );
               })}
               <span className="w-px h-3 bg-white/10" />
-              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Pause all running timers when this alarm fires (lunch start)">
-                <input type="checkbox" checked={!!alarm.pauseTimers} onChange={e => update(idx, { pauseTimers: e.target.checked })} className="w-3 h-3 rounded accent-amber-500" />
+              <label className="flex items-center gap-1.5 min-h-[32px] text-[11px] text-zinc-500 cursor-pointer" title="Pause all running timers when this alarm fires (lunch start)">
+                <input type="checkbox" checked={!!alarm.pauseTimers} onChange={e => update(idx, { pauseTimers: e.target.checked })} className="w-4 h-4 rounded accent-amber-500" />
                 Pause timers
               </label>
-              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Resume timers that were auto-paused for lunch (lunch end). Pair this with a 'Pause timers' alarm.">
-                <input type="checkbox" checked={!!alarm.resumeTimers} onChange={e => update(idx, { resumeTimers: e.target.checked })} className="w-3 h-3 rounded accent-blue-500" />
+              <label className="flex items-center gap-1.5 min-h-[32px] text-[11px] text-zinc-500 cursor-pointer" title="Resume timers that were auto-paused for lunch (lunch end). Pair this with a 'Pause timers' alarm.">
+                <input type="checkbox" checked={!!alarm.resumeTimers} onChange={e => update(idx, { resumeTimers: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
                 Resume timers
               </label>
-              <label className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer" title="Auto-clocks out all running workers at this time (handled server-side every few minutes; each open device also ends its own timer immediately)">
-                <input type="checkbox" checked={!!alarm.clockOut} onChange={e => update(idx, { clockOut: e.target.checked })} className="w-3 h-3 rounded accent-red-500" />
+              <label className="flex items-center gap-1.5 min-h-[32px] text-[11px] text-zinc-500 cursor-pointer" title="Auto-clocks out all running workers at this time (handled server-side every few minutes; each open device also ends its own timer immediately)">
+                <input type="checkbox" checked={!!alarm.clockOut} onChange={e => update(idx, { clockOut: e.target.checked })} className="w-4 h-4 rounded accent-red-500" />
                 Clock out
               </label>
-              <label className="flex items-center gap-1 text-[10px] cursor-pointer font-bold" title="Send a push notification to every worker's phone/device at this time — works even when the app is closed">
-                <input type="checkbox" checked={!!alarm.sendPush} onChange={e => update(idx, { sendPush: e.target.checked })} className="w-3 h-3 rounded accent-emerald-500" />
+              <label className="flex items-center gap-1.5 min-h-[32px] text-[11px] cursor-pointer font-bold" title="Send a push notification to every worker's phone/device at this time — works even when the app is closed">
+                <input type="checkbox" checked={!!alarm.sendPush} onChange={e => update(idx, { sendPush: e.target.checked })} className="w-4 h-4 rounded accent-emerald-500" />
                 <span className={alarm.sendPush ? 'text-emerald-400' : 'text-zinc-500'}>📲 Push all workers</span>
               </label>
             </div>
@@ -765,10 +743,10 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
                   </div>
                 )}
                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 shrink-0 cursor-pointer">
-                  <input type="checkbox" checked={goal.showOnTv !== false} onChange={e => update(idx, { showOnTv: e.target.checked })} className="w-3.5 h-3.5 rounded accent-blue-500" aria-label="Show on TV" /> TV
+                  <input type="checkbox" checked={goal.showOnTv !== false} onChange={e => update(idx, { showOnTv: e.target.checked })} className="w-4 h-4 rounded accent-amber-500" aria-label="Show on TV" /> TV
                 </label>
                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 shrink-0 cursor-pointer">
-                  <input type="checkbox" checked={goal.enabled} onChange={e => update(idx, { enabled: e.target.checked })} className="w-3.5 h-3.5 rounded accent-blue-500" aria-label="Enabled" /> Active
+                  <input type="checkbox" checked={goal.enabled} onChange={e => update(idx, { enabled: e.target.checked })} className="w-4 h-4 rounded accent-amber-500" aria-label="Enabled" /> Active
                 </label>
                 <button type="button" onClick={() => remove(idx)} aria-label="Delete goal" className="text-zinc-600 hover:text-red-400 shrink-0 p-1"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
               </div>
@@ -942,17 +920,17 @@ const FinancialSettings = ({ settings, setSettings }: { settings: SystemSettings
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Fallback Rate</label>
-              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.shopRate ?? ''} onChange={e => setSettings({ ...settings, shopRate: Number(e.target.value) || 0 })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.shopRate ?? ''} onChange={e => setSettings({ ...settings, shopRate: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="21" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/hr</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Used when a worker has no individual rate.</p>
             </div>
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Monthly Overhead</label>
-              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyOverhead ?? ''} onChange={e => setSettings({ ...settings, monthlyOverhead: Number(e.target.value) || 0 })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <div className="relative"><span className="absolute left-3 top-2 text-zinc-500 text-sm">$</span><input type="number" step="0.01" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 pl-6 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyOverhead ?? ''} onChange={e => setSettings({ ...settings, monthlyOverhead: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="5000" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Rent, utilities, insurance, software, etc.</p>
             </div>
             <div>
               <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Productive Hours</label>
-              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyWorkHours ?? ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: Number(e.target.value) || 0 })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
+              <div className="relative"><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg py-2 px-3 pr-10 text-white text-sm font-mono focus:border-amber-500/50 focus:outline-none" value={settings.monthlyWorkHours ?? ''} onChange={e => setSettings({ ...settings, monthlyWorkHours: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="160" /><span className="absolute right-3 top-2 text-zinc-600 text-xs">/mo</span></div>
               <p className="text-[10px] text-zinc-600 mt-1">Billable hours per month per worker.</p>
             </div>
           </div>
@@ -2351,22 +2329,70 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
   );
 };
 
-// ── TV Slides Editor ─ full-featured editor for rotating slideshow
-const SLIDE_TYPE_META: Record<string, { label: string; desc: string; icon: string; color: string }> = {
-  'attack-plan': { label: 'Attack Plan', desc: 'Ranked "run these in this order" — risk first, then due date', icon: '⚡', color: 'bg-orange-500/15 border-orange-500/30 text-orange-400' },
-  workers:     { label: 'Live Workers + Jobs', desc: 'Running timers + auto-scroll jobs belt (the default view)', icon: '👷', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
-  jobs:        { label: 'Open Jobs (full-screen)', desc: 'All open jobs on one screen, auto-scrolling', icon: '📋', color: 'bg-purple-500/15 border-purple-500/30 text-purple-400' },
-  leaderboard: { label: 'Leaderboard', desc: 'Ranked workers by hours/jobs', icon: '🏆', color: 'bg-amber-500/15 border-amber-500/30 text-amber-400' },
-  weather:     { label: 'Weather Forecast', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400' },
-  'stats-week': { label: 'Weekly Stats', desc: 'Hours, jobs & sessions with daily bar graph', icon: '📊', color: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' },
-  goals:       { label: 'Shop Goals', desc: 'Your custom targets (jobs/week, revenue, etc)', icon: '🎯', color: 'bg-teal-500/15 border-teal-500/30 text-teal-400' },
-  'flow-map':  { label: 'Shop Flow Map', desc: 'Visual of jobs moving through each stage · live workers', icon: '🗺️', color: 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400' },
-  safety:      { label: 'Safety Message', desc: 'Big, bold safety reminder', icon: '⚠️', color: 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400' },
-  message:     { label: 'Announcement', desc: 'Custom title + body with color', icon: '📢', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400' },
-  stats:       { label: 'Quick Stats (legacy)', desc: 'Basic stats card', icon: '📈', color: 'bg-zinc-500/15 border-zinc-500/30 text-zinc-400' },
+// The real printed quote (same builder as Print) with sample data. The old
+// preview was a separate hand-drawn layout, and half its switches never
+// reached the printed PDF.
+const QuotePreview = ({ settings }: { settings: SystemSettings }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0.6);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setScale(Math.min(1, (entry.contentRect.width - 2) / 850)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const doc = useMemo(() => {
+    const markup = settings.defaultMarkup || 25;
+    const discount = settings.defaultDiscount || 0;
+    const tax = settings.taxRate || 0;
+    const subtotal = 1375;
+    const afterMarkup = subtotal * (1 + markup / 100);
+    const discountAmt = afterMarkup * (discount / 100);
+    const taxAmt = (afterMarkup - discountAmt) * (tax / 100);
+    const fields = settings.customProjectFields || ['Purchase Order', 'Part No.'];
+    const sample = {
+      id: 'PREVIEW',
+      quoteNumber: DB.getNextQuoteNumber([], settings.quotePrefix, settings.quoteNextNumber),
+      customer: 'Acme Manufacturing', status: 'draft', createdAt: Date.now(),
+      validUntil: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
+      billTo: { name: 'Acme Manufacturing', contactPerson: 'Jamie Ortiz', email: 'orders@acmemfg.com', phone: '(555) 123-4567' },
+      projectFields: Object.fromEntries(fields.map((f, i) => [f, i === 0 ? 'PO-78432' : i === 1 ? 'BRK-1200-A' : '—'])),
+      jobDescription: 'Deburr all edges per print. Break sharp edges 0.005–0.010.',
+      items: [
+        { description: 'Deburring — Bracket Assembly', qty: 500, unit: 'ea', unitPrice: 2.5, total: 1250 },
+        { description: 'Setup & Inspection', qty: 1, unit: 'lot', unitPrice: 125, total: 125 },
+      ],
+      subtotal, markupPct: markup, discountPct: discount, discountAmt, taxRate: tax, taxAmt,
+      total: afterMarkup - discountAmt + taxAmt,
+      notes: settings.defaultQuoteComment || undefined,
+      terms: settings.defaultPaymentTerms || 'Net 30',
+    } as unknown as Quote;
+    // Paper margins come from the printer; give the on-screen page the same.
+    return quoteDocument(sample, settings).replace('<body>', '<body style="padding:0.45in">');
+  }, [settings]);
+
+  return (
+    <div className="sticky top-4 rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-zinc-900">
+      <div className="px-4 py-3 border-b border-white/10">
+        <p className="text-sm font-bold text-white flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+          Quote Preview
+        </p>
+        <p className="text-[10px] text-zinc-500 mt-0.5">The real printed page, filled with sample data</p>
+      </div>
+      <div ref={containerRef} className="bg-white overflow-hidden" style={{ height: Math.round(1100 * scale) + 2 }}>
+        <iframe
+          title="Quote preview"
+          sandbox=""
+          srcDoc={doc}
+          style={{ width: 850, height: 1100, border: 'none', transform: `scale(${scale})`, transformOrigin: 'top left', pointerEvents: 'none', display: 'block' }}
+        />
+      </div>
+    </div>
+  );
 };
 
-// ── Weather Location Card — request & display location status for TV weather slide
 // Live miniature Job Traveler preview — re-renders on every settings change
 // so admins see section toggles / banner text / row count update in real time.
 // Uses sample job data (PO-SAMPLE, ACME) so the preview is populated even if
@@ -2481,945 +2507,7 @@ const TravelerPreview = ({ settings }: { settings: SystemSettings }) => {
   );
 };
 
-const WeatherLocationCard = ({ addToast, settings, setSettings }: { addToast: any; settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
-  const [status, setStatus] = useState<'unknown' | 'granted' | 'denied' | 'prompt' | 'unsupported'>('unknown');
-  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
-  const [temp, setTemp] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!navigator.geolocation) { setStatus('unsupported'); return; }
-    // Check permission state if supported
-    if ((navigator as any).permissions) {
-      (navigator as any).permissions.query({ name: 'geolocation' }).then((r: any) => {
-        setStatus(r.state);
-        r.addEventListener?.('change', () => setStatus(r.state));
-      }).catch(() => {});
-    }
-    // Try a silent fetch — if already granted it'll work
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        setStatus('granted');
-        const lat = pos.coords.latitude, lon = pos.coords.longitude;
-        setCoords({ lat, lon });
-        fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=fahrenheit`)
-          .then(r => r.json() as Promise<{ current?: { temperature_2m?: number } }>).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
-      },
-      err => { if (err.code === err.PERMISSION_DENIED) setStatus('denied'); },
-      { timeout: 8000 }
-    );
-  }, []);
-
-  const request = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        setStatus('granted');
-        const lat = pos.coords.latitude, lon = pos.coords.longitude;
-        setCoords({ lat, lon });
-        addToast('success', 'Location access granted — weather will appear on TV');
-        fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=fahrenheit`)
-          .then(r => r.json() as Promise<{ current?: { temperature_2m?: number } }>).then(d => setTemp(d.current?.temperature_2m ? Math.round(d.current.temperature_2m) : null)).catch(() => {});
-      },
-      err => {
-        if (err.code === err.PERMISSION_DENIED) {
-          setStatus('denied');
-          addToast('error', 'Location denied. Enable it in your browser settings.');
-        } else {
-          addToast('error', 'Could not get location — try again');
-        }
-      },
-      { timeout: 10000 }
-    );
-  };
-
-  const statusColor = status === 'granted' ? 'text-emerald-400' : status === 'denied' ? 'text-red-400' : 'text-amber-400';
-  const statusBg = status === 'granted' ? 'bg-emerald-500/10 border-emerald-500/25' : status === 'denied' ? 'bg-red-500/10 border-red-500/25' : 'bg-amber-500/10 border-amber-500/25';
-
-  return (
-    <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Cloud className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-        <span className="text-sm font-bold text-white">Weather Location</span>
-      </div>
-      <p className="text-[10px] text-zinc-500 leading-snug">The TV weather slide + header widget need browser location permission to show your local forecast.</p>
-      <div className={`rounded-xl border p-3 flex items-center gap-3 ${statusBg}`}>
-        {status === 'granted' ? (
-          <>
-            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
-              <CheckCircle className="w-5 h-5 text-emerald-400" aria-hidden="true" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className={`text-xs font-bold ${statusColor}`}>Location active</p>
-              <p className="text-[10px] text-zinc-400 mt-0.5">
-                {temp !== null ? <span className="text-white font-black">{temp}°F</span> : 'Loading…'}
-                {coords && <span className="ml-1.5 text-zinc-600">· {coords.lat.toFixed(2)}, {coords.lon.toFixed(2)}</span>}
-              </p>
-            </div>
-          </>
-        ) : status === 'denied' ? (
-          <>
-            <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center shrink-0">
-              <X className="w-5 h-5 text-red-400" aria-hidden="true" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className={`text-xs font-bold ${statusColor}`}>Location blocked</p>
-              <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">Click the 🔒 in your browser's address bar → allow location → refresh.</p>
-            </div>
-          </>
-        ) : status === 'unsupported' ? (
-          <>
-            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0">
-              <AlertCircle className="w-5 h-5 text-zinc-500" aria-hidden="true" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-zinc-400">Not supported</p>
-              <p className="text-[10px] text-zinc-500 mt-0.5">This browser doesn't support geolocation.</p>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
-              <Cloud className="w-5 h-5 text-amber-400" aria-hidden="true" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className={`text-xs font-bold ${statusColor}`}>Location needed</p>
-              <p className="text-[10px] text-zinc-400 mt-0.5">Click below to allow this site to see your location.</p>
-            </div>
-            <button type="button" onClick={request} className="shrink-0 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Enable</button>
-          </>
-        )}
-      </div>
-      {status === 'granted' && (
-        <button type="button" onClick={request} className="w-full text-[11px] text-zinc-500 hover:text-white py-1 transition-colors">Refresh location</button>
-      )}
-
-      {/* Manual fallback — works on smart TVs / kiosks where geolocation is unavailable.
-          Uses Open-Meteo's free geocoding API to resolve a city or zip to lat/lon, then
-          persists the result so the TV weather slide always has coordinates to hit. */}
-      <div className="border-t border-white/5 pt-3 mt-2 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Manual Location (for TVs)</p>
-          {settings.weatherLat != null && settings.weatherLon != null && (
-            <span className="text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 rounded">✓ Saved</span>
-          )}
-        </div>
-        <p className="text-[10px] text-zinc-500 leading-snug">
-          If your TV or shop display can't share location, type a city or ZIP here. We'll look up the coordinates and save them so every device uses the same weather.
-        </p>
-        <ManualWeatherEditor settings={settings} setSettings={setSettings} addToast={addToast} />
-      </div>
-    </div>
-  );
-};
-
-// Inline geocode-on-save input. Uses Open-Meteo's free geocoding (no API key).
-const ManualWeatherEditor: React.FC<{ settings: SystemSettings; setSettings: (s: SystemSettings) => void; addToast: any }> = ({ settings, setSettings, addToast }) => {
-  const [input, setInput] = useState(settings.weatherCity || '');
-  const [looking, setLooking] = useState(false);
-
-  const resolve = async () => {
-    const q = input.trim();
-    if (!q) return;
-    setLooking(true);
-    try {
-      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
-      const d = await res.json() as { results?: Array<{ latitude: number; longitude: number; name: string; admin1?: string; country?: string; country_code?: string }> };
-      const hit = d?.results?.[0];
-      if (!hit || typeof hit.latitude !== 'number') {
-        addToast('error', `Couldn't find "${q}" — try "City, State" or a 5-digit ZIP`);
-        return;
-      }
-      const label = [hit.name, hit.admin1, hit.country_code].filter(Boolean).join(', ');
-      setSettings({ ...settings, weatherCity: label, weatherLat: hit.latitude, weatherLon: hit.longitude });
-      addToast('success', `Weather location set: ${label}`);
-      setInput(label);
-    } catch {
-      addToast('error', 'Geocoding failed — check your connection');
-    } finally {
-      setLooking(false);
-    }
-  };
-
-  const clear = () => {
-    setInput('');
-    setSettings({ ...settings, weatherCity: '', weatherLat: undefined, weatherLon: undefined });
-    addToast('info', 'Manual weather location cleared');
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !looking && resolve()}
-          placeholder="e.g. Fresno, CA or 93710"
-          className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white"
-        />
-        <button
-          type="button"
-          onClick={resolve}
-          disabled={looking || !input.trim()}
-          className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold px-3 rounded-lg"
-        >
-          {looking ? 'Looking…' : 'Set'}
-        </button>
-      </div>
-      {settings.weatherLat != null && settings.weatherLon != null && (
-        <div className="flex items-center justify-between gap-2 text-[10px]">
-          <span className="text-zinc-500">
-            <span className="text-emerald-400 font-black">{settings.weatherCity || 'Custom'}</span>
-            <span className="text-zinc-700 ml-1">· {settings.weatherLat.toFixed(2)}, {settings.weatherLon.toFixed(2)}</span>
-          </span>
-          <button type="button" onClick={clear} className="text-zinc-500 hover:text-red-400 font-bold">Clear</button>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ── Safety message presets ─ each emoji has a default title + body.
-// User can still edit freely. Picking the icon auto-fills blank fields.
-const SAFETY_PRESETS: Record<string, { title: string; body: string; color: 'yellow' | 'red' | 'orange' | 'blue' | 'green' | 'white' }> = {
-  '⚠️': { title: 'Stay Alert', body: 'Watch for hazards. Report anything unsafe to your supervisor.', color: 'yellow' },
-  '🦺': { title: 'Wear Your Vest', body: 'High-visibility gear is required on the shop floor.', color: 'orange' },
-  '🥽': { title: 'Eye Protection', body: 'Safety glasses on at all times in the work area.', color: 'blue' },
-  '🧤': { title: 'Hand Protection', body: 'Use the correct gloves for the job. Inspect before use.', color: 'blue' },
-  '🚫': { title: 'No Shortcuts', body: 'Follow the process. Shortcuts cause injuries and rework.', color: 'red' },
-  '🔥': { title: 'Fire Safety', body: 'Know where extinguishers are. Keep work areas clear of combustibles.', color: 'red' },
-  '⚡': { title: 'Electrical Safety', body: 'Inspect cords before use. Report damaged equipment.', color: 'yellow' },
-  '🛑': { title: 'Stop & Think', body: 'If something feels wrong — stop. Unsafe tasks aren\'t worth it.', color: 'red' },
-  '✅': { title: 'Good Job!', body: 'Zero incidents this week — keep it up!', color: 'green' },
-  '🎯': { title: 'Quality First', body: 'Double-check your work. Quality protects us all.', color: 'blue' },
-  '🏭': { title: 'Keep It Clean', body: '5S: Sort, Set in order, Shine, Standardize, Sustain.', color: 'green' },
-  '👷': { title: 'PPE Check', body: 'Head, eyes, ears, hands, feet — run through the list every shift.', color: 'orange' },
-  '🦾': { title: 'Machine Safety', body: 'Lock-out / tag-out before servicing. No exceptions.', color: 'red' },
-  '📢': { title: 'Important Notice', body: 'Check the bulletin board for today\'s updates.', color: 'blue' },
-  '🔔': { title: 'Shift Change', body: 'Hand off your work cleanly. Leave notes for the next shift.', color: 'yellow' },
-};
-
-const ANNOUNCEMENT_PRESETS: Record<string, { title: string; body: string; color: 'blue' | 'yellow' | 'red' | 'green' | 'white' | 'orange' }> = {
-  '📢': { title: 'Important Announcement', body: 'Please read the board for today\'s updates.', color: 'blue' },
-  '🎉': { title: 'Great Job Team!', body: 'We hit our goal — thank you all for the hard work.', color: 'green' },
-  '🎯': { title: 'Focus Today', body: 'Priority: get the hot jobs out the door.', color: 'blue' },
-  '⭐': { title: 'Shout-Out', body: 'Congrats to our top performer this week!', color: 'yellow' },
-  '✨': { title: 'Keep It Up', body: 'We\'re on track — let\'s finish strong.', color: 'green' },
-  '🏆': { title: 'Milestone Hit', body: 'Celebrate the win before starting the next push.', color: 'yellow' },
-  '📋': { title: 'Reminder', body: 'Log all your time — it helps us quote accurately.', color: 'blue' },
-  '💡': { title: 'Suggestion Box', body: 'Have an idea? Share it with your supervisor.', color: 'blue' },
-};
-
-// ── Multi-message editor for safety + announcement slides ──
-// Each slide can hold several messages that cycle one per TV rotation.
-const SlideMessagesEditor = ({ slide, onUpdate }: { slide: TvSlide; onUpdate: (patch: Partial<TvSlide>) => void }) => {
-  // Normalize legacy single-message slides into messages[]
-  const messages: SlideMessage[] = slide.messages && slide.messages.length > 0
-    ? slide.messages
-    : [{ id: 'legacy', title: slide.title, body: slide.body, color: slide.color, icon: slide.icon }];
-
-  const updateMsg = (i: number, patch: Partial<SlideMessage>) => {
-    const next = [...messages];
-    next[i] = { ...next[i], ...patch };
-    onUpdate({ messages: next, title: undefined, body: undefined, color: undefined, icon: undefined });
-  };
-  const removeMsg = (i: number) => {
-    if (messages.length <= 1) return;
-    const next = messages.filter((_, idx) => idx !== i);
-    onUpdate({ messages: next });
-  };
-  const addMsg = () => {
-    const defaults: SlideMessage = slide.type === 'safety'
-      ? { id: `m_${Date.now()}`, title: 'New Safety Reminder', body: '', color: 'yellow', icon: '⚠️' }
-      : { id: `m_${Date.now()}`, title: 'New Announcement', body: '', color: 'blue' };
-    onUpdate({ messages: [...messages, defaults] });
-  };
-  const move = (i: number, dir: -1 | 1) => {
-    const t = i + dir;
-    if (t < 0 || t >= messages.length) return;
-    const next = [...messages];
-    [next[i], next[t]] = [next[t], next[i]];
-    onUpdate({ messages: next });
-  };
-
-  const icons = slide.type === 'safety' ? ['⚠️','🦺','🥽','🧤','🚫','🔥','⚡','🛑','✅','🎯','🏭','👷','🦾','📢','🔔'] : ['📢','🎉','🎯','⭐','✨','🏆','📋','💡'];
-
-  const loadPreset = () => {
-    const presets = slide.type === 'safety' ? SAFETY_PRESETS : ANNOUNCEMENT_PRESETS;
-    const newMsgs: SlideMessage[] = Object.entries(presets).slice(0, slide.type === 'safety' ? 8 : 6).map(([icon, p], i) => ({
-      id: `m_${Date.now()}_${i}`,
-      title: p.title,
-      body: p.body,
-      color: p.color,
-      ...(slide.type === 'safety' ? { icon } : {}),
-    }));
-    onUpdate({ messages: newMsgs, title: undefined, body: undefined, color: undefined, icon: undefined });
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-          {slide.type === 'safety' ? 'Safety Messages' : 'Announcements'} · {messages.length} total
-        </p>
-        <div className="flex gap-1">
-          <button type="button" onClick={loadPreset} className="text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded-md flex items-center gap-1" title="Replace with preset pack">
-            ✨ Preset Pack
-          </button>
-          <button type="button" onClick={addMsg} className="text-[10px] font-bold bg-amber-600 hover:bg-amber-500 text-white px-2 py-1 rounded-md flex items-center gap-1">
-            <Plus className="w-3 h-3" aria-hidden="true" /> Add
-          </button>
-        </div>
-      </div>
-      <p className="text-[10px] text-zinc-600 italic">Each message shows in turn — one per slide rotation. Great for cycling 10 safety tips without cluttering the rotation.</p>
-      <div className="space-y-2">
-        {messages.map((m, i) => (
-          <div key={m.id} className="bg-zinc-900/60 border border-white/5 rounded-lg p-2.5 space-y-1.5">
-            <div className="flex items-center gap-1">
-              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">#{i + 1}</span>
-              <div className="flex-1" />
-              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move up" className="text-zinc-500 hover:text-white disabled:opacity-20 p-0.5"><ChevronUp className="w-3 h-3" aria-hidden="true" /></button>
-              <button type="button" onClick={() => move(i, 1)} disabled={i === messages.length - 1} aria-label="Move down" className="text-zinc-500 hover:text-white disabled:opacity-20 p-0.5"><ChevronDown className="w-3 h-3" aria-hidden="true" /></button>
-              {messages.length > 1 && <button type="button" onClick={() => removeMsg(i)} aria-label="Remove message" className="text-zinc-500 hover:text-red-400 p-0.5"><X className="w-3 h-3" aria-hidden="true" /></button>}
-            </div>
-            <input className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white" placeholder={slide.type === 'safety' ? 'Safety reminder title…' : 'Announcement title…'} value={m.title || ''} onChange={e => updateMsg(i, { title: e.target.value })} />
-            <textarea className="w-full bg-zinc-950 border border-white/10 rounded px-2 py-1 text-[11px] text-white resize-y" rows={2} placeholder="Body (optional)…" value={m.body || ''} onChange={e => updateMsg(i, { body: e.target.value })} />
-            {slide.type === 'safety' && (
-              <div className="flex flex-wrap gap-1">
-                {icons.map(icn => (
-                  <button
-                    key={icn}
-                    type="button"
-                    onClick={() => {
-                      const preset = SAFETY_PRESETS[icn];
-                      const patch: Partial<SlideMessage> = { icon: icn };
-                      // Only auto-fill blank fields so we don't overwrite user's edits
-                      if (preset) {
-                        if (!m.title?.trim()) patch.title = preset.title;
-                        if (!m.body?.trim()) patch.body = preset.body;
-                        if (!m.color) patch.color = preset.color;
-                      }
-                      updateMsg(i, patch);
-                    }}
-                    className={`w-7 h-7 rounded-md transition-all text-base ${(m.icon || '⚠️') === icn ? 'bg-blue-500/30 ring-2 ring-blue-500' : 'bg-zinc-900 hover:bg-zinc-800'}`}
-                    title={SAFETY_PRESETS[icn] ? `${SAFETY_PRESETS[icn].title} — click to use preset` : icn}
-                  >{icn}</button>
-                ))}
-              </div>
-            )}
-            <div className="flex items-center gap-1">
-              <span className="text-[9px] text-zinc-500 uppercase font-bold tracking-widest mr-1">Color:</span>
-              {[{id:'blue',cls:'bg-blue-500'},{id:'yellow',cls:'bg-yellow-500'},{id:'orange',cls:'bg-orange-500'},{id:'red',cls:'bg-red-500'},{id:'green',cls:'bg-emerald-500'},{id:'white',cls:'bg-white'}].map(c => (
-                <button key={c.id} type="button" onClick={() => updateMsg(i, { color: c.id as any })} className={`w-5 h-5 rounded ${c.cls} transition-all ${(m.color || (slide.type === 'safety' ? 'yellow' : 'blue')) === c.id ? 'ring-2 ring-white scale-110' : 'opacity-40 hover:opacity-80'}`} aria-label={c.id} />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const TvSlidesEditor = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
-  const slides = settings.tvSlides || [];
-  const [addOpen, setAddOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const { confirm: askConfirm, ConfirmHost } = useConfirm();
-
-  const update = (idx: number, patch: Partial<TvSlide>) => {
-    const next = [...slides];
-    next[idx] = { ...next[idx], ...patch };
-    setSettings({ ...settings, tvSlides: next });
-  };
-  const remove = async (idx: number) => {
-    const s = slides[idx];
-    const ok = await askConfirm({
-      title: `Remove "${s?.title || SLIDE_TYPE_META[s?.type || 'message']?.label || 'this'}" slide?`,
-      message: 'It drops out of the TV rotation immediately. You can re-add it later, but any custom text is lost.',
-      tone: 'warning',
-      confirmLabel: 'Remove',
-    });
-    if (!ok) return;
-    setSettings({ ...settings, tvSlides: slides.filter((_, i) => i !== idx) });
-  };
-  const move = (idx: number, dir: -1 | 1) => {
-    const t = idx + dir;
-    if (t < 0 || t >= slides.length) return;
-    const next = [...slides];
-    [next[idx], next[t]] = [next[t], next[idx]];
-    setSettings({ ...settings, tvSlides: next });
-  };
-  const add = (type: TvSlide['type']) => {
-    const defaults: Record<string, Partial<TvSlide>> = {
-      workers:      { title: 'Live Workers' },
-      jobs:         { title: 'Open Jobs' },
-      leaderboard:  { leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
-      weather:      {},
-      'stats-week': {},
-      goals:        {},
-      'flow-map':   {},
-      safety:       { title: 'Safety First', body: 'Wear your PPE. Keep your work area clean. Report hazards.', color: 'yellow', icon: '⚠️' },
-      message:      { title: 'Announcement', body: '', color: 'blue' },
-      stats:        {},
-    };
-    const newSlide: TvSlide = {
-      id: `${type}_${Date.now()}`,
-      type,
-      enabled: true,
-      ...defaults[type],
-    };
-    setSettings({ ...settings, tvSlides: [...slides, newSlide] });
-    setAddOpen(false);
-    setExpandedId(newSlide.id);
-  };
-
-  const enabledCount = slides.filter(s => s.enabled).length;
-
-  return (
-    <details open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
-      <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]">
-        <div>
-          <p className="text-sm font-bold text-white flex items-center gap-2">📺 Slides</p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">{slides.length === 0 ? 'Using defaults (Workers · Leaderboard · Weather · Stats)' : `${enabledCount} of ${slides.length} enabled`}</p>
-        </div>
-        <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
-      </summary>
-      <div className="px-4 pb-4 space-y-3">
-        {/* Add slide menu */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setAddOpen(!addOpen)}
-            className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-xs font-bold px-3 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20"
-          >
-            <Plus className="w-4 h-4" aria-hidden="true" /> Add Slide {addOpen ? '▲' : '▼'}
-          </button>
-          {addOpen && (
-            <div className="mt-2 grid grid-cols-1 gap-1.5 p-2 bg-zinc-950 border border-white/10 rounded-xl animate-fade-in">
-              {(Object.keys(SLIDE_TYPE_META) as (keyof typeof SLIDE_TYPE_META)[]).filter(t => t !== 'stats').map(t => {
-                const meta = SLIDE_TYPE_META[t];
-                // Non-configurable types render identical content every time — warn on duplicate add
-                const SINGLE_INSTANCE: TvSlide['type'][] = ['workers', 'jobs', 'weather', 'stats-week', 'goals', 'flow-map'];
-                const existing = slides.filter(s => s.type === t).length;
-                const alreadyExists = SINGLE_INSTANCE.includes(t as TvSlide['type']) && existing > 0;
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={async () => {
-                      if (alreadyExists) {
-                        const ok = await askConfirm({
-                          title: `Add another "${meta.label}" slide?`,
-                          message: 'You already have one of these. Adding another will show the same content twice in the rotation.',
-                          tone: 'warning',
-                          confirmLabel: 'Add anyway',
-                        });
-                        if (!ok) return;
-                      }
-                      add(t as TvSlide['type']);
-                    }}
-                    className={`text-left px-3 py-2 rounded-lg border ${meta.color} hover:brightness-125 transition-all flex items-center gap-2.5`}
-                  >
-                    <span className="text-xl" aria-hidden="true">{meta.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-white flex items-center gap-1.5">
-                        {meta.label}
-                        {alreadyExists && <span className="text-[9px] font-black text-yellow-400 bg-yellow-500/15 border border-yellow-500/30 rounded px-1 py-0.5">✓ Added</span>}
-                      </p>
-                      <p className="text-[10px] text-white/60 mt-0.5 leading-tight">{meta.desc}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {slides.length === 0 && (
-          <div className="rounded-xl border border-dashed border-white/10 p-4 text-center">
-            <p className="text-xs text-zinc-400 font-bold">Using default slideshow</p>
-            <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
-              Workers+Jobs · Leaderboard · Weather · Week Stats will rotate every {settings.tvSlideDuration || 15}s.<br />
-              Click <strong className="text-zinc-400">Add Slide</strong> above to customize.
-            </p>
-          </div>
-        )}
-
-        {slides.map((slide, idx) => {
-          const meta = SLIDE_TYPE_META[slide.type] || SLIDE_TYPE_META.message;
-          const expanded = expandedId === slide.id;
-          return (
-            <div key={slide.id} className={`border rounded-xl overflow-hidden transition-all ${slide.enabled ? 'border-white/10 bg-zinc-800/20' : 'border-white/5 bg-zinc-900/40 opacity-60'}`}>
-              {/* Header row */}
-              <div className="p-2.5 flex items-center gap-2">
-                {/* Move up/down */}
-                <div className="flex flex-col shrink-0">
-                  <button type="button" aria-label="Move up" disabled={idx === 0} onClick={() => move(idx, -1)} className="text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500"><ChevronUp className="w-3 h-3" aria-hidden="true" /></button>
-                  <button type="button" aria-label="Move down" disabled={idx === slides.length - 1} onClick={() => move(idx, 1)} className="text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500"><ChevronDown className="w-3 h-3" aria-hidden="true" /></button>
-                </div>
-                {/* Icon + label */}
-                <button type="button" onClick={() => setExpandedId(expanded ? null : slide.id)} className="flex-1 flex items-center gap-2 min-w-0 text-left">
-                  <span className="text-lg shrink-0" aria-hidden="true">{meta.icon}</span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{slide.title || meta.label}</p>
-                    <p className="text-[9px] text-zinc-500 truncate">{slide.type === 'leaderboard' ? `${slide.leaderboardPeriod || 'week'} · top ${slide.leaderboardCount || 5}` : meta.label}</p>
-                  </div>
-                </button>
-                {/* Duration */}
-                <select
-                  className="bg-zinc-950 border border-white/10 rounded px-1 py-0.5 text-white text-[10px] shrink-0"
-                  aria-label="Duration"
-                  value={slide.duration || settings.tvSlideDuration || 15}
-                  onChange={e => update(idx, { duration: Number(e.target.value) })}
-                >
-                  {[5, 10, 15, 20, 30, 45, 60, 90].map(s => <option key={s} value={s}>{s}s</option>)}
-                </select>
-                {/* Enabled toggle */}
-                <label className="flex items-center gap-1 shrink-0 cursor-pointer" title={slide.enabled ? 'Disable slide' : 'Enable slide'}>
-                  <input
-                    type="checkbox"
-                    checked={slide.enabled}
-                    onChange={e => update(idx, { enabled: e.target.checked })}
-                    className="w-3.5 h-3.5 rounded accent-blue-500"
-                  />
-                </label>
-                {/* Delete */}
-                <button type="button" aria-label="Delete slide" onClick={() => remove(idx)} className="text-zinc-600 hover:text-red-400 shrink-0 p-1"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
-              </div>
-
-              {/* Expanded editor */}
-              {expanded && (
-                <div className="border-t border-white/5 bg-zinc-950/40 p-3 space-y-2">
-                  {(slide.type === 'message' || slide.type === 'safety') && (
-                    <SlideMessagesEditor slide={slide} onUpdate={(patch) => update(idx, patch)} />
-                  )}
-                  {slide.type === 'leaderboard' && (
-                    <>
-                      <div>
-                        <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Period</label>
-                        <div role="group" className="inline-flex gap-1 p-1 bg-zinc-900 border border-white/10 rounded-lg w-full">
-                          {(['today', 'week', 'month'] as const).map(p => (
-                            <button key={p} type="button" onClick={() => update(idx, { leaderboardPeriod: p })} aria-pressed={(slide.leaderboardPeriod || 'week') === p} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardPeriod || 'week') === p ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{p}</button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Show</label>
-                        <div role="group" className="inline-flex gap-1 p-1 bg-zinc-900 border border-white/10 rounded-lg w-full">
-                          {(['hours', 'jobs', 'mixed'] as const).map(m => (
-                            <button key={m} type="button" onClick={() => update(idx, { leaderboardMetric: m })} aria-pressed={(slide.leaderboardMetric || 'mixed') === m} className={`flex-1 px-2 py-1 text-[10px] font-bold rounded capitalize ${(slide.leaderboardMetric || 'mixed') === m ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>{m === 'mixed' ? 'Hours + Jobs' : m}</button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-zinc-500 block mb-1 font-bold uppercase tracking-widest">Top N workers · {slide.leaderboardCount || 5}</label>
-                        <input type="range" min={3} max={10} value={slide.leaderboardCount || 5} onChange={e => update(idx, { leaderboardCount: Number(e.target.value) })} className="w-full accent-blue-500" />
-                      </div>
-                    </>
-                  )}
-                  {(slide.type === 'workers' || slide.type === 'jobs' || slide.type === 'weather' || slide.type === 'stats-week' || slide.type === 'stats' || slide.type === 'flow-map' || slide.type === 'goals') && (
-                    <p className="text-[10px] text-zinc-500 italic">No additional options — this slide uses the shop's live data.</p>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {slides.length > 0 && (
-          <div className="pt-2 border-t border-white/5 space-y-1">
-            <button
-              type="button"
-              onClick={async () => {
-                // Load the default lineup so user can customize from a clean state
-                const ok = await askConfirm({
-                  title: 'Replace slides with defaults?',
-                  message: 'Sets up Workers · Jobs · Leaderboards · Goals · Week Stats · Weather. Your current customizations will be removed.',
-                  tone: 'warning',
-                  confirmLabel: 'Replace',
-                });
-                if (!ok) return;
-                const ts = Date.now();
-                setSettings({ ...settings, tvSlides: [
-                  { id: `slide_${ts}_1`, type: 'workers', enabled: true },
-                  { id: `slide_${ts}_2`, type: 'jobs', enabled: true },
-                  { id: `slide_${ts}_3`, type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'week', leaderboardCount: 5 },
-                  { id: `slide_${ts}_4`, type: 'leaderboard', enabled: true, leaderboardMetric: 'mixed', leaderboardPeriod: 'month', leaderboardCount: 5 },
-                  { id: `slide_${ts}_5`, type: 'goals', enabled: true },
-                  { id: `slide_${ts}_6`, type: 'stats-week', enabled: true },
-                  { id: `slide_${ts}_7`, type: 'weather', enabled: true },
-                ]});
-              }}
-              className="w-full text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/5 py-1.5 rounded transition-colors font-bold"
-            >
-              ↻ Load Default Lineup
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                const ok = await askConfirm({
-                  title: 'Clear all slides?',
-                  message: 'The TV will fall back to the default rotation (Workers + Jobs + Leaderboard + Weather + Stats).',
-                  tone: 'danger',
-                  confirmLabel: 'Clear all',
-                });
-                if (ok) setSettings({ ...settings, tvSlides: [] });
-              }}
-              className="w-full text-[10px] text-zinc-600 hover:text-red-400 py-1 transition-colors"
-            >
-              Clear all (use built-in defaults)
-            </button>
-          </div>
-        )}
-      </div>
-      {ConfirmHost}
-    </details>
-  );
-};
-
-// ── TV Mirror Preview ─ a miniature, true-to-life mock of the TV-mode layout
-// so admins can see how their customizations will look before they push to TV.
-// Cycles through configured slides at 1/3 speed so admins can see each one.
-const TvMirrorPreview = ({ settings, activeLogs, jobs, allLogs }: { settings: SystemSettings; activeLogs: TimeLog[]; jobs: Job[]; allLogs: TimeLog[] }) => {
-  const [previewSlideIdx, setPreviewSlideIdx] = useState(0);
-  // Same default slides as TV mode — deduped by id so legacy configs can't double-show
-  const enabledSlides: TvSlide[] = (settings.tvSlides && settings.tvSlides.filter(s => s.enabled).length > 0)
-    ? settings.tvSlides.filter(s => s.enabled)
-    : [
-        { id: 'p-workers', type: 'workers', enabled: true },
-        { id: 'p-leader', type: 'leaderboard', enabled: true, leaderboardPeriod: 'week', leaderboardCount: 5, leaderboardMetric: 'mixed' },
-        { id: 'p-weather', type: 'weather', enabled: true },
-        { id: 'p-stats', type: 'stats-week', enabled: true },
-      ];
-  const slides = React.useMemo(() => {
-    const seen = new Set<string>();
-    const out: TvSlide[] = [];
-    for (const s of enabledSlides) { if (seen.has(s.id)) continue; seen.add(s.id); out.push(s); }
-    return out;
-  }, [enabledSlides]);
-  useEffect(() => {
-    if (slides.length <= 1) return;
-    const t = setInterval(() => setPreviewSlideIdx(prev => (prev + 1) % slides.length), 4000);
-    return () => clearInterval(t);
-  }, [slides.length]);
-  const currentSlide = slides[previewSlideIdx] || slides[0];
-
-  return <TvMirrorPreviewInner settings={settings} activeLogs={activeLogs} jobs={jobs} allLogs={allLogs} slides={slides} currentSlide={currentSlide} previewSlideIdx={previewSlideIdx} setPreviewSlideIdx={setPreviewSlideIdx} />;
-};
-
-const TvMirrorPreviewInner = ({ settings, activeLogs, jobs, allLogs, slides, currentSlide, previewSlideIdx, setPreviewSlideIdx }: { settings: SystemSettings; activeLogs: TimeLog[]; jobs: Job[]; allLogs: TimeLog[]; slides: TvSlide[]; currentSlide: TvSlide; previewSlideIdx: number; setPreviewSlideIdx: (i: number) => void }) => {
-  const [now, setNow] = useState(new Date());
-  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
-  const runningCount = activeLogs.filter(l => !l.pausedAt).length;
-  const pausedCount = activeLogs.filter(l => !!l.pausedAt).length;
-  const workerCount = new Set(activeLogs.map(l => l.userId)).size;
-  const openJobs = jobs.filter(j => j.status !== 'completed').slice(0, 8);
-  const sorted = [...activeLogs].sort((a, b) => {
-    const ap = a.pausedAt ? 1 : 0, bp = b.pausedAt ? 1 : 0;
-    return ap !== bp ? ap - bp : a.startTime - b.startTime;
-  }).slice(0, 4);
-  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-
-  const fmtElapsed = (log: TimeLog) => {
-    const el = DB.getWorkingElapsedMs(log);
-    const s = Math.floor(el / 1000);
-    return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  };
-
-  return (
-    <div className="sticky top-4 space-y-2">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <p className="text-xs font-black text-zinc-500 uppercase tracking-widest flex items-center gap-1.5"><Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" aria-hidden="true" /> Live TV Preview</p>
-        <p className="text-[10px] text-zinc-600">Updates as you change settings</p>
-      </div>
-      {/* TV frame */}
-      <div className="bg-black rounded-2xl shadow-2xl overflow-hidden border-2 border-zinc-800 p-2">
-        <div className="bg-gradient-to-br from-zinc-950 via-black to-zinc-950 rounded-xl overflow-hidden relative" style={{ aspectRatio: '16 / 9' }}>
-          {/* Ambient glow */}
-          <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-            <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[60px]" />
-            <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-600/10 blur-[60px]" />
-          </div>
-
-          {/* TOP BAR */}
-          <div className="relative shrink-0 px-3 py-2 flex items-center justify-between gap-3 border-b border-white/5 backdrop-blur-xl bg-black/20">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              {settings.companyLogo && <img src={settings.companyLogo} alt="" className="h-5 object-contain" />}
-              <div className="min-w-0">
-                {settings.companyName && <p className="text-[11px] font-black text-white truncate">{settings.companyName}</p>}
-                <div className="flex items-center gap-1"><Radio className="w-2 h-2 text-red-500 animate-pulse" /><span className="text-[7px] font-black text-white/60 uppercase tracking-[0.3em]">Live</span></div>
-              </div>
-            </div>
-            {settings.tvShowClock !== false && (
-              <div className="shrink-0 text-center">
-                <p className="text-[15px] sm:text-lg font-black text-white tabular leading-none tracking-tight">{timeStr}</p>
-                <p className="text-white/40 text-[7px] font-semibold mt-0.5 truncate max-w-[90px]">{dateStr}</p>
-              </div>
-            )}
-            <div className="shrink-0 flex items-center gap-2 min-w-0 flex-1 justify-end">
-              {settings.tvShowStats !== false && (
-                <div className="flex items-center gap-2">
-                  <div className="text-center"><p className="text-[13px] font-black text-white tabular leading-none">{workerCount}</p><p className="text-[6px] font-black text-white/30 uppercase tracking-widest mt-0.5">Wrk</p></div>
-                  <div className="w-px h-4 bg-white/10" />
-                  <div className="text-center"><p className="text-[13px] font-black text-white tabular leading-none">{runningCount}</p><p className="text-[6px] font-black text-white/30 uppercase tracking-widest mt-0.5">Run</p></div>
-                  <div className="w-px h-4 bg-white/10" />
-                  <div className="text-center"><p className="text-[13px] font-black text-white tabular leading-none">{openJobs.length}</p><p className="text-[6px] font-black text-white/30 uppercase tracking-widest mt-0.5">Open</p></div>
-                </div>
-              )}
-              {settings.tvShowWeather !== false && <div className="bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[8px] text-white/60">72°F</div>}
-            </div>
-          </div>
-
-          {/* MAIN: Rotating slides (scaled-down representation) */}
-          <div className="absolute left-0 right-0 bottom-[18px] top-[42px] overflow-hidden">
-            <MiniSlideRender slide={currentSlide} activeLogs={activeLogs} jobs={jobs} settings={settings} sorted={sorted} openJobs={openJobs} fmtElapsed={fmtElapsed} allLogs={allLogs} />
-          </div>
-
-          {/* Slide indicator dots */}
-          {slides.length > 1 && (
-            <div className="absolute bottom-0 left-0 right-0 h-[18px] flex items-center justify-center gap-1 px-2 bg-black/50 backdrop-blur-sm">
-              {slides.map((s, i) => (
-                <button key={s.id} type="button" onClick={() => setPreviewSlideIdx(i)} aria-label={`Show ${SLIDE_TYPE_META[s.type]?.label || s.type}`} aria-current={i === previewSlideIdx ? 'true' : undefined} className="flex items-center gap-0.5">
-                  <span className={`h-1 rounded-full transition-all ${i === previewSlideIdx ? 'w-5 bg-blue-500' : 'w-1 bg-white/20'}`} />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center justify-between text-[10px] text-zinc-600 px-1">
-        <span>📺 Previewing: <strong className="text-zinc-400">{SLIDE_TYPE_META[currentSlide?.type]?.label || 'Slide'}</strong> ({previewSlideIdx + 1}/{slides.length})</span>
-        <span>{activeLogs.length} live · {openJobs.length} open</span>
-      </div>
-    </div>
-  );
-};
-
-// Miniature rendering of each slide type for the settings preview.
-// Wired to LIVE data (allLogs + jobs) so admins see what will actually appear on TV
-// — not hardcoded placeholder numbers that would repeat on every slide cycle.
-const MiniSlideRender = ({ slide, activeLogs, jobs, settings, sorted, openJobs, fmtElapsed, allLogs = [] }: any) => {
-  if (!slide) return null;
-
-  if (slide.type === 'workers' || !slide.type) {
-    return (
-      <div className="h-full grid grid-cols-2 gap-0">
-        <div className="border-r border-white/5 overflow-hidden flex flex-col">
-          <div className="px-3 py-1.5 border-b border-white/5 flex items-center justify-between">
-            <h2 className="text-[8px] font-black text-white/60 uppercase tracking-[0.3em]">● Running</h2>
-            <span className="text-[8px] text-white/40 font-mono">{activeLogs.filter((l: any) => !l.pausedAt).length}</span>
-          </div>
-          <div className="flex-1 overflow-hidden p-2 space-y-1.5">
-            {sorted.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-2">
-                <div className="w-8 h-8 rounded-xl bg-zinc-800/60 border border-white/5 flex items-center justify-center mb-1"><Activity className="w-4 h-4 text-zinc-600" aria-hidden="true" /></div>
-                <p className="text-zinc-400 text-[10px] font-bold">Floor is quiet</p>
-              </div>
-            ) : sorted.map((log: any) => {
-              const job = jobs.find((j: any) => j.id === log.jobId);
-              const isPaused = !!log.pausedAt;
-              return (
-                <div key={log.id} className={`bg-gradient-to-br rounded-lg p-1.5 border ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`}>
-                  <div className="flex items-center gap-1.5">
-                    <div className={`shrink-0 w-6 h-6 rounded-md flex items-center justify-center font-black text-[9px] text-white ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-orange-500 to-amber-500'}`}>{log.userName.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-black text-white truncate leading-tight">{log.userName}</p>
-                      <p className="text-[7px] text-blue-300 truncate">{log.operation}</p>
-                      {settings.tvShowJobId !== false && job && <p className="text-[6px] text-white/40 truncate">PO {job.poNumber}</p>}
-                    </div>
-                    <p className="text-[10px] font-black text-white tabular shrink-0">{fmtElapsed(log)}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        {settings.tvShowJobsBelt !== false ? (
-          <div className="overflow-hidden flex flex-col">
-            <div className="px-3 py-1.5 border-b border-white/5 flex items-center justify-between">
-              <h2 className="text-[8px] font-black text-white/60 uppercase tracking-[0.3em]">Open Jobs</h2>
-            </div>
-            <div className="flex-1 overflow-hidden p-2 space-y-1.5">
-              {openJobs.slice(0, 4).map((j: any) => (
-                <div key={j.id} className="bg-zinc-900/50 border border-white/5 rounded-md px-1.5 py-1">
-                  <span className="text-[10px] font-black text-white tabular truncate">{j.poNumber}</span>
-                  <p className="text-[7px] text-white/60 truncate">{j.partNumber}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-center p-4 text-[8px] text-zinc-600 italic">Jobs Belt off</div>
-        )}
-      </div>
-    );
-  }
-
-  if (slide.type === 'jobs') {
-    return (
-      <div className="h-full overflow-hidden flex flex-col p-3">
-        <h2 className="text-[8px] font-black text-white/60 uppercase tracking-[0.3em] mb-2">All Open Jobs ({openJobs.length})</h2>
-        <div className="flex-1 overflow-hidden grid grid-cols-2 gap-1.5">
-          {openJobs.slice(0, 8).map((j: any) => (
-            <div key={j.id} className="bg-zinc-900/50 border border-white/5 rounded-md px-1.5 py-1">
-              <span className="text-[10px] font-black text-white tabular truncate block">{j.poNumber}</span>
-              <p className="text-[7px] text-white/60 truncate">{j.partNumber}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (slide.type === 'leaderboard') {
-    // Build real leaderboard from allLogs for the chosen period
-    const now = new Date();
-    let cutoff: number;
-    if (slide.leaderboardPeriod === 'today') {
-      const d = new Date(); d.setHours(0, 0, 0, 0); cutoff = d.getTime();
-    } else if (slide.leaderboardPeriod === 'month') {
-      cutoff = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    } else {
-      const w = new Date(); w.setDate(w.getDate() - w.getDay()); w.setHours(0, 0, 0, 0); cutoff = w.getTime();
-    }
-    const userMap = new Map<string, { name: string; hours: number }>();
-    (allLogs as TimeLog[]).filter(l => l.startTime >= cutoff && l.endTime).forEach(l => {
-      const cur = userMap.get(l.userId) || { name: l.userName, hours: 0 };
-      cur.hours += (lMs(l)) / 60;
-      cur.name = l.userName;
-      userMap.set(l.userId, cur);
-    });
-    const top = Array.from(userMap.values()).sort((a, b) => b.hours - a.hours).slice(0, 3);
-    const maxH = Math.max(1, ...top.map(u => u.hours));
-    const periodLabel = slide.leaderboardPeriod === 'today' ? "Today" : slide.leaderboardPeriod === 'month' ? "This Month" : "This Week";
-
-    return (
-      <div className="h-full flex flex-col items-center justify-center p-4 text-center">
-        <p className="text-[8px] font-black text-amber-400 uppercase tracking-widest">🏆 Leaderboard</p>
-        <h2 className="text-lg font-black text-white tracking-tight mt-1">{periodLabel}'s Top Workers</h2>
-        <div className="w-full mt-3 space-y-1">
-          {top.length === 0 ? (
-            <p className="text-[9px] text-zinc-500 italic py-3">No hours logged yet {slide.leaderboardPeriod === 'today' ? 'today' : 'this period'}</p>
-          ) : ['🥇','🥈','🥉'].slice(0, top.length).map((medal, i) => (
-            <div key={i} className={`flex items-center gap-2 p-1.5 rounded-lg ${i === 0 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-zinc-900/50'}`}>
-              <span className="text-lg">{medal}</span>
-              <div className="flex-1 min-w-0 flex flex-col items-start">
-                <p className="text-[9px] font-black text-white truncate max-w-full">{top[i].name}</p>
-                <div className="w-full h-1 rounded-full bg-white/5 overflow-hidden mt-0.5"><div className={`h-full rounded-full ${i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-zinc-400' : 'bg-orange-500'}`} style={{ width: `${(top[i].hours / maxH) * 100}%` }} /></div>
-              </div>
-              <span className="text-[10px] font-black text-white tabular">{top[i].hours.toFixed(1)}h</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (slide.type === 'flow-map') {
-    const stages = getStages(settings);
-    return (
-      <div className="h-full flex flex-col items-center justify-center p-2 text-center">
-        <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">🗺️ Flow Map</p>
-        <h2 className="text-xs font-black text-white tracking-tight mt-0.5 mb-1">Where Every Job Is</h2>
-        <div className="w-full scale-[0.6] origin-top -mt-1">
-          <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} compact />
-        </div>
-      </div>
-    );
-  }
-
-  if (slide.type === 'weather') {
-    return (
-      <div className="h-full flex flex-col items-center justify-center p-4 text-center">
-        <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">🌤️ Weather</p>
-        <div className="flex items-center gap-3 mt-2">
-          <div className="text-5xl font-black text-white tabular">72°</div>
-          <div className="text-left">
-            <p className="text-[10px] text-white/70">Partly cloudy</p>
-            <p className="text-[9px] text-white/40">H 78° · L 62°</p>
-          </div>
-        </div>
-        <div className="mt-2 grid grid-cols-5 gap-1 w-full">
-          {['Today', 'Tue', 'Wed', 'Thu', 'Fri'].map((d, i) => (
-            <div key={d} className="bg-zinc-900/50 border border-white/5 rounded p-1 text-center">
-              <p className="text-[6px] font-black text-white/40 uppercase">{d}</p>
-              <p className="text-[9px] font-black text-white tabular">{78 - i}°</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (slide.type === 'stats-week' || slide.type === 'stats') {
-    // Compute real weekly stats from allLogs + jobs (same math as full-screen TV slide)
-    const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0, 0, 0, 0);
-    const wkMs = weekStart.getTime();
-    const weekLogs = (allLogs as TimeLog[]).filter(l => l.startTime >= wkMs && l.endTime);
-    const totalH = weekLogs.reduce((a, l) => a + (lMs(l)) / 60, 0);
-    const sessions = weekLogs.length;
-    const completedThisWeek = (jobs as Job[]).filter(j => j.status === 'completed' && (j.completedAt || 0) >= wkMs).length;
-    // Hours per day of week (Sun..Sat)
-    const daily = Array.from({ length: 7 }, (_, i) => {
-      const start = new Date(weekStart); start.setDate(weekStart.getDate() + i);
-      const end = new Date(start); end.setDate(start.getDate() + 1);
-      const hrs = weekLogs.filter(l => l.startTime >= start.getTime() && l.startTime < end.getTime()).reduce((a, l) => a + (lMs(l)) / 60, 0);
-      return hrs;
-    });
-    const maxH = Math.max(1, ...daily);
-    const anyData = totalH > 0 || sessions > 0 || completedThisWeek > 0;
-
-    return (
-      <div className="h-full flex flex-col items-center justify-center p-4 text-center">
-        <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">📊 Weekly Output</p>
-        <h2 className="text-lg font-black text-white tracking-tight mt-1">This Week at a Glance</h2>
-        <div className="mt-2 grid grid-cols-3 gap-1 w-full">
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded p-1.5 text-center"><p className="text-[6px] text-blue-400 font-black">Hours</p><p className="text-sm font-black text-white tabular">{totalH.toFixed(1)}h</p></div>
-          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded p-1.5 text-center"><p className="text-[6px] text-emerald-400 font-black">Jobs</p><p className="text-sm font-black text-white tabular">{completedThisWeek}</p></div>
-          <div className="bg-purple-500/10 border border-purple-500/20 rounded p-1.5 text-center"><p className="text-[6px] text-purple-400 font-black">Sessions</p><p className="text-sm font-black text-white tabular">{sessions}</p></div>
-        </div>
-        <div className="mt-2 flex items-end gap-1 h-12 w-full">
-          {daily.map((h, i) => (
-            <div key={i} className="flex-1 bg-blue-500/40 rounded-t" style={{ height: `${Math.max(anyData ? 4 : 0, (h / maxH) * 100)}%` }} />
-          ))}
-        </div>
-        {!anyData && <p className="text-[8px] text-zinc-500 italic mt-1">No activity yet this week</p>}
-      </div>
-    );
-  }
-
-  if (slide.type === 'safety') {
-    const palette: any = { red: 'from-red-500/20 border-red-500/40', yellow: 'from-yellow-500/20 border-yellow-500/40', orange: 'from-orange-500/20 border-orange-500/40', blue: 'from-blue-500/20 border-blue-500/40', green: 'from-emerald-500/20 border-emerald-500/40', white: 'from-white/15 border-white/40' };
-    const cls = palette[slide.color || 'yellow'] || palette.yellow;
-    return (
-      <div className="h-full flex items-center justify-center p-4">
-        <div className={`w-full h-full bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-2xl p-3 text-center flex flex-col items-center justify-center`}>
-          <p className={`text-[7px] font-black uppercase tracking-[0.4em] mb-1`} style={{ color: slide.color === 'red' ? '#f87171' : slide.color === 'green' ? '#34d399' : slide.color === 'orange' ? '#fb923c' : slide.color === 'blue' ? '#60a5fa' : '#facc15' }}>⚠ Safety</p>
-          <div className="text-3xl mb-1">{slide.icon || '⚠️'}</div>
-          <h2 className="text-base font-black text-white tracking-tight leading-tight">{slide.title || 'Think Safety First'}</h2>
-          {slide.body && <p className="text-[9px] text-white/70 mt-1 leading-snug">{slide.body}</p>}
-        </div>
-      </div>
-    );
-  }
-
-  if (slide.type === 'message') {
-    const palette: any = { blue: 'from-blue-500/20 border-blue-500/40', yellow: 'from-yellow-500/20 border-yellow-500/40', red: 'from-red-500/20 border-red-500/40', green: 'from-emerald-500/20 border-emerald-500/40', white: 'from-white/15 border-white/40', orange: 'from-orange-500/20 border-orange-500/40' };
-    const cls = palette[slide.color || 'blue'] || palette.blue;
-    return (
-      <div className="h-full flex items-center justify-center p-4">
-        <div className={`w-full h-full bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-2xl p-4 text-center flex flex-col items-center justify-center`}>
-          <p className="text-[7px] font-black uppercase tracking-[0.4em] text-white/60 mb-2">Announcement</p>
-          <h2 className="text-lg font-black text-white tracking-tight leading-tight">{slide.title || 'Message'}</h2>
-          {slide.body && <p className="text-[9px] text-white/70 mt-2 leading-snug">{slide.body}</p>}
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-};
 
 // ══════════════════════════════════════════════════════════════════════
 // Per-Customer Pipeline Assigner
@@ -4136,7 +3224,7 @@ const SETTINGS_TAB_LABELS: Record<SettingsTabId, string> = {
   financial: 'Financial',
   goals: 'Goals',
   documents: 'Documents',
-  tv: 'Live Display',
+  tv: 'TV Display',
 };
 
 const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
@@ -4174,8 +3262,8 @@ const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: 'Edit Goal Targets', tab: 'goals', anchor: 'goals-list', keywords: ['goal target', 'edit goal', 'goal period', 'goal color', 'show on tv'] },
   // ── Documents · Quote / Invoice ──
   { label: 'Document Logo', tab: 'documents', anchor: 'documents-logo', keywords: ['logo', 'document logo', 'quote logo', 'brand'] },
-  { label: 'Quote Numbering & Prefix', tab: 'documents', anchor: 'documents-numbering', docSubTab: 'quote', keywords: ['numbering', 'prefix', 'quote number', 'invoice number', 'next number'] },
-  { label: 'Quote Header (Ship To / Due / Terms)', tab: 'documents', anchor: 'documents-header', docSubTab: 'quote', keywords: ['header', 'ship to', 'shipping', 'due date', 'terms'] },
+  { label: 'Quote Numbering & Prefix', tab: 'documents', anchor: 'documents-numbering', docSubTab: 'quote', keywords: ['numbering', 'prefix', 'quote number', 'invoice number', 'next number', 'start number'] },
+  { label: 'Quote Page (Valid-Until / Terms)', tab: 'documents', anchor: 'documents-header', docSubTab: 'quote', keywords: ['header', 'valid until', 'expires', 'due date', 'terms', 'conditions'] },
   { label: 'Quote Table Columns', tab: 'documents', anchor: 'documents-table', docSubTab: 'quote', keywords: ['table', 'columns', 'unit', 'rate', 'quantity', 'qty'] },
   { label: 'Signature Lines & Certificate', tab: 'documents', anchor: 'documents-footer', docSubTab: 'quote', keywords: ['signature', 'sign', 'certificate', 'conformance', 'comment', 'footer'] },
   { label: 'Project Detail Fields', tab: 'documents', anchor: 'documents-project-fields', docSubTab: 'quote', keywords: ['project fields', 'po number', 'part number', 'custom fields'] },
@@ -4188,16 +3276,20 @@ const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: 'Traveler QR Code', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['qr', 'qr code', 'barcode', 'scan'] },
   { label: 'Traveler Header Banner (ITAR etc.)', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['banner', 'itar', 'as9100', 'certified', 'header strip'] },
   { label: 'Traveler Sign-Off & Operation Log', tab: 'documents', anchor: 'documents-traveler', docSubTab: 'traveler', keywords: ['sign off', 'signoff', 'operation log', 'inspector', 'rows'] },
-  // ── Live Display (TV) ──
+  // ── TV Display ──
+  { label: 'Connect a TV (code)', tab: 'tv', anchor: 'tv-connect', keywords: ['connect tv', 'add tv', 'new tv', 'pair', 'pairing', 'code', 'wall tv', 'wall display', 'monitor', 'screen'] },
+  { label: 'Your TVs (status, refresh, disconnect)', tab: 'tv', anchor: 'tv-connect', keywords: ['tv status', 'online', 'offline', 'not responding', 'refresh tv', 'reload', 'disconnect', 'rename tv', 'show name', 'identify'] },
+  { label: 'TV Link (direct link / start over)', tab: 'tv', anchor: 'tv-link', keywords: ['tv link', 'tv url', 'token', 'stream', 'shareable', 'reset link', 'new link'] },
+  { label: 'Keep the TV On (setup tips)', tab: 'tv', anchor: 'tv-setup', keywords: ['turns off', 'turn off', 'sleep', 'screen saver', 'screensaver', 'power saving', 'eco', 'auto off', 'kiosk', 'fire tv', 'hdmi', 'cec', 'input', 'switches'] },
+  { label: 'TV Screen (text size, fit, header)', tab: 'tv', anchor: 'tv-display', keywords: ['text size', 'bigger', 'font', 'overscan', 'cut off', 'edges', 'burn in', 'clock', 'header', 'stats', 'scroll speed', 'connection'] },
+  { label: 'TV After Hours & Daily Refresh', tab: 'tv', anchor: 'tv-quiet', keywords: ['quiet hours', 'night', 'after hours', 'weekend', 'dim', 'schedule', 'refresh time', 'reload time'] },
   { label: 'Weather Location', tab: 'tv', anchor: 'tv-weather', keywords: ['weather', 'temperature', 'city', 'zip', 'location', 'forecast'] },
-  { label: 'TV Stream Link', tab: 'tv', anchor: 'tv-link', keywords: ['tv link', 'tv url', 'wall display', 'token', 'stream', 'shareable', 'monitor'] },
   { label: 'TV Privacy (Revenue / Names)', tab: 'tv', anchor: 'tv-privacy', keywords: ['privacy', 'hide', 'revenue', 'customer names', 'sensitive', 'dollar'] },
-  { label: 'TV Display Options', tab: 'tv', anchor: 'tv-display', keywords: ['clock', 'stats bar', 'jobs belt', 'card size', 'scroll speed', 'display', 'header'] },
-  { label: 'TV Slideshow Timing', tab: 'tv', anchor: 'tv-slideshow', keywords: ['slideshow', 'rotate', 'duration', 'slide timing'] },
-  { label: 'TV Slides Editor', tab: 'tv', anchor: 'tv-slides', keywords: ['slides', 'announcement', 'photos', 'messages', 'birthday', 'safety'] },
+  { label: 'TV Slides', tab: 'tv', anchor: 'tv-slides', keywords: ['slides', 'slideshow', 'rotate', 'duration', 'slide length', 'order', 'announcement', 'messages', 'safety', 'leaderboard'] },
+  { label: 'Live Floor Worker Cards', tab: 'tv', anchor: 'tv-floor-cards', keywords: ['worker cards', 'live floor', 'time bar', 'progress bar', 'customer on cards'] },
   // ── System / Defaults ──
   { label: 'Default Job Priority', tab: 'system', anchor: 'system-job-defaults', keywords: ['priority', 'urgent', 'default priority', 'new job'] },
-  { label: 'Default Payment Terms', tab: 'system', anchor: 'system-job-defaults', keywords: ['payment terms', 'net 30', 'net 15', 'terms'] },
+  { label: 'Default Payment Terms', tab: 'documents', anchor: 'documents-defaults', docSubTab: 'quote', keywords: ['payment terms', 'net 30', 'net 15', 'terms'] },
   { label: 'Weekly Goal Hours (Workers)', tab: 'system', anchor: 'system-worker-defaults', keywords: ['weekly hours', 'worker goal', 'goal hours', '40 hours', 'target hours'] },
   { label: 'Daily Email Recap', tab: 'system', anchor: 'system-recap', keywords: ['recap', 'daily email', 'summary', 'nightly', 'report', 'email'] },
   { label: 'Recap Send Time & Timezone', tab: 'system', anchor: 'system-recap', keywords: ['timezone', 'time zone', 'send time', 'auto send', 'schedule email'] },
@@ -4322,16 +3414,30 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [newOp, setNewOp] = useState('');
   const [newClient, setNewClient] = useState('');
-  const [settingsTab, setSettingsTab] = useState<'profile' | 'schedule' | 'production' | 'financial' | 'goals' | 'documents' | 'tv' | 'system'>('profile');
+  // Remembers the tab for this browser session — leaving Settings and coming
+  // back used to drop you on Shop Profile every time.
+  const [settingsTab, setSettingsTabState] = useState<SettingsTabId>(() => {
+    try {
+      const saved = sessionStorage.getItem('fabtrack_settings_tab');
+      if (saved && saved in SETTINGS_TAB_LABELS) return saved as SettingsTabId;
+    } catch {}
+    return 'profile';
+  });
+  const setSettingsTab = useCallback((tab: SettingsTabId) => {
+    setSettingsTabState(tab);
+    try { sessionStorage.setItem('fabtrack_settings_tab', tab); } catch {}
+  }, []);
   // Within the Documents tab, split customer-facing Quote/Invoice settings
   // from internal Job Traveler settings — admins were confusing them.
   const [docSubTab, setDocSubTab] = useState<'quote' | 'traveler'>('quote');
   const [opsOpen, setOpsOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
-  // Live data for TV preview
-  const [tvActiveLogs, setTvActiveLogs] = useState<TimeLog[]>([]);
-  const [tvJobs, setTvJobs] = useState<Job[]>([]);
-  const [tvAllLogs, setTvAllLogs] = useState<TimeLog[]>([]);
+  // Shop data for the tabs that need it (clock-out audit, rate learning,
+  // recap). Loaded only while one of those tabs is open — it used to be
+  // subscribed on every Settings visit (the whole jobs list, photos and all)
+  // just to feed a mock TV preview.
+  const [shopJobs, setShopJobs] = useState<Job[]>([]);
+  const [shopLogs, setShopLogs] = useState<TimeLog[]>([]);
 
   // Dirty flag — true while local edits haven't been written to Firestore yet.
   // The settings subscription must NOT overwrite local state during that window:
@@ -4353,45 +3459,110 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     saveStateTimer.current = setTimeout(() => setSaveState('idle'), s === 'error' ? 4000 : 1800);
   };
 
+  // ── Saving ─────────────────────────────────────────────────────────
+  // `baseRef` is the settings as last saved / received from the server. Each
+  // save writes only the fields that differ from it (cleared ones are really
+  // deleted), so: clearing a value sticks, and this screen never overwrites a
+  // field another device changed. Edits save 1.2 s after typing stops, and
+  // immediately when you leave the page or switch apps.
+  // `baseRef` holds its own deep copy: editing a settings object in place
+  // somewhere in this screen must never change "what was saved" too, or the
+  // edit looks unchanged and is silently never saved.
+  const snapshot = (x: SystemSettings): SystemSettings => JSON.parse(JSON.stringify(x));
+  const baseRef = useRef<SystemSettings>(null as unknown as SystemSettings);
+  if (baseRef.current === null) baseRef.current = snapshot(settings);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const diffSettings = (base: SystemSettings, cur: SystemSettings): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    const keys = new Set([...Object.keys(base), ...Object.keys(cur)]);
+    keys.forEach(k => {
+      const a = (base as any)[k], b = (cur as any)[k];
+      if (JSON.stringify(a) !== JSON.stringify(b)) out[k] = b;
+    });
+    return out;
+  };
+  const flushSave = useCallback(async (): Promise<boolean> => {
+    const changes = diffSettings(baseRef.current, settingsRef.current);
+    if (Object.keys(changes).length === 0) { dirtyRef.current = false; return true; }
+    const mySeq = editSeqRef.current;
+    setSaveState('saving');
+    try {
+      await DB.saveSettingsChanges(changes as any);
+      const next: any = { ...baseRef.current };
+      for (const [k, v] of Object.entries(changes)) { if (v === undefined) delete next[k]; else next[k] = JSON.parse(JSON.stringify(v)); }
+      baseRef.current = next;
+      if (editSeqRef.current === mySeq) dirtyRef.current = false;
+      flashSaveState('saved');
+      return true;
+    } catch {
+      flashSaveState('error');   // stays dirty — retried on the next edit / leave
+      return false;
+    }
+  }, []);
+  /** Change + save right away (no 1.2 s wait) — for things other devices act on
+   *  immediately, like a new TV link. */
+  const saveNow = useCallback(async (changes: Partial<SystemSettings>): Promise<boolean> => {
+    const merged = { ...settingsRef.current, ...changes };
+    settingsRef.current = merged;
+    setSettings(merged);
+    return flushSave();
+  }, [flushSave]);
+
   useEffect(() => {
     const unsub = DB.subscribeSettings((s) => {
-      if (dirtyRef.current) return; // local edits pending — don't clobber them
-      setSettings(s);
+      if (!dirtyRef.current) { baseRef.current = snapshot(s); setSettings(s); return; }
+      // Local edits pending: keep them, but take another device's changes to
+      // fields you haven't touched (those used to be dropped until a reload).
+      const base = baseRef.current, local = settingsRef.current;
+      let merged: any = local, changed = false;
+      new Set([...Object.keys(s), ...Object.keys(base)]).forEach(k => {
+        const remote = (s as any)[k], b = (base as any)[k], l = (local as any)[k];
+        if (JSON.stringify(remote) === JSON.stringify(b)) return;      // not a remote change
+        if (JSON.stringify(l) === JSON.stringify(b)) { merged = { ...merged, [k]: remote }; changed = true; }
+      });
+      baseRef.current = snapshot(s);
+      if (changed) setSettings(merged);
     });
-    const unsub2 = DB.subscribeActiveLogs(setTvActiveLogs);
-    const unsub3 = DB.subscribeJobs(setTvJobs);
-    const unsub4 = DB.subscribeLogs(setTvAllLogs);
-    return () => { unsub(); unsub2(); unsub3(); unsub4(); };
+    return () => { unsub(); };
   }, []);
 
   const handleSave = () => {
-    setSaveState('saving');
-    const mySeq = editSeqRef.current;
-    DB.saveSettings(settings)
-      .then(() => { if (editSeqRef.current === mySeq) dirtyRef.current = false; flashSaveState('saved'); addToast('success', 'Settings Updated'); })
-      .catch(() => { flashSaveState('error'); addToast('error', 'Save failed — check connection'); });
+    flushSave().then(ok => ok ? addToast('success', 'Settings saved') : addToast('error', 'Save failed — check connection'));
   };
 
-  // Autosave: save settings 1.5s after any change
-  const settingsJson = JSON.stringify(settings);
-  const initialSettingsRef = useRef(settingsJson);
+  const needsShopData = settingsTab === 'schedule' || settingsTab === 'system';
   useEffect(() => {
-    if (settingsJson === initialSettingsRef.current) return; // skip initial render
+    if (!needsShopData) return;
+    const u1 = DB.subscribeJobs(setShopJobs);
+    const u2 = DB.subscribeLogs(setShopLogs);
+    return () => { u1(); u2(); };
+  }, [needsShopData]);
+
+  // Autosave: 1.2 s after the last change (only when something differs from what's saved).
+  const settingsJson = JSON.stringify(settings);
+  useEffect(() => {
+    if (Object.keys(diffSettings(baseRef.current, settings)).length === 0) return;
     dirtyRef.current = true;
-    const mySeq = ++editSeqRef.current;
-    const timer = setTimeout(() => {
-      setSaveState('saving');
-      DB.saveSettings(settings)
-        .then(() => {
-          // Only clear the dirty flag if this save still reflects the latest
-          // edits — a newer keystroke mid-flight schedules its own save.
-          if (editSeqRef.current === mySeq) dirtyRef.current = false;
-          flashSaveState('saved');
-        })
-        .catch(() => { flashSaveState('error'); /* stay dirty — retry on next edit */ });
-    }, 1500);
+    ++editSeqRef.current;
+    const timer = setTimeout(() => { flushSave(); }, 1200);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsJson]);
+
+  // Leaving the page / switching apps / closing Settings saves immediately —
+  // edits made in the last second used to be lost.
+  useEffect(() => {
+    const flushIfDirty = () => { if (dirtyRef.current) flushSave(); };
+    const onVis = () => { if (document.visibilityState === 'hidden') flushIfDirty(); };
+    window.addEventListener('pagehide', flushIfDirty);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pagehide', flushIfDirty);
+      document.removeEventListener('visibilitychange', onVis);
+      flushIfDirty();
+    };
+  }, [flushSave]);
   const handleAddOp = () => { if (!newOp.trim()) return; const ops = settings.customOperations || []; if (ops.includes(newOp.trim())) return; setSettings({ ...settings, customOperations: [...ops, newOp.trim()] }); setNewOp(''); };
   const handleDeleteOp = (op: string) => { setSettings({ ...settings, customOperations: (settings.customOperations || []).filter(o => o !== op) }); };
   // Clients + ops: just update local state; autosave persists it 1.5s later (same path as every other field)
@@ -4431,7 +3602,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
       label: 'Output',
       items: [
         { id: 'documents', label: 'Documents', icon: FileText },
-        { id: 'tv', label: 'Live Display', icon: Activity },
+        { id: 'tv', label: 'TV Display', icon: Tv },
       ],
     },
   ];
@@ -4470,14 +3641,20 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     setRecapSending(true);
     setRecapStatus(null);
     try {
+      // The email server only sends to recap addresses that are SAVED in
+      // settings — save a just-typed address first or the send is refused.
+      if (!(await flushSave())) {
+        setRecapStatus({ ok: false, msg: "Couldn't save the email address — check the connection and try again." });
+        return;
+      }
       // Parse comma-separated CC addresses
       const ccEmails = (settings.recapEmailCC || '')
         .split(',').map(e => e.trim()).filter(Boolean);
       const result = await sendDailyRecap({
         to: settings.recapEmail.trim(),
         ccEmails,
-        logs: tvAllLogs,
-        allJobs: tvJobs,
+        logs: shopLogs,
+        allJobs: shopJobs,
         users: [],
         shopName: settings.companyName || 'Your Shop',
         shopRate: settings.shopRate,
@@ -4489,7 +3666,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     } finally {
       setRecapSending(false);
     }
-  }, [settings, tvAllLogs, tvJobs]);
+  }, [settings, shopLogs, shopJobs, flushSave]);
 
   return (
     <div className="flex gap-4 lg:gap-6 w-full animate-fade-in min-w-0 pb-6 md:pb-0">
@@ -4666,8 +3843,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                       canvas.width = img.width * scale;
                       canvas.height = img.height * scale;
                       canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-                      const updated = { ...settings, companyLogo: canvas.toDataURL('image/png', 0.9) };
-                      setSettings(updated); DB.saveSettings(updated);
+                      saveNow({ companyLogo: canvas.toDataURL('image/png', 0.9) });
                       addToast('success', 'Logo saved');
                     };
                     img.src = URL.createObjectURL(file);
@@ -4687,8 +3863,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                       canvas.width = img.width * scale;
                       canvas.height = img.height * scale;
                       canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-                      const updated = { ...settings, companyLogo: canvas.toDataURL('image/png', 0.9) };
-                      setSettings(updated); DB.saveSettings(updated);
+                      saveNow({ companyLogo: canvas.toDataURL('image/png', 0.9) });
                       addToast('success', 'Logo saved');
                     };
                     img.src = URL.createObjectURL(file);
@@ -4709,7 +3884,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               {settings.companyLogo && (
                 <button
                   type="button"
-                  onClick={() => { const u = { ...settings, companyLogo: '' }; setSettings(u); DB.saveSettings(u); addToast('info', 'Logo removed'); }}
+                  onClick={() => { saveNow({ companyLogo: '' }); addToast('info', 'Logo removed'); }}
                   className="w-full mt-2 text-[11px] text-zinc-500 hover:text-red-400 font-bold py-1.5 rounded hover:bg-red-500/5 transition-colors"
                 >
                   Remove logo
@@ -4874,7 +4049,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
           {/* ── Clock-Out Audit Log ────────────────────────────────────── */}
           <div data-settings-anchor="schedule-audit" className="rounded-2xl">
-            <ClockOutAuditLog logs={tvAllLogs} />
+            <ClockOutAuditLog logs={shopLogs} />
           </div>
 
         </div>
@@ -4907,17 +4082,15 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 <p className="text-[10px] text-zinc-500">Define the stages a job moves through from start to finish.</p>
               </div>
               <button onClick={() => {
-                const stages = [...(settings.jobStages || DEFAULT_STAGES)];
-                const newId = `stage_${Date.now()}`;
-                stages.splice(stages.length - 1, 0, { id: newId, label: 'New Stage', color: '#8b5cf6', order: stages.length - 1 });
-                // Reorder
-                stages.forEach((s, i) => s.order = i);
-                setSettings({ ...settings, jobStages: stages });
+                const stages = (settings.jobStages || DEFAULT_STAGES).slice().sort((a, b) => a.order - b.order);
+                // New stage goes just before the last (finishing) stage.
+                stages.splice(Math.max(0, stages.length - 1), 0, { id: `stage_${Date.now()}`, label: 'New Stage', color: '#8b5cf6', order: 0 });
+                setSettings({ ...settings, jobStages: stages.map((s, i) => ({ ...s, order: i })) });
               }} className="text-[10px] bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-bold">+ Add Stage</button>
             </div>
             {/* Stage Pipeline Preview */}
             <div className="flex items-center gap-1 bg-zinc-950 rounded-xl p-3">
-              {(settings.jobStages || DEFAULT_STAGES).sort((a, b) => a.order - b.order).map((stage, i, arr) => (
+              {(settings.jobStages || DEFAULT_STAGES).slice().sort((a, b) => a.order - b.order).map((stage, i, arr) => (
                 <React.Fragment key={stage.id}>
                   <div className="flex-1 text-center">
                     <div className="h-2 rounded-full mb-1" style={{ background: stage.color }} />
@@ -4929,57 +4102,57 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             </div>
             {/* Stage List */}
             <div className="space-y-2">
-              {(settings.jobStages || DEFAULT_STAGES).sort((a, b) => a.order - b.order).map((stage, idx) => (
+              {(settings.jobStages || DEFAULT_STAGES).slice().sort((a, b) => a.order - b.order).map((stage, idx, sortedStages) => (
                 <div key={stage.id} className="bg-zinc-800/30 rounded-xl border border-white/5">
-                 <div className="flex items-center gap-3 p-3">
+                 {/* Wraps on phones: name + buttons on one line, colors below. */}
+                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3">
                   <div className="w-4 h-4 rounded-full shrink-0" style={{ background: stage.color }} />
-                  <input className="flex-1 bg-transparent text-white text-sm font-bold outline-none border-b border-transparent focus:border-white/20" value={stage.label} onChange={e => {
-                    const stages = [...(settings.jobStages || DEFAULT_STAGES)];
-                    const si = stages.findIndex(s => s.id === stage.id);
-                    if (si >= 0) { stages[si] = { ...stages[si], label: e.target.value }; setSettings({ ...settings, jobStages: stages }); }
+                  <input aria-label="Stage name" className="flex-1 min-w-[8rem] bg-transparent text-white text-sm font-bold outline-none border-b border-transparent focus:border-white/20" value={stage.label} onChange={e => {
+                    const stages = (settings.jobStages || DEFAULT_STAGES).map(s => (s.id === stage.id ? { ...s, label: e.target.value } : s));
+                    setSettings({ ...settings, jobStages: stages });
                   }} />
                   {/* Color picker */}
-                  <div className="flex gap-1">
-                    {['#71717a', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316'].map(c => (
-                      <button key={c} onClick={() => {
-                        const stages = [...(settings.jobStages || DEFAULT_STAGES)];
-                        const si = stages.findIndex(s => s.id === stage.id);
-                        if (si >= 0) { stages[si] = { ...stages[si], color: c }; setSettings({ ...settings, jobStages: stages }); }
-                      }} className={`w-4 h-4 rounded-full transition-all ${stage.color === c ? 'ring-2 ring-white scale-125' : 'opacity-40 hover:opacity-80'}`} style={{ background: c }} />
+                  <div className="flex flex-wrap gap-1.5 order-last basis-full sm:order-none sm:basis-auto">
+                    {STAGE_COLORS.map(c => (
+                      <button key={c.hex} type="button" aria-label={`${c.name} color`} aria-pressed={stage.color === c.hex} onClick={() => {
+                        const stages = (settings.jobStages || DEFAULT_STAGES).map(s => (s.id === stage.id ? { ...s, color: c.hex } : s));
+                        setSettings({ ...settings, jobStages: stages });
+                      }} className={`w-5 h-5 rounded-full transition-all ${stage.color === c.hex ? 'ring-2 ring-white scale-110' : 'opacity-40 hover:opacity-80'}`} style={{ background: c.hex }} />
                     ))}
                   </div>
-                  {/* Move up/down */}
-                  <button onClick={() => {
-                    if (idx === 0) return;
-                    const stages = [...(settings.jobStages || DEFAULT_STAGES)].sort((a, b) => a.order - b.order);
-                    [stages[idx - 1], stages[idx]] = [stages[idx], stages[idx - 1]];
-                    stages.forEach((s, i) => s.order = i);
-                    setSettings({ ...settings, jobStages: stages });
-                  }} aria-label="Move up" className="text-zinc-500 hover:text-white p-1 rounded hover:bg-white/5" title="Move Up"><ChevronUp className="w-3.5 h-3.5" aria-hidden="true" /></button>
-                  <button onClick={() => {
-                    const stages = [...(settings.jobStages || DEFAULT_STAGES)].sort((a, b) => a.order - b.order);
-                    if (idx >= stages.length - 1) return;
-                    [stages[idx], stages[idx + 1]] = [stages[idx + 1], stages[idx]];
-                    stages.forEach((s, i) => s.order = i);
-                    setSettings({ ...settings, jobStages: stages });
-                  }} aria-label="Move down" className="text-zinc-500 hover:text-white p-1 rounded hover:bg-white/5" title="Move Down"><ChevronDown className="w-3.5 h-3.5" aria-hidden="true" /></button>
-                  {/* Mark as complete stage */}
-                  <label className="flex items-center gap-1 text-[9px] text-zinc-500 cursor-pointer shrink-0" title="Reaching this stage completes the job">
-                    <input type="checkbox" checked={stage.isComplete || false} onChange={e => {
-                      const stages = [...(settings.jobStages || DEFAULT_STAGES)];
-                      const si = stages.findIndex(s => s.id === stage.id);
-                      if (si >= 0) { stages[si] = { ...stages[si], isComplete: e.target.checked }; setSettings({ ...settings, jobStages: stages }); }
-                    }} className="w-3 h-3 rounded accent-emerald-500" />
-                    Done
-                  </label>
-                  {/* Delete (only if not a built-in) */}
-                  {!['pending', 'in-progress', 'completed'].includes(stage.id) && (
-                    <button onClick={() => {
-                      const stages = (settings.jobStages || DEFAULT_STAGES).filter(s => s.id !== stage.id);
-                      stages.forEach((s, i) => s.order = i);
-                      setSettings({ ...settings, jobStages: stages });
-                    }} className="text-zinc-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Move up/down — builds new stage objects (never edits the saved ones in place) */}
+                    <button type="button" disabled={idx === 0} onClick={() => {
+                      const order = sortedStages.map(s => s.id);
+                      [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
+                      setSettings({ ...settings, jobStages: order.map((id, i) => ({ ...sortedStages.find(s => s.id === id)!, order: i })) });
+                    }} aria-label={`Move ${stage.label} up`} className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white rounded hover:bg-white/5 disabled:opacity-20" title="Move up"><ChevronUp className="w-4 h-4" aria-hidden="true" /></button>
+                    <button type="button" disabled={idx >= sortedStages.length - 1} onClick={() => {
+                      const order = sortedStages.map(s => s.id);
+                      [order[idx], order[idx + 1]] = [order[idx + 1], order[idx]];
+                      setSettings({ ...settings, jobStages: order.map((id, i) => ({ ...sortedStages.find(s => s.id === id)!, order: i })) });
+                    }} aria-label={`Move ${stage.label} down`} className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white rounded hover:bg-white/5 disabled:opacity-20" title="Move down"><ChevronDown className="w-4 h-4" aria-hidden="true" /></button>
+                    {/* Mark as complete stage */}
+                    <label className="flex items-center gap-1.5 px-1.5 min-h-[32px] text-[11px] text-zinc-500 cursor-pointer shrink-0" title="Reaching this stage completes the job">
+                      <input type="checkbox" checked={stage.isComplete || false} onChange={e => {
+                        const stages = (settings.jobStages || DEFAULT_STAGES).map(s => (s.id === stage.id ? { ...s, isComplete: e.target.checked } : s));
+                        setSettings({ ...settings, jobStages: stages });
+                      }} className="w-4 h-4 rounded accent-emerald-500" />
+                      Done
+                    </label>
+                    {/* Delete (only if not a built-in) */}
+                    {!['pending', 'in-progress', 'completed'].includes(stage.id) && (
+                      <button type="button" aria-label={`Delete the ${stage.label} stage`} title="Delete stage" onClick={async () => {
+                        const ok = await askConfirm({
+                          title: `Delete the "${stage.label}" stage?`,
+                          message: 'It disappears from the pipeline. Jobs sitting in it will need to be moved to another stage.',
+                          tone: 'danger', confirmLabel: 'Delete stage',
+                        });
+                        if (!ok) return;
+                        setSettings({ ...settings, jobStages: sortedStages.filter(s => s.id !== stage.id).map((s, i) => ({ ...s, order: i })) });
+                      }} className="w-8 h-8 flex items-center justify-center text-zinc-600 hover:text-red-400 rounded hover:bg-red-500/10"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+                    )}
+                  </div>
                  </div>
                   {/* Per-stage operations mapping lives in the unified
                       OperationsStageMapper below — cleaner UX than a disclosure
@@ -5153,10 +4326,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                     e.preventDefault(); e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
                     const file = e.dataTransfer.files[0];
                     if (file?.type.startsWith('image/')) {
-                      const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); const u = { ...settings, companyLogo: c.toDataURL('image/png', 0.9) }; setSettings(u); DB.saveSettings(u); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(file);
+                      const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); saveNow({ companyLogo: c.toDataURL('image/png', 0.9) }); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(file);
                     }
                   }}
-                  onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = (ev: any) => { const f = ev.target.files?.[0]; if (f) { const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); const u = { ...settings, companyLogo: c.toDataURL('image/png', 0.9) }; setSettings(u); DB.saveSettings(u); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(f); } }; i.click(); }}
+                  onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = (ev: any) => { const f = ev.target.files?.[0]; if (f) { const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); saveNow({ companyLogo: c.toDataURL('image/png', 0.9) }); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(f); } }; i.click(); }}
                 >
                   {settings.companyLogo ? (
                     <div><img src={settings.companyLogo} alt="Logo" className="max-h-16 mx-auto object-contain" /><p className="text-[10px] text-zinc-500 mt-2">Click to change</p></div>
@@ -5177,17 +4350,15 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
               </summary>
               <div className="px-4 pb-4 space-y-3">
+                <p className="text-[10px] text-zinc-500 leading-snug">New quotes count up from your highest quote number. To carry on from an old system, set a starting number (e.g. 1500).</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] text-zinc-500 block mb-1">Quote Prefix</label>
                     <input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.quotePrefix || 'Q-'} onChange={e => setSettings({ ...settings, quotePrefix: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-zinc-500 block mb-1">Next Number</label>
-                    <div className="flex gap-1">
-                      <input type="number" className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.quoteNextNumber || 1} onChange={e => setSettings({ ...settings, quoteNextNumber: parseInt(e.target.value) || 1 })} min={1} />
-                      <button onClick={() => setSettings({ ...settings, quoteNextNumber: 1 })} className="text-[10px] text-red-400 hover:text-red-300 px-2 shrink-0">Reset</button>
-                    </div>
+                    <label htmlFor="quote-start-number" className="text-[10px] text-zinc-500 block mb-1">Start numbering at</label>
+                    <input id="quote-start-number" type="number" min={1} placeholder="1" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.quoteNextNumber ?? ''} onChange={e => setSettings({ ...settings, quoteNextNumber: e.target.value === '' ? undefined : (parseInt(e.target.value) || undefined) })} />
                   </div>
                 </div>
               </div>
@@ -5196,18 +4367,17 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             {/* Header */}
             <details data-settings-anchor="documents-header" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
               <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02] transition-colors">
-                <span className="text-sm font-bold text-white">Header</span>
+                <span className="text-sm font-bold text-white">On the page</span>
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
               </summary>
               <div className="px-4 pb-4 space-y-3">
                 {[
-                  { key: 'showShippingOnDocs', label: 'Shipping Details', desc: 'Show Ship To address', def: false },
-                  { key: 'showDueDateOnDocs',  label: 'Due Date',         desc: 'Show due date',        def: true },
-                  { key: 'showTermsOnDocs',    label: 'Payment Terms',    desc: 'Show terms (Net 30)',   def: true },
+                  { key: 'showDueDateOnDocs', label: 'Valid-until date', desc: 'How long the quote is good for', def: true },
+                  { key: 'showTermsOnDocs',   label: 'Terms & conditions', desc: 'The terms block near the bottom', def: true },
                 ].map(o => (
                   <div key={o.key} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
                     <div><p className="text-sm text-white font-medium">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5">{o.desc}</p></div>
-                    <Toggle checked={(settings as any)[o.key] ?? o.def ?? false} onChange={v => setSettings({ ...settings, [o.key]: v })} />
+                    <Toggle checked={(settings as any)[o.key] ?? o.def ?? false} onChange={v => setSettings({ ...settings, [o.key]: v })} label={o.label} />
                   </div>
                 ))}
               </div>
@@ -5325,7 +4495,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 ].map(o => (
                   <div key={o.key} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
                     <div><p className="text-sm text-white font-medium">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5">{o.desc}</p></div>
-                    <Toggle checked={(settings as any)[o.key] ?? o.def ?? true} onChange={v => setSettings({ ...settings, [o.key]: v })} />
+                    <Toggle checked={(settings as any)[o.key] ?? o.def ?? true} onChange={v => setSettings({ ...settings, [o.key]: v })} label={o.label} />
                   </div>
                 ))}
               </div>
@@ -5377,13 +4547,13 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
               </summary>
               <div className="px-4 pb-4 space-y-3">
-                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Payment Terms</label><input className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultPaymentTerms || ''} onChange={e => setSettings({ ...settings, defaultPaymentTerms: e.target.value })} placeholder="Net 30" /></div>
+                <div><label htmlFor="default-payment-terms" className="text-[10px] text-zinc-500 block mb-1">Default Payment Terms</label><input id="default-payment-terms" list="payment-terms-options" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultPaymentTerms || ''} onChange={e => setSettings({ ...settings, defaultPaymentTerms: e.target.value })} placeholder="Net 30" /><datalist id="payment-terms-options"><option value="Due on Receipt" /><option value="Net 15" /><option value="Net 30" /><option value="Net 45" /><option value="Net 60" /></datalist><p className="text-[10px] text-zinc-600 mt-1">Filled in on new quotes.</p></div>
                 <div><label className="text-[10px] text-zinc-500 block mb-1">Default Tax Rate (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.taxRate || ''} onChange={e => setSettings({ ...settings, taxRate: parseFloat(e.target.value) || 0 })} step="0.1" placeholder="0" /></div>
                 <div><label className="text-[10px] text-zinc-500 block mb-1">Default Discount (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultDiscount || ''} onChange={e => setSettings({ ...settings, defaultDiscount: parseFloat(e.target.value) || 0 })} step="0.1" placeholder="0" /></div>
-                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Markup (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultMarkup || '25'} onChange={e => setSettings({ ...settings, defaultMarkup: parseFloat(e.target.value) || 0 })} step="1" placeholder="25" /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Markup (%)</label><input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.defaultMarkup || ''} onChange={e => setSettings({ ...settings, defaultMarkup: e.target.value === '' ? undefined : parseFloat(e.target.value) })} step="1" min={0} placeholder="25" /><p className="text-[10px] text-zinc-600 mt-1">Used on new quotes. Blank = 25%.</p></div>
                 <div>
                   <label className="text-[10px] text-zinc-500 block mb-1">Min Margin Threshold (%)</label>
-                  <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.minMarginPct ?? ''} onChange={e => setSettings({ ...settings, minMarginPct: parseFloat(e.target.value) || 0 })} step="1" placeholder="20" />
+                  <input type="number" className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" value={settings.minMarginPct ?? ''} onChange={e => setSettings({ ...settings, minMarginPct: e.target.value === '' ? undefined : parseFloat(e.target.value) })} step="1" placeholder="20" />
                   <p className="text-[10px] text-zinc-600 mt-1">Quotes below this % margin show a red warning in the editor.</p>
                 </div>
               </div>
@@ -5437,72 +4607,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
             {docSubTab === 'traveler' ? (
               <TravelerPreview settings={settings} />
             ) : (
-            <div className="sticky top-4 bg-white text-black rounded-2xl shadow-2xl overflow-hidden" style={{ fontFamily: '-apple-system, sans-serif' }}>
-            <div className="p-10" style={{ fontSize: 13 }}>
-              {/* Mini Preview */}
-              <div className="flex justify-between items-start mb-6 gap-4">
-                <div className="min-w-0">
-                  {settings.companyLogo && <img src={settings.companyLogo} className="h-12 mb-2 object-contain" alt="" />}
-                  <div className="font-extrabold text-gray-900 leading-tight" style={{ fontSize: 18 }}>{settings.companyName || 'Company Name'}</div>
-                  {settings.companyAddress && <div className="text-gray-500 mt-1" style={{ fontSize: 11 }}>{settings.companyAddress}</div>}
-                  {settings.companyPhone && <div className="text-gray-500" style={{ fontSize: 11 }}>{settings.companyPhone}</div>}
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="font-extrabold" style={{ fontSize: 28, color: accent, letterSpacing: '0.02em' }}>QUOTE</div>
-                  <div className="text-gray-500 font-medium" style={{ fontSize: 12 }}>{settings.quotePrefix || 'Q-'}001</div>
-                  <div className="text-gray-400 mt-1" style={{ fontSize: 10 }}>{new Date().toLocaleDateString()}</div>
-                </div>
-              </div>
-              {/* Watermark */}
-              {settings.watermark && <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ fontSize: 48, color: 'rgba(0,0,0,0.06)', fontWeight: 900, transform: 'rotate(-30deg)' }}>{settings.watermark}</div>}
-              {/* Info Block */}
-              <div className="flex gap-6 mb-4 border-b border-gray-200 pb-3" style={{ fontSize: 11 }}>
-                <div><span className="text-gray-400">Date:</span> <span className="text-gray-700 font-medium">{new Date().toLocaleDateString()}</span></div>
-                {(settings.showTermsOnDocs ?? true) && <div><span className="text-gray-400">Terms:</span> <span className="text-gray-700 font-medium">{settings.defaultPaymentTerms || 'Net 30'}</span></div>}
-                {(settings.showDueDateOnDocs ?? true) && <div><span className="text-gray-400">Due:</span> <span className="text-gray-700 font-medium">05/14/2026</span></div>}
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200">
-                <div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Bill To</div>
-                <div className="font-bold text-gray-800 mt-1" style={{ fontSize: 15 }}>Acme Manufacturing</div>
-                <div className="text-gray-500" style={{ fontSize: 11 }}>orders@acmemfg.com</div>
-                <div className="text-gray-400" style={{ fontSize: 11 }}>(555) 123-4567</div>
-              </div>
-              {(settings.showShippingOnDocs) && <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200"><div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Ship To</div><div className="text-gray-500 mt-1" style={{ fontSize: 11 }}>123 Industrial Pkwy, Suite 200</div></div>}
-              {/* Project Fields */}
-              <div className="mb-4 space-y-1" style={{ fontSize: 11 }}>
-                {(settings.customProjectFields || ['Purchase Order', 'Part No.']).map((f: string, fi: number) => (
-                  <div key={f}><span className="font-bold text-gray-700">{f}:</span> <span className="text-gray-400">{fi === 0 ? 'PO-78432' : fi === 1 ? 'BRK-1200' : '—'}</span></div>
-                ))}
-              </div>
-              {/* Items Table */}
-              <table className="w-full mb-4" style={{ fontSize: 11 }}>
-                <thead><tr className="border-b-2 border-gray-200 text-gray-400 uppercase" style={{ fontSize: 9 }}><th className="text-left py-2">Description</th><th className="text-right py-2">Qty</th>{settings.showUnitCol !== false && <th className="text-right py-2">Unit</th>}<th className="text-right py-2">Rate</th><th className="text-right py-2">Amount</th></tr></thead>
-                <tbody>
-                  <tr className="border-b border-gray-100"><td className="py-2.5 text-gray-700">Deburring — Bracket Assembly</td><td className="py-2.5 text-right text-gray-600">500</td>{settings.showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">ea</td>}<td className="py-2.5 text-right text-gray-600">$2.50</td><td className="py-2.5 text-right font-bold text-gray-800">$1,250.00</td></tr>
-                  <tr className="border-b border-gray-100 bg-gray-50"><td className="py-2.5 text-gray-700">Setup & Inspection</td><td className="py-2.5 text-right text-gray-600">1</td>{settings.showUnitCol !== false && <td className="py-2.5 text-right text-gray-400">lot</td>}<td className="py-2.5 text-right text-gray-600">$125.00</td><td className="py-2.5 text-right font-bold text-gray-800">$125.00</td></tr>
-                </tbody>
-              </table>
-              {/* Totals */}
-              <div className="flex justify-end" style={{ fontSize: 12 }}>
-                <div className="w-52 space-y-1.5">
-                  <div className="flex justify-between"><span className="text-gray-400">Subtotal</span><span className="text-gray-700">$1,375.00</span></div>
-                  {settings.defaultMarkup > 0 && <div className="flex justify-between"><span className="text-gray-400">Markup {settings.defaultMarkup}%</span><span className="text-gray-700">+${(settings.defaultMarkup / 100 * 1375).toFixed(2)}</span></div>}
-                  {settings.defaultDiscount > 0 && <div className="flex justify-between"><span className="text-gray-400">Discount</span><span className="text-red-500">-${(settings.defaultDiscount / 100 * 1375).toFixed(2)}</span></div>}
-                  {(settings.taxRate || 0) > 0 && <div className="flex justify-between"><span className="text-gray-400">Tax {settings.taxRate}%</span><span className="text-gray-700">+${(settings.taxRate! / 100 * 1375).toFixed(2)}</span></div>}
-                  {(() => { const sub = 1375; const m = (settings.defaultMarkup || 0) / 100; const d = (settings.defaultDiscount || 0) / 100; const t = (settings.taxRate || 0) / 100; const total = (sub * (1 + m) * (1 - d)) * (1 + t); return (
-                  <div className="flex justify-between font-extrabold border-t-2 border-gray-800 pt-2 mt-1" style={{ fontSize: 16, color: accent }}>
-                    <span>Total</span><span>${total.toFixed(2)}</span>
-                  </div>
-                  ); })()}
-                </div>
-              </div>
-              {/* Footer */}
-              {settings.defaultQuoteComment && <div className="mt-4 pt-3 border-t border-gray-200"><div className="text-gray-400 uppercase font-bold tracking-wider" style={{ fontSize: 9 }}>Comments</div><div className="text-gray-500 mt-1" style={{ fontSize: 10 }}>{settings.defaultQuoteComment.substring(0, 150)}{settings.defaultQuoteComment.length > 150 ? '...' : ''}</div></div>}
-              {settings.showSignatureLines !== false && (
-                <div className="flex gap-8 mt-8"><div className="flex-1 pt-2 border-t border-gray-300 text-gray-400" style={{ fontSize: 10 }}>{settings.companyName || 'Company'}</div><div className="flex-1 pt-2 border-t border-gray-300 text-gray-400" style={{ fontSize: 10 }}>Client's signature</div></div>
-              )}
-            </div>
-            </div>
+            <QuotePreview settings={settings} />
             )}
           </div>
           </div>
@@ -5510,150 +4615,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
         );
       })()}
 
-      {/* ── TV DISPLAY — Split-pane with live preview ── */}
+      {/* ── TV DISPLAY ── */}
       {settingsTab === 'tv' && (
-        <div className="space-y-4">
-          <div>
-            <h3 className="text-lg font-bold text-white mb-1">TV Display</h3>
-            <p className="text-sm text-zinc-500">Shop-floor TV mode — slides, weather, and the shareable stream link. Changes preview live on the right.</p>
-          </div>
-          <div className="flex gap-4 flex-col lg:flex-row">
-          {/* LEFT: TV Controls — scrollable inside its own column on desktop, free-flow on mobile */}
-          <div className="w-full lg:w-[320px] xl:w-[340px] shrink-0 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-120px)]">
-
-            {/* Weather Location */}
-            <div data-settings-anchor="tv-weather" className="rounded-2xl">
-              <WeatherLocationCard addToast={addToast} settings={settings} setSettings={setSettings} />
-            </div>
-
-            {/* TV Stream Link */}
-            <div data-settings-anchor="tv-link" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Radio className="w-4 h-4 text-red-500" />
-                <span className="text-sm font-bold text-white">TV Stream Link</span>
-              </div>
-              <p className="text-[10px] text-zinc-500">Open this URL on any TV or browser — no login needed. Each account gets their own private link.</p>
-              {(() => {
-                const token = settings.tvToken || '';
-                const tvUrl = token ? `${window.location.origin}?tv=${token}` : '';
-                return (
-                  <>
-                    {token ? (
-                      <div className="space-y-2">
-                        <div className="flex gap-2">
-                          <input readOnly value={tvUrl} className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono truncate" />
-                          <button onClick={() => { navigator.clipboard.writeText(tvUrl); addToast('success', 'TV link copied!'); }} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg transition-colors shrink-0">Copy</button>
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => window.open(tvUrl, '_blank')} className="flex-1 px-3 py-2 bg-white/5 hover:bg-white/10 text-white text-xs font-bold rounded-lg transition-colors">Open in New Tab</button>
-                          <button onClick={async () => {
-                            const ok = await askConfirm({
-                              title: 'Generate a new TV link?',
-                              message: 'The current link will stop working. Anyone using it on a TV will need the new URL.',
-                              tone: 'warning',
-                              confirmLabel: 'Reset link',
-                            });
-                            if (ok) setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) });
-                          }} className="px-3 py-2 bg-white/5 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 text-xs font-bold rounded-lg transition-colors">Reset</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button onClick={() => setSettings({ ...settings, tvToken: crypto.randomUUID().replace(/-/g, '').slice(0, 16) })} className="w-full px-4 py-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white text-sm font-bold rounded-xl transition-all shadow shadow-amber-900/20">Generate TV Link</button>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-
-            {/* Privacy — sensitive data toggles */}
-            <details data-settings-anchor="tv-privacy" open className="bg-red-500/5 border border-red-500/20 rounded-2xl overflow-hidden group">
-              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-red-500/10">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-white flex items-center gap-1.5">🔒 Privacy</span>
-                  <span className="text-[9px] font-black text-red-400 bg-red-500/10 border border-red-500/25 px-1.5 py-0.5 rounded uppercase tracking-widest">Sensitive</span>
-                </div>
-                <ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" />
-              </summary>
-              <div className="px-4 pb-4 space-y-2">
-                <p className="text-[10px] text-zinc-500 leading-snug italic">TVs are often visible to customers, visitors, and workers — hide sensitive data by default.</p>
-                {[
-                  { key: 'tvShowRevenue', label: 'Show $ / Revenue', desc: '💰 Dollar amounts on stats + goal slides (off by default)', def: false },
-                  { key: 'tvShowCustomerNames', label: 'Show Customer Names', desc: '🏢 Customer names on job cards + Top Customer', def: true },
-                ].map(o => (
-                  <div key={o.key} className="flex items-center justify-between py-1">
-                    <div className="flex-1 min-w-0 pr-3"><p className="text-xs font-bold text-white">{o.label}</p><p className="text-[10px] text-zinc-500 mt-0.5 leading-snug">{o.desc}</p></div>
-                    <Toggle checked={(settings as any)[o.key] ?? o.def} onChange={v => setSettings({ ...settings, [o.key]: v })} />
-                  </div>
-                ))}
-              </div>
-            </details>
-
-            {/* Display Options */}
-            <details data-settings-anchor="tv-display" open className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
-              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Display</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
-              <div className="px-4 pb-4 space-y-2">
-                {[
-                  { key: 'tvCompanyHeader', label: 'Company Header', desc: 'Show name + logo at top', def: true },
-                  { key: 'tvShowClock', label: 'Live Clock', desc: 'Current time in header', def: true },
-                  { key: 'tvShowWeather', label: 'Outside Temperature', desc: 'Weather widget (needs location)', def: true },
-                  { key: 'tvShowStats', label: 'Stats Bar', desc: 'Workers, running, paused counts', def: true },
-                  { key: 'tvShowJobsBelt', label: 'Jobs Belt', desc: 'Auto-scrolling list of open jobs', def: true },
-                  { key: 'tvShowCustomer', label: 'Customer on Worker Cards', desc: 'Legacy — use Privacy toggle instead', def: true },
-                  { key: 'tvShowJobId', label: 'Job ID', desc: 'Show job ID on cards', def: true },
-                  { key: 'tvShowElapsedBar', label: 'Progress Bar', desc: 'Time elapsed bar', def: true },
-                  { key: 'tvAutoScroll', label: 'Auto-Scroll', desc: 'Scroll when many workers', def: false },
-                ].map(o => (
-                  <div key={o.key} className="flex items-center justify-between py-1">
-                    <div className="flex-1 min-w-0 pr-3"><p className="text-xs text-white">{o.label}</p><p className="text-[9px] text-zinc-600">{o.desc}</p></div>
-                    <Toggle checked={(settings as any)[o.key] ?? o.def} onChange={v => setSettings({ ...settings, [o.key]: v })} />
-                  </div>
-                ))}
-                <div className="flex items-center justify-between py-1">
-                  <p className="text-xs text-white">Card Size</p>
-                  <select aria-label="TV card size" className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvCardSize || 'normal'} onChange={e => setSettings({ ...settings, tvCardSize: e.target.value as any })}>
-                    <option value="compact">Compact</option><option value="normal">Normal</option><option value="large">Large</option>
-                  </select>
-                </div>
-                <div className="flex items-center justify-between py-1">
-                  <p className="text-xs text-white">Jobs Belt Scroll Speed</p>
-                  <div role="group" aria-label="Jobs belt scroll speed" className="inline-flex gap-1 p-1 bg-zinc-950 border border-white/10 rounded-lg">
-                    {(['off', 'slow', 'normal', 'fast'] as const).map(s => (
-                      <button key={s} type="button" onClick={() => setSettings({ ...settings, tvScrollSpeed: s })} aria-pressed={(settings.tvScrollSpeed || 'normal') === s} className={`px-2.5 py-1 text-[11px] font-bold rounded capitalize min-h-[28px] ${(settings.tvScrollSpeed || 'normal') === s ? 'bg-amber-600 text-white' : 'text-zinc-500 hover:text-white'}`}>{s}</button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </details>
-
-            {/* Slideshow */}
-            <details data-settings-anchor="tv-slideshow" className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden group">
-              <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-white/[0.02]"><span className="text-sm font-bold text-white">Slideshow</span><ChevronDown className="w-4 h-4 text-zinc-500 group-open:rotate-180 transition-transform" /></summary>
-              <div className="px-4 pb-4 space-y-3">
-                <div className="flex items-center justify-between py-1">
-                  <div><p className="text-xs text-white">Enable Slideshow</p><p className="text-[9px] text-zinc-600">Rotate between views</p></div>
-                  <Toggle checked={settings.tvSlideshowEnabled || false} onChange={v => setSettings({ ...settings, tvSlideshowEnabled: v })} />
-                </div>
-                <div className="flex items-center justify-between py-1">
-                  <p className="text-xs text-white">Duration</p>
-                  <select className="bg-zinc-950 border border-white/10 rounded px-2 py-1 text-white text-xs" value={settings.tvSlideDuration || 15} onChange={e => setSettings({ ...settings, tvSlideDuration: Number(e.target.value) })}>
-                    {[5,10,15,20,30,45,60].map(s => <option key={s} value={s}>{s}s</option>)}
-                  </select>
-                </div>
-              </div>
-            </details>
-
-            {/* Slides — rich editor with all slide types */}
-            <div data-settings-anchor="tv-slides" className="rounded-2xl">
-              <TvSlidesEditor settings={settings} setSettings={setSettings} />
-            </div>
-          </div>
-
-          {/* RIGHT: True TV-mode Mirror Preview */}
-          <div className="flex-1 min-w-0">
-            <TvMirrorPreview settings={settings} activeLogs={tvActiveLogs} jobs={tvJobs} allLogs={tvAllLogs} />
-          </div>
-          </div>
-        </div>
+        <TvDisplaySettings settings={settings} setSettings={setSettings} saveNow={saveNow} addToast={addToast} />
       )}
 
       {/* ── SYSTEM ── */}
@@ -5668,7 +4632,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           <div data-settings-anchor="system-job-defaults" className="rounded-2xl">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.12em] mb-2">Job Defaults</p>
             <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
-              <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.04]">
+              <div className="px-4 py-3.5 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-semibold text-white">Default Priority</p>
                   <p className="text-xs text-zinc-500 mt-0.5">Applied when creating new jobs</p>
@@ -5678,19 +4642,6 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   <option value="normal">Normal</option>
                   <option value="high">High</option>
                   <option value="urgent">Urgent</option>
-                </select>
-              </div>
-              <div className="px-4 py-3.5 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-white">Default Payment Terms</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">Pre-filled on new quotes and POs</p>
-                </div>
-                <select className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-amber-500/40" value={settings.defaultPaymentTerms || 'Net 30'} onChange={e => setSettings({ ...settings, defaultPaymentTerms: e.target.value })}>
-                  <option>Due on Receipt</option>
-                  <option>Net 15</option>
-                  <option>Net 30</option>
-                  <option>Net 45</option>
-                  <option>Net 60</option>
                 </select>
               </div>
             </div>
@@ -5709,8 +4660,11 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                   <input
                     type="number"
                     className="bg-zinc-950 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-20 text-center focus:outline-none focus:border-amber-500/40"
-                    value={settings.weeklyGoalHours || 40}
-                    onChange={e => setSettings({ ...settings, weeklyGoalHours: Number(e.target.value) || 40 })}
+                    aria-label="Weekly goal hours"
+                    min={1}
+                    placeholder="40"
+                    value={settings.weeklyGoalHours ?? ''}
+                    onChange={e => setSettings({ ...settings, weeklyGoalHours: e.target.value === '' ? undefined : Number(e.target.value) })}
                   />
                   <span className="text-xs text-zinc-500">hrs</span>
                 </div>
@@ -5809,10 +4763,12 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 </div>
               </div>
             </div>
-            <p className="text-[11px] text-zinc-600 mt-2 px-1">
-              Requires <code className="font-mono text-zinc-500 bg-zinc-800/60 px-1 py-0.5 rounded text-[10px]">RESEND_API_KEY</code> in Netlify environment variables.
-              Free tier: 100 emails/day — <span className="text-zinc-500">resend.com</span>
-            </p>
+            {isDeveloper() && (
+              <p className="text-[11px] text-zinc-600 mt-2 px-1">
+                Requires <code className="font-mono text-zinc-500 bg-zinc-800/60 px-1 py-0.5 rounded text-[10px]">RESEND_API_KEY</code> in Netlify environment variables.
+                Free tier: 100 emails/day — <span className="text-zinc-500">resend.com</span>
+              </p>
+            )}
           </div>
 
           {/* Daily Push Notifications — morning briefing + worker scorecards */}
@@ -5854,9 +4810,9 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
               {/* ── Sample Times Entry ── */}
               <SampleTimesEntry
                 addToast={addToast}
-                allLogs={tvAllLogs}
+                allLogs={shopLogs}
                 knownOperations={settings.customOperations || []}
-                knownPartNumbers={Array.from(new Set(tvJobs.map(j => j.partNumber).filter(Boolean) as string[]))}
+                knownPartNumbers={Array.from(new Set(shopJobs.map(j => j.partNumber).filter(Boolean) as string[]))}
                 rateBuffer={settings.rateBuffer ?? 1.15}
                 shopRate={settings.shopRate ?? 0}
                 pricingMarkup={settings.pricingMarkup ?? 2.0}
@@ -5925,10 +4881,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                     <p className="text-sm font-semibold text-white">Over-budget email alerts</p>
                     <p className="text-xs text-zinc-500 mt-0.5">Email when a job's actual time exceeds the buffered estimate.</p>
                   </div>
-                  <label className="inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={!!settings.overBudgetAlertEnabled} onChange={e => setSettings({ ...settings, overBudgetAlertEnabled: e.target.checked })} />
-                    <div className="w-10 h-5 bg-zinc-800 peer-checked:bg-amber-600 rounded-full peer-checked:after:translate-x-5 after:content-[''] after:absolute after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all after:mt-0.5 after:ml-0.5 relative" />
-                  </label>
+                  <Toggle checked={!!settings.overBudgetAlertEnabled} onChange={v => setSettings({ ...settings, overBudgetAlertEnabled: v })} label="Over-budget email alerts" />
                 </div>
 
                 {settings.overBudgetAlertEnabled && (
@@ -5997,7 +4950,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 <button
                   type="button"
                   onClick={async () => {
-                    const patches = planSessionQtyBackfill(tvJobs, tvAllLogs);
+                    const patches = planSessionQtyBackfill(shopJobs, shopLogs);
                     if (patches.length === 0) {
                       addToast('info', 'Nothing to backfill — all completed jobs already have piece data or no eligible logs found.');
                       return;
@@ -6012,7 +4965,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                     let ok = 0, fail = 0;
                     for (const p of patches) {
                       try {
-                        const log = tvAllLogs.find(l => l.id === p.logId);
+                        const log = shopLogs.find(l => l.id === p.logId);
                         if (!log) { fail++; continue; }
                         await DB.updateTimeLog({ ...log, sessionQty: p.sessionQty });
                         ok++;
