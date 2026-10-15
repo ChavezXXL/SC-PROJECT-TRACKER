@@ -121,9 +121,9 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
     let shippedAt: number | undefined;
     if (target.isComplete) {
       const lastWork = await DB.lastWorkEndForJob(job.id);
-      const choice = await askShipDate({ count: 1, label: `PO ${job.poNumber}`, lastWorkMs: lastWork });
+      const choice = await askShipDate({ count: 1, label: `PO ${job.poNumber}`, lastWorkMs: lastWork, shippedMs: job.shippedAt || null });
       if (!choice) return;
-      shippedAt = await resolveShipAt(choice, async () => lastWork);
+      shippedAt = await resolveShipAt(choice, async () => lastWork, job.shippedAt);
     }
     try {
       await DB.advanceJobStage(jobId, target.id, user.id, user.name, !!target.isComplete, shippedAt);

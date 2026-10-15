@@ -65,7 +65,8 @@ async function patchLog(
     if (v === null)            fields[k] = { nullValue: null };
     else if (typeof v === 'string')  fields[k] = { stringValue: v };
     else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
-    else                             fields[k] = { integerValue: String(Math.round(v)) };
+    // Keep decimals (e.g. 1.5-minute durations) — the app's own writes store them as doubles.
+    else                             fields[k] = Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
   }
 
   await fetch(url, {
@@ -122,8 +123,10 @@ export const handler: Handler = async (event) => {
     return { statusCode: 403, headers: JSON_H, body: JSON.stringify({ error: 'Not your timer' }) };
   }
 
-  // Must be an active log
-  if (log.status !== 'in_progress') {
+  // Must be an open log — running OR paused (the app writes status 'paused'
+  // while paused; only accepting 'in_progress' made Stop / Resume from the lock
+  // screen do nothing for a paused timer).
+  if (log.endTime || (log.status !== 'in_progress' && log.status !== 'paused')) {
     return { statusCode: 400, headers: JSON_H, body: JSON.stringify({ error: 'Timer is not running', status: log.status }) };
   }
 
@@ -136,9 +139,13 @@ export const handler: Handler = async (event) => {
       return { statusCode: 400, headers: JSON_H, body: JSON.stringify({ error: 'Already paused' }) };
     }
     const elapsed = now - log.startTime - (log.totalPausedMs || 0);
+    // Same fields the app writes, so the lunch-end auto-resume treats this as
+    // the worker's own pause (never auto-resumed).
     updates = {
-      pausedAt:  now,
-      updatedAt: now,
+      pausedAt:    now,
+      pauseReason: 'manual',
+      status:      'paused',
+      updatedAt:   now,
     };
     message = `⏸ Paused at ${fmt(elapsed)}`;
 
@@ -149,7 +156,9 @@ export const handler: Handler = async (event) => {
     const thisBreakMs = now - log.pausedAt;
     updates = {
       pausedAt:      null,
-      totalPausedMs: (log.totalPausedMs || 0) + thisBreakMs,
+      pauseReason:   null,
+      status:        'in_progress',
+      totalPausedMs: (log.totalPausedMs || 0) + Math.max(0, thisBreakMs),
       updatedAt:     now,
     };
     message = `▶ Resumed`;
@@ -158,17 +167,20 @@ export const handler: Handler = async (event) => {
     // If paused when stopped, close out the current pause period first
     const totalPaused = (log.totalPausedMs || 0) + (log.pausedAt ? now - log.pausedAt : 0);
     const durationMs  = Math.max(0, now - log.startTime - totalPaused);
-    const durationMin = durationMs / 60_000;
+    // Same rounding as the app's stopTimeLog (2-decimal minutes).
+    const durationSeconds = Math.floor(durationMs / 1000);
 
     updates = {
       endTime:         now,
       status:          'completed',
-      durationMinutes: durationMin,
-      durationSeconds: Math.round(durationMs / 1000),
+      durationMinutes: Math.round((durationSeconds / 60) * 100) / 100,
+      durationSeconds,
       totalPausedMs:   totalPaused,
       pausedAt:        null,
+      pauseReason:     null,
       updatedAt:       now,
-      stopReason:      'notification_action',
+      // The worker's own action — the app shows no "your timer was stopped" note.
+      stopReason:      'sw:notification',
     };
     message = `⏹ Stopped — ${fmt(durationMs)}`;
   }

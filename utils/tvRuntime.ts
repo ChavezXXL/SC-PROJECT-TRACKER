@@ -3,6 +3,8 @@
 // not leaving the page on a remote's Back button, and refreshing itself at a
 // quiet hour instead of mid-shift.
 
+import { shopLocalTimeMs } from './timezone';
+
 const TOKEN_KEY = 'fabtrack_tv';
 const DEVICE_KEY = 'fabtrack_tv_device';
 const NAME_KEY = 'fabtrack_tv_name';
@@ -76,52 +78,93 @@ export function inQuietHours(nowMinutes: number, start?: string, end?: string): 
 
 export interface TvQuiet { enabled?: boolean; start?: string; end?: string; days?: number[] }
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * The SHOP's wall clock at `nowMs` — minutes after midnight + weekday — in
+ * `tz` (settings.recapTimezone, the same clock auto clock-out uses). A TV
+ * browser set to UTC used to dim the board mid-shift. Without a tz (or with a
+ * bad one) the device's own clock is used.
+ */
+export function shopClock(nowMs: number, tz?: string): { minutes: number; day: number } {
+  if (tz) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', weekday: 'short',
+      }).formatToParts(new Date(nowMs));
+      const get = (t: string) => parts.find(x => x.type === t)?.value || '';
+      const h = parseInt(get('hour'), 10) % 24, m = parseInt(get('minute'), 10);
+      const day = DAYS.indexOf(get('weekday').slice(0, 3));
+      if (Number.isFinite(h) && Number.isFinite(m) && day >= 0) return { minutes: h * 60 + m, day };
+    } catch { /* unknown tz — fall through to the device clock */ }
+  }
+  const d = new Date(nowMs);
+  return { minutes: d.getHours() * 60 + d.getMinutes(), day: d.getDay() };
+}
+
+/** Epoch of h:m on the shop calendar day `dayOffset` days from `nowMs`.
+ *  Day steps go through the calendar (anchored at noon), never "+24 h" — DST
+ *  days are 23 or 25 hours long. */
+function shopTimeOn(nowMs: number, dayOffset: number, h: number, m: number, tz?: string): number {
+  if (tz) {
+    try {
+      const noon = shopLocalTimeMs(nowMs, tz, 12, 0) + dayOffset * 86_400_000;
+      return shopLocalTimeMs(noon, tz, h, m);
+    } catch { /* fall through */ }
+  }
+  const d = new Date(nowMs);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + dayOffset, h, m, 0, 0).getTime();
+}
+
 /** Is the board dimmed right now? The nightly window (overnight is fine) plus
  *  whole quiet days, e.g. weekends (0 = Sunday … 6 = Saturday). */
-export function isTvQuiet(q: TvQuiet | undefined, now: Date = new Date()): boolean {
+export function isTvQuiet(q: TvQuiet | undefined, now: Date = new Date(), tz?: string): boolean {
   if (!q?.enabled) return false;
-  if (q.days?.includes(now.getDay())) return true;
-  return inQuietHours(now.getHours() * 60 + now.getMinutes(), q.start, q.end);
+  const c = shopClock(now.getTime(), tz);
+  if (q.days?.includes(c.day)) return true;
+  return inQuietHours(c.minutes, q.start, q.end);
 }
 
 /** When a quiet board comes back on — null if it isn't quiet now, or if every
  *  day is a quiet day. */
-export function tvQuietUntil(q: TvQuiet | undefined, now: Date = new Date()): Date | null {
-  if (!q || !isTvQuiet(q, now)) return null;
+export function tvQuietUntil(q: TvQuiet | undefined, now: Date = new Date(), tz?: string): Date | null {
+  if (!q || !isTvQuiet(q, now, tz)) return null;
   // Quiet can only end at the window's end time or at midnight (leaving a
   // quiet day), so those are the only moments worth checking.
   const end = hhmmToMinutes(q.end);
+  const nowMs = now.getTime();
   const moments: number[] = [];
   for (let d = 0; d <= 8; d++) {
-    moments.push(new Date(now.getFullYear(), now.getMonth(), now.getDate() + d).getTime());
-    if (end !== null) moments.push(new Date(now.getFullYear(), now.getMonth(), now.getDate() + d, Math.floor(end / 60), end % 60).getTime());
+    moments.push(shopTimeOn(nowMs, d, 0, 0, tz));
+    if (end !== null) moments.push(shopTimeOn(nowMs, d, Math.floor(end / 60), end % 60, tz));
   }
   moments.sort((a, b) => a - b);
-  for (const t of moments) if (t > now.getTime() && !isTvQuiet(q, new Date(t))) return new Date(t);
+  for (const t of moments) if (t > nowMs && !isTvQuiet(q, new Date(t), tz)) return new Date(t);
   return null;
 }
 
 /** "at 5:00 AM" when it's later today / overnight, else "Monday at 5:00 AM". */
-export function resumeLabel(when: Date, now: Date = new Date()): string {
-  const time = when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+export function resumeLabel(when: Date, now: Date = new Date(), tz?: string): string {
+  const opts = tz ? { timeZone: tz } : {};
+  const time = when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...opts });
   return when.getTime() - now.getTime() < 20 * 3_600_000
     ? `at ${time}`
-    : `${when.toLocaleDateString('en-US', { weekday: 'long' })} at ${time}`;
+    : `${when.toLocaleDateString('en-US', { weekday: 'long', ...opts })} at ${time}`;
 }
 
 /**
- * Milliseconds until the next `hour`:00 local time — the daily refresh.
- * If that time is less than 30 minutes away it goes to the next day, so a TV
- * that just started doesn't refresh again right away.
+ * Milliseconds until the next `hour`:00 shop time — the daily refresh. If that
+ * is less than 30 minutes away it goes to the next day, so a TV that just
+ * started doesn't refresh again right away. "Tomorrow" comes from the
+ * calendar: on the night clocks fall back, "+24 h" from midnight landed on the
+ * SAME day and every TV with a 12 AM refresh reloaded in a loop all day.
  */
-export function msUntilDailyRefresh(hour: number, now: number = Date.now()): number {
+export function msUntilDailyRefresh(hour: number, now: number = Date.now(), tz?: string): number {
   const h = Number.isFinite(hour) ? Math.min(23, Math.max(0, Math.floor(hour))) : 3;
-  const d = new Date(now);
-  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, 0, 0, 0).getTime();
-  const next = target - now < 30 * 60_000 ? target + 86_400_000 : target;
-  // DST days are 23/25 h long; re-derive from the calendar instead of +24h.
-  const nd = new Date(next);
-  return new Date(nd.getFullYear(), nd.getMonth(), nd.getDate(), h, 0, 0, 0).getTime() - now;
+  let next = shopTimeOn(now, 0, h, 0, tz);
+  if (next - now < 30 * 60_000) next = shopTimeOn(now, 1, h, 0, tz);
+  // Belt and braces: never sooner than 30 minutes, whatever the clock does.
+  return Math.max(30 * 60_000, next - now);
 }
 
 /**

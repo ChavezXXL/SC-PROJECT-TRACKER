@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
           <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content" />
           <title>FabTrack IO — shop-floor tracking, quotes, POs, deliveries</title>
         <!-- PWA -->
         <link rel="manifest" href="/manifest.json" />
@@ -14,27 +14,13 @@
         <!-- Fallback icon (in case the brand PNG isn't in place yet) -->
         <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%230a1628'/><text x='96' y='125' font-size='70' font-weight='900' text-anchor='middle' fill='%23f59e0b' font-family='Arial Black'>FTIO</text></svg>" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <!-- Fonts -->
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+        <!-- Fonts are bundled with the app (index.tsx imports @fontsource). -->
         <!-- Tesseract.js + PDF.js are now lazy-loaded by services/poScanner.ts
              on first scan — they were ~400KB of parse-blocking JS on every
              page load for a feature used a few times a week. -->
-        <script src="https://cdn.tailwindcss.com"></script>
-        <script>
-                tailwind.config = {
-                          theme: {
-                                      extend: {
-                                                    colors: { zinc: { 950: '#09090b' } },
-                                                    fontFamily: {
-                                                                    sans: ['Inter', 'sans-serif'],
-                                                                    mono: ['JetBrains Mono', 'monospace'],
-                                                    },
-                                      },
-                          },
-                }
-        </script>
+        <!-- Tailwind is compiled at build time into /index.css (linked below,
+             after this <style> block, so utilities still win ties the way they
+             did with the old in-browser CDN build). See tailwind.config.js. -->
         <style>
                 /* Theme CSS variables */
                 :root {
@@ -120,6 +106,12 @@
                 .light-theme .bg-white\/10 { background-color: #e9ecef !important; }
 
                 body { font-family: 'Inter', sans-serif; background-color: var(--bg-body); color: var(--text-primary); -webkit-tap-highlight-color: transparent; }
+                /* No bounce-scroll of the page behind the app (iPhone/iPad) — the
+                   app scrolls inside its own content area. */
+                html, body { overscroll-behavior: none; }
+                /* The app frame fills the VISIBLE screen: 100vh first as the
+                   fallback, 100dvh where supported. */
+                .app-shell { height: 100vh; height: 100dvh; }
                 .mono { font-family: 'JetBrains Mono', monospace; }
                 ::-webkit-scrollbar { width: 6px; height: 6px; }
                 ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
@@ -287,8 +279,10 @@
                 body.tv-mode .md\:hidden { display: none !important; } /* hide mobile top bar too */
                 body.tv-mode .no-tv, body.tv-mode .tv-hide { display: none !important; }
                 body.tv-mode { cursor: none; }
-                body.tv-mode:hover { cursor: default; }
-                body.tv-mode .tv-chrome:hover { opacity: 1; }
+                /* Cursor + hover controls only after REAL interaction (tv-pointer is
+                   set by the board) — a mouse jiggler must not keep them on screen. */
+                body.tv-mode.tv-pointer { cursor: default; }
+                body.tv-mode.tv-pointer .tv-chrome:hover { opacity: 1; }
                 body.tv-mode .tv-chrome { opacity: 0; transition: opacity 0.3s; }
 
                 /* ── TV Mode hardening: prevent content getting cut off ──
@@ -568,14 +562,23 @@
                 });
 
                 // When controller changes (= new SW took over), reload once so the
-                // user sees the new code. Guard against infinite reload loops.
+                // user sees the new code — but never while someone is typing or
+                // has a dialog open (a worker entering a quantity used to lose it
+                // to a deploy). Checks again every 15 s; a hidden page reloads now.
                 let reloaded = false;
-                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                const busy = () => {
+                  const a = document.activeElement;
+                  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return true;
+                  return !!document.querySelector('[role="dialog"], [aria-modal="true"]');
+                };
+                const reloadWhenIdle = () => {
                   if (reloaded) return;
+                  if (document.visibilityState === 'visible' && busy()) { setTimeout(reloadWhenIdle, 15000); return; }
                   reloaded = true;
                   console.log('[SW] New version active — reloading…');
                   window.location.reload();
-                });
+                };
+                navigator.serviceWorker.addEventListener('controllerchange', reloadWhenIdle);
               }).catch(err => console.log('SW registration failed:', err));
             });
           }

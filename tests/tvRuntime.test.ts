@@ -1,4 +1,4 @@
-import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice } from '../utils/tvRuntime';
+import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock } from '../utils/tvRuntime';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -56,6 +56,41 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   const sat = new Date(2026, 9, 31, 22, 0, 0).getTime();
   const when = new Date(sat + msUntilDailyRefresh(3, sat));
   ok('DST change night still refreshes at 3:00 local', when.getHours() === 3 && when.getDate() === 1);
+}
+
+// ── 12 AM refresh on the night clocks fall back (was a reload loop) ──
+{
+  const LA = 'America/Los_Angeles';
+  // Nov 1 2026: clocks fall back at 2 AM; the day is 25 hours long.
+  const tenAm = Date.UTC(2026, 10, 1, 18, 0);          // 10:00 AM PST
+  ok('fall-back day, 12 AM refresh, 10 AM → 14 h (next midnight)', msUntilDailyRefresh(0, tenAm, LA) === 14 * HOUR);
+  const justAfterMidnight = Date.UTC(2026, 10, 1, 7, 10); // 12:10 AM PDT
+  const wait = msUntilDailyRefresh(0, justAfterMidnight, LA);
+  ok('fall-back day, 12:10 AM → tomorrow midnight (25 h day)', wait === 24 * HOUR + 50 * 60_000);
+  for (const h of [0, 3, 12, 23]) {
+    let positive = true;
+    for (let t = Date.UTC(2026, 10, 1, 7, 0); t < Date.UTC(2026, 10, 2, 9, 0); t += 20 * 60_000) {
+      if (msUntilDailyRefresh(h, t, LA) < 30 * 60_000) positive = false;
+    }
+    ok(`refresh hour ${h}: never sooner than 30 min across the fall-back day`, positive);
+  }
+  // Device-clock path (no shop timezone) — same rule from the calendar.
+  const local = new Date(2026, 10, 1, 10, 0).getTime();
+  const when = new Date(local + msUntilDailyRefresh(0, local));
+  ok('device clock: 12 AM refresh lands on the next calendar day at 0:00', when.getDate() === 2 && when.getHours() === 0);
+}
+
+// ── Quiet hours run on SHOP time, not the TV's clock setting ──────
+{
+  const fri7pmNY = Date.UTC(2026, 9, 16, 23, 0);   // Fri 7 PM in New York (EDT)
+  ok('shopClock: New York minutes + weekday', shopClock(fri7pmNY, 'America/New_York').minutes === 19 * 60 && shopClock(fri7pmNY, 'America/New_York').day === 5);
+  ok('shopClock: Tokyo is already Saturday 8 AM', shopClock(fri7pmNY, 'Asia/Tokyo').day === 6 && shopClock(fri7pmNY, 'Asia/Tokyo').minutes === 8 * 60);
+  ok('shopClock: unknown timezone falls back to the device clock', Number.isFinite(shopClock(fri7pmNY, 'Not/AZone').minutes));
+  const nightly = { enabled: true, start: '18:00', end: '05:00' };
+  ok('7 PM shop time is quiet', isTvQuiet(nightly, new Date(fri7pmNY), 'America/New_York'));
+  ok('noon shop time is not quiet', !isTvQuiet(nightly, new Date(Date.UTC(2026, 9, 16, 16, 0)), 'America/New_York'));
+  const back = tvQuietUntil({ ...nightly, days: [0, 6] }, new Date(fri7pmNY), 'America/New_York');
+  ok('weekend quiet in New York → back Monday 5:00 AM New York time', !!back && back.getTime() === Date.UTC(2026, 9, 19, 9, 0));
 }
 
 // ── Device names for the office list ──────────────────────────────

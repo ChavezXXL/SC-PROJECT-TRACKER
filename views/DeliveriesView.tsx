@@ -395,7 +395,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           onCancel={() => setCreating(false)}
           onSave={async (d, updatedContacts) => {
             await DB.saveDelivery(d);
-            if (updatedContacts) await DB.saveSettingsChanges({ clientContacts: updatedContacts });
+            if (updatedContacts) await DB.saveClientContacts(updatedContacts);
             setCreating(false);
             addToast('success', `Run ${d.runNumber} created — ${d.stops.length} stops`);
           }}
@@ -413,7 +413,7 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
             onCancel={() => setEditingId(null)}
             onSave={async (updated, updatedContacts) => {
               await DB.saveDelivery(updated);
-              if (updatedContacts) await DB.saveSettingsChanges({ clientContacts: updatedContacts });
+              if (updatedContacts) await DB.saveClientContacts(updatedContacts);
               setEditingId(null);
               addToast('success', `Saved ${updated.runNumber}`);
             }}
@@ -980,12 +980,14 @@ const DeliveryEditor: React.FC<{
     if (stops.some(s => !s.address.trim())) { addToast('error', 'All stops need an address.'); return; }
 
     // Save-back: persist new addresses into clientContacts for future auto-fill
+    // Only the NEW entries — the caller saves each one on its own (re-saving the
+    // whole contact book could undo another device's just-added contact).
     let updatedContacts: Record<string, CustomerContact> | undefined;
     for (const s of stops) {
       if (!s.customerName || !s.address.trim()) continue;
       const existing = clientContacts[s.customerName];
       if (!existing?.address) {
-        updatedContacts = updatedContacts || { ...clientContacts };
+        updatedContacts = updatedContacts || {};
         updatedContacts[s.customerName] = { name: s.customerName, ...(existing || {}), address: s.address };
       }
     }

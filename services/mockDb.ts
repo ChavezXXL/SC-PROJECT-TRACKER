@@ -15,6 +15,11 @@ import {
   deleteField,
   runTransaction,
   getDocFromServer,
+  getDocFromCache,
+  getDocsFromCache,
+  serverTimestamp,
+  Timestamp,
+  FieldPath,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -34,6 +39,7 @@ import {
 // returns "tenants/{tid}/jobs". Nothing changes for SC Deburring until
 // we explicitly switch `getTenantId()` to return something else.
 import { colPath, resolveCurrentTenantId } from "../backend/tenantContext";
+import { newTvToken } from "../utils/tvRuntime";
 
 /** Current tenant resolver. Reads from URL param → localStorage →
  *  legacy SC Deburring fallback (LEGACY_TENANT_ID). AuthProvider writes
@@ -453,6 +459,22 @@ export function partPhotoFor(jobs: Job[], partNumber?: string, excludeJobId?: st
  * the job meanwhile, and clearing really deletes (a plain save can't: merge
  * writes skip undefined, so a "removed" photo used to come straight back).
  */
+/** Tick / untick checklist items. Writes ONLY the checklist — the worker card
+ *  used to re-save the whole job (photo included) from its possibly stale
+ *  copy, so a lagging tablet could undo an office edit to the due date or qty. */
+export async function setJobChecklist(jobId: string, checklist: NonNullable<Job['checklist']>): Promise<void> {
+  if (dbInstance) {
+    try {
+      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), { checklist: sanitize(checklist) } as any));
+      firebaseStatus = { connected: true };
+    } catch (e) { throw handleError(e); }
+    return;
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === jobId);
+  if (idx >= 0) { jobs[idx] = { ...jobs[idx], checklist }; writeLS(LS.jobs, jobs); }
+}
+
 export async function setJobPhoto(jobId: string, partImage: string | null): Promise<void> {
   if (dbInstance) {
     const fields = partImage
@@ -645,18 +667,18 @@ export async function addJobNote(jobId: string, text: string, userId: string, us
   const note = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, userId, userName, timestamp: Date.now() };
   if (dbInstance) {
     try {
-      await updateDoc(doc(dbInstance, COL.jobs, jobId), { jobNotes: arrayUnion(note) } as any);
+      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), { jobNotes: arrayUnion(note) } as any));
       firebaseStatus = { connected: true };
       // Also write to flat notes collection so the push cron can query recent notes
       try {
-        await setDoc(doc(dbInstance, COL.notes, note.id), {
+        await settleWrite(setDoc(doc(dbInstance, COL.notes, note.id), {
           jobId,
           jobLabel: jobLabel || jobId,
           text: note.text,
           userId: note.userId,
           userName: note.userName,
           timestamp: note.timestamp,
-        });
+        }));
       } catch { /* non-critical — note is already saved on the job */ }
     } catch (e) { throw handleError(e); }
     return;
@@ -815,6 +837,55 @@ export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
  *  indexes, so no composite index is needed. Falls back progressively to the
  *  old userId-only query, then localStorage, so a missing index or an offline
  *  device can never block a clock-in. */
+// ── Shop-floor Wi-Fi: never wait on the server forever ────────────────
+// A Firestore write lands in this device's cache at once (every screen here
+// sees it immediately), but its promise only settles when the SERVER confirms
+// — which never happens while offline. Timer actions used to await that: the
+// Start button stayed locked, "Stopping…" spun, and confirmations never came.
+const SERVER_WAIT_MS = 4000;
+const READ_WAIT_MS = 2500;
+
+/** Wait for the server to confirm a write, up to SERVER_WAIT_MS. 'saved' =
+ *  confirmed; 'queued' = kept on this device, synced when the connection is
+ *  back. Rejects only when the write fails fast (e.g. permission denied). */
+async function settleWrite(p: Promise<unknown>, ms = SERVER_WAIT_MS): Promise<'saved' | 'queued'> {
+  p.catch(e => console.warn('[sync] a change saved on this device failed to sync:', e));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.then(() => 'saved' as const),
+      new Promise<'queued'>(res => { timer = setTimeout(() => res('queued'), ms); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+const SLOW = 'server-slow';
+function slowAfter(ms: number, onTimer: (t: ReturnType<typeof setTimeout>) => void): Promise<never> {
+  return new Promise((_, rej) => { onTimer(setTimeout(() => rej(new Error(SLOW)), ms)); });
+}
+
+/** Read a doc from the server if it answers quickly, else this device's copy. */
+async function readDoc(ref: any): Promise<any> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([getDoc(ref), slowAfter(READ_WAIT_MS, t => { timer = t; })]);
+  } catch {
+    return await getDocFromCache(ref);
+  } finally { clearTimeout(timer); }
+}
+
+/** Run a query on the server if it answers quickly, else on this device's copy.
+ *  Real errors (e.g. a missing index) still throw, as before. */
+async function queryDocs(q: any): Promise<any> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([getDocs(q), slowAfter(READ_WAIT_MS, t => { timer = t; })]);
+  } catch (e: any) {
+    if (e?.message !== SLOW) throw e;
+    return await getDocsFromCache(q);
+  } finally { clearTimeout(timer); }
+}
+
 async function getOpenLogsForUser(userId: string): Promise<TimeLog[]> {
   if (dbInstance) {
     try {
@@ -823,7 +894,7 @@ async function getOpenLogsForUser(userId: string): Promise<TimeLog[]> {
         where('userId', '==', userId),
         where('endTime', '==', null),
       );
-      const snap = await getDocs(q);
+      const snap = await queryDocs(q);
       return snap.docs.map((d: any) => d.data() as TimeLog);
     } catch {
       try {
@@ -907,14 +978,12 @@ export async function startTimeLog(
         // No merge: a fresh clock-in is always a create — merging would let a
         // (now near-impossible) id clash silently fuse two workers' sessions.
         const cleanLog = sanitize(log);
-        await setDoc(doc(dbInstance, COL.logs, id), cleanLog);
-        
-        // Update job status safely
-        try {
-            await updateDoc(doc(dbInstance, COL.jobs, jobId), { status: "in-progress" } as any);
-        } catch(e) {
-            // Ignore job update error, log is more important
-        }
+        await settleWrite(setDoc(doc(dbInstance, COL.logs, id), cleanLog));
+
+        // Mark the job in progress — but a job the office put on HOLD stays on
+        // hold (a clock-in used to silently take it off hold). Reads the job
+        // from this device's copy first: job docs are big (inline photos).
+        markJobInProgress(jobId);
         
         firebaseStatus = { connected: true };
         // Server-push admin devices so they get a notification even with browser closed
@@ -934,11 +1003,21 @@ export async function startTimeLog(
 
   const jobs = readLS<Job[]>(LS.jobs, []);
   const idx = jobs.findIndex((j) => j.id === jobId);
-  if (idx >= 0) {
+  if (idx >= 0 && jobs[idx].status !== 'hold') {
     jobs[idx] = { ...(jobs[idx] as any), status: "in-progress" } as Job;
     writeLS(LS.jobs, jobs);
   }
   return id;
+}
+
+function markJobInProgress(jobId: string) {
+  if (!dbInstance) return;
+  const ref = doc(dbInstance, COL.jobs, jobId);
+  getDocFromCache(ref).catch(() => readDoc(ref)).then((snap: any) => {
+    const status = snap?.exists?.() ? (snap.data() as Job).status : undefined;
+    if (status === 'hold' || status === 'in-progress') return;
+    return settleWrite(updateDoc(ref, { status: 'in-progress' } as any));
+  }).catch(() => { /* the clock-in itself is what matters */ });
 }
 
 /** Hard ceiling on a single session's working time — matches the 14h safety
@@ -980,7 +1059,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
   if (dbInstance) {
       try {
         const ref = doc(dbInstance, COL.logs, logId);
-        const snap = await getDoc(ref);
+        const snap = await readDoc(ref);
         if (!snap.exists()) throw new Error("Log not found.");
 
         const existing = snap.data() as TimeLog;
@@ -1005,7 +1084,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         if (sessionQty !== undefined) updates.sessionQty = sessionQty;
         if (notes !== undefined) updates.notes = notes;
 
-        await updateDoc(ref, sanitize(updates));
+        await settleWrite(updateDoc(ref, sanitize(updates)));
         updateUserProgress(existing.userId, existing.jobId, existing.operation, durationSeconds).catch(() => {});
         firebaseStatus = { connected: true };
         // Server-push admin devices on clock-out — but ONLY for real worker
@@ -1408,16 +1487,16 @@ export async function pauseTimeLog(logId: string, reason?: string): Promise<void
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.logs, logId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);
       if (!snap.exists()) throw new Error("Log not found.");
       const existing = snap.data() as TimeLog;
       if (existing.pausedAt || existing.endTime) return; // already paused or stopped
-      await updateDoc(ref, sanitize({
+      await settleWrite(updateDoc(ref, sanitize({
         pausedAt: now,
         pauseReason: reason || 'manual',
         status: 'paused',
         updatedAt: now,
-      }));
+      })));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1439,7 +1518,7 @@ export async function resumeTimeLog(logId: string): Promise<void> {
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.logs, logId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);
       if (!snap.exists()) throw new Error("Log not found.");
       const existing = snap.data() as TimeLog;
       if (!existing.pausedAt) return; // not paused
@@ -1447,13 +1526,13 @@ export async function resumeTimeLog(logId: string): Promise<void> {
       // pause total to Firestore (finalizeDuration guards reads, not writes).
       const pausedDuration = Math.max(0, now - existing.pausedAt);
       const totalPausedMs = (existing.totalPausedMs || 0) + pausedDuration;
-      await updateDoc(ref, sanitize({
+      await settleWrite(updateDoc(ref, sanitize({
         pausedAt: null,
         pauseReason: null,
         totalPausedMs,
         status: 'in_progress',
         updatedAt: now,
-      }));
+      })));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -1970,11 +2049,29 @@ export function subscribeSyncStatus(cb: (s: { online: boolean; synced: boolean }
   return () => { unsub(); window.removeEventListener('online', emit); window.removeEventListener('offline', emit); };
 }
 
+// Times written for TVs come from the SERVER clock (serverTimestamp). TV
+// clocks drift: a TV a few minutes slow looked "Not responding" between
+// check-ins, one 15+ minutes off could never be paired, and a Refresh sent
+// from a phone with a fast clock made later ones look old and get ignored.
+const tsMs = (v: any): number =>
+  v && typeof v.toMillis === 'function' ? v.toMillis() : typeof v === 'number' ? v : 0;
+
+function readTvDevice(snap: any): TvDevice {
+  const raw = snap.data({ serverTimestamps: 'estimate' }) || {};
+  return {
+    ...raw,
+    id: snap.id,
+    lastSeen: tsMs(raw.lastSeen),
+    ...(raw.reloadAt != null ? { reloadAt: tsMs(raw.reloadAt) } : {}),
+    ...(raw.identifyAt != null ? { identifyAt: tsMs(raw.identifyAt) } : {}),
+  } as TvDevice;
+}
+
 /** TV check-in (merge) — creates the device row on first call. */
 export async function tvCheckIn(device: Partial<TvDevice> & { id: string }): Promise<void> {
   if (!dbInstance) return;
   try {
-    await setDoc(doc(dbInstance, COL.tvDevices, device.id), sanitize({ ...device, lastSeen: Date.now() }), { merge: true });
+    await settleWrite(setDoc(doc(dbInstance, COL.tvDevices, device.id), { ...sanitize(device), lastSeen: serverTimestamp() }, { merge: true }));
   } catch { /* a missed check-in only makes the office view stale */ }
 }
 
@@ -1983,17 +2080,18 @@ export function subscribeTvDevice(id: string, cb: (d: TvDevice | null) => void):
   if (!dbInstance) return () => {};
   return retryingSnapshot(
     () => doc(dbInstance!, COL.tvDevices, id),
-    (snap: any) => cb(snap.exists() ? ({ ...snap.data(), id } as TvDevice) : null),
+    (snap: any) => cb(snap.exists() ? readTvDevice(snap) : null),
     () => {},
   );
 }
 
-/** Settings: every TV that has checked in, most recently seen first. */
+/** Settings: every TV that has checked in, most recently seen first. Removed
+ *  TVs stay in the collection as hidden, disconnected rows (see removeTvDevice). */
 export function subscribeTvDevices(cb: (list: TvDevice[]) => void): () => void {
   if (!dbInstance) { cb([]); return () => {}; }
   return retryingSnapshot(
     () => collection(dbInstance!, COL.tvDevices),
-    (snap: any) => cb(snap.docs.map((d: any) => ({ ...d.data(), id: d.id }) as TvDevice).sort((a: TvDevice, b: TvDevice) => (b.lastSeen || 0) - (a.lastSeen || 0))),
+    (snap: any) => cb(snap.docs.map(readTvDevice).filter((d: TvDevice) => !d.hidden).sort((a: TvDevice, b: TvDevice) => (b.lastSeen || 0) - (a.lastSeen || 0))),
     () => {},
   );
 }
@@ -2001,46 +2099,79 @@ export function subscribeTvDevices(cb: (list: TvDevice[]) => void): () => void {
 /** Office → TV: refresh, show its name on screen, or disconnect it. */
 export async function sendTvCommand(id: string, cmd: 'reload' | 'identify' | 'disconnect'): Promise<void> {
   if (!dbInstance) return;
-  const patch = cmd === 'reload' ? { reloadAt: Date.now() } : cmd === 'identify' ? { identifyAt: Date.now() } : { revoked: true };
-  try { await updateDoc(doc(dbInstance, COL.tvDevices, id), patch); }
+  const patch = cmd === 'reload' ? { reloadAt: serverTimestamp() } : cmd === 'identify' ? { identifyAt: serverTimestamp() } : { revoked: true };
+  try { await settleWrite(updateDoc(doc(dbInstance, COL.tvDevices, id), patch)); }
   catch (e) { throw handleError(e); }
 }
 
 export async function renameTvDevice(id: string, name: string): Promise<void> {
   if (!dbInstance) return;
-  try { await updateDoc(doc(dbInstance, COL.tvDevices, id), { name: name.trim().slice(0, 40) || 'TV' }); }
+  try { await settleWrite(updateDoc(doc(dbInstance, COL.tvDevices, id), { name: name.trim().slice(0, 40) || 'TV' })); }
   catch (e) { throw handleError(e); }
 }
 
-/** Remove a TV from the list (one that's gone for good). A TV that is still
- *  running reappears at its next check-in — use 'disconnect' to unpair it. */
+/** Take a TV off the list — and disconnect it in the same step. Deleting the
+ *  row let a TV that was switched off come back on its next start (still
+ *  holding a valid link) and quietly recreate itself. The row stays, hidden,
+ *  so that TV finds the disconnect whenever it wakes up. */
 export async function removeTvDevice(id: string): Promise<void> {
   if (!dbInstance) return;
-  try { await deleteDoc(doc(dbInstance, COL.tvDevices, id)); }
+  try { await settleWrite(updateDoc(doc(dbInstance, COL.tvDevices, id), { revoked: true, hidden: true })); }
   catch (e) { throw handleError(e); }
+}
+
+/** The shop's TV link — created only when the SERVER copy has none. A fresh
+ *  browser shows no link until settings arrive; making one in that window
+ *  silently replaced the real link and dropped every TV. Needs internet. */
+export async function ensureTvToken(): Promise<string> {
+  if (!dbInstance) {
+    const existing = getSettings().tvToken;
+    if (existing) return existing;
+    const t = newTvToken();
+    await saveSettingsChanges({ tvToken: t });
+    return t;
+  }
+  const ref = doc(dbInstance, COL.settings, 'system');
+  const token = await runTransaction(dbInstance, async (tx: any) => {
+    const snap = await tx.get(ref);
+    const existing = snap.exists() ? (snap.data() as any).tvToken : undefined;
+    if (existing) return existing as string;
+    const t = newTvToken();
+    if (snap.exists()) tx.update(ref, { tvToken: t }); else tx.set(ref, { tvToken: t }, { merge: true });
+    return t;
+  });
+  const cached = readLS<any>(LS.settings, {});
+  if (cached.tvToken !== token) { cached.tvToken = token; writeLS(LS.settings, cached); }
+  return token;
 }
 
 const TV_PAIR_TTL_MS = 15 * 60_000;
 
+function readPairing(snap: any): TvPairing {
+  const raw = snap.data({ serverTimestamps: 'estimate' }) || {};
+  return { ...raw, createdAt: tsMs(raw.createdAt) } as TvPairing;
+}
+
 /** TV side: claim a fresh 6-digit code and wait for the office to enter it. */
 export async function startTvPairing(deviceId: string): Promise<string> {
   // Self-cleaning: codes left behind by TVs that were switched off mid-pairing
-  // (a page closing can't finish its own cleanup) are deleted here.
+  // (a page closing can't finish its own cleanup). An extra hour of margin —
+  // this runs on a TV, whose clock may be off.
   if (dbInstance) {
     try {
-      const stale = await getDocs(query(collection(dbInstance, COL.tvPairing), where('createdAt', '<', Date.now() - TV_PAIR_TTL_MS)));
-      await Promise.all(stale.docs.map((d: any) => deleteDoc(d.ref).catch(() => {})));
+      const cutoff = Timestamp.fromMillis(Date.now() - TV_PAIR_TTL_MS - 60 * 60_000);
+      const stale = await queryDocs(query(collection(dbInstance, COL.tvPairing), where('createdAt', '<', cutoff)));
+      stale.docs.forEach((d: any) => { deleteDoc(d.ref).catch(() => {}); });
     } catch { /* best effort */ }
   }
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = String(Math.floor(100000 + Math.random() * 900000));
     if (!dbInstance) return code;
     const ref = doc(dbInstance, COL.tvPairing, code);
-    const existing = await getDoc(ref).catch(() => null);
-    const live = existing?.exists() && Date.now() - ((existing.data() as TvPairing).createdAt || 0) < TV_PAIR_TTL_MS;
+    const existing = await readDoc(ref).catch(() => null);
+    const live = existing?.exists() && existing.data().status === 'waiting';
     if (live) continue;
-    const pairing: TvPairing = { code, deviceId, createdAt: Date.now(), status: 'waiting' };
-    await setDoc(ref, pairing);
+    await settleWrite(setDoc(ref, { code, deviceId, createdAt: serverTimestamp(), status: 'waiting' }));
     return code;
   }
   throw new Error('Could not create a pairing code');
@@ -2050,14 +2181,14 @@ export function subscribeTvPairing(code: string, cb: (p: TvPairing | null) => vo
   if (!dbInstance) return () => {};
   return retryingSnapshot(
     () => doc(dbInstance!, COL.tvPairing, code),
-    (snap: any) => cb(snap.exists() ? (snap.data() as TvPairing) : null),
+    (snap: any) => cb(snap.exists() ? readPairing(snap) : null),
     () => {},
   );
 }
 
 export async function endTvPairing(code: string): Promise<void> {
   if (!dbInstance) return;
-  try { await deleteDoc(doc(dbInstance, COL.tvPairing, code)); } catch { /* expires on its own */ }
+  try { await settleWrite(deleteDoc(doc(dbInstance, COL.tvPairing, code))); } catch { /* expires on its own */ }
 }
 
 /** Office side: hand the TV link to the TV showing this code. */
@@ -2068,11 +2199,34 @@ export async function approveTvPairing(code: string, token: string, name: string
   const ref = doc(dbInstance, COL.tvPairing, clean);
   const snap = await getDoc(ref);
   if (!snap.exists()) return 'not-found';
-  const p = snap.data() as TvPairing;
+  const p = readPairing(snap);
   if (p.status !== 'waiting') return 'not-found';
   if (Date.now() - (p.createdAt || 0) > TV_PAIR_TTL_MS) return 'expired';
   await updateDoc(ref, { status: 'approved', token, name: name.trim().slice(0, 40) || 'Shop TV' });
   return 'ok';
+}
+
+/** Save customer contacts one entry at a time (one field path per customer).
+ *  Writing the whole map from one device's copy dropped a contact another
+ *  device had just added. */
+export async function saveClientContacts(contacts: Record<string, any>): Promise<void> {
+  const names = Object.keys(contacts);
+  if (!names.length) return;
+  const cached = readLS<any>(LS.settings, {});
+  cached.clientContacts = { ...(cached.clientContacts || {}), ...contacts };
+  if (dbInstance) {
+    const ref = doc(dbInstance, COL.settings, 'system');
+    const args: any[] = [];
+    for (const n of names) args.push(new FieldPath('clientContacts', n), sanitize(contacts[n]));
+    try {
+      const [first, firstVal, ...rest] = args;
+      await settleWrite(updateDoc(ref, first, firstVal, ...rest));
+    } catch (e) {
+      writeLS(LS.settings, cached);
+      throw handleError(e);
+    }
+  }
+  writeLS(LS.settings, cached);
 }
 
 // ── localStorage → Firestore photo migration ──────────────────────────

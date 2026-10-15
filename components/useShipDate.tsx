@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 import { X, Truck } from 'lucide-react';
 
 export type ShipChoice =
+  | { mode: 'keep' }          // the date it was marked Shipped (falls back to last work)
   | { mode: 'today' }
   | { mode: 'lastWork' }
   | { mode: 'date'; at: number };
@@ -27,6 +28,10 @@ export interface ShipDateOptions {
   label?: string;
   /** Single job only: when work on it last ended (shows the actual date). */
   lastWorkMs?: number | null;
+  /** Single job: when it was already marked Shipped. */
+  shippedMs?: number | null;
+  /** Bulk: how many of the jobs already have a Shipped date. */
+  shippedCount?: number;
 }
 
 const fmtDay = (ms: number) => new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -37,10 +42,12 @@ const isoDay = (ms: number) => {
 
 /** Turn a choice into a timestamp for one job. lastWork falls back to now when
  *  the job has no logged work. A picked day is stored as local noon (the
- *  on-time rule compares calendar days, so the hour never matters). */
-export async function resolveShipAt(choice: ShipChoice, lastWork: () => Promise<number | null>): Promise<number> {
+ *  on-time rule compares calendar days, so the hour never matters).
+ *  `shippedAt` = the job's existing Shipped date, kept by 'keep'. */
+export async function resolveShipAt(choice: ShipChoice, lastWork: () => Promise<number | null>, shippedAt?: number | null): Promise<number> {
   if (choice.mode === 'today') return Date.now();
   if (choice.mode === 'date') return choice.at;
+  if (choice.mode === 'keep' && shippedAt) return shippedAt;
   return (await lastWork()) ?? Date.now();
 }
 
@@ -50,7 +57,9 @@ export function useShipDate() {
   const [picked, setPicked] = useState('');
 
   const askShipDate = useCallback((opts: ShipDateOptions) => new Promise<ShipChoice | null>(resolve => {
-    setMode('today');
+    // A job already marked Shipped keeps that date by default — completing it
+    // days later used to default to "Today" and turn an on-time ship late.
+    setMode(opts.shippedMs || (opts.shippedCount || 0) > 0 ? 'keep' : 'today');
     setPicked('');
     setPending({ opts, resolve });
   }), []);
@@ -99,6 +108,15 @@ export function useShipDate() {
           </div>
 
           <div className="space-y-2" role="radiogroup" aria-label="Ship date">
+            {(pending.opts.shippedMs || (pending.opts.shippedCount || 0) > 0) && (
+              <Choice checked={mode === 'keep'} onSelect={() => setMode('keep')}
+                title="When it was marked Shipped"
+                hint={pending.opts.count === 1 && pending.opts.shippedMs
+                  ? fmtDay(pending.opts.shippedMs)
+                  : pending.opts.shippedCount === pending.opts.count
+                    ? "Each job's own Shipped date"
+                    : `${pending.opts.shippedCount} of ${pending.opts.count} have one · the rest use the day work finished`} />
+            )}
             <Choice checked={mode === 'today'} onSelect={() => setMode('today')} title="Today" hint={fmtDay(Date.now())} />
             {(pending.opts.count > 1 || pending.opts.lastWorkMs) && (
               <Choice checked={mode === 'lastWork'} onSelect={() => setMode('lastWork')}

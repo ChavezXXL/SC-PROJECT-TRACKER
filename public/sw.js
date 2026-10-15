@@ -33,6 +33,24 @@ self.addEventListener('activate', event => {
   );
 });
 
+// Shown when there's no connection and nothing cached to fall back on. It
+// retries every 20 s and as soon as the device reports it's back online, so an
+// unattended screen recovers without anyone touching it.
+function offlinePage() {
+  return new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>FabTrack IO — Offline</title>
+    <style>body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;background:#09090b;font-family:system-ui,sans-serif;color:#fff;text-align:center;padding:24px}h2{font-size:1.4rem;font-weight:900;margin:0 0 8px}p{color:#71717a;font-size:.9rem;margin:0 0 20px}button{background:linear-gradient(135deg,#f97316,#f59e0b);color:#fff;border:none;border-radius:10px;padding:10px 24px;font-size:.95rem;font-weight:700;cursor:pointer}</style>
+    </head><body><div><div style="font-size:2.5rem;margin-bottom:16px">📡</div>
+    <h2>You're offline</h2><p>Connect to Wi-Fi or mobile data. This page retries by itself.</p>
+    <button onclick="window.location.reload()">Retry now</button></div>
+    <script>setTimeout(function(){location.reload()},20000);addEventListener('online',function(){location.reload()});</script>
+    </body></html>`,
+    { headers: { 'Content-Type': 'text/html' } }
+  );
+}
+
 // ── Fetch strategy ───────────────────────────────────────────────
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
@@ -65,24 +83,26 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // ── HTML (/ and *.html): ALWAYS network-first, never serve from cache. ──
-  // Serving cached HTML was the root cause of the "blank screen on open"
-  // bug: new deploys change bundle hashes in index.html, but the cached
-  // copy still references old (deleted) hashes → 404s → white screen.
-  if (url.pathname === '/' || url.pathname.endsWith('.html')) {
+  // ── Page loads (/, /tv, any app URL): network-first, ALWAYS when online. ──
+  // Serving cached HTML while online was the root cause of the "blank screen
+  // on open" bug: new deploys change bundle hashes in index.html, but a cached
+  // copy still referenced old (deleted) hashes → 404s → white screen.
+  // Offline only: the app page cached by THIS version (old versions' caches are
+  // wiped on activate), else an offline page that keeps retrying by itself. A
+  // wall TV that booted before the router came back used to sit on a blank
+  // page until someone walked over and reloaded it. Every app address (/, /tv,
+  // /?jobId=…) is the same index.html, so one copy under '/' covers them all.
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
     event.respondWith(
-      fetch(event.request).catch(() =>
-        new Response(
-          `<!doctype html><html lang="en"><head><meta charset="utf-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>FabTrack IO — Offline</title>
-          <style>body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;background:#09090b;font-family:system-ui,sans-serif;color:#fff;text-align:center;padding:24px}h2{font-size:1.4rem;font-weight:900;margin:0 0 8px}p{color:#71717a;font-size:.9rem;margin:0 0 20px}button{background:linear-gradient(135deg,#f97316,#f59e0b);color:#fff;border:none;border-radius:10px;padding:10px 24px;font-size:.95rem;font-weight:700;cursor:pointer}</style>
-          </head><body><div><div style="font-size:2.5rem;margin-bottom:16px">📡</div>
-          <h2>You're offline</h2><p>Connect to Wi-Fi or mobile data and try again.</p>
-          <button onclick="window.location.reload()">Retry</button></div></body></html>`,
-          { headers: { 'Content-Type': 'text/html' } }
-        )
-      )
+      fetch(event.request)
+        .then(response => {
+          if (response && response.status === 200 && response.type === 'basic' && !response.redirected) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(c => c.put('/', clone)).catch(() => {});
+          }
+          return response;
+        })
+        .catch(async () => (await caches.match('/')) || offlinePage())
     );
     return;
   }
@@ -171,10 +191,11 @@ self.addEventListener('notificationclick', event => {
             timerNotifs.forEach(n => n.close());
           }
         } else {
-          await clients.openWindow(`${url}?action=${action}&logId=${encodeURIComponent(logId)}`);
+          // Couldn't do it from here — open the app so the worker can.
+          await clients.openWindow(url);
         }
       } catch {
-        await clients.openWindow(`${url}?action=${action}&logId=${encodeURIComponent(logId)}`);
+        await clients.openWindow(url);
       }
     })());
     return;

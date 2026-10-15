@@ -3690,7 +3690,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
       {saveState !== 'idle' && (
         <div
           role="status"
-          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 rounded-full border shadow-2xl backdrop-blur-xl text-xs font-black animate-fade-in pointer-events-none ${
+          className={`fixed bottom-6 inset-x-0 mx-auto w-fit z-[80] flex items-center gap-2 px-4 py-2 rounded-full border shadow-2xl backdrop-blur-xl text-xs font-black animate-fade-in pointer-events-none ${
             saveState === 'saving' ? 'bg-zinc-900/95 border-white/15 text-zinc-300' :
             saveState === 'saved'  ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-300' :
                                      'bg-red-950/95 border-red-500/40 text-red-300'

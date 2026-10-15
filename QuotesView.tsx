@@ -554,8 +554,8 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       await DB.saveQuote(quote);
       // Auto-save client contact info for next time
       if (billTo.name && (billTo.email || billTo.phone || billTo.address || billTo.contactPerson)) {
-        const updatedContacts = { ...(settings.clientContacts || {}), [billTo.name]: billTo };
-        DB.saveSettingsChanges({ clientContacts: updatedContacts });
+        // Just this customer's entry — never re-save the whole contact book.
+        DB.saveClientContacts({ [billTo.name]: billTo }).catch(() => {});
       }
       addToast('success', editing ? 'Quote updated' : `Quote ${quote.quoteNumber} created`);
       setShowModal(false);
@@ -1102,7 +1102,7 @@ ${settings.companyPhone || ''}`.trim()
                       if (!c.name) return;
                       const updatedContacts = { ...(settings.clientContacts || {}), [c.name]: c };
                       setSettings({ ...settings, clientContacts: updatedContacts });
-                      DB.saveSettingsChanges({ clientContacts: updatedContacts });
+                      DB.saveClientContacts({ [c.name]: c }).catch(() => addToast('error', "Couldn't save the contact — try again"));
                       addToast('success', `Saved contact info for ${c.name}`);
                     }}
                   />

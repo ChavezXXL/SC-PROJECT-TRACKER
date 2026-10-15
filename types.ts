@@ -1002,6 +1002,7 @@ export interface TvDevice {
   reloadAt?: number;       // office asked this TV to refresh
   identifyAt?: number;     // office asked this TV to show its name
   revoked?: boolean;       // office disconnected it — TV forgets its link
+  hidden?: boolean;        // removed from the office list (kept so a switched-off TV still finds the disconnect)
 }
 
 /** Short-lived pairing: the TV shows a 6-digit code, the office types it in. */

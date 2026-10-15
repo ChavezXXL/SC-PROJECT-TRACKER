@@ -162,8 +162,8 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
     const ok = await confirm({
       title: `Remove ${name} from the list?`,
       message: d.revoked
-        ? "It's already disconnected — this just tidies up the list."
-        : "For a TV that's gone for good. If it's still plugged in somewhere, it shows up again the next time it turns on.",
+        ? "It's already disconnected — this just takes it off the list."
+        : "It's disconnected and taken off the list. If it's still plugged in somewhere, it shows a connect code the next time it turns on.",
       tone: 'warning', confirmLabel: 'Remove',
     });
     if (ok) act(() => DB.removeTvDevice(d.id), `${name} removed`);
@@ -230,9 +230,14 @@ function AdvancedLink({ settings, saveNow, confirm, addToast }: { settings: Syst
       message: 'Every connected TV is disconnected and shows a new code — you will need to connect each one again. Do this if the link got out.',
       tone: 'danger', confirmLabel: 'Make new link',
     }))) return;
+    if (!token) {
+      try { await DB.ensureTvToken(); addToast('success', 'TV link made'); }
+      catch { addToast('error', "Couldn't save — check the internet and try again"); }
+      return;
+    }
     const ok = await saveNow({ tvToken: newTvToken() });
     if (!ok) addToast('error', "Couldn't save — check the internet and try again");
-    else addToast('success', token ? 'New link made — connect each TV again with its code' : 'TV link made');
+    else addToast('success', 'New link made — connect each TV again with its code');
   };
   return (
     <details data-settings-anchor="tv-link" className="group mt-4 rounded-xl border border-white/5">
@@ -280,11 +285,9 @@ function WallTvs({ settings, devices, now, saveNow, confirm, addToast }: {
     setBusy(true);
     setResult(null);
     try {
-      let token = settings.tvToken;
-      if (!token) {
-        token = newTvToken();
-        if (!(await saveNow({ tvToken: token }))) throw new Error('save failed');
-      }
+      // ensureTvToken reads the server first — a fresh browser shows no link
+      // until settings arrive, and minting one then dropped every TV.
+      const token = settings.tvToken || await DB.ensureTvToken();
       const tvName = name.trim() || suggested;
       const r = await DB.approveTvPairing(code, token, tvName);
       if (r === 'ok') {
@@ -406,6 +409,9 @@ function SetupTips({ openWhenReady, refreshHour }: { openWhenReady: boolean | nu
         <Tip title="Come back after a power cut">
           Set the TV browser's home page to <span className="font-mono text-amber-300">{tvHomeUrl().replace(/^https?:\/\//, '')}</span>. Most reliable: a Fire TV Stick or Android TV box with a kiosk browser app (for example Fully Kiosk Browser) set to open that address when it starts.
         </Tip>
+        <Tip title="A mouse jiggler is fine">
+          Keeping a USB mouse jiggler plugged in so the TV never sleeps? Good — the board ignores those small nudges, so the Exit button and cursor stay hidden. Nothing on the board closes without a click and a second confirm.
+        </Tip>
         <Tip title="Wired internet if you can">
           On Wi-Fi the board rides out short drops — it says <b className="text-zinc-200">Reconnecting</b> and catches up by itself — but a cable is steadier.
         </Tip>
@@ -455,6 +461,7 @@ function ScreenCard({ settings, set }: { settings: SystemSettings; set: Patch })
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function ScheduleCard({ settings, set, now }: { settings: SystemSettings; set: Patch; now: number }) {
+  const tz = settings.recapTimezone || 'America/Los_Angeles';   // the TV runs on shop time
   const q = settings.tvQuietHours;
   const enabled = !!q?.enabled;
   const start = q?.start || '18:00';
@@ -463,8 +470,8 @@ function ScheduleCard({ settings, set, now }: { settings: SystemSettings; set: P
   const quiet = { enabled, start, end, days };
   const setQuiet = (patch: Partial<typeof quiet>) => set({ tvQuietHours: { ...quiet, ...patch } });
   const nowDate = new Date(now);
-  const quietNow = isTvQuiet(quiet, nowDate);
-  const until = quietNow ? tvQuietUntil(quiet, nowDate) : null;
+  const quietNow = isTvQuiet(quiet, nowDate, tz);
+  const until = quietNow ? tvQuietUntil(quiet, nowDate, tz) : null;
 
   return (
     <Card anchor="tv-quiet" icon={<Moon className="w-4 h-4" />} title="After hours" desc="Rest the screen when nobody's working.">
@@ -499,7 +506,7 @@ function ScheduleCard({ settings, set, now }: { settings: SystemSettings; set: P
             ) : (
               <p className="text-xs text-zinc-500">
                 Right now: {quietNow
-                  ? <><b className="text-amber-400">dimmed</b>{until ? ` — back ${resumeLabel(until, nowDate)}` : ''}</>
+                  ? <><b className="text-amber-400">dimmed</b>{until ? ` — back ${resumeLabel(until, nowDate, tz)}` : ''}</>
                   : <b className="text-emerald-400">showing the board</b>}
               </p>
             )}
@@ -807,8 +814,9 @@ const DURATIONS = [10, 15, 20, 30, 45, 60, 90];
 const loopLabel = (secs: number) => (secs < 90 ? `${secs} sec` : `${Math.round(secs / 30) / 2} min`);
 const typeKey = (t: TvSlide['type']): string => (t === 'stats' ? 'stats-week' : t);
 
-function SlidesCard({ settings, setSettings, set, confirm, addToast }: {
+function SlidesCard({ settings, setSettings, set, confirm, addToast, onPreview }: {
   settings: SystemSettings; setSettings: SetSettings; set: Patch; confirm: Confirm; addToast: Toast;
+  onPreview: (slide: TvSlide) => void;
 }) {
   const custom = settings.tvSlides && settings.tvSlides.length > 0 ? settings.tvSlides : null;
   const rows = custom || DEFAULT_TV_SLIDES;
@@ -948,6 +956,8 @@ function SlidesCard({ settings, setSettings, set, confirm, addToast }: {
                   <option value="">Auto</option>
                   {DURATIONS.map(d => <option key={d} value={d}>{d}s</option>)}
                 </select>
+                <button type="button" aria-label={`Preview ${meta.label} on the board`} title="See this slide on the board" onClick={() => onPreview(s)}
+                  className="shrink-0 w-8 h-8 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/5"><Eye className="w-4 h-4" aria-hidden="true" /></button>
                 <Toggle checked={s.enabled} onChange={v => update(s.id, { enabled: v })} label={`Show ${meta.label}`} />
                 <button type="button" aria-label={`Remove ${meta.label}`} onClick={() => remove(s)}
                   className="shrink-0 w-8 h-8 flex items-center justify-center rounded-md text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
@@ -989,14 +999,16 @@ export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: 
     return () => window.clearInterval(i);
   }, []);
 
-  // Opens the real board in a new tab without turning this computer into a TV.
-  const preview = async () => {
+  // Opens the real board in a new tab without turning this computer into a TV —
+  // optionally starting on one slide (even one that's off or not saved yet).
+  const preview = async (slide?: TvSlide) => {
     let token = settings.tvToken;
     if (!token) {
-      token = newTvToken();
-      if (!(await saveNow({ tvToken: token }))) { addToast('error', "Couldn't create the TV link — check the internet and try again"); return; }
+      try { token = await DB.ensureTvToken(); }
+      catch { addToast('error', "Couldn't set up the TV link — check the internet and try again"); return; }
     }
-    window.open(`/tv?tv=${encodeURIComponent(token)}&preview=1`, '_blank', 'noopener');
+    const start = slide ? `&slide=${encodeURIComponent(slide.id)}&type=${encodeURIComponent(slide.type)}` : '';
+    window.open(`/tv?tv=${encodeURIComponent(token)}&preview=1${start}`, '_blank', 'noopener');
   };
 
   return (
@@ -1006,7 +1018,7 @@ export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: 
           <h3 className="text-lg font-bold text-white mb-1">TV Display</h3>
           <p className="text-sm text-zinc-500 max-w-2xl">Put the shop board on any TV. Connect it once with a code — it stays on, reconnects by itself, and updates live.</p>
         </div>
-        <button type="button" onClick={preview}
+        <button type="button" onClick={() => preview()}
           className="inline-flex items-center gap-2 px-4 min-h-[40px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-bold text-white transition-colors">
           <ExternalLink className="w-4 h-4" aria-hidden="true" />Preview the board
         </button>
@@ -1016,7 +1028,7 @@ export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: 
       <SetupTips openWhenReady={devices === null ? null : devices.length === 0} refreshHour={settings.tvRefreshHour ?? 3} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 items-start">
-        <SlidesCard settings={settings} setSettings={setSettings} set={set} confirm={confirm} addToast={addToast} />
+        <SlidesCard settings={settings} setSettings={setSettings} set={set} confirm={confirm} addToast={addToast} onPreview={preview} />
         <div className="space-y-4">
           <ScreenCard settings={settings} set={set} />
           <ScheduleCard settings={settings} set={set} now={now} />

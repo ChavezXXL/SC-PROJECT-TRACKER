@@ -1,1 +1,6 @@
-/* Base styles - loaded via index.html */
+/* Tailwind, compiled at build time (see tailwind.config.js). The theme
+   variables, light-theme overrides and other hand-written CSS still live in
+   the <style> block in index.html. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

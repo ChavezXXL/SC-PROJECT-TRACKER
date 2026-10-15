@@ -1,9 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, CartesianGrid, Legend, Sector
-} from 'recharts';
 
 import {
   LayoutDashboard, Briefcase, Users, Settings, LogOut, Menu,
@@ -18,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Toast } from './components/Toast';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
+import { useConfirm } from './components/useConfirm';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { Job, User, UserRole, TimeLog, ToastMessage, AppView, SystemSettings, TvSlide, Quote, JobStage, ReworkEntry, PurchaseOrder, Sample, CustomerPoFile, ShopAction } from './types';
 import { readyToInvoiceList } from './utils/poOrganizer';
@@ -58,6 +55,8 @@ function lazyView<T extends React.ComponentType<any>>(loader: () => Promise<{ de
   );
 }
 const CustomerPosView = lazyView(() => import('./views/CustomerPosView').then(m => ({ default: m.CustomerPosView })));
+// Charts load only for the owner's dashboard donut (see components/RevenueDonut).
+const RevenueDonut = lazyView(() => import('./components/RevenueDonut'));
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
@@ -137,7 +136,7 @@ import { FeatureGate } from './backend/FeatureGate';
 import { TrialBanner } from './components/TrialBanner';
 // Pure helpers — extracted to utils/ so each file has a single responsibility
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins, parseDueDate } from './utils/date';
-import { dueState, shippedOnTime, onTimeRate, compareByDue, dueLabel, toDateInput } from './utils/dueDates';
+import { dueState, shippedOnTime, onTimeRate, compareByDue, dueLabel, toDateInput, isJobClosed } from './utils/dueDates';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { getSampleEstimateForPart, suggestHoursFromSample, getAggregatedSampleEstimate, suggestHoursFromAggregated } from './utils/sampleEstimate';
@@ -1050,11 +1049,22 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
 };
 
 // --- JOB SELECTION CARD ---
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[], knownOps?: string[], risk?: JobRisk, familiarity?: Familiarity, vets?: WorkerPartExperience[] }> = ({ job, onStart, disabled, operations, defaultExpanded, user, addToast, activeLogs = [], knownOps = [], risk, familiarity, vets = [] }) => {
+// `disabled` = this worker already has a timer running. The card stays open
+// for drawings, the checklist and notes; only starting is blocked (the whole
+// card used to go dead mid-job). `startingKey` = "jobId|op" being started.
+const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, startingKey?: string | null, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[], knownOps?: string[], risk?: JobRisk, familiarity?: Familiarity, vets?: WorkerPartExperience[] }> = ({ job, onStart, disabled, startingKey = null, operations, defaultExpanded, user, addToast, activeLogs = [], knownOps = [], risk, familiarity, vets = [] }) => {
   const [expanded, setExpanded] = useState(defaultExpanded || false);
   const [showAllOps, setShowAllOps] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [newNote, setNewNote] = useState('');
+  const submitNote = () => {
+    const text = newNote.trim();
+    if (!text || !user) return;
+    setNewNote('');
+    DB.addJobNote(job.id, text, user.id, user.name, job.jobIdsDisplay || job.partNumber || job.id)
+      .then(() => addToast?.('success', 'Note added'))
+      .catch(() => { setNewNote(text); addToast?.('error', "Couldn't save the note — check the Wi-Fi and try again"); });
+  };
   // Workers can click the part photo to view a big lightbox version (user request)
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -1078,7 +1088,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
   const borderClass = isOverdue ? 'border-red-500/40 bg-red-500/5' : priorityColors[job.priority || 'normal'];
 
   return (
-    <div ref={cardRef} data-job-id={job.id} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-amber-500/50' : 'hover:bg-zinc-800/50'} ${disabled ? 'opacity-50 pointer-events-none' : ''} ${defaultExpanded ? 'ring-2 ring-amber-500 shadow-lg shadow-amber-500/10' : ''}`}>
+    <div ref={cardRef} data-job-id={job.id} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-amber-500/50' : 'hover:bg-zinc-800/50'} ${defaultExpanded ? 'ring-2 ring-amber-500 shadow-lg shadow-amber-500/10' : ''}`}>
       <div className="p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)}>
         <div className="flex justify-between items-start mb-1">
           <div>
@@ -1086,6 +1096,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <h3 className="text-xl font-black text-white leading-tight">{job.poNumber}</h3>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end min-w-0">
+            {job.status === 'hold' && <span className="text-[10px] font-black text-zinc-200 bg-zinc-700/70 border border-white/15 px-1.5 py-0.5 rounded">⏸ ON HOLD</span>}
             {risk && <RiskPill risk={risk} />}
             {job.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">  URGENT</span>}
             {job.priority === 'high' && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">  HIGH</span>}
@@ -1118,7 +1129,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
           )}
           {job.dueDate && (
-            <p className={`text-xs font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-500'}`}>
+            <p className={`text-sm font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
               {due === 'overdue' ? `OVERDUE · ${dueLabel(job.dueDate)} (${fmt(job.dueDate)})`
                 : due === 'today' ? `Due TODAY · ${fmt(job.dueDate)}`
                 : due === 'soon' ? `Due soon · ${fmt(job.dueDate)}`
@@ -1178,7 +1189,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
         )}
         {!expanded && (
           <div className="mt-4 flex items-center text-amber-400 text-xs font-bold uppercase tracking-wide">
-            Tap to Start <ArrowRight className="w-3 h-3 ml-1" />
+            {disabled ? 'Tap for drawings & notes' : 'Tap to choose operation'} <ArrowRight className="w-3 h-3 ml-1" />
           </div>
         )}
       </div>
@@ -1218,12 +1229,13 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                               : { ...c, done: true, doneAt: Date.now(), doneBy: user.id, doneByName: user.name })
                           : c
                       );
-                      // Stage fields owned by DB.advanceJobStage — strip so a stale snapshot can't revert them
-                      const { currentStage: _cs, stageHistory: _sh, ...jobRest } = job;
-                      DB.saveJob({ ...jobRest, checklist: next });
-                      if (!item.done) addToast?.('success', `✓ ${item.label}`);
+                      // Only the checklist is written — re-saving the whole job from this
+                      // card's copy could undo an office edit (due date, qty, photo).
+                      DB.setJobChecklist(job.id, next)
+                        .then(() => { if (!item.done) addToast?.('success', `✓ ${item.label}`); })
+                        .catch(() => addToast?.('error', "Couldn't save that tick — check the Wi-Fi and try again"));
                     }}
-                    className={`w-full flex items-center gap-2 p-2 rounded-lg border transition-all text-left ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900 border-white/10 hover:border-purple-400/30'}`}
+                    className={`w-full min-h-[44px] flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-all text-left ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900 border-white/10 hover:border-purple-400/30'}`}
                   >
                     <span className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${item.done ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-600'}`}>
                       {item.done && <CheckCircle className="w-3 h-3 text-white" aria-hidden="true" />}
@@ -1262,6 +1274,9 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             </div>
           )}
 
+          {disabled && (
+            <p className="mb-2 text-xs font-bold text-amber-400/90">Your timer is running — stop it above to start this job.</p>
+          )}
           {(() => {
             // Job memory: this job's / this part's previously-used operations
             // come FIRST — the rest hide behind "All operations" so a repeat
@@ -1270,12 +1285,15 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
             // admin deleted must not be startable from history.
             const usual = knownOps.filter(op => op && op.trim() && operations.includes(op));
             const rest = operations.filter(op => !usual.includes(op));
+            const busy = !!startingKey;
             const startBtn = (op: string, highlight: boolean) => (
-              <button key={op} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
+              <button key={op} disabled={disabled || busy} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
                 className={`${highlight
                   ? 'bg-gradient-to-br from-amber-500/20 to-amber-500/[0.06] hover:from-amber-500 hover:to-orange-500 border-amber-500/40 text-amber-200 hover:text-white'
-                  : 'bg-zinc-800 hover:bg-amber-600 hover:text-white border-white/5 text-zinc-300'} border py-3 px-4 rounded-xl text-sm transition-colors font-bold active:scale-95`}>
-                {highlight && <span className="mr-1.5 text-[10px] opacity-70">↺</span>}{op}
+                  : 'bg-zinc-800 hover:bg-amber-600 hover:text-white border-white/5 text-zinc-300'} border py-3 px-4 min-h-[48px] rounded-xl text-sm transition-colors font-bold active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5`}>
+                {startingKey === `${job.id}|${op}`
+                  ? <><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Starting…</>
+                  : <>{highlight && <span className="text-[10px] opacity-70">↺</span>}{op}</>}
               </button>
             );
             if (usual.length === 0) {
@@ -1292,7 +1310,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
               <div className="grid grid-cols-2 gap-2">{usual.map(op => startBtn(op, true))}</div>
               {rest.length > 0 && (
                 <button onClick={e => { e.stopPropagation(); setShowAllOps(s => !s); }}
-                  className="mt-2 w-full text-[11px] font-bold text-zinc-500 hover:text-white py-1.5 flex items-center justify-center gap-1 transition-colors">
+                  className="mt-2 w-full min-h-[44px] text-xs font-bold text-zinc-400 hover:text-white flex items-center justify-center gap-1 transition-colors">
                   {showAllOps ? <>Hide other operations <ChevronUp className="w-3 h-3" /></> : <>All operations ({rest.length}) <ChevronDown className="w-3 h-3" /></>}
                 </button>
               )}
@@ -1336,9 +1354,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                     onKeyDown={e => {
                       if (e.key === 'Enter' && newNote.trim()) {
                         e.stopPropagation();
-                        DB.addJobNote(job.id, newNote.trim(), user.id, user.name, job.jobIdsDisplay || job.partNumber || job.id);
-                        addToast?.('success', 'Note added');
-                        setNewNote('');
+                        submitNote();
                       }
                     }}
                     onClick={e => e.stopPropagation()}
@@ -1348,10 +1364,7 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!newNote.trim()) return;
-                      DB.addJobNote(job.id, newNote.trim(), user.id, user.name, job.jobIdsDisplay || job.partNumber || job.id);
-                      addToast?.('success', 'Note added');
-                      setNewNote('');
+                      submitNote();
                     }}
                     disabled={!newNote.trim()}
                     className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 text-white px-3 py-2 rounded-lg text-sm font-bold transition-colors"
@@ -1377,8 +1390,10 @@ function swPost(msg: object) {
 }
 
 // ── Camera-based QR Scanner tab ──────────────────────────────────────────────
-const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (id: string) => void; addToast: any }) => {
+const ScanJobTab = ({ jobs, onJobFound, onNotFound, addToast }: { jobs: Job[]; onJobFound: (id: string) => void; onNotFound: (text: string) => void; addToast: any }) => {
   const [mode, setMode] = useState<'input' | 'camera'>('input');
+  // iPad/Safari has no BarcodeDetector — don't ask for the camera only to fail.
+  const canCamera = typeof (window as any).BarcodeDetector !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1396,16 +1411,18 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
 
   const handleResult = (raw: string) => {
     const val = resolveValue(raw);
+    if (!val) return;
+    const v = val.toLowerCase();
     const found = jobs.find(j =>
-      j.id === val || j.jobIdsDisplay === val || j.poNumber === val ||
-      j.id.toLowerCase() === val.toLowerCase()
+      j.id === val || j.id.toLowerCase() === v ||
+      (j.jobIdsDisplay || '').toLowerCase() === v || (j.poNumber || '').toLowerCase() === v
     );
+    stopCamera();
     if (found) {
-      stopCamera();
       onJobFound(found.id);
       addToast('success', `Opened: ${found.poNumber}`);
     } else {
-      addToast('info', 'QR scanned — job not found. Try typing the PO#.');
+      onNotFound(val);   // falls back to searching the job list
     }
   };
 
@@ -1470,7 +1487,7 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
           <button onClick={() => { stopCamera(); setMode('input'); }} className={`flex-1 py-3 min-h-[44px] text-sm font-bold transition-all ${mode === 'input' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
             ⌨️ Type / Hardware
           </button>
-          <button onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-3 min-h-[44px] text-sm font-bold transition-all ${mode === 'camera' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+          <button disabled={!canCamera} title={canCamera ? undefined : "This browser can't scan with the camera"} onClick={() => { setMode('camera'); if (!scanning) startCamera(); }} className={`flex-1 py-3 min-h-[44px] text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${mode === 'camera' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
             📷 Camera Scan
           </button>
         </div>
@@ -1479,7 +1496,8 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
           {mode === 'input' ? (
             <>
               <input autoFocus onKeyDown={handleKey} className="bg-black/50 border border-amber-500 rounded-xl px-4 py-3 text-white text-center w-full text-base focus:ring-2 focus:ring-amber-500 outline-none" placeholder="Scan or type PO / Job ID…" />
-              <p className="text-zinc-600 text-xs mt-3">Press Enter after typing or scanning with a USB barcode reader</p>
+              <p className="text-zinc-500 text-xs mt-3">Press Enter after typing or scanning with a USB barcode reader</p>
+              {!canCamera && <p className="text-zinc-600 text-xs mt-2">Camera scanning isn't available in this browser — use a scanner or type the PO#.</p>}
             </>
           ) : (
             <>
@@ -1507,10 +1525,36 @@ const ScanJobTab = ({ jobs, onJobFound, addToast }: { jobs: Job[]; onJobFound: (
   );
 };
 
+/** Plain words for a timer the worker didn't stop themselves (null = they did). */
+function systemStopReason(reason?: string): string | null {
+  if (!reason || reason === 'manual' || reason.startsWith('manual:') || reason.startsWith('sw:') || reason === 'auto:switched-job') return null;
+  if (reason === 'sweep:auto-clockout') return 'automatic clock-out at the end of the shift';
+  if (reason === 'alarm:shift-end') return 'the end-of-shift alarm';
+  if (reason === 'sweep:14h-safety') return 'it had been running over 14 hours';
+  if (reason.startsWith('admin:')) return 'stopped by the office';
+  return 'stopped automatically';
+}
+
 const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User, addToast: any, onLogout: () => void, notifBell?: React.ReactNode }) => {
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
   const [tab, setTab] = useState<'jobs' | 'history' | 'scan' | 'progress'>('jobs');
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
-  const [activeJob, setActiveJob] = useState<Job | null>(null);
+  const lastActiveIdRef = useRef<string | null>(null);
+  const [startingKey, setStartingKey] = useState<string | null>(null);
+  // Online / synced — shown in the header so a worker on bad Wi-Fi knows their
+  // taps are kept on the tablet (they sync by themselves).
+  const [sync, setSync] = useState<{ online: boolean; synced: boolean }>({ online: true, synced: true });
+  useEffect(() => DB.subscribeSyncStatus(setSync), []);
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+  const [showSyncWarning, setShowSyncWarning] = useState(false);
+  useEffect(() => {
+    if (sync.online && sync.synced) { setShowSyncWarning(false); return; }
+    // Startup is briefly "not synced" — only warn when it lasts.
+    const t = setTimeout(() => setShowSyncWarning(true), sync.online ? 8000 : 1500);
+    return () => clearTimeout(t);
+  }, [sync.online, sync.synced]);
+  const willSync = () => (syncRef.current.online && syncRef.current.synced ? '' : ' · saved on this tablet, will sync');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
   const [myHistory, setMyHistory] = useState<TimeLog[]>([]);
@@ -1523,6 +1567,13 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   // Risk system inputs — unfiltered jobs (history lives in completed ones),
   // all logs (everyone's — familiarity is per worker), and rework entries.
   const [riskJobs, setRiskJobs] = useState<Job[]>([]);
+  // The running job comes from the live jobs list — it used to be fetched from
+  // the server on every log change (with the inline photo), flashing "PO
+  // Unknown / job not found" right when the worker checks it started.
+  const activeJob = useMemo(
+    () => (activeLog ? riskJobs.find(j => j.id === activeLog.jobId) || null : null),
+    [activeLog?.jobId, riskJobs],
+  );
   const [riskLogsAll, setRiskLogsAll] = useState<TimeLog[]>([]);
   const [riskRework, setRiskRework] = useState<ReworkEntry[]>([]);
   // Deep log history (one-shot) — the live stream caps at 500 logs, which
@@ -1575,10 +1626,17 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       const history = allLogs.filter(l => l.userId === user.id).sort((a, b) => b.startTime - a.startTime);
       setActiveLog(myActive || null);
       setMyHistory(history);
-      if (myActive) {
-        DB.getJobById(myActive.jobId).then(j => setActiveJob(j || null));
-      } else {
-        setActiveJob(null);
+      // A timer the system ended (auto clock-out, 14-hour safety stop, the
+      // office) used to just vanish from this screen — say what happened.
+      const prevActiveId = lastActiveIdRef.current;
+      lastActiveIdRef.current = myActive?.id ?? null;
+      if (prevActiveId && myActive?.id !== prevActiveId) {
+        const ended = allLogs.find(l => l.id === prevActiveId);
+        const why = ended?.endTime ? systemStopReason(ended.stopReason) : null;
+        if (ended && why) {
+          const at = new Date(ended.endTime!).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          addToast('info', `Your ${ended.operation} timer${ended.jobIdsDisplay ? ` on ${ended.jobIdsDisplay}` : ''} was stopped at ${at} — ${why}. Tell your supervisor if that's wrong.`);
+        }
       }
       // Job memory: which operations has this job / this part ACTUALLY used
       // before (any worker)? Lets the picker surface "the usual ops" first
@@ -1801,10 +1859,34 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     return () => navigator.serviceWorker.removeEventListener('message', handler);
   }, [addToast]);
 
+  const knownOpsFor = (job: Job) => [...new Set([
+    ...(opsMemory.byJob.get(job.id) || []),
+    ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || []),
+    ...((job.checklist || []).map(c => c.label)),
+  ])];
+
   const handleStartJob = async (jobId: string, operation: string) => {
     if (_startInFlight.has(user.id)) return;   // drop double-tap
-    _startInFlight.add(user.id);
     const job = jobs.find(j => j.id === jobId);
+    // Held jobs: the office stopped them on purpose — ask first.
+    if (job?.status === 'hold' && !(await askConfirm({
+      title: `${job.poNumber} is on hold`,
+      message: 'The office paused this job. Start it anyway?',
+      tone: 'warning', confirmLabel: 'Start anyway',
+    }))) return;
+    // RED job + this worker has never run the part: one check. Experienced
+    // hands are never asked.
+    if (job) {
+      const risk = computeJobRisk(job, riskIndex);
+      if (risk.tier === 'red' && workerFamiliarity(job.partNumber, riskIndex, user.id, knownOpsFor(job)).level === 'new' && !(await askConfirm({
+        title: 'RED job — your first time on this part',
+        message: `${risk.guidance} Has the owner or a senior OK'd you running it?`,
+        tone: 'warning', confirmLabel: "Yes, I'm cleared",
+      }))) return;
+    }
+    if (_startInFlight.has(user.id)) return;
+    _startInFlight.add(user.id);
+    setStartingKey(`${jobId}|${operation}`);
     try {
       const logId = await DB.startTimeLog(jobId, user.id, user.name, operation, job?.partNumber, job?.customer, undefined, undefined, job?.jobIdsDisplay, job?.partImage);
       if (logId) {
@@ -1824,11 +1906,12 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           } catch { /* silent — timer still started */ }
         }
       }
-      addToast('success', 'Timer Started');
+      addToast('success', `Timer started · ${operation}${job ? ` on PO ${job.poNumber}` : ''}${willSync()}`);
       setShouldScrollToTimer(true);
     } catch (e: any) {
       addToast('error', e?.message || 'Failed to start timer');
     } finally {
+      setStartingKey(null);
       // Hold the guard briefly so a second tap can't slip through before the
       // Firestore snapshot with the new log arrives (subscription latency).
       setTimeout(() => _startInFlight.delete(user.id), 2000);
@@ -1840,11 +1923,13 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
   // every individual clock-out.
   const handleStopJob = async (logId: string) => {
     const stoppedJobId = activeLog?.jobId ?? null;
+    const stoppedLog = activeLogRef.current;
+    const workedMins = stoppedLog ? DB.getWorkingElapsedMs(stoppedLog) / 60000 : 0;
     try {
       await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual');
       swPost({ type: 'TIMER_STOP' });
       cancelTimerNotification(logId);
-      addToast('success', 'Job Stopped');
+      addToast('success', `Stopped · ${formatDuration(workedMins)}${activeJob ? ` on PO ${activeJob.poNumber}` : ''}${stoppedLog ? ` · ${stoppedLog.operation}` : ''}${willSync()}`);
       if (stoppedJobId) {
         setScannedJobId(stoppedJobId);
         setTab('jobs');
@@ -1864,40 +1949,15 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 
   // Stuck-timer force-clear — same direct stop, different audit reason.
   const forceStopJob = async (logId: string) => {
-    try { await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual:force-clear'); }
-    catch { addToast('error', 'Failed to stop. Please try again.'); }
-  };
-
-  const handleScan = (e: any) => {
-    if (e.key === 'Enter') {
-      let val = e.currentTarget.value.trim();
-      e.currentTarget.value = '';
-      // Extract jobId from URL if scanned QR contains full URL
-      const urlMatch = val.match(/[?&]jobId=([^&]+)/);
-      if (urlMatch) val = urlMatch[1];
-      // Also handle raw URLs that might be encoded
-      const decoded = decodeURIComponent(val);
-      const urlMatch2 = decoded.match(/[?&]jobId=([^&]+)/);
-      if (urlMatch2) val = urlMatch2[1];
-      // Find job by internal ID, jobIdsDisplay, or PO number
-      const found = jobs.find(j =>
-        j.id === val ||
-        j.jobIdsDisplay === val ||
-        j.poNumber === val ||
-        j.id.toLowerCase() === val.toLowerCase()
-      );
-      if (found) {
-        setScannedJobId(found.id);
-        setTab('jobs');
-        addToast('success', `Opened: ${found.poNumber}`);
-        // Scroll to the job after a short delay for render
-        setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 200);
-      } else {
-        setSearch(val);
-        setTab('jobs');
-        addToast('info', 'Job not found — showing search results');
-      }
-    }
+    if (!(await askConfirm({
+      title: 'Stop this timer?',
+      message: 'It ends now and the time so far is kept.',
+      tone: 'warning', confirmLabel: 'Stop timer',
+    }))) return;
+    try {
+      await DB.stopTimeLog(logId, undefined, undefined, undefined, 'manual:force-clear');
+      addToast('success', `Timer stopped${willSync()}`);
+    } catch { addToast('error', 'Failed to stop. Please try again.'); }
   };
 
   // Search only the fields a worker would actually type — the old version
@@ -1981,6 +2041,11 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                 <span className={`w-1.5 h-1.5 rounded-full ${activeLog ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`} />
                 {activeLog ? 'Clocked in' : 'Not clocked in'}
               </span>
+              {showSyncWarning && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${!sync.online ? 'text-red-300 bg-red-500/10 border-red-500/30' : 'text-amber-300 bg-amber-500/10 border-amber-500/30'}`}>
+                  {!sync.online ? 'Offline — taps are saved here and sync later' : 'Reconnecting…'}
+                </span>
+              )}
               <span className="text-[10px] text-zinc-600 hidden sm:inline">·</span>
               <span className="text-[10px] text-zinc-600 hidden sm:inline">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</span>
             </div>
@@ -2033,19 +2098,22 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 
       <div className="flex flex-wrap gap-2 justify-between items-center bg-zinc-900/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 no-print">
         <div className="flex gap-2">
-          <button onClick={() => setTab('jobs')} className={`px-4 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
-          <button onClick={() => setTab('history')} className={`px-4 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
-          <button onClick={() => setTab('progress')} className={`px-4 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'progress' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><Zap className="w-4 h-4" /> Stats</button>
+          <button onClick={() => setTab('jobs')} className={`px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium transition-all ${tab === 'jobs' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}>Jobs</button>
+          <button onClick={() => setTab('history')} className={`px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'history' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><History className="w-4 h-4" /> History</button>
+          <button onClick={() => setTab('progress')} className={`px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${tab === 'progress' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-500 hover:text-white'}`}><Zap className="w-4 h-4" /> Stats</button>
         </div>
         <div className="flex items-center gap-2">
           {notifBell}
-          <button onClick={() => setTab('scan')} className={`px-3 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-amber-600 text-white shadow' : 'bg-zinc-800 text-amber-400 hover:bg-amber-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
-          <button onClick={onLogout} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
+          <button onClick={() => setTab('scan')} className={`px-3 py-3 min-h-[44px] rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${tab === 'scan' ? 'bg-amber-600 text-white shadow' : 'bg-zinc-800 text-amber-400 hover:bg-amber-600 hover:text-white'}`}><ScanLine className="w-4 h-4" /> Scan</button>
+          <button onClick={() => { if (activeLog) addToast('info', `Signed out — your ${activeLog.operation} timer keeps running`); onLogout(); }} className="bg-red-500/10 text-red-500 hover:bg-red-600 hover:text-white px-3 py-3 min-h-[44px] rounded-xl text-sm font-bold flex items-center gap-2 transition-all"><LogOut className="w-4 h-4" /> Exit</button>
         </div>
       </div>
 
       {tab === 'scan' ? (
-        <ScanJobTab jobs={jobs} onJobFound={(id) => { setScannedJobId(id); setTab('jobs'); }} addToast={addToast} />
+        <ScanJobTab jobs={jobs}
+          onJobFound={(id) => { setSearch(''); setScannedJobId(id); setTab('jobs'); }}
+          onNotFound={(text) => { setSearch(text); setTab('jobs'); addToast('info', `No job matches "${text}" exactly — showing search results`); }}
+          addToast={addToast} />
 
       ) : tab === 'history' ? (
         <div className="space-y-4 animate-fade-in">
@@ -2152,8 +2220,10 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             <input type="text" placeholder="Search by Job #, PO, or Part..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none shadow-sm" />
           </div>
           {activeLog && (() => {
-            const staleMinutes = Math.floor((Date.now() - activeLog.startTime) / 60000);
-            const isStale = staleMinutes > 60; // running > 1 hour with no interaction
+            // Working time (lunch + pauses excluded). Long deburring runs are
+            // normal — this used to turn red after one hour, every day.
+            const staleMinutes = Math.floor(DB.getWorkingElapsedMs(activeLog) / 60000);
+            const isStale = staleMinutes > 600;
             return (
               <div className={`mb-4 p-3 rounded-xl border text-sm flex items-center justify-between gap-2 ${isStale ? 'bg-red-900/20 border-red-500/30 text-red-300' : 'bg-emerald-900/20 border-emerald-500/30 text-emerald-300'}`}>
                 <span className="flex items-center gap-2">
@@ -2165,7 +2235,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
                 {isStale && (
                   <button
                     onClick={() => forceStopJob(activeLog.id)}
-                    className="shrink-0 text-xs font-bold text-red-400 hover:text-white bg-red-500/15 hover:bg-red-500 px-3 py-1.5 rounded-lg border border-red-500/20 transition-all"
+                    className="shrink-0 min-h-[40px] text-xs font-bold text-red-400 hover:text-white bg-red-500/15 hover:bg-red-500 px-3 py-2 rounded-lg border border-red-500/20 transition-all"
                   >
                     Clear Stuck Timer
                   </button>
@@ -2177,13 +2247,9 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             {filteredJobs.map(job => {
               // Ops this job/part has actually used before (any worker) — feeds
               // the picker AND the "you know these ops" familiarity check.
-              const jobKnownOps = [...new Set([
-                ...(opsMemory.byJob.get(job.id) || []),
-                ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || []),
-                ...((job.checklist || []).map(c => c.label)),
-              ])];
+              const jobKnownOps = knownOpsFor(job);
               return (
-                <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
+                <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} startingKey={startingKey} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
                   knownOps={jobKnownOps}
                   risk={computeJobRisk(job, riskIndex)}
                   familiarity={workerFamiliarity(job.partNumber, riskIndex, user.id, jobKnownOps)}
@@ -2194,7 +2260,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           </div>
         </div>
       )}
-
+      {ConfirmHost}
     </div>
   );
 };
@@ -2498,10 +2564,21 @@ export const Avatar = ({ name, size = 'md', className = '', ring = false, dot }:
 
 // --- LOGIN ---
 const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast: any }) => {
-  // Read ?u=<username> from URL — used by QR invite codes to pre-fill
-  const initialUsername = (() => {
-    try { return new URLSearchParams(window.location.search).get('u') || ''; } catch { return ''; }
-  })();
+  // Read ?u=<username> from a badge QR to pre-fill — then drop it from the
+  // address, or the NEXT person on this tablet got the previous badge's name
+  // (and their PIN tries counted toward the lockout).
+  const [initialUsername] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const u = params.get('u') || '';
+      if (u) {
+        params.delete('u');
+        const qs = params.toString();
+        history.replaceState(history.state, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash);
+      }
+      return u;
+    } catch { return ''; }
+  });
   const [username, setUsername] = useState(initialUsername);
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
@@ -2555,7 +2632,7 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
           try { localStorage.setItem('login_lock_until', String(until)); localStorage.removeItem('login_fails'); } catch {}
           addToast('error', 'Too many failed attempts — locked for 30 seconds');
         } else {
-          addToast('error', 'Invalid Credentials');
+          addToast('error', 'Wrong username or PIN. Ask your supervisor if you forgot it.');
         }
         setPin('');
       }
@@ -2597,7 +2674,10 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
               onChange={e => setUsername(e.target.value)}
               className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500/50 outline-none transition-all"
               placeholder="Username"
-              autoFocus
+              aria-label="Username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoFocus={!initialUsername}
             />
             <input
               type="password"
@@ -2605,6 +2685,11 @@ const LoginView = ({ onLogin, addToast }: { onLogin: (u: User) => void, addToast
               onChange={e => setPin(e.target.value)}
               className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:ring-2 focus:ring-amber-500 focus:border-amber-500/50 outline-none transition-all"
               placeholder="PIN"
+              aria-label="PIN"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              autoComplete="off"
+              autoFocus={!!initialUsername}
             />
             <button
               disabled={loading || locked}
@@ -2867,7 +2952,9 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   // Risk level first (critical → at-risk → watch), then earliest due date,
   // then priority. The answer to "what should the floor be doing right now?"
   const attackPlan = useMemo(() => {
-    const open = jobs.filter(j => j.status !== 'completed' && j.status !== 'hold');
+    // isJobClosed: a job sitting in Shipped (status still 'in-progress' until
+    // the close-out) is done — it was ranked #1 as "3d overdue".
+    const open = jobs.filter(j => !isJobClosed(j) && j.status !== 'hold');
     const etaMap = new Map<string, ReturnType<typeof computeJobETA>>();
     for (const job of open) {
       const history = getPartHistory(job.partNumber || '', jobs, allLogs);
@@ -3502,7 +3589,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
       {/* ── WEEKLY CAPACITY FORECAST — ETA engine output ── */}
       {(() => {
         // Only show when we have real data (at least one job with expected hours or part history)
-        const openJobsForCap = jobs.filter(j => j.status !== 'completed');
+        const openJobsForCap = jobs.filter(j => !isJobClosed(j));
         if (openJobsForCap.length === 0) return null;
         const dashEtaMap2 = new Map<string, ReturnType<typeof computeJobETA>>();
         for (const job of openJobsForCap) {
@@ -4030,45 +4117,9 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 
                   {/* Donut chart */}
                   <div className="relative" onMouseLeave={() => setHoveredCustIdx(null)}>
-                    <ResponsiveContainer width="100%" height={isMobile ? 220 : 260}>
-                      <PieChart>
-                        <defs>
-                          {custChartData.map((d, i) => (
-                            <linearGradient key={`gradPie-${i}`} id={`gradPie-${i}`} x1="0" y1="0" x2="1" y2="1">
-                              <stop offset="0%" stopColor={d.color} stopOpacity={1} />
-                              <stop offset="100%" stopColor={d.color} stopOpacity={0.6} />
-                            </linearGradient>
-                          ))}
-                        </defs>
-                        <Pie
-                          data={custChartData}
-                          cx="50%" cy="50%"
-                          innerRadius={isMobile ? 62 : 76}
-                          outerRadius={isMobile ? 96 : 116}
-                          paddingAngle={3}
-                          dataKey="revenue"
-                          nameKey="fullName"
-                          stroke="rgba(9,9,11,0.9)"
-                          strokeWidth={2}
-                          isAnimationActive
-                          animationDuration={900}
-                          animationEasing="ease-out"
-                          cornerRadius={6}
-                          onMouseEnter={(_, i) => setHoveredCustIdx(i)}
-                        >
-                          {custChartData.map((_, i) => (
-                            <Cell
-                              key={i}
-                              fill={`url(#gradPie-${i})`}
-                              style={{
-                                filter: hoveredCustIdx !== null && hoveredCustIdx !== i ? 'opacity(0.35)' : 'none',
-                                transition: 'filter 0.25s ease',
-                              }}
-                            />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
+                    <React.Suspense fallback={<div style={{ height: isMobile ? 220 : 260 }} />}>
+                      <RevenueDonut data={custChartData} isMobile={isMobile} hoveredIdx={hoveredCustIdx} onHover={setHoveredCustIdx} />
+                    </React.Suspense>
 
                     {/* Center label — dynamic with hover */}
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-4">
@@ -5051,7 +5102,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // ── ETA / risk map — computed once for the whole jobs view ──────────
   // Maps jobId → JobETA so every job card can show a risk badge instantly.
   const jobEtaMap = useMemo(() => {
-    const openJobs = jobs.filter(j => j.status !== 'completed');
+    const openJobs = jobs.filter(j => !isJobClosed(j));
     const m = new Map<string, ReturnType<typeof computeJobETA>>();
     for (const job of openJobs) {
       const history = getPartHistory(job.partNumber || '', jobs, allLogs);
@@ -5358,9 +5409,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // Ask when it actually shipped — on-time is judged by that, not this click.
     let lastWork = 0;
     for (const l of jobLogs) if (!l.isSample && l.endTime && l.endTime > lastWork) lastWork = l.endTime;
-    const choice = await askShipDate({ count: 1, label: `PO ${j.poNumber}`, lastWorkMs: lastWork || null });
+    const choice = await askShipDate({ count: 1, label: `PO ${j.poNumber}`, lastWorkMs: lastWork || null, shippedMs: j.shippedAt || null });
     if (!choice) return;
-    const shippedAt = await resolveShipAt(choice, async () => lastWork || null);
+    const shippedAt = await resolveShipAt(choice, async () => lastWork || null, j.shippedAt);
     const breakdown = calcJobProfit(j, jobLogs, workers, shopSettings, allPOs);
     const snapshot = buildProfitSnapshot(breakdown);
     if (completedStage) {
@@ -5476,7 +5527,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           const dayJobs = jobsByDay[d] || [];
           const past = dateNum(`${String(mo+1).padStart(2,'0')}/${String(d).padStart(2,'0')}/${yr}`) < dateNum(todayStr);
           const selected = calSelectedDay === d;
-          const hasOverdue = dayJobs.some(j => j.status !== 'completed') && past;
+          const hasOverdue = dayJobs.some(j => dueState(j) === 'overdue');   // same rule as the Overdue count
           cells.push(
             <div key={d} onClick={() => setCalSelectedDay(selected ? null : d)}
               className={`min-h-[80px] md:min-h-[110px] border p-1.5 md:p-2 rounded-lg cursor-pointer transition-all ${selected ? 'bg-blue-500/20 border-blue-500/50 ring-1 ring-blue-500/30' : isToday(d) ? 'bg-blue-500/10 border-blue-500/30' : past ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-900/30 border-white/5 hover:bg-zinc-800/40 hover:border-white/10'}`}>
@@ -5813,12 +5864,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const completing = plan.filter(p => p.next.isComplete);
               let choice: ShipChoice | null = null;
               if (completing.length) {
-                choice = await askShipDate({ count: completing.length });
+                choice = await askShipDate({
+                  count: completing.length,
+                  shippedCount: completing.filter(p => jobs.find(x => x.id === p.id)?.shippedAt).length,
+                });
                 if (!choice) return;
               }
               await Promise.all(plan.map(async ({ id, next }) => {
                 const shippedAt = next.isComplete && choice
-                  ? await resolveShipAt(choice, () => DB.lastWorkEndForJob(id))
+                  ? await resolveShipAt(choice, () => DB.lastWorkEndForJob(id), jobs.find(x => x.id === id)?.shippedAt)
                   : undefined;
                 await DB.advanceJobStage(id, next.id, user.id, user.name, next.isComplete, shippedAt);
               }));
@@ -7962,7 +8016,9 @@ export default function App() {
     const preview = params.get('preview') === '1';
     const urlToken = params.get('tv');
     const realUrlToken = urlToken && urlToken !== '1' ? urlToken : null;   // "1" was the old placeholder
-    if (realUrlToken && !preview) saveTvToken(realUrlToken);
+    // The board saves a link only once it checks out against the shop's
+    // settings (LiveFloorMonitor) — saving the address's link here let an
+    // outdated home-page link overwrite a TV's newer one at every power-on.
     const saved = getSavedTvToken();
     if (isTvPath || urlToken) return { active: true, token: realUrlToken || (preview ? null : saved) };
     if (saved) {
@@ -8267,8 +8323,11 @@ export default function App() {
   // (handlePOJobCreate removed — only used by the AI POScanner which we
   // pulled out. New jobs come in via the New Job modal in JobsView.)
 
+  // app-shell = the VISIBLE screen height (index.html). Plain 100vh (h-screen)
+  // is taller than the visible area on iPhone/iPad, so the page itself could
+  // scroll behind the content — typing in a field scrolled "the background".
   return (
-    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
+    <div className="app-shell bg-zinc-950 text-zinc-100 flex flex-col font-sans">
       <a href="#main-content" className="skip-link">Skip to main content</a>
       <TrialBanner />
       <div className="flex-1 flex min-h-0">

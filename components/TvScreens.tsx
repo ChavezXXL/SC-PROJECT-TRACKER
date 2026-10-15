@@ -29,9 +29,13 @@ export function TvPairScreen({ deviceId, reason, onPaired }: {
     let cancelled = false;
     let current: string | null = null;
     let unsub = () => {};
+    let busy = false;   // one attempt at a time — offline, overlapping attempts piled up codes and leaked listeners
     const begin = async () => {
+      if (busy) return;
+      busy = true;
       unsub();
-      if (current) DB.endTvPairing(current);
+      unsub = () => {};
+      if (current) { DB.endTvPairing(current); current = null; }
       try {
         const c = await DB.startTvPairing(deviceId);
         if (cancelled) { DB.endTvPairing(c); return; }
@@ -47,6 +51,8 @@ export function TvPairScreen({ deviceId, reason, onPaired }: {
         });
       } catch {
         if (!cancelled) setError(true);
+      } finally {
+        busy = false;
       }
     };
     begin();

@@ -24,7 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { Job, TimeLog, SystemSettings, TvSlide, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice } from './types';
+import { Job, TimeLog, SystemSettings, TvSlide, TvSlideType, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice } from './types';
 import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
@@ -34,13 +34,14 @@ import { computeJobETA, RISK_COLORS } from './utils/jobETA';
 import type { JobETA, JobRiskLevel } from './utils/jobETA';
 import { getPartHistory } from './utils/partHistory';
 import { parseDueDate } from './utils/date';
-import { dueState, daysUntilDue, onTimeRate } from './utils/dueDates';
+import { dueState, daysUntilDue, onTimeRate, isJobClosed, compareByDue } from './utils/dueDates';
 import {
-  getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, clearTvToken, appBuild, describeDevice,
+  getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, getSavedTvToken, clearTvToken, appBuild, describeDevice,
   isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, startKeepAwakeVideo, installBackTrap, newTvToken,
 } from './utils/tvRuntime';
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm } from './components/TvScreens';
-import { effectiveTvSlides } from './utils/tvSlides';
+import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
+import { TvPartPhoto } from './components/TvPartPhoto';
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
@@ -101,7 +102,8 @@ function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | '
     let acc = 0;                                  // fractional px carried between frames
     let pos = 0;                                  // tracked scroll pos — avoids per-frame scrollTop reads
     let needResync = true;                        // re-read real scrollTop after pauses/measures
-    let halfway = 0;                              // height of one content copy (loop wrap point)
+    let halfway = 0;                              // height of one content copy (loop period)
+    let loopStart = 0;                            // top of the first item — laps run from here
     let maxScroll = 0;                            // scrollHeight - clientHeight (classic mode)
     let mode: 'loop' | 'classic' | 'none' = 'none';
     let dupsHidden = false;
@@ -120,6 +122,20 @@ function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | '
       dupsHidden = hide;
     };
 
+    // Where the duplicate copy starts, measured from the first item. Wrapping
+    // at scrollHeight / 2 was off by the container's padding, so every lap
+    // ended with a visible jump of ~26 px.
+    const loopGeometry = (el: HTMLDivElement): { start: number; period: number } => {
+      const first = el.children[0] as HTMLElement | undefined;
+      let dup: HTMLElement | undefined;
+      for (let i = 0; i < el.children.length; i++) {
+        const c = el.children[i] as HTMLElement;
+        if (c.getAttribute('aria-hidden') === 'true') { dup = c; break; }
+      }
+      const period = first && dup ? dup.offsetTop - first.offsetTop : 0;
+      return period > 0 && first ? { start: first.offsetTop, period } : { start: 0, period: el.scrollHeight / 2 };
+    };
+
     // The ONLY place layout is read — runs about once a second, not per frame.
     const measure = (el: HTMLDivElement) => {
       let hasDups = false;
@@ -135,7 +151,9 @@ function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | '
         if (shouldLoop && dupsHidden) setDupsHidden(el, false);
         else if (!shouldLoop && !dupsHidden) setDupsHidden(el, true);
         if (shouldLoop) {
-          halfway = el.scrollHeight / 2;          // re-read only if visibility just changed
+          const g = loopGeometry(el);
+          halfway = g.period;
+          loopStart = g.start;
           mode = 'loop';
         } else {
           mode = 'none';
@@ -177,7 +195,8 @@ function useTvAutoScroll(ref: React.RefObject<HTMLDivElement>, speed: 'slow' | '
       pos += acc;
       acc = 0;
       if (mode === 'loop') {
-        if (pos >= halfway) pos -= halfway;       // seamless wrap — bounded forever
+        // Seamless wrap: the view one period down is identical. Bounded forever.
+        if (pos >= loopStart + halfway) pos -= halfway;
         el.scrollTop = pos;
         lastScrollRef.current = pos;
       } else {
@@ -222,6 +241,46 @@ function formatDueForTv(raw?: string | null): { dueText: string; daysLeft: numbe
   const dueText = due.toLocaleDateString('en-US', sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
   return { dueText, daysLeft, overdue, urgency };
 }
+
+const DUE_TONE = {
+  late:   'text-red-300 bg-red-500/15 border-red-500/40',
+  today:  'text-orange-200 bg-orange-500/20 border-orange-500/45',
+  soon:   'text-amber-200 bg-amber-500/10 border-amber-500/30',
+  normal: 'text-white/85 bg-white/[0.04] border-white/10',
+} as const;
+
+function daysWords(daysLeft: number, urgency: 'late' | 'today' | 'soon' | 'normal'): string {
+  if (urgency === 'late') return `${Math.abs(daysLeft)} day${Math.abs(daysLeft) === 1 ? '' : 's'} late`;
+  if (urgency === 'today') return 'Due today';
+  return daysLeft === 1 ? 'Tomorrow' : `${daysLeft} days`;
+}
+
+// Due date sized to read from across the shop — date on top, days left under it.
+const TvDueBlock = ({ raw }: { raw?: string | null }) => {
+  const { dueText, daysLeft, urgency } = formatDueForTv(raw);
+  if (!dueText || daysLeft === null || urgency === 'none') {
+    return <div className="shrink-0 text-white/30 italic text-right" style={{ fontSize: 'clamp(0.65rem, 0.85vw, 0.8rem)' }}>No due date</div>;
+  }
+  return (
+    <div className={`shrink-0 text-center rounded-xl border ${DUE_TONE[urgency]}`} style={{ padding: 'clamp(0.25rem, 0.5vw, 0.5rem) clamp(0.5rem, 0.9vw, 0.875rem)' }}>
+      <p className="font-black uppercase tracking-widest opacity-70" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.65rem)' }}>Due</p>
+      <p className="font-black tabular leading-tight whitespace-nowrap" style={{ fontSize: 'clamp(1rem, 1.6vw, 1.5rem)' }}>{dueText}</p>
+      <p className="font-bold tabular whitespace-nowrap" style={{ fontSize: 'clamp(0.6rem, 0.85vw, 0.85rem)' }}>{daysWords(daysLeft, urgency)}</p>
+    </div>
+  );
+};
+
+// One-line due chip for cards that are already busy (Live Workers).
+const TvDueChip = ({ raw }: { raw?: string | null }) => {
+  const { dueText, daysLeft, urgency } = formatDueForTv(raw);
+  if (!dueText || daysLeft === null || urgency === 'none') return null;
+  return (
+    <span className={`inline-flex items-center gap-1 font-black tabular border rounded-md px-1.5 py-0.5 shrink-0 whitespace-nowrap ${DUE_TONE[urgency]}`} style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' }}>
+      <Clock className="w-[1em] h-[1em]" aria-hidden="true" />
+      Due {dueText} · {urgency === 'late' ? `${Math.abs(daysLeft)}d late` : urgency === 'today' ? 'today' : `${daysLeft}d`}
+    </span>
+  );
+};
 
 // ── LIVE CLOCK — big, always ticking ──
 // Memoized + minute-resolution updates: the display only shows hh:mm, so the 1s
@@ -420,14 +479,20 @@ const WorkerCard: React.FC<{
 };
 
 // ── useAutoLunch HOOK ───────────────────────────────────────────
-// SAFETY: All "fired today" flags are persisted to sessionStorage so that
-// page refreshes do NOT re-fire the auto clock-out. Without this, refreshing
-// the page after the shift-end time would call stopAllActive() again, randomly
-// stopping workers who clocked back in for overtime.
-// sessionStorage clears when the browser tab closes (correct — new session = new day).
-const SS_STOPPED  = 'auto-clockout-stopped-';   // + YYYY-MM-DD
-const SS_PAUSED   = 'auto-lunch-paused-';        // + YYYY-MM-DD
-const SS_RESUMED  = 'auto-lunch-resumed-';       // + YYYY-MM-DD
+// Shop-wide lunch pause/resume from the legacy lunch settings. Runs on every
+// open screen (wall TVs included), so lunch still pauses when the workers'
+// own tablets are asleep.
+//
+// It used to do clock-out too, and acted on page load: any tab opened after
+// the cut-off (the owner checking from home, a relaunched iPad app) stopped
+// EVERY running timer at "now" — overtime included — and with a UTC day key
+// it could fire a second time around 5 PM. Clock-out is owned by
+// sweepStaleLogs + shift alarms + the server cron, which end sessions AT the
+// cut-off and leave sessions started after it alone. The lunch pause now
+// fires only when this screen's clock actually crosses lunch start, so a tab
+// opened mid-lunch no longer re-pauses someone who chose to keep working.
+const SS_PAUSED   = 'auto-lunch-paused-';        // + local YYYY-MM-DD
+const SS_RESUMED  = 'auto-lunch-resumed-';       // + local YYYY-MM-DD
 
 function ssGet(key: string): boolean {
   try { return !!sessionStorage.getItem(key); } catch { return false; }
@@ -438,29 +503,22 @@ function ssSet(key: string) {
 
 export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', message: string) => void) {
   useEffect(() => {
+    let lastHhmm: string | null = null;   // null until the first check — never act on load
     const check = () => {
       const settings = DB.getSettings();
       const now = new Date();
-      const today = now.toISOString().split('T')[0];
+      const today = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;   // this device's date, like hhmm
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-      // Auto clock-out: only when the setting is explicitly enabled, only once
-      // per day per browser session (sessionStorage key prevents page-refresh re-fires).
-      if (settings.autoClockOutEnabled && settings.autoClockOutTime) {
-        if (hhmm >= settings.autoClockOutTime && !ssGet(SS_STOPPED + today)) {
-          ssSet(SS_STOPPED + today);
-          DB.stopAllActive('sweep:auto-clockout').then((count) => {
-            if (count > 0) addToast('info', `⏹ Auto clock-out: stopped ${count} timer${count > 1 ? 's' : ''}`);
-          });
-        }
-      }
+      const prev = lastHhmm;
+      lastHhmm = hhmm;
 
       if (!settings.autoLunchPauseEnabled) return;
       const lunchStart = settings.lunchStart || '12:00';
       const lunchEnd = settings.lunchEnd || '12:30';
       const inLunch = hhmm >= lunchStart && hhmm < lunchEnd;
+      const crossedStart = prev !== null && prev < lunchStart && hhmm >= lunchStart;
 
-      if (inLunch && !ssGet(SS_PAUSED + today)) {
+      if (inLunch && crossedStart && !ssGet(SS_PAUSED + today)) {
         ssSet(SS_PAUSED + today);
         DB.pauseAllActive('auto-lunch').then((count) => {
           if (count > 0) addToast('info', `Auto-paused ${count} timer${count > 1 ? 's' : ''} for lunch`);
@@ -1090,7 +1148,7 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
 
   // Compute ETAs for all open jobs — memoized on the data arrays
   const etas = React.useMemo<Array<{ job: Job; eta: JobETA }>>(() => jobs
-    .filter(j => j.status !== 'completed')
+    .filter(j => !isJobClosed(j))      // shipped / complete stage — can't be late any more
     .map(job => {
       const history = getPartHistory(job.partNumber || '', jobs, allLogs);
       const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
@@ -1156,7 +1214,7 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
             <React.Fragment key={copy}>
               {etas.map(({ job, eta }) => {
                 const c = RISK_COLORS[eta.riskLevel];
-                const dueStr = job.dueDate || '—';
+                const due = formatDueForTv(job.dueDate);
                 const pctBar = eta.pctComplete;
                 return (
                   <div
@@ -1167,6 +1225,7 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
                   >
                     {/* Risk indicator */}
                     <div className={`shrink-0 w-1.5 self-stretch rounded-full ${c.dot}`} />
+                    <TvPartPhoto src={job.partImage} size="clamp(3.5rem, 5.5vw, 5.5rem)" />
 
                     {/* Main info */}
                     <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 items-center">
@@ -1181,7 +1240,10 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
                       <div className="flex items-center gap-4">
                         <div>
                           <p className="text-white/40 font-bold uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.6rem)' }}>Due</p>
-                          <p className={`font-black tabular ${c.text}`} style={{ fontSize: 'clamp(0.85rem, 1.6vw, 1.25rem)' }}>{dueStr}</p>
+                          <p className={`font-black tabular whitespace-nowrap ${c.text}`} style={{ fontSize: 'clamp(0.85rem, 1.6vw, 1.25rem)' }}>{due.dueText || '—'}</p>
+                          {due.daysLeft !== null && due.urgency !== 'none' && (
+                            <p className={`font-bold tabular whitespace-nowrap opacity-80 ${c.text}`} style={{ fontSize: 'clamp(0.6rem, 0.85vw, 0.8rem)' }}>{daysWords(due.daysLeft, due.urgency)}</p>
+                          )}
                         </div>
                         {eta.expectedHours !== null && (
                           <div>
@@ -1236,6 +1298,9 @@ const TvAtRiskSlide = React.memo(function TvAtRiskSlide({ jobs, allLogs, activeL
   );
 });
 
+// Open, not on hold, not shipped — what the floor can actually run next.
+const isAttackable = (j: Job) => j.status !== 'hold' && !isJobClosed(j);
+
 // ── ATTACK PLAN slide — ranked "run these in this order" for the floor ──
 // Same ranking as the admin dashboard's Attack Plan: risk level first
 // (critical → at-risk → watch → on-track), then earliest due date, then
@@ -1253,12 +1318,8 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
   const ranked = React.useMemo(() => {
     const riskScore: Record<JobRiskLevel, number> = { critical: 0, 'at-risk': 1, watch: 2, 'on-track': 3, 'no-data': 4 };
     const prioScore: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
-    const dueNum = (d?: string) => {
-      const m = (d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      return m ? parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : 99991231;
-    };
     return jobs
-      .filter(j => j.status !== 'completed' && j.status !== 'hold')
+      .filter(isAttackable)
       .map(job => {
         const history = getPartHistory(job.partNumber || '', jobs, allLogs);
         const eta = computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs);
@@ -1267,7 +1328,7 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
       .sort((a, b) => {
         const r = (riskScore[a.eta.riskLevel] ?? 4) - (riskScore[b.eta.riskLevel] ?? 4);
         if (r !== 0) return r;
-        const d = dueNum(a.job.dueDate) - dueNum(b.job.dueDate);
+        const d = compareByDue(a.job, b.job);   // the shared due rule (any date format)
         if (d !== 0) return d;
         return (prioScore[a.job.priority || 'normal'] ?? 2) - (prioScore[b.job.priority || 'normal'] ?? 2);
       })
@@ -1298,7 +1359,7 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
         <div className="flex items-center justify-between mt-1 flex-wrap gap-2">
           <h2 className="font-black text-white" style={{ fontSize: 'clamp(1.5rem, 3.5vw, 2.75rem)' }}>Today's Attack Plan</h2>
           <p className="text-white/40 font-bold" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 1rem)' }}>
-            Top {ranked.length} of {jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').length} open
+            Top {ranked.length} of {jobs.filter(isAttackable).length} open
           </p>
         </div>
       </div>
@@ -1329,6 +1390,8 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
                   {i + 1}
                 </div>
 
+                <TvPartPhoto src={job.partImage} size="clamp(3.25rem, 5vw, 5rem)" />
+
                 {/* Job info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap">
@@ -1358,13 +1421,7 @@ const TvAttackPlanSlide = React.memo(function TvAttackPlanSlide({ jobs, allLogs,
                   </div>
                 )}
 
-                {/* Due */}
-                <div className="shrink-0 text-right">
-                  <p className="font-black text-white/40 uppercase tracking-widest" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.6rem)' }}>Due</p>
-                  <p className={`font-black tabular ${eta.isOverdue ? 'text-red-400' : 'text-white/80'}`} style={{ fontSize: 'clamp(0.85rem, 1.5vw, 1.25rem)' }}>
-                    {job.dueDate ? job.dueDate.slice(0, 5) : '—'}
-                  </p>
-                </div>
+                <TvDueBlock raw={job.dueDate} />
               </div>
             );
           })}
@@ -1614,42 +1671,107 @@ const TvGoalsSlide = React.memo(function TvGoalsSlide({ goals, jobs, logs, rewor
   );
 });
 
+type TvSpeed = 'slow' | 'normal' | 'fast' | 'off';
+
 // Workers + Jobs combined (the default TV layout)
-const TvWorkersJobsSlide = React.memo(function TvWorkersJobsSlide({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt }: {
+const TvWorkersJobsSlide = React.memo(function TvWorkersJobsSlide({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt, showCustomers = true, activeLogs }: {
   sorted: TimeLog[];
   jobs: Job[];
   jobsForBelt: Job[];
   stages: JobStage[];
   runningCount: number;
-  speed: 'slow' | 'normal' | 'fast' | 'off';
+  speed: TvSpeed;
   showJobsBelt: boolean;
+  showCustomers?: boolean;   // Settings → TV → Privacy
+  activeLogs: TimeLog[];
 }) {
   return (
     <div className={`h-full grid grid-cols-1 ${showJobsBelt ? 'lg:grid-cols-2' : ''} min-h-0 gap-0`}>
-      <TvWorkersColumn sorted={sorted} jobs={jobs} stages={stages} runningCount={runningCount} speed={speed} />
-      {showJobsBelt && <TvJobsBelt jobs={jobsForBelt} stages={stages} speed={speed} />}
+      <TvWorkersColumn sorted={sorted} jobs={jobs} stages={stages} runningCount={runningCount} speed={speed} wide={!showJobsBelt} />
+      {showJobsBelt && <TvJobsBelt jobs={jobsForBelt} stages={stages} speed={speed} showCustomers={showCustomers} activeLogs={activeLogs} />}
     </div>
   );
 });
 
-// ── TV Jobs Belt — scrollable, auto-advances, pauses on manual scroll ──
-// ── TV Currently-Running Workers column with the same auto-scroll behavior as the jobs belt
-const TvWorkersColumn: React.FC<{
+// Solid badges — they sit on photos too, where a see-through tint can't be read.
+const TvJobBadges = ({ job, overdue }: { job: Job; overdue: boolean }) => {
+  const fs = { fontSize: 'clamp(0.6rem, 0.8vw, 0.75rem)' };
+  return (
+    <>
+      {overdue && <span className="font-black text-white bg-red-600 px-1.5 py-0.5 rounded shadow" style={fs}>OVERDUE</span>}
+      {job.priority === 'urgent' && <span className="font-black text-white bg-red-600 px-1.5 py-0.5 rounded shadow animate-pulse" style={fs}>URGENT</span>}
+      {job.status === 'hold' && <span className="font-black text-black bg-yellow-400 px-1.5 py-0.5 rounded shadow" style={fs}>ON HOLD</span>}
+    </>
+  );
+};
+
+// ── Live Workers — who is running what: the part's photo, PO, part number,
+// due date and a live timer. `wide` (the full-screen Live Workers slide)
+// lays the cards out two across.
+const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stages, runningCount, speed, wide = false }: {
   sorted: TimeLog[];
   jobs: Job[];
   stages: JobStage[];
   runningCount: number;
-  speed: 'slow' | 'normal' | 'fast' | 'off';
-  showCustomers?: boolean;
-}> = ({ sorted, jobs, stages, runningCount, speed, showCustomers = true }) => {
+  speed: TvSpeed;
+  wide?: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const handlers = useTvAutoScroll(scrollRef, speed, sorted.length);
+  const jobById = React.useMemo(() => new Map(jobs.map(j => [j.id, j])), [jobs]);
+  const tile = 'clamp(3.25rem, 5.5vw, 5.25rem)';
+  const chip = { fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' };
+
+  const card = (log: TimeLog, copy: number) => {
+    const job = jobById.get(log.jobId);
+    const stage = job ? getJobStage(job, stages) : null;
+    const isPaused = !!log.pausedAt;
+    const initials = (log.userName || '??').split(' ').map(n => n[0] || '').slice(0, 2).join('').toUpperCase() || '??';
+    const tone = isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-emerald-500 to-teal-600';
+    return (
+      <div key={`${copy}-${log.id}`} className={`bg-gradient-to-br rounded-3xl border ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
+        <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
+          {/* The part being run, with the worker's initials on its corner.
+              No photo → the initials tile, as before. */}
+          <TvPartPhoto
+            src={job?.partImage || log.partImage}
+            size={tile}
+            fallback={
+              <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${tone}`} style={{ width: tile, height: tile, fontSize: 'clamp(1rem, 1.75vw, 1.5rem)' }}>
+                {initials}
+              </div>
+            }
+            badge={<span className={`absolute bottom-1 right-1 rounded-md px-1.5 font-black text-white shadow-lg ${tone}`} style={{ fontSize: 'clamp(0.6rem, 0.85vw, 0.8rem)' }}>{initials}</span>}
+          />
+          <div className="flex-1 min-w-0">
+            <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 1.9vw, 1.5rem)' }}>{log.userName}</p>
+            <p className="text-amber-300 font-semibold truncate" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.95rem)' }}>{log.operation}{isPaused ? ' · Paused' : ''}</p>
+            {job && (
+              <>
+                <p className="text-white/75 font-bold truncate mt-0.5" style={{ fontSize: 'clamp(0.7rem, 1vw, 0.95rem)' }}>PO {job.poNumber}{job.partNumber ? ` · ${job.partNumber}` : ''}</p>
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  <TvDueChip raw={job.dueDate} />
+                  {job.quantity > 0 && <span className="font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md tabular shrink-0" style={chip}>Qty {job.quantity.toLocaleString()}</span>}
+                  {!!log.sessionQty && <span className="font-black text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded-md tabular shrink-0" style={chip}>Session {log.sessionQty}</span>}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="font-black text-white tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}><LiveTicker log={log} size="lg" /></div>
+            {stage && <div className="mt-1 inline-block font-black uppercase tracking-widest px-2 py-0.5 rounded border" style={{ fontSize: 'clamp(0.6rem, 0.8vw, 0.75rem)', background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</div>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-full border-r border-white/5 overflow-hidden flex flex-col relative">
       <div className="px-8 py-4 border-b border-white/5 flex items-center justify-between shrink-0">
-        <h2 className="text-sm font-black text-white/60 uppercase tracking-[0.3em]">● Currently Running</h2>
+        <h2 className="font-black text-white/60 uppercase tracking-[0.3em]" style={{ fontSize: 'clamp(0.8rem, 1vw, 1rem)' }}>● Currently Running</h2>
         <div className="flex items-center gap-3">
-          <span className="text-[11px] text-white/40 font-mono">{runningCount} active</span>
+          <span className="text-white/40 font-mono" style={{ fontSize: 'clamp(0.7rem, 0.9vw, 0.875rem)' }}>{runningCount} active</span>
           {speed !== 'off' && sorted.length > 3 && (
             <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto-scroll</span>
           )}
@@ -1668,42 +1790,14 @@ const TvWorkersColumn: React.FC<{
           <div
             ref={scrollRef}
             {...handlers}
-            className="absolute inset-0 overflow-y-auto p-8 space-y-4"
+            className="absolute inset-0 overflow-y-auto px-8 pt-6"
             style={{ scrollBehavior: 'auto' }}
           >
-            {/* Duplicate content for seamless infinite scroll loop */}
+            {/* Two copies for the seamless loop (the second hides when the list fits) */}
             {[0, 1].map(copy => (
-              <React.Fragment key={copy}>
-                {sorted.map(log => {
-                  const job = jobs.find(j => j.id === log.jobId);
-                  const stage = job ? getJobStage(job, stages) : null;
-                  const isPaused = !!log.pausedAt;
-                  return (
-                    <div key={`${copy}-${log.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-gradient-to-br rounded-3xl border transition-all ${isPaused ? 'from-yellow-500/10 to-yellow-500/0 border-yellow-500/25' : 'from-zinc-900/90 to-zinc-900/40 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
-                      <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
-                        <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${isPaused ? 'bg-gradient-to-br from-yellow-500 to-orange-500' : 'bg-gradient-to-br from-emerald-500 to-teal-600'}`} style={{ width: 'clamp(2.75rem, 4.5vw, 4rem)', height: 'clamp(2.75rem, 4.5vw, 4rem)', fontSize: 'clamp(1rem, 1.75vw, 1.5rem)' }}>
-                          {(log.userName || '??').split(' ').map(n => n[0] || '').slice(0, 2).join('').toUpperCase() || '??'}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, 1.9vw, 1.5rem)' }}>{log.userName}</p>
-                          <p className="text-amber-300 font-semibold truncate" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.875rem)' }}>{log.operation}</p>
-                          {job && (
-                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <p className="text-white/40 truncate" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>PO {job.poNumber} · {job.partNumber}</p>
-                              {job.quantity && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded tabular shrink-0">Qty {job.quantity.toLocaleString()}</span>}
-                              {log.sessionQty && <span className="text-[10px] font-black text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded tabular shrink-0">Session {log.sessionQty}</span>}
-                            </div>
-                          )}
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <div className="font-black text-white tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}><LiveTicker log={log} size="lg" /></div>
-                          {stage && <div className="mt-1 inline-block text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border" style={{ background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</div>}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </React.Fragment>
+              <div key={copy} aria-hidden={copy === 1 ? 'true' : undefined} className={wide ? 'grid grid-cols-1 lg:grid-cols-2 gap-4 pb-4' : 'space-y-4 pb-4'}>
+                {sorted.map(log => card(log, copy))}
+              </div>
             ))}
           </div>
         )}
@@ -1712,18 +1806,119 @@ const TvWorkersColumn: React.FC<{
       </div>
     </div>
   );
-};
+});
 
-const TvJobsBelt = React.memo(function TvJobsBelt({ jobs, stages, speed, showCustomers = true }: { jobs: Job[]; stages: JobStage[]; speed: 'slow' | 'normal' | 'fast' | 'off'; showCustomers?: boolean }) {
+// ── Open Jobs — every job on the floor: photo, PO, part, qty, due date,
+// stage and who is on it. `grid` (the full-screen Open Jobs slide) shows big
+// photo cards; the list sits beside Live Workers on the default slide.
+const TvJobsBelt = React.memo(function TvJobsBelt({ jobs, stages, speed, showCustomers = true, activeLogs, layout = 'list' }: {
+  jobs: Job[];
+  stages: JobStage[];
+  speed: TvSpeed;
+  showCustomers?: boolean;
+  activeLogs?: TimeLog[];
+  layout?: 'list' | 'grid';
+}) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const handlers = useTvAutoScroll(scrollRef, speed, jobs.length);
+  const grid = layout === 'grid';
+
+  // First names of whoever is on each job right now.
+  const crewByJob = React.useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const l of activeLogs || []) {
+      const first = (l.userName || '').trim().split(' ')[0];
+      if (!first) continue;
+      const list = m.get(l.jobId) || [];
+      if (!list.includes(first)) list.push(first);
+      m.set(l.jobId, list);
+    }
+    return m;
+  }, [activeLogs]);
+
+  const crewLine = (j: Job) => {
+    const crew = crewByJob.get(j.id);
+    if (!crew?.length) return null;
+    return (
+      <p className="flex items-center gap-1.5 text-emerald-400 font-black min-w-0" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' }}>
+        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true" />
+        <span className="truncate">{crew.join(', ')}</span>
+      </p>
+    );
+  };
+
+  const stageBar = (j: Job) => {
+    const stage = getJobStage(j, stages);
+    const stageIdx = stages.findIndex(s => s.id === stage.id);
+    const progressPct = stages.length > 1 ? Math.min(100, Math.max(0, Math.round((stageIdx / (stages.length - 1)) * 100))) : 0;
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex-1 relative h-2 rounded-full bg-zinc-800 overflow-hidden">
+          <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700" style={{ width: `${progressPct}%`, background: stage.color, boxShadow: `0 0 8px ${stage.color}80` }} />
+        </div>
+        <span className="font-black uppercase tracking-widest px-2 py-0.5 rounded border shrink-0" style={{ fontSize: 'clamp(0.6rem, 0.8vw, 0.75rem)', background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</span>
+      </div>
+    );
+  };
+
+  const text = (j: Job) => {
+    const meta = [j.quantity > 0 ? `${j.quantity.toLocaleString()} pc` : '', showCustomers ? (j.customer || '') : ''].filter(Boolean).join(' · ');
+    return (
+      <div className="min-w-0">
+        <p className="font-black text-white tabular truncate" style={{ fontSize: 'clamp(1.1rem, 1.7vw, 1.6rem)' }}>{j.poNumber}</p>
+        <p className="font-bold text-white/85 truncate" style={{ fontSize: 'clamp(0.9rem, 1.25vw, 1.2rem)' }}>{j.partNumber || '—'}</p>
+        {meta && <p className="text-white/45 truncate" style={{ fontSize: 'clamp(0.7rem, 0.9vw, 0.9rem)' }}>{meta}</p>}
+      </div>
+    );
+  };
+
+  const listCard = (j: Job, copy: number) => {
+    const { overdue } = formatDueForTv(j.dueDate);
+    return (
+      <div key={`${copy}-${j.id}`} className={`bg-zinc-900/50 border rounded-2xl flex items-center ${overdue ? 'border-red-500/35' : 'border-white/5'}`} style={{ padding: 'clamp(0.625rem, 1.1vw, 1rem)', gap: 'clamp(0.75rem, 1.2vw, 1.1rem)' }}>
+        <TvPartPhoto src={j.partImage} size="clamp(4rem, 6.5vw, 6.5rem)" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap"><TvJobBadges job={j} overdue={overdue} /></div>
+              {text(j)}
+              {crewLine(j)}
+            </div>
+            <TvDueBlock raw={j.dueDate} />
+          </div>
+          <div className="mt-2">{stageBar(j)}</div>
+        </div>
+      </div>
+    );
+  };
+
+  const gridCard = (j: Job, copy: number) => {
+    const { overdue } = formatDueForTv(j.dueDate);
+    return (
+      <div key={`${copy}-${j.id}`} className={`bg-zinc-900/60 border-2 rounded-2xl overflow-hidden flex flex-col ${overdue ? 'border-red-500/45' : 'border-white/5'}`}>
+        {/* Sized by padding, not aspect-ratio — older TV browsers lack it. */}
+        <div className="relative w-full shrink-0" style={{ paddingTop: '56%' }}>
+          <TvPartPhoto src={j.partImage} px={440} frameless />
+          <div className="absolute top-2 left-2 right-2 flex items-center gap-1.5 flex-wrap"><TvJobBadges job={j} overdue={overdue} /></div>
+        </div>
+        <div className="flex-1 flex flex-col gap-2" style={{ padding: 'clamp(0.625rem, 1vw, 1rem)' }}>
+          <div className="flex items-start justify-between gap-2">
+            {text(j)}
+            <TvDueBlock raw={j.dueDate} />
+          </div>
+          {crewLine(j)}
+          <div className="mt-auto">{stageBar(j)}</div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="h-full overflow-hidden flex flex-col relative">
       <div className="px-8 py-4 border-b border-white/5 flex items-center justify-between shrink-0">
-        <h2 className="text-sm font-black text-white/60 uppercase tracking-[0.3em]">All Open Jobs</h2>
+        <h2 className="font-black text-white/60 uppercase tracking-[0.3em]" style={{ fontSize: 'clamp(0.8rem, 1vw, 1rem)' }}>All Open Jobs</h2>
         <div className="flex items-center gap-3">
-          <span className="text-[11px] text-white/40 font-mono">{jobs.length} on the floor</span>
+          <span className="text-white/40 font-mono" style={{ fontSize: 'clamp(0.7rem, 0.9vw, 0.875rem)' }}>{jobs.length} on the floor</span>
           {speed !== 'off' && <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto-scroll</span>}
         </div>
       </div>
@@ -1734,57 +1929,19 @@ const TvJobsBelt = React.memo(function TvJobsBelt({ jobs, stages, speed, showCus
           <div
             ref={scrollRef}
             {...handlers}
-            className="absolute inset-0 overflow-y-auto p-8 space-y-3"
+            className="absolute inset-0 overflow-y-auto px-8 pt-6"
             style={{ scrollBehavior: 'auto' }}
           >
-            {/* Duplicate content for seamless infinite scroll loop */}
+            {/* Two copies for the seamless loop (the second hides when the list fits) */}
             {[0, 1].map(copy => (
-              <React.Fragment key={copy}>
-                {jobs.map(j => {
-                  const stage = getJobStage(j, stages);
-                  const stageIdx = stages.findIndex(s => s.id === stage.id);
-                  const progressPct = stages.length > 1 ? Math.min(100, Math.max(0, Math.round((stageIdx / (stages.length - 1)) * 100))) : 0;
-                  const { dueText, daysLeft, overdue, urgency } = formatDueForTv(j.dueDate);
-                  const dueColor = urgency === 'late' ? 'text-red-400' : urgency === 'today' ? 'text-orange-300' : urgency === 'soon' ? 'text-orange-400' : 'text-white/60';
-                  const dueTint = urgency === 'late' ? 'bg-red-500/10 border-red-500/25' : urgency === 'today' ? 'bg-orange-500/10 border-orange-500/25' : urgency === 'soon' ? 'bg-orange-500/10 border-orange-500/20' : 'bg-white/[0.03] border-white/5';
-                  return (
-                    <div key={`${copy}-${j.id}`} aria-hidden={copy === 1 ? 'true' : undefined} className={`bg-zinc-900/50 border rounded-2xl px-5 py-4 backdrop-blur-xl ${overdue ? 'border-red-500/30' : 'border-white/5'}`}>
-                      <div className="flex items-center justify-between gap-4 mb-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xl font-black text-white tabular">{j.poNumber}</span>
-                            {overdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
-                            {j.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">URGENT</span>}
-                          </div>
-                          <p className="text-sm text-white/70 truncate mt-0.5">{j.partNumber}{j.customer && showCustomers ? ` · ${j.customer}` : ''}</p>
-                        </div>
-                        <div className="shrink-0 text-right flex flex-col items-end gap-1">
-                          <div className="text-xs font-mono text-white/80 tabular">{j.quantity || '—'} pc</div>
-                          {dueText ? (
-                            <div className={`inline-flex items-center gap-1.5 text-[11px] font-bold tabular border rounded-md px-2 py-0.5 ${dueColor} ${dueTint}`}>
-                              <Clock className="w-3 h-3" aria-hidden="true" />
-                              <span>{dueText}</span>
-                              {daysLeft !== null && (
-                                <span className="opacity-80 font-black">
-                                  {urgency === 'late' ? `· ${Math.abs(daysLeft)}d late` : urgency === 'today' ? '· today' : `· ${daysLeft}d`}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="text-[10px] text-white/30 italic">no due date</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 relative h-2 rounded-full bg-zinc-800 overflow-hidden">
-                          <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700" style={{ width: `${progressPct}%`, background: stage.color, boxShadow: `0 0 8px ${stage.color}80` }} />
-                        </div>
-                        <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border shrink-0" style={{ background: `${stage.color}22`, color: stage.color, borderColor: `${stage.color}44` }}>{stage.label}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </React.Fragment>
+              <div
+                key={copy}
+                aria-hidden={copy === 1 ? 'true' : undefined}
+                className={grid ? 'grid gap-4 pb-4' : 'space-y-3 pb-3'}
+                style={grid ? { gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(15rem, 21vw, 24rem), 1fr))' } : undefined}
+              >
+                {jobs.map(j => (grid ? gridCard(j, copy) : listCard(j, copy)))}
+              </div>
             ))}
           </div>
         )}
@@ -1913,9 +2070,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
   const [tvPaused, setTvPaused] = useState(false);
 
-  // ── Auto-hide chrome (Exit button) after 5 s of inactivity ───────────
-  // Prevents accidental tap on touch TVs and remote back-button triggering.
-  // Any mouse move, touch, or keypress re-shows the chrome.
+  // ── Auto-hide chrome (Exit button, hints, cursor) after 5 s ──────────
+  // Prevents accidental taps on touch TVs and remote back-button triggering.
+  // Shown again only by REAL interaction: a click, a touch, a key, or a hand
+  // actually moving the mouse. A mouse jiggler (plugged into a TV so it never
+  // sleeps) nudges the pointer every few seconds — that used to keep the Exit
+  // button, the hint bar and the cursor on the wall all day. A person moving
+  // a mouse sends a quick burst of movement; a jiggler sends a lone nudge.
   const [tvChromeVisible, setTvChromeVisible] = useState(true);
   const tvChromeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showChrome = useCallback(() => {
@@ -1926,14 +2087,31 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode) return;
     showChrome();
-    window.addEventListener('mousemove', showChrome, { passive: true });
+    let burstStart = 0, burstMoves = 0, burstDist = 0, lastX = -1, lastY = -1;
+    const onMove = (e: MouseEvent) => {
+      const t = performance.now();
+      if (t - burstStart > 500) { burstStart = t; burstMoves = 0; burstDist = 0; }
+      if (lastX >= 0) burstDist += Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY);
+      lastX = e.clientX; lastY = e.clientY;
+      burstMoves++;
+      if (burstMoves >= 4 && burstDist >= 60) showChrome();
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    window.addEventListener('mousedown', showChrome, { passive: true });
     window.addEventListener('touchstart', showChrome, { passive: true });
     return () => {
-      window.removeEventListener('mousemove', showChrome);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mousedown', showChrome);
       window.removeEventListener('touchstart', showChrome);
       if (tvChromeTimer.current) clearTimeout(tvChromeTimer.current);
     };
   }, [tvMode, showChrome]);
+  // The cursor follows the same rule (CSS: body.tv-mode.tv-pointer).
+  useEffect(() => {
+    if (!tvMode) return;
+    document.body.classList.toggle('tv-pointer', tvChromeVisible);
+    return () => { document.body.classList.remove('tv-pointer'); };
+  }, [tvMode, tvChromeVisible]);
 
   // ── Double-Escape guard — prevents TV remote back-button from exiting ─
   // First Escape shows a "Press Esc again to exit" toast for 2 s.
@@ -2077,12 +2255,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // ── Daily refresh at a quiet hour (default 3 AM) — fresh connection, fresh
   // memory, latest app version. This used to reload every 6 hours, which put
   // a blank "Connecting…" moment on the wall in the middle of a shift.
+  const shopTz = settings.recapTimezone || 'America/Los_Angeles';   // the shop clock (auto clock-out uses it too)
   useEffect(() => {
     if (!tvMode) return;
-    const delay = msUntilDailyRefresh(settings.tvRefreshHour ?? 3);
+    const delay = msUntilDailyRefresh(settings.tvRefreshHour ?? 3, Date.now(), shopTz);
     const id = setTimeout(() => { try { window.location.reload(); } catch {} }, delay);
     return () => clearTimeout(id);
-  }, [tvMode, settings.tvRefreshHour]);
+  }, [tvMode, settings.tvRefreshHour, shopTz]);
 
   // ── Live connection status — shown on screen, and a watchdog: if the TV
   // has internet but hasn't been getting live data for 10 minutes, the data
@@ -2098,9 +2277,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode || downSince === null) return;
     const id = window.setInterval(() => {
-      if (navigator.onLine !== false && Date.now() - downSince > 10 * 60_000) {
-        try { window.location.reload(); } catch {}
-      }
+      if (navigator.onLine === false || Date.now() - downSince <= 10 * 60_000) return;
+      // "Online" can just mean the Wi-Fi is up while the internet is down —
+      // reloading then could leave the wall on an error page. Reload only
+      // once the app's own server answers.
+      fetch(`/manifest.json?alive=${Date.now()}`, { cache: 'no-store' })
+        .then(r => { if (r.ok) window.location.reload(); })
+        .catch(() => { /* still offline — keep showing the last data */ });
     }, 60_000);
     return () => window.clearInterval(id);
   }, [tvMode, downSince]);
@@ -2111,7 +2294,21 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const startedAtRef = useRef(Date.now());
   const [deviceDoc, setDeviceDoc] = useState<TvDevice | null | undefined>(undefined); // undefined = not loaded yet
   const [identifyName, setIdentifyName] = useState<string | null>(null);
-  const linkValid = !!standalone && !!tvToken && !!settings.tvToken && tvToken === settings.tvToken;
+  // The TV's own saved link wins over an outdated one in the address: a TV
+  // whose home page still holds an old ?tv= link used to wipe out its new
+  // link (from re-pairing) at every power-on and fall back to the code screen.
+  const savedTvToken = React.useMemo(() => getSavedTvToken(), []);
+  const effectiveTvToken = tvToken && settings.tvToken === tvToken ? tvToken
+    : savedTvToken && settings.tvToken === savedTvToken ? savedTvToken
+    : tvToken;
+  const linkValid = !!standalone && !!effectiveTvToken && !!settings.tvToken && effectiveTvToken === settings.tvToken;
+  useEffect(() => {
+    if (!linkValid || isPreview || !effectiveTvToken) return;
+    if (getSavedTvToken() !== effectiveTvToken) saveTvToken(effectiveTvToken);
+    if (effectiveTvToken !== tvToken) {
+      try { history.replaceState(history.state, '', `/tv?tv=${encodeURIComponent(effectiveTvToken)}`); } catch {}
+    }
+  }, [linkValid, isPreview, effectiveTvToken, tvToken]);
   const reportsIn = linkValid && !isPreview;
   useEffect(() => {
     if (!reportsIn) return;
@@ -2196,10 +2393,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // minuteOfDay is in the deps only to re-check as the clock moves.
   const quietUntil = React.useMemo(() => {
     const now = new Date();
-    if (!isTvQuiet(settings.tvQuietHours, now)) return null;
-    const until = tvQuietUntil(settings.tvQuietHours, now);
-    return until ? resumeLabel(until, now) : '';
-  }, [settings.tvQuietHours, minuteOfDay]);
+    if (!isTvQuiet(settings.tvQuietHours, now, shopTz)) return null;
+    const until = tvQuietUntil(settings.tvQuietHours, now, shopTz);
+    return until ? resumeLabel(until, now, shopTz) : '';
+  }, [settings.tvQuietHours, minuteOfDay, shopTz]);
   const quiet = quietUntil !== null;
 
   const [exitConfirm, setExitConfirm] = useState(false);
@@ -2212,9 +2409,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const openTvMode = async () => {
     let token = settings.tvToken;
     if (!token) {
-      token = newTvToken();
-      try { await DB.saveSettingsChanges({ tvToken: token }); }
-      catch { addToast('error', "Couldn't create the TV link — try again"); return; }
+      // ensureTvToken checks the server first — never replace the real link.
+      try { token = await DB.ensureTvToken(); }
+      catch { addToast('error', "Couldn't set up the TV link — check the internet and try again"); return; }
     }
     window.open(`/tv?tv=${encodeURIComponent(token)}&preview=1`, '_blank', 'noopener');
   };
@@ -2376,7 +2573,25 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // DEFAULT_TV_SLIDES (each tab gets its own dedicated full-screen slide).
   // Users can customize in Settings → TV Display → Slides.
   // Dedup enabled slides by id (prevents "same slide shows twice" bugs from legacy configs)
-  const configuredTvSlides = React.useMemo(() => effectiveTvSlides(settings.tvSlides), [settings.tvSlides]);
+  // Settings → a slide's Preview button opens the board ON that slide — even
+  // one that's switched off or not saved yet (it shows first, then the lineup).
+  const previewPick = React.useMemo(() => {
+    if (!isPreview) return null;
+    const q = new URLSearchParams(window.location.search);
+    const id = q.get('slide'), type = q.get('type');
+    return id || type ? { id, type } : null;
+  }, [isPreview]);
+  const configuredTvSlides = React.useMemo(() => {
+    const lineup = effectiveTvSlides(settings.tvSlides);
+    if (!previewPick) return lineup;
+    const i = lineup.findIndex(s => s.id === previewPick.id);
+    if (i >= 0) return i === 0 ? lineup : [...lineup.slice(i), ...lineup.slice(0, i)];
+    const saved = (settings.tvSlides || []).find(s => s.id === previewPick.id);
+    const type = saved?.type || previewPick.type;
+    if (!type || !(type === 'stats' || Object.prototype.hasOwnProperty.call(TV_SLIDE_CATALOG, type))) return lineup;
+    const first: TvSlide = saved ? { ...saved, enabled: true } : { id: 'preview-slide', type: type as TvSlideType, enabled: true };
+    return [first, ...lineup];
+  }, [settings.tvSlides, previewPick]);
   // Keep the ref in sync so the keyboard handler can read the count without re-binding
   slideCountRef.current = configuredTvSlides.length;
 
@@ -2521,16 +2736,17 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     return buildLeaderboard(weekCutoff);
   }, [activeTvSlide, buildLeaderboard, weekCutoff]);
 
-  // ── OPEN JOBS ─────────────────────────────────────────────────
-  // Sort by parsed due date (soonest first). Jobs without a due date fall to the end.
-  // Memoized (like `sorted` above) so React.memo'd TV slides see stable refs.
-  const openJobs = React.useMemo(() => jobs.filter(j => j.status !== 'completed').sort((a, b) => {
-    const da = parseDueDate(a.dueDate)?.getTime() ?? Infinity;
-    const db = parseDueDate(b.dueDate)?.getTime() ?? Infinity;
-    return da - db;
-  }), [jobs]);
-
   const stages = React.useMemo(() => getStages(settings), [settings]);
+
+  // ── OPEN JOBS ─────────────────────────────────────────────────
+  // What is on the floor: not completed and not sitting in a shipped stage (a
+  // shipped job used to stay on the TV, flagged OVERDUE). Soonest due first,
+  // undated last — the shared due rule. Memoized (like `sorted` above) so
+  // React.memo'd TV slides see stable refs.
+  const openJobs = React.useMemo(
+    () => jobs.filter(j => !isJobClosed(j, stages)).sort(compareByDue),
+    [jobs, stages],
+  );
 
   // ── TV LINK CHECK (after every hook above — early returns must come last) ──
   // A wall TV isn't signed in, so the link token is its only key. Nothing is
@@ -2540,7 +2756,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     // A link this TV already used (cached settings) is enough to show the
     // cached board while offline — no dead "Connecting…" screen after a
     // power cut that also took the internet down.
-    const cachedOk = !!tvToken && settings.tvToken === tvToken;
+    const cachedOk = !!effectiveTvToken && settings.tvToken === effectiveTvToken;
     if (!settingsLoaded && !cachedOk) {
       return (
         <div className="fixed inset-0 bg-zinc-950 text-white flex items-center justify-center p-8 text-center">
@@ -2555,11 +2771,11 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       return (
         <TvPairScreen
           deviceId={deviceId}
-          reason={deviceDoc?.revoked ? 'disconnected' : tvToken ? 'outdated' : 'new'}
+          reason={deviceDoc?.revoked ? 'disconnected' : effectiveTvToken ? 'outdated' : 'new'}
           onPaired={async (token, name) => {
             saveTvToken(token);
             saveTvName(name);
-            try { await DB.tvCheckIn({ id: deviceId, name, revoked: false }); } catch {}
+            try { await DB.tvCheckIn({ id: deviceId, name, revoked: false, hidden: false }); } catch {}
             window.location.replace(`/tv?tv=${encodeURIComponent(token)}`);
           }}
         />
@@ -2621,9 +2837,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           return <TvAtRiskSlide jobs={jobs} allLogs={allLogs} activeLogs={activeLogs} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} />;
         case 'workers':
           // Full-screen live workers view — no jobs belt on this slide. Jobs get their own 'jobs' slide.
-          return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={false} />;
+          return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={false} activeLogs={activeLogs} />;
         case 'jobs':
-          return <div className="h-full flex flex-col"><TvJobsBelt jobs={jobsForBelt} stages={stages} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} /></div>;
+          // Full screen: big photo cards, so the floor can see every part that's in the shop.
+          return <div className="h-full flex flex-col"><TvJobsBelt jobs={jobsForBelt} stages={stages} speed={settings.tvScrollSpeed || 'normal'} showCustomers={settings.tvShowCustomerNames !== false} activeLogs={activeLogs} layout="grid" /></div>;
         case 'leaderboard':
           return <TvLeaderboardSlide data={tvLeaderboardData} period={slide.leaderboardPeriod || 'week'} count={slide.leaderboardCount || 5} metric={slide.leaderboardMetric || 'mixed'} speed={settings.tvScrollSpeed || 'normal'} />;
         case 'weather':
@@ -2666,7 +2883,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           return <TvMessageSlide title={m.title} body={m.body} color={m.color} cycleInfo={msgs.length > 1 ? { current: (i % msgs.length) + 1, total: msgs.length } : undefined} />;
         }
         default:
-          return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={settings.tvShowJobsBelt !== false} />;
+          return <TvWorkersJobsSlide sorted={sorted} jobs={jobs} jobsForBelt={jobsForBelt} stages={stages} runningCount={runningCount} speed={settings.tvScrollSpeed || 'normal'} showJobsBelt={settings.tvShowJobsBelt !== false} showCustomers={settings.tvShowCustomerNames !== false} activeLogs={activeLogs} />;
       }
     };
 
