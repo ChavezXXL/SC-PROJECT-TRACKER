@@ -1698,19 +1698,6 @@ const TvGoalsSlide = React.memo(function TvGoalsSlide({ goals, jobs, logs, rewor
 
 type TvSpeed = 'slow' | 'normal' | 'fast' | 'off';
 
-/** How far back finished jobs matter on the TV: Today / week / month numbers
- *  (35 days covers them), further only for quarter or year goals. */
-function tvJobsSince(goals?: ShopGoal[]): number {
-  const now = new Date();
-  let start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 35).getTime();
-  for (const g of goals || []) {
-    if (!g.enabled) continue;
-    if (g.period === 'quarter') start = Math.min(start, new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1).getTime());
-    if (g.period === 'year') start = Math.min(start, new Date(now.getFullYear(), 0, 1).getTime());
-  }
-  return start;
-}
-
 // Workers + Jobs combined (the default TV layout)
 const TvWorkersJobsSlide = React.memo(function TvWorkersJobsSlide({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt, showCustomers = true, activeLogs }: {
   sorted: TimeLog[];
@@ -2341,11 +2328,19 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     if (!tvMode || downSince === null) return;
     const id = window.setInterval(() => {
       if (navigator.onLine === false || Date.now() - downSince <= 10 * 60_000) return;
+      // At most one reconnect-reload an hour: if the database itself is refusing
+      // (outage / daily limit), reloading every 10 minutes can't fix it.
+      try { if (Date.now() - Number(localStorage.getItem('fabtrack_tv_watchdog_at') || 0) < 60 * 60_000) return; } catch {}
       // "Online" can just mean the Wi-Fi is up while the internet is down —
       // reloading then could leave the wall on an error page. Reload only
       // once the app's own server answers.
       fetch(`/manifest.json?alive=${Date.now()}`, { cache: 'no-store' })
-        .then(r => { if (r.ok) { setTvExitReason('reconnect after 10 min without live data'); window.location.reload(); } })
+        .then(r => {
+          if (!r.ok) return;
+          try { localStorage.setItem('fabtrack_tv_watchdog_at', String(Date.now())); } catch {}
+          setTvExitReason('reconnect after 10 min without live data');
+          window.location.reload();
+        })
         .catch(() => { /* still offline — keep showing the last data */ });
     }, 60_000);
     return () => window.clearInterval(id);
@@ -2485,7 +2480,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // no edge sits on the same pixels all day (matters on OLED panels).
   const [drift, setDrift] = useState({ x: 0, y: 0 });
   useEffect(() => {
-    if (!tvMode || settings.tvBurnInGuard === false) { setDrift({ x: 0, y: 0 }); return; }
+    // Off on 1–2 GB TV sticks (LCD screens don't burn in; sliding the whole
+    // screen every 2 minutes is heavy work for their graphics chip).
+    const lite = ((navigator as any).deviceMemory ?? 8) <= 2;
+    if (!tvMode || lite || settings.tvBurnInGuard === false) { setDrift({ x: 0, y: 0 }); return; }
     const id = window.setInterval(() => setDrift({ x: Math.round(Math.random() * 8 - 4), y: Math.round(Math.random() * 6 - 3) }), 120_000);
     return () => window.clearInterval(id);
   }, [tvMode, settings.tvBurnInGuard]);
@@ -2546,9 +2544,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
-    // A wall TV loads only open jobs + recently finished ones (its slides need
-    // nothing older). The in-app Live Floor shares the office's full list.
-    const unsub2 = standalone ? DB.subscribeTvJobs(tvJobsSince(DB.getSettings().shopGoals), setJobs) : DB.subscribeJobs(setJobs);
+    // The full job list, as before. (A slimmer TV-only feed left most jobs
+    // unused in the on-disk cache, and clearing those out was heavy work for
+    // a 1 GB TV stick.)
+    const unsub2 = DB.subscribeJobs(setJobs);
     const unsub3 = DB.subscribeSettings(setSettings);
     const unsub4 = DB.subscribeLogs(setAllLogs);
     const unsub5 = DB.subscribeRework((entries) => setOpenReworkCount((entries || []).filter((r) => r.status === 'open' || r.status === 'in-rework').length));
