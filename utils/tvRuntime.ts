@@ -269,7 +269,12 @@ export function startTvSession(startedAt: number): { previous: string; stop: () 
   let previous = '';
   try { previous = describePrevSession(localStorage.getItem(SESSION_KEY)); } catch {}
   let hiddenAt: number | null = null;
+  // Once the page is leaving, nothing may overwrite the exit stamp: a reload
+  // fires "pagehide" and THEN "visibilitychange → hidden", and that second
+  // save used to erase the reason — a planned update read as a crash.
+  let leaving = false;
   const save = (extra: Record<string, unknown> = {}) => {
+    if (leaving) return;
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify({ startedAt, lastBeat: Date.now(), ...(hiddenAt ? { hiddenAt } : {}), ...extra }));
     } catch {}
@@ -280,15 +285,22 @@ export function startTvSession(startedAt: number): { previous: string; stop: () 
     hiddenAt = document.visibilityState === 'hidden' ? Date.now() : null;
     save();
   };
-  const onHide = () => save({ exit: exitReason || (window as any).__fabtrackExitReason || 'page closed or reloaded', exitAt: Date.now() });
+  const onHide = () => {
+    save({ exit: exitReason || (window as any).__fabtrackExitReason || 'page closed or reloaded', exitAt: Date.now() });
+    leaving = true;
+  };
+  // Back from the browser's back/forward cache: the session goes on.
+  const onShow = (e: any) => { if (e && e.persisted) { leaving = false; save(); } };
   document.addEventListener('visibilitychange', onVis);
   window.addEventListener('pagehide', onHide);
+  window.addEventListener('pageshow', onShow);
   return {
     previous,
     stop: () => {
       window.clearInterval(beat);
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('pageshow', onShow);
     },
   };
 }

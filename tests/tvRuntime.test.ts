@@ -1,4 +1,4 @@
-import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession } from '../utils/tvRuntime';
+import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason } from '../utils/tvRuntime';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -103,6 +103,40 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   ok('no exit stamp → stopped without closing', crash.startsWith('stopped without closing'));
   ok('…with the last time it was alive', crash.includes('last alive'));
   ok('screensaver/home screen is mentioned when the page was hidden', describePrevSession(JSON.stringify({ startedAt: t - 3600_000, lastBeat: t, hiddenAt: t - 60_000 })).includes('screen hidden since'));
+}
+
+// ── A reload keeps its reason (pagehide fires BEFORE visibility → hidden) ──
+{
+  const store = new Map<string, string>();
+  const handlers: Record<string, ((e: any) => void)[]> = {};
+  const on = (scope: string) => ({
+    addEventListener: (t: string, f: (e: any) => void) => { (handlers[scope + t] ||= []).push(f); },
+    removeEventListener: () => {},
+  });
+  const fire = (key: string, e: any = {}) => (handlers[key] || []).forEach(f => f(e));
+  const g = globalThis as any;
+  const saved = { localStorage: g.localStorage, window: g.window, document: g.document };
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, String(v)); } };
+  g.window = { ...on('w'), setInterval: () => 0, clearInterval: () => {} };
+  g.document = { ...on('d'), visibilityState: 'visible' };
+
+  const s1 = startTvSession(1000);
+  ok('first session has nothing to report', s1.previous === '');
+  setTvExitReason('app update');
+  fire('wpagehide');
+  g.document.visibilityState = 'hidden';
+  fire('dvisibilitychange');
+  const s2 = startTvSession(2000);
+  ok('reload: the reason survives the hidden event after pagehide', s2.previous.startsWith('app update'));
+
+  // Screen covered (screensaver / home) and then killed: no pagehide.
+  setTvExitReason('');
+  g.document.visibilityState = 'hidden';
+  fire('dvisibilitychange');
+  const s3 = startTvSession(3000);
+  ok('killed while covered → stopped without closing + screen hidden', s3.previous.startsWith('stopped without closing') && s3.previous.includes('screen hidden since'));
+
+  g.localStorage = saved.localStorage; g.window = saved.window; g.document = saved.document;
 }
 
 // ── Device names for the office list ──────────────────────────────
