@@ -4,3 +4,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Wall-TV lite mode (1–2 GB TV sticks — LiveFloorMonitor sets body.tv-lite):
+   no live blur effects; solid backgrounds instead. */
+body.tv-lite .tv-glow { display: none !important; }
+body.tv-lite * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}

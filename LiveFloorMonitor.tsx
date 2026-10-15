@@ -2145,6 +2145,16 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       if (tvChromeTimer.current) clearTimeout(tvChromeTimer.current);
     };
   }, [tvMode, showChrome]);
+  // Lite mode on 1–2 GB devices (TV sticks): no live blur effects. Backdrop
+  // blurs and the big blurred glows are redrawn by the graphics chip all day
+  // and are the first thing to strain a TV stick's memory (CSS: body.tv-lite).
+  useEffect(() => {
+    if (!tvMode) return;
+    const lite = ((navigator as any).deviceMemory ?? 8) <= 2;
+    document.body.classList.toggle('tv-lite', lite);
+    if (lite) tvEvent('lite mode on (low-memory device)');
+    return () => { document.body.classList.remove('tv-lite'); };
+  }, [tvMode]);
   // The cursor follows the same rule (CSS: body.tv-mode.tv-pointer).
   useEffect(() => {
     if (!tvMode) return;
@@ -2270,7 +2280,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // This means even if no admin tab is open, orphaned logs get cleaned up.
   useEffect(() => {
     DB.sweepStaleLogs().catch(() => {});
-    const id = setInterval(() => DB.sweepStaleLogs().catch(() => {}), 60_000);
+    // Every 5 minutes (it records the cutoff time itself, so this costs no accuracy).
+    const id = setInterval(() => DB.sweepStaleLogs().catch(() => {}), 5 * 60_000);
     return () => clearInterval(id);
   }, []);
 
@@ -2280,9 +2291,22 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   // ── Keep the panel awake where Wake Lock isn't honored (most built-in TV
   // browsers): a tiny always-playing muted video, which TV OSes treat as
   // content on screen and so don't start the screensaver / auto-off timer.
+  // Only as a FALLBACK now: the shop's 1 GB Fire TV holds the real wake lock,
+  // yet died ~50 minutes into every session — and this video makes a new
+  // frame every second (≈3,000 by then) through the browser's media pipeline.
+  // So it runs only while the wake lock can't be held.
   useEffect(() => {
     if (!tvMode) return;
-    return startKeepAwakeVideo();
+    let stop: (() => void) | null = null;
+    const sync = () => {
+      const need = !wakeHeldRef.current;
+      if (need && !stop) { stop = startKeepAwakeVideo(); tvEvent('keep-awake: video fallback (no wake lock)'); }
+      if (!need && stop) { stop(); stop = null; tvEvent('keep-awake: wake lock held, video off'); }
+    };
+    // Give the wake lock a moment to be granted before deciding.
+    const first = window.setTimeout(sync, 3000);
+    const i = window.setInterval(sync, 30_000);
+    return () => { window.clearTimeout(first); window.clearInterval(i); if (stop) stop(); };
   }, [tvMode]);
 
   // ── A remote's Back button must not leave the TV page.
@@ -3029,8 +3053,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             background, but never content (everything else lives in the
             safe-area wrapper below). */}
         <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-600/10 blur-[120px]" />
-          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-amber-600/10 blur-[120px]" />
+          <div className="tv-glow absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-600/10 blur-[120px]" />
+          <div className="tv-glow absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-amber-600/10 blur-[120px]" />
         </div>
 
         {/* ── TV SAFE AREA ── real TVs overscan-crop 2–5% of every edge, so ALL

@@ -8405,12 +8405,15 @@ export default function App() {
     return unsub;
   }, [user?.id]);
 
-  // Auto clock-out sweep: runs on mount + every 60s
+  // Auto clock-out sweep: runs on mount + every 5 minutes. Each run costs at
+  // least one database read on every open screen even when nothing is open,
+  // and the stop time it records is the cutoff itself — so a minute-by-minute
+  // sweep spent ~1,440 reads per screen per day for no extra accuracy.
   useEffect(() => {
     DB.sweepStaleLogs().catch(e => console.warn('[auto-clock-out] sweep failed:', e));
     const id = setInterval(() => {
       DB.sweepStaleLogs().catch(e => console.warn('[auto-clock-out] sweep failed:', e));
-    }, 60_000);
+    }, 5 * 60_000);
     return () => clearInterval(id);
   }, []);
 
