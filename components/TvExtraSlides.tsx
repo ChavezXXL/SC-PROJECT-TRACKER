@@ -40,7 +40,9 @@ export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: num
     loadNews().then(() => { if (alive) { setData(newsCache); setTried(true); } });
     return () => { alive = false; };
   }, []);
-  const PER = 5;
+  // Five headlines on a full-HD screen; fewer on short ones (a 960×540 TV
+  // stick) so two-line headlines never run into each other.
+  const PER = typeof window !== 'undefined' && window.innerHeight < 620 ? 3 : window.innerHeight < 820 ? 4 : 5;
   const items = data?.items || [];
   const pages = Math.max(1, Math.ceil(items.length / PER));
   const page = ((pass % pages) + pages) % pages;
@@ -66,9 +68,9 @@ export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: num
           </p>
         </div>
       ) : (
-        <ol className="flex-1 min-h-0 flex flex-col justify-around">
+        <ol className="flex-1 min-h-0 flex flex-col justify-evenly overflow-hidden">
           {shown.map((h, i) => (
-            <li key={`${page}-${i}`} className="border-b border-white/5 last:border-b-0 py-[clamp(0.25rem,0.8vh,0.75rem)]">
+            <li key={`${page}-${i}`} className="shrink-0 border-b border-white/5 last:border-b-0 py-[clamp(0.25rem,0.8vh,0.75rem)]">
               <p className="font-black text-white leading-snug line-clamp-2" style={{ fontSize: i === 0 ? 'clamp(1.2rem, 2.6vw, 2.2rem)' : 'clamp(1rem, 2vw, 1.7rem)' }}>{h.title}</p>
               <p className="mt-1 flex items-center gap-2 font-bold" style={{ fontSize: 'clamp(0.65rem, 0.95vw, 0.9rem)' }}>
                 <span className="text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded px-1.5 py-0.5">{h.source}</span>
