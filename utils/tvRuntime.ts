@@ -341,6 +341,10 @@ export function startTvSession(startedAt: number): { previous: string; previousL
     previous,
     previousLog,
     stop: () => {
+      // The board itself closed (left the TV screen) — a clean exit, not a crash.
+      save({ exit: exitReason || 'board closed', exitAt: Date.now() });
+      leaving = true;
+      tvEvent('board closed', true);
       logOn = false;
       flushTvLog();
       window.clearInterval(beat);

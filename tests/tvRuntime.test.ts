@@ -144,7 +144,11 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   ok('…and the new session starts a fresh log', readPrevTvLog(store.get('fabtrack_tv_log') ?? null).includes('start') && !readPrevTvLog(store.get('fabtrack_tv_log') ?? null).includes('Open Jobs'));
   ok('log keeps only the last lines', (() => { for (let i = 0; i < 60; i++) tvEvent(`e${i}`, true); return JSON.parse(store.get('fabtrack_tv_log') || '[]').length === 40; })());
   ok('readPrevTvLog survives junk', readPrevTvLog('{bad') === '' && readPrevTvLog(null) === '');
+  setTvExitReason('');
   s4.stop();
+  const s5 = startTvSession(5000);
+  ok('closing the board normally is a clean exit, not a crash', s5.previous.startsWith('board closed'));
+  s5.stop();
 
   g.localStorage = saved.localStorage; g.window = saved.window; g.document = saved.document;
 }
