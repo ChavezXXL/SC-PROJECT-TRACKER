@@ -1,10 +1,26 @@
 import {
   getFirestore, Firestore, collection, getDocs, query, limit,
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache,
 } from "firebase/firestore";
 import * as firebaseApp from "firebase/app";
 
 const STORAGE_KEY_FB = 'nexus_firebase_config';
+
+/**
+ * A wall TV — the /tv address, a ?tv= link, or a device that saved a TV link
+ * (utils/tvRuntime TOKEN_KEY). TVs keep their data in memory only: the on-disk
+ * cache held every job ever with its photos inside, and on a 1 GB TV stick
+ * reading through it at start-up — and clearing it out once the TV only
+ * listened to ~55 jobs — could take the browser down minutes after loading.
+ * A TV is online anyway and only needs a small, live set of data.
+ */
+function isWallTv(): boolean {
+  try {
+    if (/^\/tv\/?$/.test(window.location.pathname)) return true;
+    if (new URLSearchParams(window.location.search).has('tv')) return true;
+    return !!localStorage.getItem('fabtrack_tv');
+  } catch { return false; }
+}
 
 const defaultConfig = {
     apiKey: "AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8",
@@ -68,10 +84,11 @@ export function initFirebaseFromLocalStorage() {
       // instead of every launch waiting on the network for the full dataset.
       // Multi-tab manager keeps the cache consistent across open tabs/PWA.
       try {
+        const tv = isWallTv();
         cachedDb = initializeFirestore(app, {
-          localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+          localCache: tv ? memoryLocalCache() : persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
         });
-        console.log("Firebase Firestore Client Retrieved (persistent cache)");
+        console.log(`Firebase Firestore Client Retrieved (${tv ? 'memory cache — wall TV' : 'persistent cache'})`);
       } catch {
         // Already initialized (HMR/double-init) or persistence unavailable
         // (private browsing, ancient browser) → fall back to the default
