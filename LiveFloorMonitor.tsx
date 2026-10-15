@@ -1695,6 +1695,19 @@ const TvGoalsSlide = React.memo(function TvGoalsSlide({ goals, jobs, logs, rewor
 
 type TvSpeed = 'slow' | 'normal' | 'fast' | 'off';
 
+/** How far back finished jobs matter on the TV: Today / week / month numbers
+ *  (35 days covers them), further only for quarter or year goals. */
+function tvJobsSince(goals?: ShopGoal[]): number {
+  const now = new Date();
+  let start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 35).getTime();
+  for (const g of goals || []) {
+    if (!g.enabled) continue;
+    if (g.period === 'quarter') start = Math.min(start, new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1).getTime());
+    if (g.period === 'year') start = Math.min(start, new Date(now.getFullYear(), 0, 1).getTime());
+  }
+  return start;
+}
+
 // Workers + Jobs combined (the default TV layout)
 const TvWorkersJobsSlide = React.memo(function TvWorkersJobsSlide({ sorted, jobs, jobsForBelt, stages, runningCount, speed, showJobsBelt, showCustomers = true, activeLogs }: {
   sorted: TimeLog[];
@@ -2496,7 +2509,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [openReworkCount, setOpenReworkCount] = useState(0);
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
-    const unsub2 = DB.subscribeJobs(setJobs);
+    // A wall TV loads only open jobs + recently finished ones (its slides need
+    // nothing older). The in-app Live Floor shares the office's full list.
+    const unsub2 = standalone ? DB.subscribeTvJobs(tvJobsSince(DB.getSettings().shopGoals), setJobs) : DB.subscribeJobs(setJobs);
     const unsub3 = DB.subscribeSettings(setSettings);
     const unsub4 = DB.subscribeLogs(setAllLogs);
     const unsub5 = DB.subscribeRework((entries) => setOpenReworkCount((entries || []).filter((r) => r.status === 'open' || r.status === 'in-rework').length));

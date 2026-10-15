@@ -512,6 +512,78 @@ export function subscribeJobs(cb: (jobs: Job[]) => void) {
   return localSubscribe(() => enrichJobsWithPartPhotos(readLS<Job[]>(LS.jobs, [])), cb);
 }
 
+/**
+ * The wall TV's jobs: everything still open, plus jobs finished since `since`
+ * (enough for its Today / week / month numbers). Loading every job ever —
+ * 325 for this shop, ~200 photos stored inside them (≈28 MB) — was heavy for
+ * a 1 GB TV stick, and every clock-in re-processed all of them. An open job
+ * whose part photo lives on an older run still shows it: those photos are
+ * looked up once per part.
+ */
+export function subscribeTvJobs(since: number, cb: (jobs: Job[]) => void): () => void {
+  if (!dbInstance) return subscribeJobs(cb);
+  let open: Job[] = [], done: Job[] = [];
+  let haveOpen = false, haveDone = false, destroyed = false;
+  const borrowed = new Map<string, { url: string; at: number; po: string }>();   // part key → photo from an older run
+  const lookedUp = new Set<string>();
+
+  const lookUpMissing = (list: Job[]) => {
+    const parts: string[] = [];
+    for (const j of list) {
+      if (j.status === 'completed' || j.partImage || !j.partNumber) continue;
+      const k = photoPartKey(j.partNumber);
+      if (!k || lookedUp.has(k)) continue;
+      lookedUp.add(k);
+      parts.push(j.partNumber);
+    }
+    for (let i = 0; i < parts.length; i += 30) {            // 'in' takes up to 30 values
+      const chunk = parts.slice(i, i + 30);
+      queryDocs(query(collection(dbInstance!, COL.jobs), where('partNumber', 'in', chunk)))
+        .then((snap: any) => {
+          let added = false;
+          for (const d of snap.docs) {
+            const j = d.data() as Job;
+            const k = j.partImage ? photoPartKey(j.partNumber) : '';
+            if (!k) continue;
+            const at = photoTakenAt(j), cur = borrowed.get(k);
+            if (!cur || at > cur.at) { borrowed.set(k, { url: j.partImage!, at, po: j.poNumber || '' }); added = true; }
+          }
+          if (added) emit();
+        })
+        .catch(() => { chunk.forEach(p => lookedUp.delete(photoPartKey(p))); });   // try again on the next update
+    }
+  };
+
+  const emit = () => {
+    if (destroyed || !haveOpen || !haveDone) return;       // both halves first — no half list flashing up
+    const byId = new Map<string, Job>();
+    for (const j of done) byId.set(j.id, j);
+    for (const j of open) byId.set(j.id, j);
+    let list = enrichJobsWithPartPhotos([...byId.values()]);
+    if (borrowed.size) {
+      list = list.map(j => {
+        if (j.partImage) return j;
+        const hit = borrowed.get(photoPartKey(j.partNumber));
+        return hit ? ({ ...j, partImage: hit.url, photoInherited: true, photoFromPo: hit.po } as Job) : j;
+      });
+    }
+    cb(list);
+    lookUpMissing(list);
+  };
+
+  const unsubOpen = retryingSnapshot(
+    () => query(collection(dbInstance!, COL.jobs), where('status', 'in', ['pending', 'in-progress', 'hold'])),
+    (snap: any) => { firebaseStatus = { connected: true }; open = snap.docs.map((d: any) => d.data() as Job); haveOpen = true; emit(); },
+    () => { haveOpen = true; emit(); },
+  );
+  const unsubDone = retryingSnapshot(
+    () => query(collection(dbInstance!, COL.jobs), where('completedAt', '>=', since)),
+    (snap: any) => { done = snap.docs.map((d: any) => d.data() as Job).filter((j: Job) => j.status === 'completed'); haveDone = true; emit(); },
+    () => { haveDone = true; emit(); },
+  );
+  return () => { destroyed = true; unsubOpen(); unsubDone(); };
+}
+
 export async function getJobById(id: string): Promise<Job | null> {
   if (dbInstance) {
       try {
