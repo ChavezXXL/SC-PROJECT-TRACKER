@@ -1808,14 +1808,18 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0">{sorted.map(log => card(log, 0))}</div>
           <div className="min-h-0 flex flex-col">
             <p className="font-black text-white/45 uppercase tracking-[0.3em] mb-2" style={{ fontSize: 'clamp(0.7rem, 0.95vw, 0.9rem)' }}>Due next</p>
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 min-h-0 overflow-hidden">
-              {dueNext.map(job => (
-                <div key={job.id} className="rounded-2xl border border-white/5 bg-zinc-900/60 flex items-center gap-3 min-w-0" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.8rem)' }}>
-                  <TvPartPhoto src={job.partImage} size="clamp(2.5rem, 9vh, 4.25rem)" />
-                  <div className="min-w-0">
+            {/* Rows keep their height (TV mode sets min-height: 0 on everything,
+                which let cards squeeze and overlap); extra rows clip at the bottom. */}
+            <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 min-h-0 overflow-hidden" style={{ gridAutoRows: 'max-content' }}>
+              {dueNext.slice(0, sorted.length >= 2 ? 4 : 6).map(job => (
+                <div key={job.id} className="rounded-2xl border border-white/5 bg-zinc-900/60 flex items-center gap-3 min-w-0" style={{ padding: 'clamp(0.3rem, 1vh, 0.7rem) clamp(0.5rem, 1vw, 0.8rem)' }}>
+                  <TvPartPhoto src={job.partImage} size="clamp(2.25rem, 7.5vh, 3.75rem)" />
+                  <div className="min-w-0 flex-1">
                     <p className={`font-black truncate leading-tight ${job.priority === 'urgent' ? 'text-amber-200' : 'text-white'}`} style={{ fontSize: 'clamp(0.85rem, min(1.6vw, 3.2vh), 1.3rem)' }}>{job.partNumber || job.jobIdsDisplay || `PO ${job.poNumber}`}</p>
-                    <p className="text-white/50 font-bold truncate" style={{ fontSize: 'clamp(0.6rem, min(1vw, 2.2vh), 0.85rem)' }}>PO {job.poNumber}{job.quantity ? ` · ${job.quantity.toLocaleString()} pc` : ''}</p>
-                    <div className="mt-1"><TvDueChip raw={job.dueDate} /></div>
+                    <div className="flex items-center gap-2 mt-0.5 min-w-0">
+                      <TvDueChip raw={job.dueDate} />
+                      <span className="text-white/50 font-bold truncate" style={{ fontSize: 'clamp(0.6rem, min(1vw, 2.2vh), 0.85rem)' }}>PO {job.poNumber}{job.quantity ? ` · ${job.quantity.toLocaleString()} pc` : ''}</span>
+                    </div>
                   </div>
                 </div>
               ))}
