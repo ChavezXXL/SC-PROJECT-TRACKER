@@ -1811,7 +1811,7 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
             {/* Rows keep their height (TV mode sets min-height: 0 on everything,
                 which let cards squeeze and overlap); extra rows clip at the bottom. */}
             <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 min-h-0 overflow-hidden" style={{ gridAutoRows: 'max-content' }}>
-              {dueNext.slice(0, sorted.length >= 2 ? 4 : 6).map(job => (
+              {dueNext.slice(0, sorted.length >= 2 || window.innerHeight < 700 ? 4 : 6).map(job => (
                 <div key={job.id} className="rounded-2xl border border-white/5 bg-zinc-900/60 flex items-center gap-3 min-w-0" style={{ padding: 'clamp(0.3rem, 1vh, 0.7rem) clamp(0.5rem, 1vw, 0.8rem)' }}>
                   <TvPartPhoto src={job.partImage} size="clamp(2.25rem, 7.5vh, 3.75rem)" />
                   <div className="min-w-0 flex-1">
