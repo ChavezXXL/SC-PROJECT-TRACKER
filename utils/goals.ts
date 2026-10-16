@@ -82,6 +82,15 @@ export function formatGoalValue(goal: ShopGoal, val: number): string {
   return Math.round(val).toString();
 }
 
+/** The target as shown after the big number: "/ 160.0h", "/ 95%", "/ 10 jobs".
+ *  Hours, percent and dollars already carry their unit in the number. */
+export function goalTargetText(goal: ShopGoal): string {
+  const v = formatGoalValue(goal, goal.target);
+  const built = goal.metric === 'revenue' || goal.metric === 'on-time-delivery' || goal.metric === 'hours-logged';
+  const unit = built ? '' : goalUnit(goal);
+  return unit ? `${v} ${unit}` : v;
+}
+
 /** Get the default unit label for a goal based on its metric. */
 export function goalUnit(goal: ShopGoal): string {
   if (goal.unit) return goal.unit;

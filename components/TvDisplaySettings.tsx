@@ -10,7 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, Cake, CheckCircle, ChevronDown, ChevronUp, Cloud, Copy, ExternalLink, Eye, Layers,
+  AlertTriangle, Cake, CalendarDays, CheckCircle, ChevronDown, ChevronUp, Cloud, Copy, ExternalLink, Eye, Layers,
   Lightbulb, Lock, MapPin, Monitor, Moon, Pencil, Plus, RefreshCw, Trash2, Tv, Unplug, X,
 } from 'lucide-react';
 import type { SystemSettings, TvDevice, TvSlide, SlideMessage } from '../types';
@@ -1111,6 +1111,52 @@ function BirthdaysCard({ settings, set }: { settings: SystemSettings; set: Patch
   );
 }
 
+/** The shop's own days on the TV calendar: closed, audits, visits, deadlines. */
+function ShopDaysCard({ settings, set }: { settings: SystemSettings; set: Patch }) {
+  const list = settings.shopEvents || [];
+  const todayIso = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const [label, setLabel] = useState('');
+  const [date, setDate] = useState(todayIso);
+  const add = () => {
+    const l = label.trim();
+    if (!l || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const next = [...list, { id: `e_${Date.now()}`, date, label: l.slice(0, 40) }].sort((a, b) => a.date.localeCompare(b.date));
+    set({ shopEvents: next });
+    setLabel('');
+  };
+  // Past days drop off the list a month later, so it doesn't grow forever.
+  const monthAgo = (() => { const d = new Date(); d.setDate(d.getDate() - 31); return d.toISOString().slice(0, 10); })();
+  const shown = list.filter(e => e.date >= monthAgo);
+  const nice = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
+  return (
+    <Card anchor="tv-shop-days" icon={<CalendarDays className="w-4 h-4" />} title="Shop days"
+      desc="Days off, audits, customer visits, deadlines — they show on the TV calendar and in its “Coming up” list.">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <input aria-label="What's happening" placeholder="e.g. Shop closed, AS9100 audit" maxLength={40} value={label} onChange={e => setLabel(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add(); }} className={`${inputCls} flex-1 min-w-[9rem]`} />
+        <input type="date" aria-label="Date" value={date} onChange={e => setDate(e.target.value)} className={selectCls} />
+        <Btn tone="primary" disabled={!label.trim()} onClick={add}><Plus className="w-3.5 h-3.5" aria-hidden="true" />Add</Btn>
+      </div>
+      {shown.length === 0 ? (
+        <p className="text-xs text-zinc-500">Nothing planned yet — add days off or visits and the whole shop sees them coming.</p>
+      ) : (
+        <ul className="divide-y divide-white/5">
+          {shown.map(e => (
+            <li key={e.id} className={`flex items-center justify-between gap-2 py-1.5 ${e.date < todayIso ? 'opacity-50' : ''}`}>
+              <span className="text-sm text-white truncate min-w-0">📌 {e.label}</span>
+              <span className="flex items-center gap-1 shrink-0">
+                <span className="text-xs text-zinc-400 tabular">{nice(e.date)}</span>
+                <button type="button" aria-label={`Remove ${e.label}`} onClick={() => set({ shopEvents: list.filter(x => x.id !== e.id) })}
+                  className="w-8 h-8 flex items-center justify-center rounded-md text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // ── The tab ──────────────────────────────────────────────────────────
 
 export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: {
@@ -1160,6 +1206,7 @@ export function TvDisplaySettings({ settings, setSettings, saveNow, addToast }: 
           <ScreenCard settings={settings} set={set} />
           <ScheduleCard settings={settings} set={set} now={now} />
           <BirthdaysCard settings={settings} set={set} />
+          <ShopDaysCard settings={settings} set={set} />
           <WeatherCard settings={settings} set={set} addToast={addToast} />
           <PrivacyCard settings={settings} set={set} />
           <LiveFloorCard settings={settings} set={set} />

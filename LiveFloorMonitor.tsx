@@ -24,7 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { Job, TimeLog, SystemSettings, TvSlide, TvSlideType, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice, TeamBirthday } from './types';
+import { Job, TimeLog, SystemSettings, TvSlide, TvSlideType, JobStage, ShopGoal, GoalMetric, GoalPeriod, TvDevice, TeamBirthday, ShopEvent } from './types';
 import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
@@ -320,15 +320,18 @@ const LiveClock = React.memo(function LiveClock({ size = 'xl' }: { size?: 'md' |
     }), 1000);
     return () => clearInterval(i);
   }, []);
-  const sz = { md: 'text-2xl', lg: 'text-4xl', xl: 'text-6xl', huge: 'text-8xl' }[size];
+  const sz = { md: 'text-2xl', lg: 'text-4xl', xl: 'text-6xl', huge: '' }[size];
+  // The wall-TV clock follows the screen's height too: on a 960×540 TV the
+  // fixed 8xl clock (and the header around it) took a third of the screen.
+  const hugeStyle = size === 'huge' ? { fontSize: 'clamp(2.75rem, min(7.5vw, 12vh), 6rem)' } : undefined;
   const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   const timeParts = time.split(' ');
   const clockTime = timeParts[0] || time;
   const ampm = timeParts[1] || '';
   return (
     <div className="flex items-baseline gap-3">
-      <span className={`${sz} font-black text-white tabular tracking-tight leading-none`} style={{ textShadow: '0 0 40px rgba(59,130,246,0.3)' }}>{clockTime}</span>
-      {ampm && <span className="text-white/40 font-bold text-2xl">{ampm}</span>}
+      <span className={`${sz} font-black text-white tabular tracking-tight leading-none`} style={{ textShadow: '0 0 40px rgba(59,130,246,0.3)', ...hugeStyle }}>{clockTime}</span>
+      {ampm && <span className={`text-white/40 font-bold ${size === 'huge' ? '' : 'text-2xl'}`} style={size === 'huge' ? { fontSize: 'clamp(0.9rem, min(2vw, 3.5vh), 1.5rem)' } : undefined}>{ampm}</span>}
     </div>
   );
 });
@@ -727,6 +730,13 @@ export function refreshWeather(override?: { lat?: number; lon?: number }) {
   fetchWeather(override);
 }
 
+/** Outside temperature on the date line under the clock (narrow TVs). */
+const TvInlineTemp: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) => {
+  const { current } = useWeather({ lat, lon });
+  if (!current) return null;
+  return <> · <span className="text-white/70 font-black">{weatherLabel(current.code)} {current.temp}°</span></>;
+};
+
 const TVWeather: React.FC<{ lat?: number; lon?: number }> = ({ lat, lon }) => {
   const { current } = useWeather({ lat, lon });
   if (!current) return null;
@@ -761,6 +771,7 @@ type LeaderRow = { userId: string; name: string; hours: number; jobs: number; se
 // mint a new array every render and defeat TvGoalsSlide's React.memo.
 const EMPTY_GOALS: ShopGoal[] = [];
 const EMPTY_BIRTHDAYS: TeamBirthday[] = [];
+const EMPTY_EVENTS: ShopEvent[] = [];
 
 // Default TV slides live in utils/tvSlides.ts (shared with Settings).
 
@@ -787,15 +798,15 @@ const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period
   const handlers = useTvAutoScroll(scrollRef, scrollSpeed, rows.length);
 
   return (
-    <div className="h-full flex flex-col items-center p-[clamp(1rem,2.5vw,3rem)] overflow-hidden">
+    <div className="h-full flex flex-col items-center overflow-hidden" style={{ padding: 'clamp(0.5rem, 2.5vh, 3rem) clamp(1rem, 2.5vw, 3rem)' }}>
       <div className="w-full max-w-5xl flex flex-col h-full min-h-0">
         {/* Header — pinned, doesn't scroll */}
-        <div className="shrink-0 flex items-center justify-between mb-[clamp(0.75rem,1.5vw,1.5rem)] gap-3 flex-wrap">
+        <div className="shrink-0 flex items-center justify-between mb-[clamp(0.5rem,2vh,1.5rem)] gap-3 flex-wrap">
           <div className="min-w-0">
             <p className="font-black text-amber-400/80 uppercase tracking-[0.3em] flex items-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
               <Trophy className="w-4 h-4" aria-hidden="true" /> Shop Leaderboard
             </p>
-            <h2 className="font-black text-white tracking-tight mt-2 truncate" style={{ fontSize: 'clamp(1.5rem, 4vw, 3.25rem)' }}>{periodLabel}'s Top Workers</h2>
+            <h2 className="font-black text-white tracking-tight mt-1 truncate" style={{ fontSize: 'clamp(1.25rem, min(4vw, 6.5vh), 3.25rem)' }}>{periodLabel}'s Top Workers</h2>
           </div>
           <div className="text-right hidden sm:block">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Total Logged</p>
@@ -823,21 +834,21 @@ const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period
               {/* Duplicate content for seamless top→bottom→top loop. The 2nd
                   copy is aria-hidden so screen readers don't double-announce. */}
               {[0, 1].map(copy => (
-                <div key={copy} className="space-y-3 pb-3" aria-hidden={copy === 1 ? 'true' : undefined}>
+                <div key={copy} className="space-y-2 pb-2" aria-hidden={copy === 1 ? 'true' : undefined}>
                   {rows.map((r, idx) => {
                     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
                     const medalColor = idx === 0 ? 'from-amber-400 to-yellow-600' : idx === 1 ? 'from-zinc-300 to-zinc-500' : idx === 2 ? 'from-orange-500 to-amber-700' : 'from-zinc-600 to-zinc-800';
                     const pctH = (r.hours / maxH) * 100;
                     const pctJ = (r.jobs / maxJ) * 100;
                     return (
-                      <div key={`${copy}-${r.userId}`} className={`rounded-2xl border ${idx === 0 ? 'bg-gradient-to-r from-amber-500/10 to-transparent border-amber-500/30' : 'bg-zinc-900/50 border-white/5'}`} style={{ padding: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>
+                      <div key={`${copy}-${r.userId}`} className={`rounded-2xl border ${idx === 0 ? 'bg-gradient-to-r from-amber-500/10 to-transparent border-amber-500/30' : 'bg-zinc-900/50 border-white/5'}`} style={{ padding: 'clamp(0.4rem, min(1.4vw, 1.8vh), 1.25rem) clamp(0.6rem, 1.4vw, 1.25rem)' }}>
                         <div className="flex items-center" style={{ gap: 'clamp(0.625rem, 1.2vw, 1rem)' }}>
                           {/* Rank */}
-                          <div className={`shrink-0 rounded-xl flex items-center justify-center font-black text-white shadow-xl bg-gradient-to-br ${medalColor}`} style={{ width: 'clamp(2.5rem, 3.5vw, 3.5rem)', height: 'clamp(2.5rem, 3.5vw, 3.5rem)', fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>
+                          <div className={`shrink-0 rounded-xl flex items-center justify-center font-black text-white shadow-xl bg-gradient-to-br ${medalColor}`} style={{ width: 'clamp(2rem, min(3.5vw, 6.5vh), 3.5rem)', height: 'clamp(2rem, min(3.5vw, 6.5vh), 3.5rem)', fontSize: 'clamp(0.9rem, 1.5vw, 1.5rem)' }}>
                             {medal || `#${idx + 1}`}
                           </div>
                           {/* Avatar */}
-                          <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${idx === 0 ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.75rem, 4vw, 4rem)', height: 'clamp(2.75rem, 4vw, 4rem)', fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>
+                          <div className={`shrink-0 rounded-2xl flex items-center justify-center font-black text-white shadow-xl ${idx === 0 ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`} style={{ width: 'clamp(2.25rem, min(4vw, 7vh), 4rem)', height: 'clamp(2.25rem, min(4vw, 7vh), 4rem)', fontSize: 'clamp(0.9rem, 1.5vw, 1.5rem)' }}>
                             {(r.name || '?').split(' ').map(n => n[0] || '').slice(0, 2).join('').toUpperCase() || '?'}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -848,13 +859,13 @@ const TvLeaderboardSlide = React.memo(function TvLeaderboardSlide({ data, period
                           <div className="shrink-0 text-right flex items-center" style={{ gap: 'clamp(0.75rem, 2vw, 1.5rem)' }}>
                             {(metric === 'hours' || metric === 'mixed') && (
                               <div>
-                                <div className="font-black text-white tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}>{r.hours.toFixed(1)}<span className="text-white/50" style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>h</span></div>
+                                <div className="font-black text-white tabular tracking-tight" style={{ fontSize: 'clamp(1.2rem, min(3vw, 5.5vh), 2.5rem)' }}>{r.hours.toFixed(1)}<span className="text-white/50" style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>h</span></div>
                                 <div className="h-1 bg-white/10 rounded-full mt-1 overflow-hidden" style={{ width: 'clamp(3rem, 8vw, 6rem)' }}><div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" style={{ width: `${pctH}%` }} /></div>
                               </div>
                             )}
                             {(metric === 'jobs' || metric === 'mixed') && (
                               <div>
-                                <div className="font-black text-emerald-400 tabular tracking-tight" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}>{r.jobs}<span className="text-emerald-400/60 ml-1" style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>jobs</span></div>
+                                <div className="font-black text-emerald-400 tabular tracking-tight" style={{ fontSize: 'clamp(1.2rem, min(3vw, 5.5vh), 2.5rem)' }}>{r.jobs}<span className="text-emerald-400/60 ml-1" style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.25rem)' }}>jobs</span></div>
                                 <div className="h-1 bg-white/10 rounded-full mt-1 overflow-hidden" style={{ width: 'clamp(3rem, 8vw, 6rem)' }}><div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${pctJ}%` }} /></div>
                               </div>
                             )}
@@ -888,10 +899,10 @@ const TvWeatherSlide = React.memo(function TvWeatherSlide({ lat, lon }: { lat?: 
     // minHeight is inline because body.tv-mode * { min-height: 0 } (index.html)
     // outranks Tailwind's .min-h-full and silently breaks centering.
     <div className="h-full w-full overflow-y-auto overflow-x-hidden">
-      <div className="flex flex-col items-center justify-center p-[clamp(1rem,2.5vw,3rem)]" style={{ minHeight: '100%' }}>
+      <div className="flex flex-col items-center justify-center" style={{ minHeight: '100%', padding: 'clamp(0.5rem, 2.5vh, 3rem) clamp(1rem, 2.5vw, 3rem)' }}>
       <div className="w-full max-w-5xl">
         <p className="font-black text-blue-400/80 uppercase tracking-[0.3em] text-center" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>Outside · Live</p>
-        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.75rem)' }}>Weather Forecast</h2>
+        <h2 className="font-black text-white tracking-tight text-center mt-1" style={{ fontSize: 'clamp(1.4rem, min(5vw, 7vh), 3.75rem)' }}>Weather Forecast</h2>
         {!current && !forecast.length ? (
           <div className="flex flex-col items-center justify-center text-center py-24">
             <Cloud className="w-24 h-24 text-zinc-700 mb-4" aria-hidden="true" />
@@ -919,14 +930,14 @@ const TvWeatherSlide = React.memo(function TvWeatherSlide({ lat, lon }: { lat?: 
             {/* CURRENT — vertical sizes clamp on vh so 720p TVs fit; the vh terms
                 exceed the caps at 1080p+, so big TVs render pixel-identical. */}
             {current && (
-              <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl flex items-center justify-around" style={{ marginTop: 'clamp(1rem, 4vh, 2.5rem)', padding: 'clamp(0.75rem, 3vh, 2rem)' }}>
+              <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl flex items-center justify-around" style={{ marginTop: 'clamp(0.5rem, 2.5vh, 2.5rem)', padding: 'clamp(0.5rem, 2.2vh, 2rem)' }}>
                 <div className="text-center">
-                  <div className="flex items-center justify-center mb-2">{weatherIcon(current.code, 'w-20 h-20')}</div>
+                  <div className="flex items-center justify-center mb-1">{weatherIcon(current.code, 'w-14 h-14')}</div>
                   <p className="text-2xl font-bold text-white/80">{weatherLabel(current.code)}</p>
                 </div>
                 <div className="text-center">
-                  <div className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(3.5rem, 15vh, 8rem)' }}>{current.temp}°</div>
-                  <p className="text-xl text-white/50 mt-2">Right now</p>
+                  <div className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(2.75rem, 12vh, 8rem)' }}>{current.temp}°</div>
+                  <p className="text-xl text-white/50 mt-1">Right now</p>
                 </div>
                 {today && (
                   <div className="text-center">
@@ -939,12 +950,12 @@ const TvWeatherSlide = React.memo(function TvWeatherSlide({ lat, lon }: { lat?: 
             )}
             {/* 5-DAY */}
             {forecast.length > 1 && (
-              <div className="grid grid-cols-5 gap-3" style={{ marginTop: 'clamp(0.75rem, 2.5vh, 1.5rem)' }}>
+              <div className="grid grid-cols-5 gap-3" style={{ marginTop: 'clamp(0.5rem, 2vh, 1.5rem)' }}>
                 {forecast.slice(0, 5).map((d, i) => (
-                  <div key={d.dateMs} className={`rounded-2xl p-4 border text-center ${i === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
-                    <p className={`text-xs font-black uppercase tracking-widest mb-2 ${i === 0 ? 'text-blue-400' : 'text-white/40'}`}>{d.dayLabel}</p>
-                    <div className="flex items-center justify-center mb-3">{weatherIcon(d.code, 'w-12 h-12')}</div>
-                    <p className="text-3xl font-black text-white tabular">{d.tMax}°</p>
+                  <div key={d.dateMs} className={`rounded-2xl border text-center ${i === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-zinc-900/50 border-white/5'}`} style={{ padding: 'clamp(0.4rem, 1.8vh, 1rem)' }}>
+                    <p className={`text-xs font-black uppercase tracking-widest mb-1 ${i === 0 ? 'text-blue-400' : 'text-white/40'}`}>{d.dayLabel}</p>
+                    <div className="flex items-center justify-center mb-1">{weatherIcon(d.code, 'w-10 h-10')}</div>
+                    <p className="font-black text-white tabular leading-tight" style={{ fontSize: 'clamp(1.25rem, 4.5vh, 1.875rem)' }}>{d.tMax}°</p>
                     <p className="text-sm font-bold text-blue-400 tabular mt-0.5">{d.tMin}°</p>
                   </div>
                 ))}
@@ -993,21 +1004,32 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
   const customerCounts = countByCustomer(completedThisWeek);
   let topCustomer = '—'; let topCustCount = 0;
   customerCounts.forEach((c, name) => { if (c > topCustCount) { topCustCount = c; topCustomer = name; } });
+  // With customer names hidden, the tile shows the week's top worker instead.
+  let topWorker = '—', topWorkerHrs = 0;
+  if (!showCustomers) {
+    const byWorker = new Map<string, number>();
+    for (const l of allLogs) {
+      if (l.startTime < weekStart.getTime() || !l.endTime) continue;
+      const who = (l.userName || '').trim();
+      if (who) byWorker.set(who, (byWorker.get(who) || 0) + lMs(l) / 60);
+    }
+    byWorker.forEach((h, name) => { if (h > topWorkerHrs) { topWorkerHrs = h; topWorker = name; } });
+  }
   // Revenue this week
   const revenue = completedThisWeek.reduce((a, j) => a + (j.quoteAmount || 0), 0);
 
   return (
     <div className="h-full w-full overflow-y-auto overflow-x-hidden">
       {/* minHeight inline: body.tv-mode * { min-height: 0 } outranks .min-h-full */}
-      <div className="flex items-center justify-center p-[clamp(1rem,2vw,2.5rem)]" style={{ minHeight: '100%' }}>
+      <div className="flex items-center justify-center" style={{ minHeight: '100%', padding: 'clamp(0.5rem, 2vh, 2.5rem) clamp(1rem, 2vw, 2.5rem)' }}>
       <div className="w-full max-w-6xl mx-auto">
         <p className="font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <TrendingUp className="w-4 h-4" aria-hidden="true" /> Weekly Output
         </p>
-        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.75rem)' }}>This Week at a Glance</h2>
+        <h2 className="font-black text-white tracking-tight text-center mt-1" style={{ fontSize: 'clamp(1.4rem, min(5vw, 7vh), 3.75rem)' }}>This Week at a Glance</h2>
 
         {/* Primary metrics — hero row. Revenue card only shows if admin opts-in (money is sensitive) */}
-        <div className={`mt-6 grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+        <div className={`mt-[clamp(0.5rem,2.5vh,1.5rem)] grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
           <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-4 text-center">
             <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Hours Logged</p>
             <p className="text-4xl font-black text-white tabular mt-1.5">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
@@ -1046,8 +1068,8 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
           </div>
           <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center min-w-0">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">{showCustomers ? 'Top Customer' : 'Top Contributor'}</p>
-            <p className="text-base font-black text-white truncate mt-1" title={showCustomers ? topCustomer : 'hidden'}>{showCustomers ? topCustomer : '—'}</p>
-            <p className="text-[9px] text-white/40">{topCustCount} {topCustCount === 1 ? 'job' : 'jobs'}</p>
+            <p className="text-base font-black text-white truncate mt-1" title={showCustomers ? topCustomer : topWorker}>{showCustomers ? topCustomer : topWorker}</p>
+            <p className="text-[9px] text-white/40">{showCustomers ? `${topCustCount} ${topCustCount === 1 ? 'job' : 'jobs'}` : `${topWorkerHrs.toFixed(1)}h this week`}</p>
           </div>
         </div>
 
@@ -1564,7 +1586,7 @@ const TvTodaySlide = React.memo(function TvTodaySlide({ jobs, allLogs, openJobs,
 });
 
 // Goal calculation helpers come from utils/goals.ts — same logic used by Settings editor
-import { computeGoalProgress, formatGoalValue, goalUnit } from './utils/goals';
+import { computeGoalProgress, formatGoalValue, goalTargetText } from './utils/goals';
 
 // ── Full-screen GOALS slide with progress gauges
 const TvGoalsSlide = React.memo(function TvGoalsSlide({ goals, jobs, logs, reworkCount, showRevenue = false }: { goals: ShopGoal[]; jobs: Job[]; logs: TimeLog[]; reworkCount: number; showRevenue?: boolean }) {
@@ -1615,30 +1637,30 @@ const TvGoalsSlide = React.memo(function TvGoalsSlide({ goals, jobs, logs, rewor
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">
-      <div className="flex flex-col justify-center" style={{ padding: 'clamp(1rem, 2.5vw, 3rem)', minHeight: '100%' }}>
+      <div className="flex flex-col justify-center" style={{ padding: 'clamp(0.5rem, 2.5vh, 3rem) clamp(1rem, 2.5vw, 3rem)', minHeight: '100%' }}>
       <div className="w-full max-w-6xl mx-auto">
         <p className="text-xs font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2">
           <Zap className="w-4 h-4" aria-hidden="true" /> Shop Goals
         </p>
-        <h2 className="font-black text-white tracking-tight text-center mt-2" style={{ fontSize: 'clamp(2rem, 5vw, 4rem)' }}>How we're tracking</h2>
-        <div className={`mt-[clamp(1rem,2vw,2rem)] grid gap-[clamp(0.5rem,1vw,1.25rem)] ${visible.length === 1 ? 'grid-cols-1' : visible.length <= 3 ? 'md:grid-cols-' + visible.length : 'md:grid-cols-3'}`}>
+        <h2 className="font-black text-white tracking-tight text-center mt-1" style={{ fontSize: 'clamp(1.4rem, min(5vw, 7vh), 4rem)' }}>How we're tracking</h2>
+        <div className={`mt-[clamp(0.5rem,2.5vh,2rem)] grid gap-[clamp(0.5rem,1vw,1.25rem)] ${visible.length === 1 ? 'grid-cols-1' : visible.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
           {visible.map(g => {
             const { current, pct } = computeGoalProgress(g, jobs, logs, reworkCount);
             const p = palette[g.color || 'blue'];
             const achieved = g.lowerIsBetter ? current <= g.target : current >= g.target;
             return (
-              <div key={g.id} className={`bg-gradient-to-br ${p.bg} to-transparent border-2 border-white/5 rounded-3xl p-6 relative overflow-hidden ${achieved ? 'ring-2 ' + p.ring : ''}`}>
+              <div key={g.id} className={`bg-gradient-to-br ${p.bg} to-transparent border-2 border-white/5 rounded-3xl relative overflow-hidden ${achieved ? 'ring-2 ' + p.ring : ''}`} style={{ padding: 'clamp(0.6rem, 2.4vh, 1.5rem) clamp(0.75rem, 1.6vw, 1.5rem)' }}>
                 <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
                 <div className="relative">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className={`text-[11px] font-black uppercase tracking-widest ${p.text}`}>{g.period} · {g.metric.replace(/-/g, ' ')}</p>
+                  <div className="flex items-center justify-between mb-[clamp(0.25rem,1vh,0.75rem)] gap-2">
+                    <p className={`text-[11px] font-black uppercase tracking-widest truncate ${p.text}`}>{g.period} · {g.metric.replace(/-/g, ' ')}</p>
                     {achieved && <span className="text-xs font-black uppercase tracking-widest text-emerald-400 flex items-center gap-1">✓ Hit</span>}
                   </div>
-                  <h3 className="text-2xl font-black text-white tracking-tight leading-tight mb-3">{g.label}</h3>
-                  {/* Big number */}
-                  <div className="flex items-baseline gap-2 mb-4">
-                    <span className="text-6xl font-black text-white tabular leading-none">{formatGoalValue(g, current)}</span>
-                    <span className="text-xl text-white/40 font-bold">/ {formatGoalValue(g, g.target)} {goalUnit(g)}</span>
+                  <h3 className="font-black text-white tracking-tight leading-tight line-clamp-2" style={{ fontSize: 'clamp(1rem, min(2.2vw, 4vh), 1.5rem)', marginBottom: 'clamp(0.25rem, 1.2vh, 0.75rem)' }}>{g.label}</h3>
+                  {/* Big number — the target wraps under it rather than running into it */}
+                  <div className="flex flex-wrap items-baseline gap-x-2" style={{ marginBottom: 'clamp(0.4rem, 1.6vh, 1rem)' }}>
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.9rem, min(5.5vw, 9vh), 3.75rem)' }}>{formatGoalValue(g, current)}</span>
+                    <span className="text-white/40 font-bold whitespace-nowrap" style={{ fontSize: 'clamp(0.85rem, min(1.6vw, 3vh), 1.25rem)' }}>/ {goalTargetText(g)}</span>
                   </div>
                   {/* Progress bar */}
                   <div className="h-3 rounded-full bg-white/5 overflow-hidden border border-white/5">
@@ -3018,7 +3040,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
         case 'news':
           return <TvNewsSlide pass={(slideCycleCounts[slide.id] || 1) - 1} />;
         case 'calendar':
-          return <TvCalendarSlide jobs={jobs} birthdays={settings.birthdays || EMPTY_BIRTHDAYS} />;
+          return <TvCalendarSlide jobs={jobs} birthdays={settings.birthdays || EMPTY_BIRTHDAYS} events={settings.shopEvents || EMPTY_EVENTS} showCustomers={settings.tvShowCustomerNames !== false} />;
         case 'birthday':
           return <TvBirthdaySlide names={todaysBirthdays} />;
         case 'message': {
@@ -3153,7 +3175,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
               ~900px so nothing gets clipped. */}
           <div
             className="shrink-0 flex items-center justify-between gap-3 sm:gap-6 border-b border-white/5 backdrop-blur-xl bg-black/20 flex-wrap"
-            style={{ padding: 'clamp(0.5rem, 1.2vw, 1.5rem) clamp(0.75rem, 2vw, 2rem)' }}
+            style={{ padding: 'clamp(0.35rem, min(1.2vw, 1.8vh), 1.5rem) clamp(0.75rem, 2vw, 2rem)' }}
           >
             {/* Left — shop */}
             <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -3176,7 +3198,10 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             {/* Center — clock */}
             {settings.tvShowClock !== false && <div className="shrink-0 text-center">
               <LiveClock size="huge" />
-              <p className="text-white/40 font-semibold mt-1 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.875rem)' }}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+              <p className="text-white/40 font-semibold mt-1 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.875rem)' }}>
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                {settings.tvShowWeather !== false && <span className="min-[1100px]:hidden"><TvInlineTemp lat={settings.weatherLat} lon={settings.weatherLon} /></span>}
+              </p>
             </div>}
 
             {/* Right — stats + weather */}
@@ -3231,7 +3256,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                 )}
               </div>}
               {/* Weather — compact inline */}
-              {settings.tvShowWeather !== false && <TVWeather lat={settings.weatherLat} lon={settings.weatherLon} />}
+              {settings.tvShowWeather !== false && <div className="hidden min-[1100px]:block"><TVWeather lat={settings.weatherLat} lon={settings.weatherLon} /></div>}
             </div>
           </div>
 
@@ -3246,7 +3271,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
           {/* Slide indicators + slide label — bottom of screen */}
           {configuredTvSlides.length > 1 && (
-            <div className="tv-chrome shrink-0 border-t border-white/5 bg-black/40 backdrop-blur-xl flex items-center justify-center gap-2 flex-wrap" style={{ padding: 'clamp(0.35rem, 0.6vw, 0.75rem) clamp(0.75rem, 2vw, 2rem)' }}>
+            <div className="shrink-0 flex items-center justify-center gap-2 flex-wrap opacity-70" style={{ padding: 'clamp(0.2rem, 0.8vh, 0.6rem) clamp(0.75rem, 2vw, 2rem)' }}>
               {configuredTvSlides.map((s, i) => (
                 <button
                   key={s.id}

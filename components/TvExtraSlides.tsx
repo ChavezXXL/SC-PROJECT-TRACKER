@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { Job, TeamBirthday } from '../types';
+import type { Job, TeamBirthday, ShopEvent } from '../types';
 import { dueNum, isJobClosed } from '../utils/dueDates';
 import { getHolidays, type HolidayRecord } from '../services/holidays';
 import { tvEvent } from '../utils/tvRuntime';
@@ -87,18 +87,38 @@ export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: num
 });
 
 // ── Calendar ─────────────────────────────────────────────────────────
-// This month: jobs due each day (open jobs, the shared due rule), US
-// holidays, and team birthdays, with what's coming up next.
+// This month at a glance: which jobs are due each day (open jobs, the shared
+// due rule), US holidays, team birthdays and the shop's own days (closed,
+// audits, visits) — plus a "due next" list readable from across the shop.
 
 const holidayCache = new Map<number, HolidayRecord[]>();
 
 const ymd = (d: Date) => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const numDate = (n: number) => new Date(Math.floor(n / 10000), Math.floor(n / 100) % 100 - 1, n % 100);
+const jobLabel = (j: Job) => (j.partNumber || j.jobIdsDisplay || j.poNumber || 'Job').trim();
+const isUrgent = (j: Job) => j.priority === 'urgent' || j.priority === 'high';
 
-export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birthdays }: { jobs: Job[]; birthdays: TeamBirthday[] }) {
+// Sizes follow the screen's width AND height (a 960×540 TV and a 4K panel alike).
+const fs = {
+  tiny: 'clamp(0.55rem, min(1vw, 2.1vh), 0.9rem)',
+  small: 'clamp(0.6rem, min(1.1vw, 2.3vh), 0.95rem)',
+  body: 'clamp(0.75rem, min(1.4vw, 2.9vh), 1.2rem)',
+  day: 'clamp(0.75rem, min(1.5vw, 3vh), 1.3rem)',
+  title: 'clamp(1.1rem, min(3vw, 5.5vh), 2.5rem)',
+};
+
+export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birthdays, events = [], showCustomers = true }: {
+  jobs: Job[];
+  birthdays: TeamBirthday[];
+  events?: ShopEvent[];
+  showCustomers?: boolean;
+}) {
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
   const todayN = ymd(now);
+  const tomorrowN = ymd(new Date(year, month, now.getDate() + 1));
   const [holidays, setHolidays] = useState<HolidayRecord[]>(() => holidayCache.get(year) || []);
   useEffect(() => {
     if (holidayCache.has(year)) return;
@@ -107,24 +127,39 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
     return () => { alive = false; };
   }, [year]);
 
-  const dueByDay = useMemo(() => {
-    const m = new Map<number, number>();
+  // Open jobs with a due date, soonest first; urgent ones first within a day.
+  const openDue = useMemo(() => {
+    const list: { n: number; job: Job }[] = [];
     for (const j of jobs) {
       if (isJobClosed(j)) continue;
       const n = dueNum(j.dueDate);
-      if (n) m.set(n, (m.get(n) || 0) + 1);
+      if (n) list.push({ n, job: j });
     }
-    return m;
+    return list.sort((a, b) => a.n - b.n || Number(isUrgent(b.job)) - Number(isUrgent(a.job)));
   }, [jobs]);
-  const overdueCount = useMemo(() => [...dueByDay].filter(([n]) => n < todayN).reduce((a, [, c]) => a + c, 0), [dueByDay, todayN]);
+  const dueByDay = useMemo(() => {
+    const m = new Map<number, Job[]>();
+    for (const { n, job } of openDue) { const a = m.get(n); if (a) a.push(job); else m.set(n, [job]); }
+    return m;
+  }, [openDue]);
+  const overdue = useMemo(() => openDue.filter(d => d.n < todayN), [openDue, todayN]);
+  const dueNext = useMemo(() => openDue.filter(d => d.n >= todayN).slice(0, 6), [openDue, todayN]);
 
   const holidayByDay = useMemo(() => {
     const m = new Map<number, string>();
     for (const h of holidays) { const n = Number(h.date.replace(/-/g, '')); if (n) m.set(n, h.localName || h.name); }
     return m;
   }, [holidays]);
-
-  const bdaysByDay = (mm: number, dd: number) => birthdays.filter(b => b.month === mm && b.day === dd).map(b => b.name.trim().split(/\s+/)[0]);
+  const eventsByDay = useMemo(() => {
+    const m = new Map<number, string[]>();
+    for (const e of events) {
+      const n = Number((e.date || '').replace(/-/g, ''));
+      if (!n || !e.label?.trim()) continue;
+      const a = m.get(n); if (a) a.push(e.label.trim()); else m.set(n, [e.label.trim()]);
+    }
+    return m;
+  }, [events]);
+  const bdaysOn = (mm: number, dd: number) => birthdays.filter(b => b.month === mm && b.day === dd).map(b => b.name.trim().split(/\s+/)[0]);
 
   const first = new Date(year, month, 1);
   const daysIn = new Date(year, month + 1, 0).getDate();
@@ -132,85 +167,125 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
   while (cells.length % 7) cells.push(null);
   const rows = cells.length / 7;
 
-  // Coming up: birthdays and holidays in the next 30 days.
+  // Coming up: shop days, birthdays and holidays in the next 30 days.
   const upcoming = useMemo(() => {
-    const out: { at: Date; label: string; kind: 'bday' | 'holiday' }[] = [];
+    const out: { at: Date; label: string; kind: 'event' | 'bday' | 'holiday' }[] = [];
     for (let i = 0; i <= 30; i++) {
       const d = new Date(year, month, now.getDate() + i);
-      for (const name of birthdays.filter(b => b.month === d.getMonth() + 1 && b.day === d.getDate()).map(b => b.name)) out.push({ at: d, label: name, kind: 'bday' });
-      const h = holidayByDay.get(ymd(d));
+      const n = ymd(d);
+      for (const label of eventsByDay.get(n) || []) out.push({ at: d, label, kind: 'event' });
+      for (const b of birthdays.filter(b => b.month === d.getMonth() + 1 && b.day === d.getDate())) out.push({ at: d, label: b.name, kind: 'bday' });
+      const h = holidayByDay.get(n);
       if (h) out.push({ at: d, label: h, kind: 'holiday' });
     }
-    return out.slice(0, 6);
+    return out.slice(0, 4);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [birthdays, holidayByDay, todayN]);
-  const dueThisWeek = useMemo(() => {
-    let c = 0;
-    for (let i = 0; i < 7; i++) c += dueByDay.get(ymd(new Date(year, month, now.getDate() + i))) || 0;
-    return c;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dueByDay, todayN]);
+  }, [birthdays, holidayByDay, eventsByDay, todayN]);
 
-  const small = { fontSize: 'clamp(0.55rem, 0.8vw, 0.8rem)' };
+  const dayChip = (n: number) => n === todayN ? 'Today' : n === tomorrowN ? 'Tmrw'
+    : (() => { const d = numDate(n); return d.getMonth() === month ? `${DOW[d.getDay()]} ${d.getDate()}` : `${MON[d.getMonth()]} ${d.getDate()}`; })();
+
   return (
-    <div className="h-full flex gap-[clamp(0.75rem,1.5vw,1.5rem)] overflow-hidden px-[clamp(1rem,2.5vw,3rem)] py-[clamp(0.5rem,1.2vw,1.25rem)]">
+    <div className="h-full flex overflow-hidden" style={{ gap: 'clamp(0.6rem, 1.5vw, 1.5rem)', padding: 'clamp(0.4rem, 1.6vh, 1.25rem) clamp(1rem, 2.5vw, 3rem)' }}>
+      {/* The month */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <div className="shrink-0 flex items-end justify-between gap-2 mb-2">
-          <h2 className="font-black text-white" style={{ fontSize: 'clamp(1.4rem, 3vw, 2.5rem)' }}>
+        <div className="shrink-0 flex items-end justify-between gap-2" style={{ marginBottom: 'clamp(0.2rem, 0.8vh, 0.5rem)' }}>
+          <h2 className="font-black text-white leading-none" style={{ fontSize: fs.title }}>
             {first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
           </h2>
-          <p className="font-bold text-white/40 flex items-center gap-3" style={small}>
-            <span><span className="text-amber-300">■</span> jobs due</span><span>🎂 birthday</span><span className="text-sky-300">★ holiday</span>
+          <p className="font-bold text-white/45 flex items-center gap-3 whitespace-nowrap" style={{ fontSize: fs.tiny }}>
+            <span><span className="text-amber-300">■</span> due</span><span className="text-red-300">■ late</span>
+            <span className="text-teal-200">📌 shop</span><span>🎂</span><span className="text-sky-300">★ holiday</span>
           </p>
         </div>
-        <div className="grid grid-cols-7 gap-1 shrink-0 mb-1">
-          {DOW.map(d => <div key={d} className="text-center font-black text-white/40 uppercase" style={small}>{d}</div>)}
+        <div className="grid grid-cols-7 gap-1 shrink-0" style={{ marginBottom: '0.2rem' }}>
+          {DOW.map(d => <div key={d} className="text-center font-black text-white/40 uppercase" style={{ fontSize: fs.tiny }}>{d}</div>)}
         </div>
         <div className="flex-1 min-h-0 grid grid-cols-7 gap-1" style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
           {cells.map((day, i) => {
             if (!day) return <div key={i} />;
             const n = year * 10000 + (month + 1) * 100 + day;
-            const due = dueByDay.get(n) || 0;
+            const dayJobs = dueByDay.get(n) || [];
             const isToday = n === todayN;
-            const late = n < todayN && due > 0;
-            const soon = n >= todayN && n <= ymd(new Date(year, month, now.getDate() + 3));
+            const past = n < todayN;
+            const late = past && dayJobs.length > 0;
+            const soon = !past && n <= ymd(new Date(year, month, now.getDate() + 3));
+            const weekend = (i % 7) === 0 || (i % 7) === 6;
+            const shopDays = eventsByDay.get(n) || [];
             const holiday = holidayByDay.get(n);
-            const names = bdaysByDay(month + 1, day);
-            const tone = late ? 'bg-red-600 text-white' : isToday && due ? 'bg-orange-500 text-black' : soon && due ? 'bg-amber-400 text-black' : 'bg-white/10 text-white/80';
+            const names = bdaysOn(month + 1, day);
+            const badge = late ? 'bg-red-600 text-white' : isToday && dayJobs.length ? 'bg-orange-500 text-black' : soon && dayJobs.length ? 'bg-amber-400 text-black' : 'bg-white/15 text-white/85';
+            // Two lines fit: the shop's own days first, then holiday,
+            // birthdays, then which parts are due.
+            const lines: { t: string; c: string }[] = [
+              ...shopDays.map(t => ({ t: `📌 ${t}`, c: 'text-teal-200' })),
+              ...(holiday ? [{ t: `★ ${holiday}`, c: 'text-sky-300' }] : []),
+              ...(names.length ? [{ t: `🎂 ${names.join(', ')}`, c: 'text-pink-200' }] : []),
+              ...dayJobs.map(j => ({ t: jobLabel(j), c: late ? 'text-red-200' : isUrgent(j) ? 'text-amber-200' : 'text-white/65' })),
+            ];
+            const shown = lines.slice(0, 2);
+            const more = lines.length - shown.length;
             return (
-              <div key={i} className={`rounded-lg border overflow-hidden p-1 flex flex-col gap-0.5 min-w-0 ${isToday ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/60' : names.length ? 'border-pink-500/40 bg-pink-500/10' : 'border-white/5 bg-zinc-900/60'}`}>
+              <div key={i} className={`rounded-lg border overflow-hidden flex flex-col min-w-0 ${isToday ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/60' : shopDays.length ? 'border-teal-400/40 bg-teal-500/10' : names.length ? 'border-pink-500/40 bg-pink-500/10' : weekend ? 'border-white/5 bg-zinc-900/30' : 'border-white/5 bg-zinc-900/60'}`}
+                style={{ padding: 'clamp(0.15rem, 0.6vh, 0.4rem)', gap: '0.05rem' }}>
                 <div className="flex items-center justify-between gap-1">
-                  <span className={`font-black tabular leading-none ${isToday ? 'text-amber-300' : 'text-white/80'}`} style={{ fontSize: 'clamp(0.75rem, 1.4vw, 1.3rem)' }}>{day}</span>
-                  {due > 0 && <span className={`rounded px-1 font-black tabular leading-tight ${tone}`} style={small}>{due} due</span>}
+                  <span className={`font-black tabular leading-none ${isToday ? 'text-amber-300' : past ? 'text-white/35' : 'text-white/85'}`} style={{ fontSize: fs.day }}>{day}</span>
+                  {dayJobs.length > 0 && <span className={`rounded px-1 font-black tabular leading-tight ${badge}`} style={{ fontSize: fs.tiny }}>{dayJobs.length} due</span>}
                 </div>
-                {names.length > 0 && <p className="font-black text-pink-200 truncate leading-tight" style={small}>🎂 {names.slice(0, 2).join(', ')}{names.length > 2 ? ` +${names.length - 2}` : ''}</p>}
-                {holiday && <p className="font-bold text-sky-300 truncate leading-tight" style={small}>★ {holiday}</p>}
+                {shown.map((l, k) => (
+                  <p key={k} className={`font-bold truncate leading-tight ${l.c} ${past && !late ? 'opacity-60' : ''}`} style={{ fontSize: fs.tiny }}>
+                    {l.t}{k === shown.length - 1 && more > 0 ? ` +${more}` : ''}
+                  </p>
+                ))}
               </div>
             );
           })}
         </div>
       </div>
-      {/* A div, not <aside>: TV mode hides every aside (that rule is for the app sidebar). */}
-      <div className="w-[26%] max-w-xs shrink-0 flex flex-col gap-2 min-w-0">
-        <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
-          <p className="font-black text-white/40 uppercase tracking-widest" style={small}>Due this week</p>
-          <p className="font-black text-white tabular" style={{ fontSize: 'clamp(1.5rem, 3vw, 2.6rem)' }}>{dueThisWeek} <span className="text-white/40" style={{ fontSize: 'clamp(0.75rem, 1.2vw, 1.1rem)' }}>jobs</span></p>
-          {overdueCount > 0 && <p className="font-black text-red-400" style={small}>+ {overdueCount} overdue</p>}
-        </div>
-        <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3 flex-1 min-h-0 overflow-hidden">
-          <p className="font-black text-white/40 uppercase tracking-widest mb-1.5" style={small}>Coming up</p>
-          {upcoming.length === 0 ? (
-            <p className="text-white/40" style={small}>No birthdays or holidays in the next month.</p>
+
+      {/* Due next + coming up. A div, not <aside>: TV mode hides every aside. */}
+      <div className="w-[30%] max-w-sm shrink-0 flex flex-col min-w-0" style={{ gap: 'clamp(0.4rem, 1.2vh, 0.75rem)' }}>
+        <div className="rounded-xl border border-white/10 bg-zinc-900/60 min-h-0 flex flex-col overflow-hidden" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.9rem)', flex: '1 1 60%' }}>
+          <div className="flex items-baseline justify-between gap-2 shrink-0">
+            <p className="font-black text-white/45 uppercase tracking-widest" style={{ fontSize: fs.tiny }}>Due next</p>
+            {overdue.length > 0 && (
+              <p className="font-black text-red-400 whitespace-nowrap" style={{ fontSize: fs.small }}>{overdue.length} overdue</p>
+            )}
+          </div>
+          {dueNext.length === 0 ? (
+            <p className="text-white/45 mt-1" style={{ fontSize: fs.small }}>Nothing else due — all caught up.</p>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="mt-1 min-h-0 overflow-hidden" style={{ display: 'grid', gap: 'clamp(0.15rem, 0.7vh, 0.4rem)' }}>
+              {dueNext.map(({ n, job }) => {
+                const chip = n === todayN ? 'bg-orange-500 text-black' : n <= ymd(new Date(year, month, now.getDate() + 3)) ? 'bg-amber-400 text-black' : 'bg-white/10 text-white/80';
+                const sub = [showCustomers ? job.customer : '', job.quantity ? `${job.quantity} pc` : ''].filter(Boolean).join(' · ');
+                return (
+                  <li key={job.id} className="flex items-center gap-2 min-w-0">
+                    <span className={`shrink-0 rounded-md px-1.5 font-black tabular text-center ${chip}`} style={{ fontSize: fs.small, minWidth: '3.6em' }}>{dayChip(n)}</span>
+                    <span className="min-w-0">
+                      <span className={`block font-black truncate leading-tight ${isUrgent(job) ? 'text-amber-200' : 'text-white'}`} style={{ fontSize: fs.body }}>{jobLabel(job)}</span>
+                      {sub && <span className="block text-white/45 font-bold truncate leading-tight" style={{ fontSize: fs.tiny }}>{sub}</span>}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <div className="rounded-xl border border-white/10 bg-zinc-900/60 min-h-0 overflow-hidden" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.9rem)', flex: '1 1 40%' }}>
+          <p className="font-black text-white/45 uppercase tracking-widest" style={{ fontSize: fs.tiny }}>Coming up</p>
+          {upcoming.length === 0 ? (
+            <p className="text-white/45 mt-1" style={{ fontSize: fs.small }}>No shop days, birthdays or holidays this month.</p>
+          ) : (
+            <ul className="mt-1" style={{ display: 'grid', gap: 'clamp(0.15rem, 0.7vh, 0.4rem)' }}>
               {upcoming.map((u, i) => {
                 const isToday = ymd(u.at) === todayN;
+                const tone = u.kind === 'event' ? 'text-teal-200' : u.kind === 'bday' ? 'text-pink-200' : 'text-sky-300';
+                const mark = u.kind === 'event' ? '📌' : u.kind === 'bday' ? '🎂' : '★';
                 return (
-                  <li key={i} className="min-w-0">
-                    <p className={`font-black truncate ${u.kind === 'bday' ? 'text-pink-200' : 'text-sky-300'}`} style={{ fontSize: 'clamp(0.7rem, 1.1vw, 1rem)' }}>
-                      {u.kind === 'bday' ? '🎂' : '★'} {u.label}
-                    </p>
-                    <p className="text-white/45 font-bold" style={small}>{isToday ? 'Today!' : u.at.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
+                  <li key={i} className="min-w-0 flex items-baseline justify-between gap-2">
+                    <span className={`font-black truncate ${tone}`} style={{ fontSize: fs.small }}>{mark} {u.label}</span>
+                    <span className="shrink-0 text-white/45 font-bold" style={{ fontSize: fs.tiny }}>{isToday ? 'Today!' : `${DOW[u.at.getDay()]} ${MON[u.at.getMonth()]} ${u.at.getDate()}`}</span>
                   </li>
                 );
               })}

@@ -284,6 +284,11 @@
                 body.tv-mode.tv-pointer { cursor: default; }
                 body.tv-mode.tv-pointer .tv-chrome:hover { opacity: 1; }
                 body.tv-mode .tv-chrome { opacity: 0; transition: opacity 0.3s; }
+                /* No scrollbars on the wall: lists scroll by themselves, and the
+                   bars showed as a grey line down the right edge — with a mouse
+                   jiggler's arrow appearing whenever it sat over one. */
+                body.tv-mode * { scrollbar-width: none; }
+                body.tv-mode *::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
                 /* ── TV Mode hardening: prevent content getting cut off ──
                    The wall TV is unforgiving — anything that overflows the

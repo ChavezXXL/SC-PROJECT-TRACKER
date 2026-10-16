@@ -769,6 +769,7 @@ export interface SystemSettings {
   // Slideshow
   tvSlides?: TvSlide[];        // Ordered list of slides for TV rotation
   birthdays?: TeamBirthday[];  // TV calendar + a happy-birthday slide on the day
+  shopEvents?: ShopEvent[];   // TV calendar: days off, audits, visits
   tvSlideDuration?: number;    // Default seconds per slide (default 15)
   tvSlideshowEnabled?: boolean; // Enable slideshow rotation
   tvToken?: string;            // Unique token for shareable TV URL (?tv=TOKEN)
@@ -998,6 +999,13 @@ export interface TeamBirthday {
   name: string;
   month: number;   // 1–12
   day: number;     // 1–31
+}
+
+/** A day on the shop's own calendar — closed, an audit, a customer visit. */
+export interface ShopEvent {
+  id: string;
+  date: string;    // YYYY-MM-DD
+  label: string;
 }
 
 /** A wall TV that checks in every few minutes, so the office can see it's
