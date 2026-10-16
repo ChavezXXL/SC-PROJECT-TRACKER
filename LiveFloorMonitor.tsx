@@ -323,7 +323,7 @@ const LiveClock = React.memo(function LiveClock({ size = 'xl' }: { size?: 'md' |
   const sz = { md: 'text-2xl', lg: 'text-4xl', xl: 'text-6xl', huge: '' }[size];
   // The wall-TV clock follows the screen's height too: on a 960×540 TV the
   // fixed 8xl clock (and the header around it) took a third of the screen.
-  const hugeStyle = size === 'huge' ? { fontSize: 'clamp(2.75rem, min(7.5vw, 12vh), 6rem)' } : undefined;
+  const hugeStyle = size === 'huge' ? { fontSize: 'clamp(3.25rem, min(8.5vw, 13.5vh), 7rem)' } : undefined;
   const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   const timeParts = time.split(' ');
   const clockTime = timeParts[0] || time;
@@ -331,7 +331,7 @@ const LiveClock = React.memo(function LiveClock({ size = 'xl' }: { size?: 'md' |
   return (
     <div className="flex items-baseline gap-3">
       <span className={`${sz} font-black text-white tabular tracking-tight leading-none`} style={{ textShadow: '0 0 40px rgba(59,130,246,0.3)', ...hugeStyle }}>{clockTime}</span>
-      {ampm && <span className={`text-white/40 font-bold ${size === 'huge' ? '' : 'text-2xl'}`} style={size === 'huge' ? { fontSize: 'clamp(0.9rem, min(2vw, 3.5vh), 1.5rem)' } : undefined}>{ampm}</span>}
+      {ampm && <span className={`text-white/40 font-bold ${size === 'huge' ? '' : 'text-2xl'}`} style={size === 'huge' ? { fontSize: 'clamp(1rem, min(2.3vw, 4vh), 1.75rem)' } : undefined}>{ampm}</span>}
     </div>
   );
 });
@@ -930,13 +930,13 @@ const TvWeatherSlide = React.memo(function TvWeatherSlide({ lat, lon }: { lat?: 
             {/* CURRENT — vertical sizes clamp on vh so 720p TVs fit; the vh terms
                 exceed the caps at 1080p+, so big TVs render pixel-identical. */}
             {current && (
-              <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl flex items-center justify-around" style={{ marginTop: 'clamp(0.5rem, 2.5vh, 2.5rem)', padding: 'clamp(0.5rem, 2.2vh, 2rem)' }}>
+              <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-3xl flex items-center justify-around" style={{ marginTop: 'clamp(0.4rem, 1.8vh, 2.5rem)', padding: 'clamp(0.4rem, 2vh, 2rem)' }}>
                 <div className="text-center">
-                  <div className="flex items-center justify-center mb-1">{weatherIcon(current.code, 'w-14 h-14')}</div>
+                  <div className="flex items-center justify-center mb-1">{weatherIcon(current.code, 'w-12 h-12')}</div>
                   <p className="text-2xl font-bold text-white/80">{weatherLabel(current.code)}</p>
                 </div>
                 <div className="text-center">
-                  <div className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(2.75rem, 12vh, 8rem)' }}>{current.temp}°</div>
+                  <div className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(2.5rem, 11vh, 8rem)' }}>{current.temp}°</div>
                   <p className="text-xl text-white/50 mt-1">Right now</p>
                 </div>
                 {today && (
@@ -950,7 +950,7 @@ const TvWeatherSlide = React.memo(function TvWeatherSlide({ lat, lon }: { lat?: 
             )}
             {/* 5-DAY */}
             {forecast.length > 1 && (
-              <div className="grid grid-cols-5 gap-3" style={{ marginTop: 'clamp(0.5rem, 2vh, 1.5rem)' }}>
+              <div className="grid grid-cols-5 gap-3" style={{ marginTop: 'clamp(0.4rem, 1.4vh, 1.5rem)' }}>
                 {forecast.slice(0, 5).map((d, i) => (
                   <div key={d.dateMs} className={`rounded-2xl border text-center ${i === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-zinc-900/50 border-white/5'}`} style={{ padding: 'clamp(0.4rem, 1.8vh, 1rem)' }}>
                     <p className={`text-xs font-black uppercase tracking-widest mb-1 ${i === 0 ? 'text-blue-400' : 'text-white/40'}`}>{d.dayLabel}</p>
@@ -1026,47 +1026,47 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
         <p className="font-black text-emerald-400/80 uppercase tracking-[0.3em] text-center flex items-center justify-center gap-2" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
           <TrendingUp className="w-4 h-4" aria-hidden="true" /> Weekly Output
         </p>
-        <h2 className="font-black text-white tracking-tight text-center mt-1" style={{ fontSize: 'clamp(1.4rem, min(5vw, 7vh), 3.75rem)' }}>This Week at a Glance</h2>
+        <h2 className="font-black text-white tracking-tight text-center mt-1" style={{ fontSize: 'clamp(1.3rem, min(5vw, 6vh), 3.75rem)' }}>This Week at a Glance</h2>
 
         {/* Primary metrics — hero row. Revenue card only shows if admin opts-in (money is sensitive) */}
         <div className={`mt-[clamp(0.5rem,2.5vh,1.5rem)] grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
-          <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
+          <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-[clamp(0.35rem,1.3vh,1rem)] text-center">
             <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Hours Logged</p>
-            <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
+            <p className="text-[length:clamp(1.4rem,min(4vw,6.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
           </div>
-          <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
+          <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl p-[clamp(0.35rem,1.3vh,1rem)] text-center">
             <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Jobs Completed</p>
-            <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{completedCount}</p>
+            <p className="text-[length:clamp(1.4rem,min(4vw,6.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{completedCount}</p>
             <p className="text-[9px] text-white/40 mt-0.5">{totalJobs} touched</p>
           </div>
-          <div className="bg-gradient-to-br from-cyan-500/15 to-cyan-500/[0.02] border border-cyan-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
+          <div className="bg-gradient-to-br from-cyan-500/15 to-cyan-500/[0.02] border border-cyan-500/20 rounded-2xl p-[clamp(0.35rem,1.3vh,1rem)] text-center">
             <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">On-Time</p>
-            <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{onTimePct}<span className="text-xl text-white/50">%</span></p>
+            <p className="text-[length:clamp(1.4rem,min(4vw,6.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{onTimePct}<span className="text-xl text-white/50">%</span></p>
             <p className="text-[9px] text-white/40 mt-0.5">{onTimeCount} of {otWeek.judged}</p>
           </div>
           {showRevenue && (
-            <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
+            <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-[clamp(0.35rem,1.3vh,1rem)] text-center">
               <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Revenue</p>
-              <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">${Math.round(revenue).toLocaleString()}</p>
+              <p className="text-[length:clamp(1.4rem,min(4vw,6.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">${Math.round(revenue).toLocaleString()}</p>
             </div>
           )}
         </div>
 
         {/* Secondary metrics — smaller row */}
-        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center">
+        <div className="mt-[clamp(0.3rem,1.2vh,0.75rem)] grid grid-cols-2 md:grid-cols-4 gap-[clamp(0.4rem,1.2vh,0.75rem)]">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.3rem,1.1vh,0.75rem)] text-center">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Active Workers</p>
             <p className="text-[length:clamp(1.1rem,min(2.6vw,5vh),1.5rem)] font-black text-white tabular mt-0.5 leading-tight">{uniqueWorkers}</p>
           </div>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.3rem,1.1vh,0.75rem)] text-center">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Sessions</p>
             <p className="text-[length:clamp(1.1rem,min(2.6vw,5vh),1.5rem)] font-black text-white tabular mt-0.5 leading-tight">{totalSessions}</p>
           </div>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.3rem,1.1vh,0.75rem)] text-center">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Avg / Job</p>
             <p className="text-[length:clamp(1.1rem,min(2.6vw,5vh),1.5rem)] font-black text-white tabular mt-0.5 leading-tight">{avgPerJob.toFixed(1)}<span className="text-base text-white/50">h</span></p>
           </div>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center min-w-0">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.3rem,1.1vh,0.75rem)] text-center min-w-0">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">{showCustomers ? 'Top Customer' : 'Top Contributor'}</p>
             <p className="text-base font-black text-white truncate mt-1" title={showCustomers ? topCustomer : topWorker}>{showCustomers ? topCustomer : topWorker}</p>
             <p className="text-[9px] text-white/40">{showCustomers ? `${topCustCount} ${topCustCount === 1 ? 'job' : 'jobs'}` : `${topWorkerHrs.toFixed(1)}h this week`}</p>
@@ -1074,12 +1074,12 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
         </div>
 
         {/* Bar chart */}
-        <div className="mt-[clamp(0.4rem,2vh,1.25rem)] bg-zinc-900/50 border border-white/5 rounded-3xl p-[clamp(0.5rem,2vh,1.25rem)]">
+        <div className="mt-[clamp(0.3rem,1.2vh,1.25rem)] bg-zinc-900/50 border border-white/5 rounded-3xl p-[clamp(0.4rem,1.4vh,1.25rem)]">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Hours by Day</p>
             <p className="text-[10px] text-white/30">Peak: {Math.max(0, ...daily.map(d => d.hours)).toFixed(1)}h · Avg: {(totalH / 7).toFixed(1)}h/day</p>
           </div>
-          <div className="flex items-end justify-around gap-3 h-[clamp(3.5rem,14vh,11rem)]">
+          <div className="flex items-end justify-around gap-3 h-[clamp(3rem,9.5vh,11rem)]">
             {daily.map((d) => {
               const pct = (d.hours / maxH) * 100;
               return (
@@ -1745,6 +1745,27 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
       .sort(compareByDue)
       .slice(0, sorted.length === 0 ? 0 : 6);
   }, [wide, sorted, jobs]);
+  // Only whole rows of "due next" cards: measure the room left and how tall
+  // a card is, so nothing is ever cut off at the bottom of the TV.
+  const nextGridRef = useRef<HTMLDivElement | null>(null);
+  const [nextFit, setNextFit] = useState(4);
+  useEffect(() => {
+    const el = nextGridRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const fit = () => {
+      const first = el.firstElementChild as HTMLElement | null;
+      if (!first) return;
+      const gap = parseFloat(getComputedStyle(el).rowGap) || 8;
+      const cols = getComputedStyle(el).gridTemplateColumns.split(' ').length || 2;
+      const rows = Math.max(1, Math.floor((el.clientHeight + gap) / (first.getBoundingClientRect().height + gap)));
+      const n = Math.min(6, rows * cols);
+      setNextFit(prev => prev === n ? prev : n);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [dueNext.length]);
   const tile = 'clamp(3.25rem, 5.5vw, 5.25rem)';
   const chip = { fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' };
 
@@ -1806,19 +1827,19 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
       {dueNext.length > 0 ? (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-8 pt-6" style={{ gap: 'clamp(0.75rem, 3vh, 1.5rem)' }}>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0">{sorted.map(log => card(log, 0))}</div>
-          <div className="min-h-0 flex flex-col">
-            <p className="font-black text-white/45 uppercase tracking-[0.3em] mb-2" style={{ fontSize: 'clamp(0.7rem, 0.95vw, 0.9rem)' }}>Due next</p>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <p className="font-black text-white/45 uppercase tracking-[0.3em] mb-2 shrink-0" style={{ fontSize: 'clamp(0.7rem, 0.95vw, 0.9rem)' }}>Due next</p>
             {/* Rows keep their height (TV mode sets min-height: 0 on everything,
                 which let cards squeeze and overlap); extra rows clip at the bottom. */}
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 min-h-0 overflow-hidden" style={{ gridAutoRows: 'max-content' }}>
-              {dueNext.slice(0, sorted.length >= 2 || window.innerHeight < 700 ? 4 : 6).map(job => (
+            <div ref={nextGridRef} className="flex-1 grid grid-cols-2 xl:grid-cols-3 gap-2 min-h-0 overflow-hidden content-start" style={{ gridAutoRows: 'max-content' }}>
+              {dueNext.slice(0, nextFit).map(job => (
                 <div key={job.id} className="rounded-2xl border border-white/5 bg-zinc-900/60 flex items-center gap-3 min-w-0" style={{ padding: 'clamp(0.3rem, 1vh, 0.7rem) clamp(0.5rem, 1vw, 0.8rem)' }}>
                   <TvPartPhoto src={job.partImage} size="clamp(2.25rem, 7.5vh, 3.75rem)" />
                   <div className="min-w-0 flex-1">
-                    <p className={`font-black truncate leading-tight ${job.priority === 'urgent' ? 'text-amber-200' : 'text-white'}`} style={{ fontSize: 'clamp(0.85rem, min(1.6vw, 3.2vh), 1.3rem)' }}>{job.partNumber || job.jobIdsDisplay || `PO ${job.poNumber}`}</p>
+                    <p className={`font-black truncate leading-tight ${job.priority === 'urgent' ? 'text-amber-200' : 'text-white'}`} style={{ fontSize: 'clamp(1rem, min(2vw, 3.8vh), 1.5rem)' }}>{job.partNumber || job.jobIdsDisplay || `PO ${job.poNumber}`}</p>
                     <div className="flex items-center gap-2 mt-0.5 min-w-0">
                       <TvDueChip raw={job.dueDate} />
-                      <span className="text-white/50 font-bold truncate" style={{ fontSize: 'clamp(0.6rem, min(1vw, 2.2vh), 0.85rem)' }}>PO {job.poNumber}{job.quantity ? ` · ${job.quantity.toLocaleString()} pc` : ''}</span>
+                      <span className="text-white/60 font-bold truncate" style={{ fontSize: 'clamp(0.7rem, min(1.25vw, 2.5vh), 1rem)' }}>PO {job.poNumber}{job.quantity ? ` · ${job.quantity.toLocaleString()} pc` : ''}</span>
                     </div>
                   </div>
                 </div>
@@ -3214,9 +3235,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           >
             {/* Left — shop */}
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              {settings.tvCompanyHeader !== false && settings.companyLogo && <img src={settings.companyLogo} alt="" className="object-contain shrink-0" style={{ height: 'clamp(1.75rem, 3.5vw, 3rem)' }} />}
+              {settings.tvCompanyHeader !== false && settings.companyLogo && <img src={settings.companyLogo} alt="" className="object-contain shrink-0" style={{ height: 'clamp(2rem, min(4.5vw, 8vh), 3.5rem)' }} />}
               <div className="min-w-0">
-                {settings.tvCompanyHeader !== false && settings.companyName && <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1rem, 1.8vw, 1.5rem)' }}>{settings.companyName}</p>}
+                {settings.tvCompanyHeader !== false && settings.companyName && <p className="font-black text-white tracking-tight truncate" style={{ fontSize: 'clamp(1.1rem, min(2.2vw, 4vh), 1.75rem)' }}>{settings.companyName}</p>}
                 {/* Truthful status: the old pulsing "LIVE" dot stayed on even
                     when the TV had lost its connection hours ago. */}
                 {settings.tvShowConnection !== false ? (
@@ -3233,7 +3254,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
             {/* Center — clock */}
             {settings.tvShowClock !== false && <div className="shrink-0 text-center">
               <LiveClock size="huge" />
-              <p className="text-white/40 font-semibold mt-1 truncate" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.875rem)' }}>
+              <p className="text-white/50 font-semibold mt-1 truncate" style={{ fontSize: 'clamp(0.75rem, min(1.5vw, 2.7vh), 1.1rem)' }}>
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
                 {settings.tvShowWeather !== false && <span className="min-[1100px]:hidden"><TvInlineTemp lat={settings.weatherLat} lon={settings.weatherLon} /></span>}
               </p>
@@ -3241,29 +3262,29 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
 
             {/* Right — stats + weather */}
             <div className="shrink-0 flex items-center gap-3 sm:gap-5 min-w-0 flex-1 justify-end flex-wrap">
-              {settings.tvShowStats !== false && <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 1.2vw, 1.25rem)' }}>
+              {settings.tvShowStats !== false && <div className="flex items-center" style={{ gap: 'clamp(0.4rem, 0.9vw, 1.25rem)' }}>
                 <div className="text-center">
                   <div className="flex items-center gap-1 justify-center">
                     <Users className="w-3 h-3 sm:w-4 sm:h-4 text-emerald-400 shrink-0" aria-hidden="true" />
-                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{workerCount}</span>
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.4rem, min(2.7vw, 5vh), 2.25rem)' }}>{workerCount}</span>
                   </div>
-                  <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Workers</p>
+                  <p className="font-black text-white/30 uppercase tracking-wider mt-1" style={{ fontSize: 'clamp(0.56rem, min(0.95vw, 1.8vh), 0.8rem)' }}>Workers</p>
                 </div>
                 <div className="w-px h-8 bg-white/10" />
                 <div className="text-center">
                   <div className="flex items-center gap-1 justify-center">
                     <Activity className="w-3 h-3 sm:w-4 sm:h-4 text-amber-400 animate-pulse shrink-0" aria-hidden="true" />
-                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{runningCount}</span>
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.4rem, min(2.7vw, 5vh), 2.25rem)' }}>{runningCount}</span>
                   </div>
-                  <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Running</p>
+                  <p className="font-black text-white/30 uppercase tracking-wider mt-1" style={{ fontSize: 'clamp(0.56rem, min(0.95vw, 1.8vh), 0.8rem)' }}>Running</p>
                 </div>
                 <div className="w-px h-8 bg-white/10" />
                 <div className="text-center">
                   <div className="flex items-center gap-1 justify-center">
                     <Briefcase className="w-3 h-3 sm:w-4 sm:h-4 text-purple-400 shrink-0" aria-hidden="true" />
-                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{openJobs.length}</span>
+                    <span className="font-black text-white tabular leading-none" style={{ fontSize: 'clamp(1.4rem, min(2.7vw, 5vh), 2.25rem)' }}>{openJobs.length}</span>
                   </div>
-                  <p className="font-black text-white/30 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Open</p>
+                  <p className="font-black text-white/30 uppercase tracking-wider mt-1" style={{ fontSize: 'clamp(0.56rem, min(0.95vw, 1.8vh), 0.8rem)' }}>Open</p>
                 </div>
                 {dueTodayCount > 0 && (
                   <>
@@ -3271,9 +3292,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                     <div className="text-center">
                       <div className="flex items-center gap-1 justify-center">
                         <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-amber-400 shrink-0" aria-hidden="true" />
-                        <span className="font-black text-amber-300 tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{dueTodayCount}</span>
+                        <span className="font-black text-amber-300 tabular leading-none" style={{ fontSize: 'clamp(1.4rem, min(2.7vw, 5vh), 2.25rem)' }}>{dueTodayCount}</span>
                       </div>
-                      <p className="font-black text-amber-400/70 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Due Today</p>
+                      <p className="font-black text-amber-400/70 uppercase tracking-wider mt-1" style={{ fontSize: 'clamp(0.56rem, min(0.95vw, 1.8vh), 0.8rem)' }}>Due Today</p>
                     </div>
                   </>
                 )}
@@ -3283,9 +3304,9 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                     <div className="text-center animate-pulse">
                       <div className="flex items-center gap-1 justify-center">
                         <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-                        <span className="font-black text-red-400 tabular leading-none" style={{ fontSize: 'clamp(1.25rem, 2vw, 1.875rem)' }}>{overdueCount}</span>
+                        <span className="font-black text-red-400 tabular leading-none" style={{ fontSize: 'clamp(1.4rem, min(2.7vw, 5vh), 2.25rem)' }}>{overdueCount}</span>
                       </div>
-                      <p className="font-black text-red-400/70 uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(0.5rem, 0.65vw, 0.625rem)' }}>Overdue</p>
+                      <p className="font-black text-red-400/70 uppercase tracking-wider mt-1" style={{ fontSize: 'clamp(0.56rem, min(0.95vw, 1.8vh), 0.8rem)' }}>Overdue</p>
                     </div>
                   </>
                 )}
@@ -3318,7 +3339,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                 >
                   <span className={`h-1.5 rounded-full transition-all duration-500 ${i === tvSlideIdx ? 'w-12 bg-amber-500' : 'w-1.5 bg-white/20 group-hover:bg-white/40'}`} />
                   {i === tvSlideIdx && (
-                    <span className="text-[10px] text-white/60 font-black uppercase tracking-widest">{slideLabel(s)}</span>
+                    <span className="text-white/70 font-black uppercase tracking-widest" style={{ fontSize: 'clamp(0.65rem, min(1.2vw, 2.2vh), 0.9rem)' }}>{slideLabel(s)}</span>
                   )}
                 </button>
               ))}

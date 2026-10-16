@@ -12,6 +12,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.PointerIcon;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.RenderProcessGoneDetail;
@@ -32,7 +34,7 @@ import android.widget.Toast;
  */
 public class MainActivity extends Activity {
     static final String TAG = "FabTrackTV";
-    static final String VERSION = "1.0";
+    static final String VERSION = "1.1";
     static final String BOARD_URL = "https://scprojtrac.netlify.app/tv";
     static final String PREFS = "fabtrack_tv";
 
@@ -71,7 +73,7 @@ public class MainActivity extends Activity {
             web = null;
         }
         pingPending = false;
-        web = new WebView(this);
+        web = new BoardView(this);
         web.setBackgroundColor(Color.BLACK);
         web.setFocusable(true);
         WebSettings s = web.getSettings();
@@ -92,6 +94,21 @@ public class MainActivity extends Activity {
         web.loadUrl(url);
         web.requestFocus();
         Log.i(TAG, "board opened" + (note == null ? "" : " (" + note + ")"));
+    }
+
+    /**
+     * The board's web view, with the mouse pointer always hidden: the shop's
+     * USB mouse jiggler kept an arrow on the wall (the TV's web engine
+     * ignores the page's cursor: none).
+     */
+    private static class BoardView extends WebView {
+        BoardView(android.content.Context c) { super(c); }
+
+        @Override
+        public PointerIcon onResolvePointerIcon(MotionEvent event, int pointerIndex) {
+            if (Build.VERSION.SDK_INT >= 24) return PointerIcon.getSystemIcon(getContext(), PointerIcon.TYPE_NULL);
+            return super.onResolvePointerIcon(event, pointerIndex);
+        }
     }
 
     private class BoardClient extends WebViewClient {

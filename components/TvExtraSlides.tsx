@@ -102,11 +102,11 @@ const isUrgent = (j: Job) => j.priority === 'urgent' || j.priority === 'high';
 
 // Sizes follow the screen's width AND height (a 960×540 TV and a 4K panel alike).
 const fs = {
-  tiny: 'clamp(0.55rem, min(1vw, 2.1vh), 0.9rem)',
-  small: 'clamp(0.6rem, min(1.1vw, 2.3vh), 0.95rem)',
-  body: 'clamp(0.75rem, min(1.4vw, 2.9vh), 1.2rem)',
-  day: 'clamp(0.75rem, min(1.5vw, 3vh), 1.3rem)',
-  title: 'clamp(1.1rem, min(3vw, 5.5vh), 2.5rem)',
+  tiny: 'clamp(0.62rem, min(1.15vw, 2.3vh), 1rem)',
+  small: 'clamp(0.68rem, min(1.25vw, 2.5vh), 1.05rem)',
+  body: 'clamp(0.85rem, min(1.6vw, 3.2vh), 1.35rem)',
+  day: 'clamp(0.85rem, min(1.7vw, 3.3vh), 1.45rem)',
+  title: 'clamp(1.2rem, min(3.2vw, 6vh), 2.6rem)',
 };
 
 export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birthdays, events = [], showCustomers = true }: {
@@ -143,7 +143,8 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
     return m;
   }, [openDue]);
   const overdue = useMemo(() => openDue.filter(d => d.n < todayN), [openDue, todayN]);
-  const dueNext = useMemo(() => openDue.filter(d => d.n >= todayN).slice(0, 6), [openDue, todayN]);
+  // Five on short screens (a 960×540 TV), so the last one isn't clipped.
+  const dueNext = useMemo(() => openDue.filter(d => d.n >= todayN).slice(0, typeof window !== 'undefined' && window.innerHeight < 700 ? 5 : 6), [openDue, todayN]);
 
   const holidayByDay = useMemo(() => {
     const m = new Map<number, string>();
