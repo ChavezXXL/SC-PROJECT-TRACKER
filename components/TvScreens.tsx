@@ -153,9 +153,13 @@ export function TvStopNotice({ crash, fireTv }: { crash: { at: number; text: str
       <p className="text-amber-300 font-black uppercase tracking-[0.16em]" style={{ fontSize: big('0.75rem', '1.15vw', '1.25rem') }}>
         The board went off the screen around {when}
       </p>
-      {fireTv ? (
+      {fireTv && /pop-up or menu came up|screen hidden since/i.test(crash.text) ? (
         <p className="text-white font-bold mt-1 leading-snug" style={{ fontSize: big('1rem', '2vw', '2.2rem') }}>
           Stop it for good — Fire TV <span className="text-amber-300">Settings → Preferences → Data Usage Monitoring</span> → turn <span className="text-amber-300">Still Watching</span> off.
+        </p>
+      ) : fireTv ? (
+        <p className="text-white font-bold mt-1 leading-snug" style={{ fontSize: big('1rem', '2vw', '2.2rem') }}>
+          The TV's browser closed while the board was showing (out of memory). <span className="text-amber-300">FabTrack Settings → TV Display</span> shows how to keep it on.
         </p>
       ) : (
         <p className="text-white font-bold mt-1 leading-snug" style={{ fontSize: big('1rem', '2vw', '2.2rem') }}>

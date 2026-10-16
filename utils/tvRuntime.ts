@@ -244,6 +244,7 @@ const FIRE_TV_MODELS: Record<string, string> = {
   AFTKA: 'Fire TV Stick 4K Max', AFTKRT: 'Fire TV Stick 4K Max (2nd gen)',
   AFTA: 'Fire TV Cube (1st gen)', AFTR: 'Fire TV Cube (2nd gen)', AFTGAZL: 'Fire TV Cube (3rd gen)',
   AFTB: 'Fire TV (1st gen)', AFTS: 'Fire TV (2nd gen)', AFTN: 'Fire TV (3rd gen)',
+  AFTALMO: 'Insignia / Pioneer Fire TV (2022)',
 };
 
 /** "Fire TV Stick (3rd gen) · AFTSSS", a bare model code, or '' when it isn't a Fire TV. */

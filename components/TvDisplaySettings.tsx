@@ -222,6 +222,9 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
           {responding && d.visible !== false && d.focused === false && (
             <p className="text-[11px] text-amber-400/90 mt-1">A pop-up or menu is in front of the board{fireTv ? ' — on a Fire TV that is usually “Still watching?”' : ''}.</p>
           )}
+          {fireTv && (d.deviceMemory ?? 8) <= 1 && (
+            <p className="text-[11px] text-zinc-500 mt-1">This TV has only 1 GB of memory — tight for a live board with photos. See “Keep the TV on, all day” below.</p>
+          )}
           {responding && fireTv && Number(d.input?.match(/^0 mouse moves.* in (\d+) min/)?.[1] || 0) >= 4 && (
             <p className="text-[11px] text-zinc-500 mt-1">No mouse movement reaches this TV, so a mouse jiggler isn't keeping it awake (see “Keep the TV on, all day” below).</p>
           )}
@@ -257,7 +260,7 @@ function crashAdvice(text: string, fireTv: boolean): string {
   if (/^screen error/i.test(text)) return 'The board hit an error and restarted itself.';
   const tookScreen = /pop-up or menu came up|screen hidden since/i.test(text);
   if (fireTv && tookScreen) return 'The Fire TV took the board off the screen itself — most likely its Still Watching timer. On the TV: Settings → Preferences → Data Usage Monitoring → Still Watching: Off.';
-  if (fireTv) return 'The browser stopped without warning. Turn off Still Watching first (Fire TV Settings → Preferences → Data Usage Monitoring); if it still happens, a kiosk browser app (Fully Kiosk Browser) reopens the board by itself.';
+  if (fireTv) return "The TV's browser closed with the board still on screen — on a 1 GB Fire TV that's it running out of memory. Fix: a kiosk app that reopens the board by itself (Fully Kiosk Browser), or a streaming stick with 2 GB or more (tips below).";
   if (tookScreen) return "The TV covered the board (screensaver, home screen or sleep). Turn off the TV's own sleep and screensaver timers (tips below).";
   return 'The browser stopped without warning (crash, out of memory, or the TV slept). The tips below keep it on.';
 }
@@ -453,8 +456,11 @@ function SetupTips({ openWhenReady, refreshHour }: { openWhenReady: boolean | nu
         <Tip title="On a Fire TV — turn off Still Watching">
           Settings → <b className="text-zinc-200">Preferences</b> → <b className="text-zinc-200">Data Usage Monitoring</b> → Still Watching: <b className="text-zinc-200">Off</b>. Otherwise the Fire TV sends the board back to its home screen when nobody touches the remote (if its “Still watching?” pop-up is showing, choose <b className="text-zinc-200">Don't show again</b>). Also Display &amp; Sounds → Screensaver → Start Time: <b className="text-zinc-200">Never</b>, and on models with Ambient Experience its Advanced Settings → Timeout: <b className="text-zinc-200">Never</b>. A kiosk browser app (Fully Kiosk Browser) reopens the board by itself if the Fire TV ever closes it.
         </Tip>
-        <Tip title="Mouse jiggler: plug it into the Fire TV">
-          A jiggler only keeps awake the device it's plugged into. In a TV's own USB port it can't reach a Fire TV stick plugged into that TV — use a USB OTG adapter to plug it into the stick. The board ignores its small nudges, so the Exit button and cursor stay hidden. A TV that feels no mouse movement says so in the list above.
+        <Tip title="1 GB Fire TVs: let an app reopen the board">
+          Budget TVs with Fire TV built in, and older Fire TV sticks, have 1 GB of memory — the browser can run out on a live board with photos and close (the TV goes back to its home screen). <b className="text-zinc-200">Fully Kiosk Browser</b> (install it with the free Downloader app; its paid Plus option restarts the board by itself after a crash) or a streaming stick with <b className="text-zinc-200">2 GB or more</b> fixes that.
+        </Tip>
+        <Tip title="Mouse jiggler">
+          A jiggler keeps awake the device it's plugged into: on a TV with Fire TV built in, the TV's USB port is fine; for a Fire TV stick, plug it into the stick (USB OTG adapter). The board ignores its small nudges, so the Exit button and cursor stay hidden. A TV that feels no mouse movement says so in the list above.
         </Tip>
         <Tip title="Wired internet if you can">
           On Wi-Fi the board rides out short drops — it says <b className="text-zinc-200">Reconnecting</b> and catches up by itself — but a cable is steadier.

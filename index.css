@@ -12,3 +12,9 @@ body.tv-lite * {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
+/* …and no endless pulse / ping / spin / bounce: each keeps the graphics chip
+   redrawing every frame, all day. */
+body.tv-lite .animate-pulse,
+body.tv-lite .animate-ping,
+body.tv-lite .animate-spin,
+body.tv-lite .animate-bounce { animation: none !important; }

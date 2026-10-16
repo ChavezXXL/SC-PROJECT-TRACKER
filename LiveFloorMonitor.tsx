@@ -2044,10 +2044,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     // As long as we keep calling it, the browser won't throttle or discard
     // this tab no matter how long it runs. We only write to the DOM every
     // 15 s to avoid unnecessary layout work.
+    // Not on 1–2 GB TVs: a page on screen isn't throttled anyway, and a
+    // callback every frame all day is work those TVs can't spare.
+    const liteTv = ((navigator as any).deviceMemory ?? 8) <= 2;
     let rafId = 0;
     let lastRafWrite = 0;
     const rafLoop = (ts: number) => {
-      if (cancelled) return;
+      if (cancelled || liteTv) return;
       if (ts - lastRafWrite > 15_000) {
         lastRafWrite = ts;
         try { document.body.dataset.tvRaf = String(Math.floor(ts / 1000)); } catch {}
@@ -2738,36 +2741,6 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const [tvSlideIdx, setTvSlideIdx] = useState(0);
   const [tvFade, setTvFade] = useState(true);
 
-  // ── Fresh start every 30 minutes on low-memory TV sticks ─────────────
-  // The shop's 1 GB Fire TV closed the board ~50 minutes into every session,
-  // with the page still on screen and no error: memory the browser doesn't
-  // report piling up until it gives out. A quick reload right after a slide
-  // change starts the page fresh long before that. Only when the app's own
-  // server answers, so it never reloads into an error page.
-  const slideChangedAtRef = useRef(Date.now());
-  useEffect(() => { slideChangedAtRef.current = Date.now(); }, [tvSlideIdx]);
-  useEffect(() => {
-    if (!standalone || isPreview || !tvMode) return;
-    if (((navigator as any).deviceMemory ?? 8) > 2) return;
-    const EVERY = 30 * 60_000;
-    let busy = false;
-    const id = window.setInterval(() => {
-      const up = Date.now() - startedAtRef.current;
-      if (up < EVERY || busy || navigator.onLine === false) return;
-      // Just after a slide change, so it looks like the next slide; or anyway
-      // once it's 3 minutes late (after hours there are no slides).
-      if (Date.now() - slideChangedAtRef.current > 4000 && up < EVERY + 3 * 60_000) return;
-      busy = true;
-      fetch(`/manifest.json?alive=${Date.now()}`, { cache: 'no-store' })
-        .then(r => {
-          if (!r.ok) throw new Error(String(r.status));
-          setTvExitReason('fresh start (every 30 min on this TV)');
-          window.location.reload();
-        })
-        .catch(() => { busy = false; });
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [standalone, isPreview, tvMode]);
 
   // Auto-rotate through TV slides (only while in TV mode, and not paused via Spacebar).
   //
