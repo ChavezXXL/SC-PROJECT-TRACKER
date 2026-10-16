@@ -234,6 +234,26 @@ export function describeDevice(ua: string = navigator.userAgent): string {
   return 'Browser';
 }
 
+// Fire TV model codes from the browser's user agent. Which Fire TV it is
+// matters for the fixes: the 4K sticks, for example, can't switch off the
+// "Still Watching" timer. Unknown codes (Fire TV smart TVs, new models) are
+// shown as the bare code.
+const FIRE_TV_MODELS: Record<string, string> = {
+  AFTM: 'Fire TV Stick (1st gen)', AFTT: 'Fire TV Stick (2nd gen)', AFTSSS: 'Fire TV Stick (3rd gen)',
+  AFTSS: 'Fire TV Stick Lite', AFTMM: 'Fire TV Stick 4K', AFTKM: 'Fire TV Stick 4K (2nd gen)',
+  AFTKA: 'Fire TV Stick 4K Max', AFTKRT: 'Fire TV Stick 4K Max (2nd gen)',
+  AFTA: 'Fire TV Cube (1st gen)', AFTR: 'Fire TV Cube (2nd gen)', AFTGAZL: 'Fire TV Cube (3rd gen)',
+  AFTB: 'Fire TV (1st gen)', AFTS: 'Fire TV (2nd gen)', AFTN: 'Fire TV (3rd gen)',
+};
+
+/** "Fire TV Stick (3rd gen) · AFTSSS", a bare model code, or '' when it isn't a Fire TV. */
+export function deviceModel(ua: string = navigator.userAgent): string {
+  const m = ua.match(/\b(AFT[A-Z0-9]+)\b/);
+  if (!m) return '';
+  const name = FIRE_TV_MODELS[m[1]];
+  return name ? `${name} · ${m[1]}` : m[1];
+}
+
 // ── Why did the last TV session end? ─────────────────────────────────
 // A wall TV that "just went away" can't tell anyone why. Each session keeps
 // a heartbeat in this device's storage, and a planned reload (nightly
@@ -293,23 +313,85 @@ export function describePrevSession(raw: string | null): string {
   try {
     const p = JSON.parse(raw);
     if (p.exit) return `${p.exit} (${clockLabel(p.exitAt || p.lastBeat)})`;
+    // A system pop-up (Fire TV's "Still watching?") takes the focus first,
+    // then the TV's home screen hides the page — both are kept as clues.
+    const popup = p.blurAt ? `; a pop-up or menu came up at ${clockLabel(p.blurAt)}` : '';
     const hidden = p.hiddenAt ? `; screen hidden since ${clockLabel(p.hiddenAt)}` : '';
-    return `stopped without closing — crash, out of memory, browser closed or device asleep (last alive ${clockLabel(p.lastBeat || p.startedAt)}${hidden})`;
+    return `stopped without closing — crash, out of memory, browser closed or device asleep (last alive ${clockLabel(p.lastBeat || p.startedAt)}${popup}${hidden})`;
   } catch { return ''; }
 }
 
+/** An ending nobody planned: the board stopped, or crashed and reloaded. */
+export const isUnplannedExit = (text?: string | null): boolean =>
+  !!text && /^(stopped without closing|screen error)/i.test(text);
+
+// ── Last unplanned stop ──────────────────────────────────────────────
+// Kept on the device until a newer one replaces it. The planned reloads that
+// often follow a restart (an app update a few seconds in, the nightly
+// refresh) used to overwrite the one report that explained the stop.
+const CRASH_KEY = 'fabtrack_tv_crash';
+export interface TvCrash { at: number; text: string; log: string }
+
+export function readTvCrash(): TvCrash | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(CRASH_KEY) || 'null');
+    return c && typeof c.text === 'string' && Number(c.at) ? { at: Number(c.at), text: c.text, log: String(c.log || '') } : null;
+  } catch { return null; }
+}
+
+export function rememberTvCrash(c: TvCrash): void {
+  try { localStorage.setItem(CRASH_KEY, JSON.stringify(c)); } catch {}
+}
+
+// ── Real input reaching the TV ───────────────────────────────────────
+// Mouse moves and key presses between check-ins. A mouse jiggler that the
+// device can actually feel shows up as steady moves; none at all means it
+// isn't reaching this device (for example, it's in the TV's own USB port
+// while the board runs on a Fire TV stick).
+let inputMoves = 0;
+let inputKeys = 0;
+let inputSince = 0;
+let popupSince: number | null = null;
+
+/** When a pop-up or menu came up in front of the board (null = none now). */
+export const tvPopupSince = (): number | null => popupSince;
+
+/** "12 mouse moves, 0 key presses in 5 min" — and starts counting again. */
+export function takeInputCounts(now: number = Date.now()): string {
+  const mins = Math.max(1, Math.round((now - (inputSince || now)) / 60_000));
+  const label = `${inputMoves} mouse move${inputMoves === 1 ? '' : 's'}, ${inputKeys} key press${inputKeys === 1 ? '' : 'es'} in ${mins} min`;
+  inputMoves = 0; inputKeys = 0; inputSince = now;
+  return label;
+}
+
 /**
- * Start tracking this session. Returns the previous session's ending and a
- * stop function. Never throws.
+ * Start tracking this session. Returns the previous session's ending, the
+ * last unplanned stop (this one or an earlier one) and a stop function.
+ * Never throws.
  */
-export function startTvSession(startedAt: number): { previous: string; previousLog: string; stop: () => void } {
-  let previous = '', previousLog = '';
-  try { previous = describePrevSession(localStorage.getItem(SESSION_KEY)); } catch {}
+export function startTvSession(startedAt: number): { previous: string; previousLog: string; crash: TvCrash | null; stop: () => void } {
+  let previous = '', previousLog = '', lastAlive = 0;
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    previous = describePrevSession(raw);
+    const p = raw ? JSON.parse(raw) : null;
+    lastAlive = Number(p?.lastBeat || p?.startedAt) || 0;
+  } catch {}
   try { previousLog = readPrevTvLog(localStorage.getItem(LOG_KEY)); } catch {}
+  let crash: TvCrash | null;
+  if (isUnplannedExit(previous)) {
+    crash = { at: lastAlive || Date.now(), text: previous, log: previousLog };
+    rememberTvCrash(crash);
+  } else {
+    crash = readTvCrash();
+  }
   logLines = [];
   logOn = true;
   tvEvent(`start · ${memoryLabel() || 'memory n/a'}`, true);
+  inputMoves = 0; inputKeys = 0; inputSince = Date.now(); popupSince = null;
   let hiddenAt: number | null = null;
+  let blurAt: number | null = null;
+  let movedYet = false;
   // Once the page is leaving, nothing may overwrite the exit stamp: a reload
   // fires "pagehide" and THEN "visibilitychange → hidden", and that second
   // save used to erase the reason — a planned update read as a crash.
@@ -317,7 +399,7 @@ export function startTvSession(startedAt: number): { previous: string; previousL
   const save = (extra: Record<string, unknown> = {}) => {
     if (leaving) return;
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ startedAt, lastBeat: Date.now(), ...(hiddenAt ? { hiddenAt } : {}), ...extra }));
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ startedAt, lastBeat: Date.now(), ...(hiddenAt ? { hiddenAt } : {}), ...(blurAt ? { blurAt } : {}), ...extra }));
     } catch {}
   };
   save();
@@ -334,12 +416,26 @@ export function startTvSession(startedAt: number): { previous: string; previousL
   };
   // Back from the browser's back/forward cache: the session goes on.
   const onShow = (e: any) => { if (e && e.persisted) { leaving = false; save(); } };
+  // Focus: a system pop-up in front of the board (Fire TV's "Still
+  // watching?", a settings menu) takes it before anything else happens.
+  const onBlur = () => { blurAt = popupSince = Date.now(); save(); tvEvent('lost focus — a pop-up or menu is in front', true); };
+  const onFocus = () => { if (!blurAt) return; blurAt = popupSince = null; save(); tvEvent('focus back', true); };
+  const onMove = () => {
+    inputMoves++;
+    if (!movedYet) { movedYet = true; tvEvent('mouse movement reaches this TV', true); }
+  };
+  const onKey = () => { inputKeys++; };
   document.addEventListener('visibilitychange', onVis);
   window.addEventListener('pagehide', onHide);
   window.addEventListener('pageshow', onShow);
+  window.addEventListener('blur', onBlur);
+  window.addEventListener('focus', onFocus);
+  window.addEventListener('mousemove', onMove, { capture: true, passive: true } as any);
+  window.addEventListener('keydown', onKey, true);
   return {
     previous,
     previousLog,
+    crash,
     stop: () => {
       // The board itself closed (left the TV screen) — a clean exit, not a crash.
       save({ exit: exitReason || 'board closed', exitAt: Date.now() });
@@ -351,6 +447,10 @@ export function startTvSession(startedAt: number): { previous: string; previousL
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pagehide', onHide);
       window.removeEventListener('pageshow', onShow);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('mousemove', onMove, true);
+      window.removeEventListener('keydown', onKey, true);
     },
   };
 }

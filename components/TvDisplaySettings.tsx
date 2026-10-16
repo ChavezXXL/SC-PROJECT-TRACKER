@@ -171,7 +171,14 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
 
   const dot = st.tone === 'live' ? 'bg-emerald-400' : st.tone === 'warn' ? 'bg-amber-400 animate-pulse' : st.tone === 'down' ? 'bg-red-400' : 'bg-zinc-600';
   const toneText = st.tone === 'live' ? 'text-emerald-400' : st.tone === 'warn' ? 'text-amber-400' : st.tone === 'down' ? 'text-red-400' : 'text-zinc-400';
-  const facts = [d.agent, d.screen, responding && d.slide ? `showing “${d.slide}”` : ''].filter(Boolean).join(' · ');
+  const fireTv = d.agent === 'Amazon Fire TV';
+  const deviceLabel = d.model ? (d.model.includes(' · ') ? d.model.split(' · ')[0] : `${d.agent || 'Fire TV'} ${d.model}`) : d.agent;
+  const facts = [deviceLabel, d.screen, responding && d.slide ? `showing “${d.slide}”` : ''].filter(Boolean).join(' · ');
+  // The last time it went away on its own: the kept report (survives the
+  // planned reloads after it), else the previous session's ending.
+  const keptCrash = !!d.lastCrash && (!d.lastCrashAt || now - d.lastCrashAt < 7 * 86_400_000);
+  const crashText = keptCrash ? d.lastCrash! : (d.prevExit && /stopped without closing|screen error/i.test(d.prevExit) ? d.prevExit : '');
+  const crashLog = keptCrash ? d.lastCrashLog : d.prevLog;
 
   return (
     <li className="rounded-xl border border-white/5 bg-zinc-950/40 p-3">
@@ -198,17 +205,26 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
           {facts && <p className="text-[11px] text-zinc-600 mt-1">{facts}{d.mem ? ` · memory ${d.mem}` : ''}</p>}
           {outdated && <p className="text-[11px] text-amber-400 mt-1 font-bold">Running an older version — press Refresh to update it.</p>}
           {/* Health — so "the TV just went away" can be explained afterwards. */}
-          {d.prevExit && /stopped without closing|screen error/i.test(d.prevExit) && (
-            <p className="text-[11px] text-amber-400/90 mt-1">Last restart: {d.prevExit}</p>
-          )}
-          {d.prevLog && d.prevExit && /stopped without closing|screen error/i.test(d.prevExit) && (
-            <details className="mt-1">
-              <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">What it was doing before that</summary>
-              <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed break-words">{d.prevLog}</p>
-            </details>
+          {crashText && (
+            <div className="mt-1">
+              <p className="text-[11px] text-amber-400/90">Last time it went off the screen: {crashText}</p>
+              <p className="text-[11px] text-zinc-300 mt-0.5">{crashAdvice(crashText, fireTv)}</p>
+              {crashLog && (
+                <details className="mt-1">
+                  <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">What it was doing before that</summary>
+                  <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed break-words">{crashLog}</p>
+                </details>
+              )}
+            </div>
           )}
           {(d.startsToday || 0) > 3 && <p className="text-[11px] text-amber-400/90 mt-1">Restarted {d.startsToday} times today.</p>}
           {responding && d.visible === false && <p className="text-[11px] text-amber-400/90 mt-1">The board is covered — the TV is showing its screensaver or home screen.</p>}
+          {responding && d.visible !== false && d.focused === false && (
+            <p className="text-[11px] text-amber-400/90 mt-1">A pop-up or menu is in front of the board{fireTv ? ' — on a Fire TV that is usually “Still watching?”' : ''}.</p>
+          )}
+          {responding && fireTv && Number(d.input?.match(/^0 mouse moves.* in (\d+) min/)?.[1] || 0) >= 4 && (
+            <p className="text-[11px] text-zinc-500 mt-1">No mouse movement reaches this TV, so a mouse jiggler isn't keeping it awake (see “Keep the TV on, all day” below).</p>
+          )}
           {responding && d.wakeLock === false && d.visible !== false && (
             <p className="text-[11px] text-zinc-500 mt-1">This TV's browser won't hold the screen on by itself — set the TV's own sleep and screensaver to Never (tips below).</p>
           )}
@@ -234,6 +250,16 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
       </div>
     </li>
   );
+}
+
+/** What to do about the last time a TV went off the screen, from the clues it left. */
+function crashAdvice(text: string, fireTv: boolean): string {
+  if (/^screen error/i.test(text)) return 'The board hit an error and restarted itself.';
+  const tookScreen = /pop-up or menu came up|screen hidden since/i.test(text);
+  if (fireTv && tookScreen) return 'The Fire TV took the board off the screen itself — most likely its Still Watching timer. On the TV: Settings → Preferences → Data Usage Monitoring → Still Watching: Off.';
+  if (fireTv) return 'The browser stopped without warning. Turn off Still Watching first (Fire TV Settings → Preferences → Data Usage Monitoring); if it still happens, a kiosk browser app (Fully Kiosk Browser) reopens the board by itself.';
+  if (tookScreen) return "The TV covered the board (screensaver, home screen or sleep). Turn off the TV's own sleep and screensaver timers (tips below).";
+  return 'The browser stopped without warning (crash, out of memory, or the TV slept). The tips below keep it on.';
 }
 
 function AdvancedLink({ settings, saveNow, confirm, addToast }: { settings: SystemSettings; saveNow: SaveNow; confirm: Confirm; addToast: Toast }) {
@@ -424,11 +450,11 @@ function SetupTips({ openWhenReady, refreshHour }: { openWhenReady: boolean | nu
         <Tip title="Come back after a power cut">
           Set the TV browser's home page to <span className="font-mono text-amber-300">{tvHomeUrl().replace(/^https?:\/\//, '')}</span>. Most reliable: a Fire TV Stick or Android TV box with a kiosk browser app (for example Fully Kiosk Browser) set to open that address when it starts.
         </Tip>
-        <Tip title="On a Fire TV">
-          Settings → <b className="text-zinc-200">Display &amp; Sounds</b> → <b className="text-zinc-200">Screensaver</b> → Start Time: <b className="text-zinc-200">Never</b>, and set <b className="text-zinc-200">Sleep</b> to Never if your model has it. The Fire TV can close the Silk browser when memory runs low — a kiosk browser app (Fully Kiosk Browser) reopens the board by itself if that happens.
+        <Tip title="On a Fire TV — turn off Still Watching">
+          Settings → <b className="text-zinc-200">Preferences</b> → <b className="text-zinc-200">Data Usage Monitoring</b> → Still Watching: <b className="text-zinc-200">Off</b>. Otherwise the Fire TV sends the board back to its home screen when nobody touches the remote (if its “Still watching?” pop-up is showing, choose <b className="text-zinc-200">Don't show again</b>). Also Display &amp; Sounds → Screensaver → Start Time: <b className="text-zinc-200">Never</b>, and on models with Ambient Experience its Advanced Settings → Timeout: <b className="text-zinc-200">Never</b>. A kiosk browser app (Fully Kiosk Browser) reopens the board by itself if the Fire TV ever closes it.
         </Tip>
-        <Tip title="A mouse jiggler is fine">
-          Keeping a USB mouse jiggler plugged in so the TV never sleeps? Good — the board ignores those small nudges, so the Exit button and cursor stay hidden. Nothing on the board closes without a click and a second confirm.
+        <Tip title="Mouse jiggler: plug it into the Fire TV">
+          A jiggler only keeps awake the device it's plugged into. In a TV's own USB port it can't reach a Fire TV stick plugged into that TV — use a USB OTG adapter to plug it into the stick. The board ignores its small nudges, so the Exit button and cursor stay hidden. A TV that feels no mouse movement says so in the list above.
         </Tip>
         <Tip title="Wired internet if you can">
           On Wi-Fi the board rides out short drops — it says <b className="text-zinc-200">Reconnecting</b> and catches up by itself — but a cable is steadier.

@@ -1,4 +1,4 @@
-import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason, tvEvent, readPrevTvLog } from '../utils/tvRuntime';
+import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason, tvEvent, readPrevTvLog, deviceModel, isUnplannedExit, takeInputCounts } from '../utils/tvRuntime';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -103,6 +103,8 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   ok('no exit stamp → stopped without closing', crash.startsWith('stopped without closing'));
   ok('…with the last time it was alive', crash.includes('last alive'));
   ok('screensaver/home screen is mentioned when the page was hidden', describePrevSession(JSON.stringify({ startedAt: t - 3600_000, lastBeat: t, hiddenAt: t - 60_000 })).includes('screen hidden since'));
+  ok('a pop-up in front before the stop is a clue too', describePrevSession(JSON.stringify({ startedAt: t - 3600_000, lastBeat: t, blurAt: t - 30_000 })).includes('pop-up or menu came up'));
+  ok('unplanned endings', isUnplannedExit('stopped without closing — x') && isUnplannedExit('screen error (x)') && !isUnplannedExit('app update (x)') && !isUnplannedExit('') && !isUnplannedExit(undefined));
 }
 
 // ── A reload keeps its reason (pagehide fires BEFORE visibility → hidden) ──
@@ -150,6 +152,25 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   ok('closing the board normally is a clean exit, not a crash', s5.previous.startsWith('board closed'));
   s5.stop();
 
+  // The last unplanned stop is kept through the planned restarts after it
+  // (an app update a few seconds in used to bury the one useful report).
+  ok('a stop without closing is kept as the last crash', !!s3.crash && s3.crash.text.startsWith('stopped without closing'));
+  ok('…and survives a planned restart after it, with its log', !!s5.crash && s5.crash.text.startsWith('stopped without closing') && s5.crash.log.includes('Open Jobs'));
+
+  // Input reaching the TV (does a mouse jiggler get through?), and focus.
+  for (const k of Object.keys(handlers)) delete handlers[k];   // only the next session listens
+  setTvExitReason('');
+  const s6 = startTvSession(6000);
+  fire('wmousemove'); fire('wmousemove'); fire('wmousemove'); fire('wkeydown');
+  ok('input: counts mouse moves and key presses', takeInputCounts().startsWith('3 mouse moves, 1 key press in'));
+  ok('input: starts over after each check-in', takeInputCounts().startsWith('0 mouse moves, 0 key presses in'));
+  ok('input: the first mouse move is noted in the flight recorder', (store.get('fabtrack_tv_log') || '').includes('mouse movement reaches this TV'));
+  fire('wblur');
+  const s7 = startTvSession(7000);   // s6 never closed: it went away after a pop-up came up
+  ok('a pop-up before the stop is reported', s6.previous.startsWith('board closed') && s7.previous.startsWith('stopped without closing') && s7.previous.includes('pop-up or menu came up'));
+  ok('…and becomes the kept crash', !!s7.crash && s7.crash.text.includes('pop-up or menu came up'));
+  s7.stop();
+
   g.localStorage = saved.localStorage; g.window = saved.window; g.document = saved.document;
 }
 
@@ -158,6 +179,9 @@ ok('Samsung', describeDevice('Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebK
 ok('LG', describeDevice('Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36') === 'LG TV (webOS)');
 ok('Fire TV', describeDevice('Mozilla/5.0 (Linux; Android 9; AFTMM Build/PS7233) Silk/90') === 'Amazon Fire TV');
 ok('Windows', describeDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120') === 'Windows PC');
+ok('Fire TV model named from its code', deviceModel('Mozilla/5.0 (Linux; Android 9; AFTSSS Build/PS7633) Silk/112') === 'Fire TV Stick (3rd gen) · AFTSSS');
+ok('unknown Fire TV code shown as-is', deviceModel('Mozilla/5.0 (Linux; Android 9; AFTEU011 Build/PS7) Silk/112') === 'AFTEU011');
+ok('not a Fire TV → no model', deviceModel('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120') === '');
 
 console.log(`${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

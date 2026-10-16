@@ -139,6 +139,35 @@ export function TvIdentifyOverlay({ name }: { name: string }) {
 }
 
 /**
+ * For a minute after the board comes back from an unplanned stop: when it
+ * went away, and the one setting that stops it on a Fire TV. Whoever just
+ * restarted it is standing there with the remote. Never takes input.
+ */
+export function TvStopNotice({ crash, fireTv }: { crash: { at: number; text: string }; fireTv: boolean }) {
+  // The report's own "last alive" time; a report carried over from an older
+  // version only has the time it was sent.
+  const when = crash.text.match(/last alive ([^;)]+)/)?.[1]
+    || new Date(crash.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return (
+    <div role="status" className="fixed left-1/2 -translate-x-1/2 bottom-[4vh] z-[10005] w-[min(92vw,1100px)] rounded-2xl border-2 border-amber-400 bg-zinc-950/95 shadow-2xl px-[2.4vw] py-[2.2vh] pointer-events-none animate-fade-in">
+      <p className="text-amber-300 font-black uppercase tracking-[0.16em]" style={{ fontSize: big('0.75rem', '1.15vw', '1.25rem') }}>
+        The board went off the screen around {when}
+      </p>
+      {fireTv ? (
+        <p className="text-white font-bold mt-1 leading-snug" style={{ fontSize: big('1rem', '2vw', '2.2rem') }}>
+          Stop it for good — Fire TV <span className="text-amber-300">Settings → Preferences → Data Usage Monitoring</span> → turn <span className="text-amber-300">Still Watching</span> off.
+        </p>
+      ) : (
+        <p className="text-white font-bold mt-1 leading-snug" style={{ fontSize: big('1rem', '2vw', '2.2rem') }}>
+          Turn off the TV's own sleep, screensaver and power-saving timers — FabTrack Settings → TV Display has the steps.
+        </p>
+      )}
+      <p className="text-zinc-500 font-semibold mt-1" style={{ fontSize: big('0.7rem', '1vw', '1.1rem') }}>Press any button to hide</p>
+    </div>
+  );
+}
+
+/**
  * Outside working hours: a dim clock that drifts slowly, so the panel isn't
  * holding one bright image all night (burn-in) and anyone walking by sees
  * the TV is still alive.

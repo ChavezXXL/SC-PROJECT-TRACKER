@@ -1027,6 +1027,12 @@ export interface TvDevice {
   startsToday?: number;    // page starts today — a crash/reload loop shows up here
   prevLog?: string;        // flight recorder: the previous session's last moments
   jobsLoaded?: number;     // jobs the TV is holding (open + recently finished)
+  model?: string;          // Fire TV model, e.g. "Fire TV Stick (3rd gen) · AFTSSS"
+  focused?: boolean;       // false = a pop-up or menu is in front of the board
+  input?: string;          // mouse moves / key presses since the last check-in (does a jiggler reach it?)
+  lastCrash?: string;      // the last unplanned stop — survives the planned reloads after it
+  lastCrashAt?: number;    // when that was (last sign of life, ms)
+  lastCrashLog?: string;   // flight recorder from right before it
 }
 
 /** Short-lived pairing: the TV shows a 6-digit code, the office types it in. */

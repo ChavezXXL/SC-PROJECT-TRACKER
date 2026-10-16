@@ -39,8 +39,9 @@ import {
   getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, getSavedTvToken, clearTvToken, appBuild, describeDevice,
   isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, startKeepAwakeVideo, installBackTrap, newTvToken,
   setTvExitReason, startTvSession, memoryLabel, tvEvent,
+  deviceModel, takeInputCounts, rememberTvCrash, isUnplannedExit, tvPopupSince, type TvCrash,
 } from './utils/tvRuntime';
-import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm } from './components/TvScreens';
+import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm, TvStopNotice } from './components/TvScreens';
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
 import { TvPartPhoto } from './components/TvPartPhoto';
 import { TvNewsSlide, TvCalendarSlide, TvBirthdaySlide } from './components/TvExtraSlides';
@@ -2325,11 +2326,21 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const jobsCountRef = useRef(0);
   const lastErrorRef = useRef('');
   const startsTodayRef = useRef(0);
+  // The last time the board went away without a planned reload. Kept across
+  // the planned reloads that follow, so the office can still see it.
+  const crashRef = useRef<TvCrash | null>(null);
+  // Shown for a minute to whoever restarts the board with the remote.
+  const [stopNotice, setStopNotice] = useState<TvCrash | null>(null);
+  const showStopNotice = (c: TvCrash | null) => {
+    if (c && /^stopped without closing/i.test(c.text) && Date.now() - c.at < 12 * 3_600_000) setStopNotice(c);
+  };
   useEffect(() => {
     if (!standalone || isPreview) return;
     const session = startTvSession(startedAtRef.current);
     prevExitRef.current = session.previous;
     prevLogRef.current = session.previousLog;
+    crashRef.current = session.crash;
+    if (isUnplannedExit(session.previous)) showStopNotice(session.crash);
     try {
       const day = new Date().toDateString();
       const prev = JSON.parse(localStorage.getItem('fabtrack_tv_starts') || '{}');
@@ -2351,6 +2362,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       window.removeEventListener('unhandledrejection', onRejection);
     };
   }, [standalone, isPreview]);
+  useEffect(() => {
+    if (!stopNotice) return;
+    const hide = () => setStopNotice(null);
+    const t = window.setTimeout(hide, 60_000);
+    window.addEventListener('keydown', hide);
+    return () => { window.clearTimeout(t); window.removeEventListener('keydown', hide); };
+  }, [stopNotice]);
   const [deviceDoc, setDeviceDoc] = useState<TvDevice | null | undefined>(undefined); // undefined = not loaded yet
   const [identifyName, setIdentifyName] = useState<string | null>(null);
   // The TV's own saved link wins over an outdated one in the address: a TV
@@ -2409,6 +2427,16 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     // Wait until our row has loaded, so a name set in the office isn't
     // overwritten by this TV's old local name.
     if (!reportsIn || deviceDoc === undefined || deviceDoc?.revoked) return;
+    // An older version of the app reports a stop and then updates itself a
+    // few seconds later; that update's restart would bury the report. If the
+    // row still shows a fresh unplanned stop that this device hasn't kept,
+    // keep it now, before this check-in replaces it.
+    if (!crashRef.current && deviceDoc && isUnplannedExit(deviceDoc.prevExit) && !isUnplannedExit(prevExitRef.current)
+        && Date.now() - (deviceDoc.lastSeen || 0) < 10 * 60_000) {
+      crashRef.current = { at: deviceDoc.lastSeen || Date.now(), text: deviceDoc.prevExit!, log: deviceDoc.prevLog || '' };
+      rememberTvCrash(crashRef.current);
+      showStopNotice(crashRef.current);
+    }
     const checkIn = () => DB.tvCheckIn({
       id: deviceId,
       ...(isNewDevice ? { name: getSavedTvName() } : {}),
@@ -2417,12 +2445,18 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       synced: sync.synced,
       screen: `${window.screen?.width || window.innerWidth}×${window.screen?.height || window.innerHeight}`,
       agent: describeDevice(),
+      model: deviceModel() || undefined,
       build: appBuild(),
       slide: slideLabelRef.current,
       mem: memoryLabel(),
       deviceMemory: (navigator as any).deviceMemory,
       wakeLock: wakeHeldRef.current,
       visible: document.visibilityState === 'visible',
+      focused: !tvPopupSince(),
+      input: takeInputCounts(),
+      lastCrash: crashRef.current?.text,
+      lastCrashAt: crashRef.current?.at,
+      lastCrashLog: crashRef.current?.log || undefined,
       prevExit: prevExitRef.current || undefined,
       prevLog: prevLogRef.current || undefined,
       jobsLoaded: jobsCountRef.current,
@@ -2894,6 +2928,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const overlays = (
       <>
         {identifyName && <TvIdentifyOverlay name={identifyName} />}
+        {stopNotice && <TvStopNotice crash={stopNotice} fireTv={describeDevice() === 'Amazon Fire TV'} />}
         {exitConfirm && (
           <TvExitConfirm
             onStay={stayOnTv}
