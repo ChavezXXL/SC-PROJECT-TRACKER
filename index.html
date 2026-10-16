@@ -279,6 +279,9 @@
                 body.tv-mode .md\:hidden { display: none !important; } /* hide mobile top bar too */
                 body.tv-mode .no-tv, body.tv-mode .tv-hide { display: none !important; }
                 body.tv-mode { cursor: none; }
+                /* Buttons and links set their own cursor, which brought the
+                   jiggler's arrow back over the slide dots — none anywhere. */
+                body.tv-mode:not(.tv-pointer) * { cursor: none !important; }
                 /* Cursor + hover controls only after REAL interaction (tv-pointer is
                    set by the board) — a mouse jiggler must not keep them on screen. */
                 body.tv-mode.tv-pointer { cursor: default; }

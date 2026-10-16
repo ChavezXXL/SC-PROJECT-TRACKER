@@ -1030,43 +1030,43 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
 
         {/* Primary metrics — hero row. Revenue card only shows if admin opts-in (money is sensitive) */}
         <div className={`mt-[clamp(0.5rem,2.5vh,1.5rem)] grid grid-cols-2 gap-3 ${showRevenue ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
-          <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-4 text-center">
+          <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
             <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Hours Logged</p>
-            <p className="text-4xl font-black text-white tabular mt-1.5">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
+            <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{totalH.toFixed(1)}<span className="text-xl text-white/50">h</span></p>
           </div>
-          <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl p-4 text-center">
+          <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
             <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Jobs Completed</p>
-            <p className="text-4xl font-black text-white tabular mt-1.5">{completedCount}</p>
+            <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{completedCount}</p>
             <p className="text-[9px] text-white/40 mt-0.5">{totalJobs} touched</p>
           </div>
-          <div className="bg-gradient-to-br from-cyan-500/15 to-cyan-500/[0.02] border border-cyan-500/20 rounded-2xl p-4 text-center">
+          <div className="bg-gradient-to-br from-cyan-500/15 to-cyan-500/[0.02] border border-cyan-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
             <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">On-Time</p>
-            <p className="text-4xl font-black text-white tabular mt-1.5">{onTimePct}<span className="text-xl text-white/50">%</span></p>
+            <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">{onTimePct}<span className="text-xl text-white/50">%</span></p>
             <p className="text-[9px] text-white/40 mt-0.5">{onTimeCount} of {otWeek.judged}</p>
           </div>
           {showRevenue && (
-            <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-4 text-center">
+            <div className="bg-gradient-to-br from-amber-500/15 to-amber-500/[0.02] border border-amber-500/20 rounded-2xl p-[clamp(0.4rem,1.8vh,1rem)] text-center">
               <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Revenue</p>
-              <p className="text-4xl font-black text-white tabular mt-1.5">${Math.round(revenue).toLocaleString()}</p>
+              <p className="text-[length:clamp(1.5rem,min(4vw,7.5vh),2.25rem)] font-black text-white tabular mt-1 leading-none">${Math.round(revenue).toLocaleString()}</p>
             </div>
           )}
         </div>
 
         {/* Secondary metrics — smaller row */}
         <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Active Workers</p>
-            <p className="text-2xl font-black text-white tabular mt-1">{uniqueWorkers}</p>
+            <p className="text-[length:clamp(1.1rem,min(2.6vw,5vh),1.5rem)] font-black text-white tabular mt-0.5 leading-tight">{uniqueWorkers}</p>
           </div>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Sessions</p>
-            <p className="text-2xl font-black text-white tabular mt-1">{totalSessions}</p>
+            <p className="text-[length:clamp(1.1rem,min(2.6vw,5vh),1.5rem)] font-black text-white tabular mt-0.5 leading-tight">{totalSessions}</p>
           </div>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Avg / Job</p>
-            <p className="text-2xl font-black text-white tabular mt-1">{avgPerJob.toFixed(1)}<span className="text-base text-white/50">h</span></p>
+            <p className="text-[length:clamp(1.1rem,min(2.6vw,5vh),1.5rem)] font-black text-white tabular mt-0.5 leading-tight">{avgPerJob.toFixed(1)}<span className="text-base text-white/50">h</span></p>
           </div>
-          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-3 text-center min-w-0">
+          <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-[clamp(0.35rem,1.4vh,0.75rem)] text-center min-w-0">
             <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">{showCustomers ? 'Top Customer' : 'Top Contributor'}</p>
             <p className="text-base font-black text-white truncate mt-1" title={showCustomers ? topCustomer : topWorker}>{showCustomers ? topCustomer : topWorker}</p>
             <p className="text-[9px] text-white/40">{showCustomers ? `${topCustCount} ${topCustCount === 1 ? 'job' : 'jobs'}` : `${topWorkerHrs.toFixed(1)}h this week`}</p>
@@ -1074,12 +1074,12 @@ const TvWeeklyStatsSlide = React.memo(function TvWeeklyStatsSlide({ allLogs, wee
         </div>
 
         {/* Bar chart */}
-        <div className="mt-5 bg-zinc-900/50 border border-white/5 rounded-3xl p-5">
+        <div className="mt-[clamp(0.4rem,2vh,1.25rem)] bg-zinc-900/50 border border-white/5 rounded-3xl p-[clamp(0.5rem,2vh,1.25rem)]">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Hours by Day</p>
             <p className="text-[10px] text-white/30">Peak: {Math.max(0, ...daily.map(d => d.hours)).toFixed(1)}h · Avg: {(totalH / 7).toFixed(1)}h/day</p>
           </div>
-          <div className="flex items-end justify-around gap-3 h-44">
+          <div className="flex items-end justify-around gap-3 h-[clamp(3.5rem,14vh,11rem)]">
             {daily.map((d) => {
               const pct = (d.hours / maxH) * 100;
               return (
@@ -1735,6 +1735,16 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const handlers = useTvAutoScroll(scrollRef, speed, sorted.length);
   const jobById = React.useMemo(() => new Map(jobs.map(j => [j.id, j])), [jobs]);
+  // With only one or two people running, most of the slide sat empty. Fill
+  // it with what's due next (open, not overdue, nobody on it yet).
+  const dueNext = React.useMemo(() => {
+    if (!wide || sorted.length > 2) return [] as Job[];
+    const running = new Set(sorted.map(l => l.jobId));
+    return jobs
+      .filter(j => !running.has(j.id) && j.status !== 'hold' && ['today', 'soon', 'later'].includes(dueState(j)))
+      .sort(compareByDue)
+      .slice(0, sorted.length === 0 ? 0 : 6);
+  }, [wide, sorted, jobs]);
   const tile = 'clamp(3.25rem, 5.5vw, 5.25rem)';
   const chip = { fontSize: 'clamp(0.65rem, 0.9vw, 0.85rem)' };
 
@@ -1793,6 +1803,26 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
           )}
         </div>
       </div>
+      {dueNext.length > 0 ? (
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-8 pt-6" style={{ gap: 'clamp(0.75rem, 3vh, 1.5rem)' }}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0">{sorted.map(log => card(log, 0))}</div>
+          <div className="min-h-0 flex flex-col">
+            <p className="font-black text-white/45 uppercase tracking-[0.3em] mb-2" style={{ fontSize: 'clamp(0.7rem, 0.95vw, 0.9rem)' }}>Due next</p>
+            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 min-h-0 overflow-hidden">
+              {dueNext.map(job => (
+                <div key={job.id} className="rounded-2xl border border-white/5 bg-zinc-900/60 flex items-center gap-3 min-w-0" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.8rem)' }}>
+                  <TvPartPhoto src={job.partImage} size="clamp(2.5rem, 9vh, 4.25rem)" />
+                  <div className="min-w-0">
+                    <p className={`font-black truncate leading-tight ${job.priority === 'urgent' ? 'text-amber-200' : 'text-white'}`} style={{ fontSize: 'clamp(0.85rem, min(1.6vw, 3.2vh), 1.3rem)' }}>{job.partNumber || job.jobIdsDisplay || `PO ${job.poNumber}`}</p>
+                    <p className="text-white/50 font-bold truncate" style={{ fontSize: 'clamp(0.6rem, min(1vw, 2.2vh), 0.85rem)' }}>PO {job.poNumber}{job.quantity ? ` · ${job.quantity.toLocaleString()} pc` : ''}</p>
+                    <div className="mt-1"><TvDueChip raw={job.dueDate} /></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="flex-1 overflow-hidden relative">
         {sorted.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-8">
@@ -1820,6 +1850,7 @@ const TvWorkersColumn = React.memo(function TvWorkersColumn({ sorted, jobs, stag
         <div aria-hidden="true" className="absolute top-0 left-0 right-0 h-10 bg-gradient-to-b from-zinc-950 to-transparent pointer-events-none" />
         <div aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none" />
       </div>
+      )}
     </div>
   );
 });
