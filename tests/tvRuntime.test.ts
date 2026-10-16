@@ -1,4 +1,4 @@
-import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason, tvEvent, readPrevTvLog, deviceModel, isUnplannedExit, takeInputCounts } from '../utils/tvRuntime';
+import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason, tvEvent, readPrevTvLog, deviceModel, isUnplannedExit, takeInputCounts, tvAppVersion, appRestartNote } from '../utils/tvRuntime';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -204,6 +204,9 @@ ok('Windows', describeDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/1
 ok('Fire TV model named from its code', deviceModel('Mozilla/5.0 (Linux; Android 9; AFTSSS Build/PS7633) Silk/112') === 'Fire TV Stick (3rd gen) · AFTSSS');
 ok('unknown Fire TV code shown as-is', deviceModel('Mozilla/5.0 (Linux; Android 9; AFTEU011 Build/PS7) Silk/112') === 'AFTEU011');
 ok('not a Fire TV → no model', deviceModel('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120') === '');
+ok('board inside the FabTrack TV app', tvAppVersion('Mozilla/5.0 (Linux; Android 9; AFTALMO) Chrome/130 Safari/537.36 FabTrackTV/1.0') === '1.0');
+ok('…and not in a plain browser', tvAppVersion('Mozilla/5.0 (Linux; Android 9; AFTALMO) Silk/130') === '');
+ok('app restart notes', appRestartNote('#app-restart=memory').includes('ran out of memory') && appRestartNote('#app-restart=hung').includes('stopped responding') && appRestartNote('') === '' && appRestartNote('#x') === '');
 
 console.log(`${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

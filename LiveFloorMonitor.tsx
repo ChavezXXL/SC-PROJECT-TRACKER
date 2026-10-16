@@ -39,7 +39,7 @@ import {
   getTvDeviceId, getSavedTvName, saveTvName, saveTvToken, getSavedTvToken, clearTvToken, appBuild, describeDevice,
   isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, startKeepAwakeVideo, installBackTrap, newTvToken,
   setTvExitReason, startTvSession, memoryLabel, tvEvent,
-  deviceModel, takeInputCounts, rememberTvCrash, isUnplannedExit, tvPopupSince, type TvCrash,
+  deviceModel, takeInputCounts, rememberTvCrash, isUnplannedExit, tvPopupSince, tvAppVersion, type TvCrash,
 } from './utils/tvRuntime';
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm, TvStopNotice } from './components/TvScreens';
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
@@ -2264,7 +2264,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       // Two checks in a row (a minute) without the lock — a brief re-request
       // isn't a reason to start a video.
       missed = wakeHeldRef.current ? 0 : missed + 1;
-      const need = missed >= 2;
+      const need = missed >= 2 && !tvAppVersion();
       if (need && !stop) { stop = startKeepAwakeVideo(); tvEvent('keep-awake: video fallback (no wake lock)'); }
       if (!need && stop) { stop(); stop = null; tvEvent('keep-awake: wake lock held, video off'); }
     };
@@ -2349,7 +2349,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     prevExitRef.current = session.previous;
     prevLogRef.current = session.previousLog;
     crashRef.current = session.crash;
-    if (isUnplannedExit(session.previous)) showStopNotice(session.crash);
+    if (isUnplannedExit(session.previous) && !tvAppVersion()) showStopNotice(session.crash);
     try {
       const day = new Date().toDateString();
       const prev = JSON.parse(localStorage.getItem('fabtrack_tv_starts') || '{}');
@@ -2460,6 +2460,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       mem: memoryLabel(),
       deviceMemory: (navigator as any).deviceMemory,
       wakeLock: wakeHeldRef.current,
+      app: tvAppVersion() || undefined,
       visible: document.visibilityState === 'visible',
       focused: !tvPopupSince(),
       input: takeInputCounts(),

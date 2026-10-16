@@ -173,7 +173,7 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
   const toneText = st.tone === 'live' ? 'text-emerald-400' : st.tone === 'warn' ? 'text-amber-400' : st.tone === 'down' ? 'text-red-400' : 'text-zinc-400';
   const fireTv = d.agent === 'Amazon Fire TV';
   const deviceLabel = d.model ? (d.model.includes(' · ') ? d.model.split(' · ')[0] : `${d.agent || 'Fire TV'} ${d.model}`) : d.agent;
-  const facts = [deviceLabel, d.screen, responding && d.slide ? `showing “${d.slide}”` : ''].filter(Boolean).join(' · ');
+  const facts = [deviceLabel, d.app ? `FabTrack TV app ${d.app}` : '', d.screen, responding && d.slide ? `showing “${d.slide}”` : ''].filter(Boolean).join(' · ');
   // The last time it went away on its own: the kept report (survives the
   // planned reloads after it), else the previous session's ending.
   const keptCrash = !!d.lastCrash && (!d.lastCrashAt || now - d.lastCrashAt < 7 * 86_400_000);
@@ -228,7 +228,7 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
           {responding && fireTv && Number(d.input?.match(/^0 mouse moves.* in (\d+) min/)?.[1] || 0) >= 4 && (
             <p className="text-[11px] text-zinc-500 mt-1">No mouse movement reaches this TV, so a mouse jiggler isn't keeping it awake (see “Keep the TV on, all day” below).</p>
           )}
-          {responding && d.wakeLock === false && d.visible !== false && (
+          {responding && !d.app && d.wakeLock === false && d.visible !== false && (
             <p className="text-[11px] text-zinc-500 mt-1">This TV's browser won't hold the screen on by itself — set the TV's own sleep and screensaver to Never (tips below).</p>
           )}
         </div>
@@ -254,6 +254,9 @@ function TvRow({ d, now, confirm, addToast }: { d: TvDevice; now: number; confir
     </li>
   );
 }
+
+/** Where TVs download the FabTrack TV app (public/tv.apk), without the https://. */
+const tvAppUrl = () => `${window.location.host}/tv.apk`;
 
 /** What to do about the last time a TV went off the screen, from the clues it left. */
 function crashAdvice(text: string, fireTv: boolean): string {
@@ -455,6 +458,9 @@ function SetupTips({ openWhenReady, refreshHour }: { openWhenReady: boolean | nu
         </Tip>
         <Tip title="On a Fire TV — turn off Still Watching">
           Settings → <b className="text-zinc-200">Preferences</b> → <b className="text-zinc-200">Data Usage Monitoring</b> → Still Watching: <b className="text-zinc-200">Off</b>. Otherwise the Fire TV sends the board back to its home screen when nobody touches the remote (if its “Still watching?” pop-up is showing, choose <b className="text-zinc-200">Don't show again</b>). Also Display &amp; Sounds → Screensaver → Start Time: <b className="text-zinc-200">Never</b>, and on models with Ambient Experience its Advanced Settings → Timeout: <b className="text-zinc-200">Never</b>. A kiosk browser app (Fully Kiosk Browser) reopens the board by itself if the Fire TV ever closes it.
+        </Tip>
+        <Tip title="Best on a Fire TV: the FabTrack TV app">
+          Runs the board full screen, keeps the screen on, starts when the TV turns on, and reopens the board by itself within seconds if the TV's web engine ever quits. On the TV: install the free <b className="text-zinc-200">Downloader</b> app, open it and type <span className="font-mono text-amber-300">{tvAppUrl()}</span>, then Install. The first time, it shows a connect code — type it in above.
         </Tip>
         <Tip title="1 GB Fire TVs: let an app reopen the board">
           Budget TVs with Fire TV built in, and older Fire TV sticks, have 1 GB of memory — the browser can run out on a live board with photos and close (the TV goes back to its home screen). <b className="text-zinc-200">Fully Kiosk Browser</b> (install it with the free Downloader app; its paid Plus option restarts the board by itself after a crash) or a streaming stick with <b className="text-zinc-200">2 GB or more</b> fixes that.

@@ -36,3 +36,8 @@ netlify/functions/*.zip
 
 # Accidental self-nested extract
 /SC-PROJECT-TRACKER-main/
+
+# FabTrack TV app (tv-app/): downloaded build tools and build output
+tv-app/.tools/
+tv-app/build/
+*.keystore

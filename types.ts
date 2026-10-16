@@ -1027,6 +1027,7 @@ export interface TvDevice {
   startsToday?: number;    // page starts today — a crash/reload loop shows up here
   prevLog?: string;        // flight recorder: the previous session's last moments
   jobsLoaded?: number;     // jobs the TV is holding (open + recently finished)
+  app?: string;            // FabTrack TV app version when the board runs in it (tv-app/)
   model?: string;          // Fire TV model, e.g. "Fire TV Stick (3rd gen) · AFTSSS"
   focused?: boolean;       // false = a pop-up or menu is in front of the board
   input?: string;          // mouse moves / key presses since the last check-in (does a jiggler reach it?)

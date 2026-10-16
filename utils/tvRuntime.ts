@@ -247,6 +247,20 @@ const FIRE_TV_MODELS: Record<string, string> = {
   AFTALMO: 'Insignia / Pioneer Fire TV (2022)',
 };
 
+/** The FabTrack TV app's version when the board runs inside it (tv-app/), else ''. */
+export function tvAppVersion(ua: string = navigator.userAgent): string {
+  return ua.match(/FabTrackTV\/([\w.]+)/)?.[1] || '';
+}
+
+/** Why the FabTrack TV app reopened the board (it says so in the address), in words. */
+export function appRestartNote(hash: string = typeof location !== 'undefined' ? location.hash : ''): string {
+  const why = hash.match(/app-restart=(\w+)/)?.[1];
+  return why === 'memory' ? 'the TV app reopened it: its web engine ran out of memory'
+    : why === 'crash' ? 'the TV app reopened it: its web engine crashed'
+    : why === 'hung' ? 'the TV app reopened it: the board stopped responding'
+    : '';
+}
+
 /** "Fire TV Stick (3rd gen) · AFTSSS", a bare model code, or '' when it isn't a Fire TV. */
 export function deviceModel(ua: string = navigator.userAgent): string {
   const m = ua.match(/\b(AFT[A-Z0-9]+)\b/);
@@ -383,6 +397,8 @@ export function startTvSession(startedAt: number): { previous: string; previousL
     prevChain = Number(p?.chainSince || p?.startedAt) || 0;
     prevRefreshes = Number(p?.refreshes) || 0;
   } catch {}
+  const appNote = appRestartNote();
+  if (appNote && isUnplannedExit(previous)) previous = previous.replace(/\)$/, `; ${appNote})`);
   // A planned reload a moment ago continues the same stretch on screen;
   // anything else (a stop, the board closed, a TV switched on) starts anew.
   const continues = !!previous && !isUnplannedExit(previous) && !/^board closed/i.test(previous)
