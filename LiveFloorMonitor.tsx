@@ -44,7 +44,8 @@ import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvEx
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
 import { TvPartPhoto } from './components/TvPartPhoto';
 import { TvNewsSlide, TvCalendarSlide, TvBirthdaySlide } from './components/TvExtraSlides';
-import { tipForPass, TIP_KIND_LABEL } from './utils/safetyTips';
+import { tipForPass, SHOP_TIPS } from './utils/safetyTips';
+import { TvSign, asTone } from './components/TvSign';
 
 /** Log duration in fractional minutes — prefers precise durationSeconds when available. */
 const lMs = (l: { durationSeconds?: number | null; durationMinutes?: number | null }) =>
@@ -1100,64 +1101,31 @@ const TvFlowMapSlide = React.memo(function TvFlowMapSlide({ jobs, stages, active
 });
 
 // Safety slide — full-screen, bold, attention-grabbing
-const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number }; kicker?: string }> = ({ title, body, color, icon, cycleInfo, kicker }) => {
-  const palette: Record<string, { from: string; border: string; text: string }> = {
-    red: { from: 'from-red-500/20', border: 'border-red-500/40', text: 'text-red-400' },
-    yellow: { from: 'from-yellow-500/20', border: 'border-yellow-500/40', text: 'text-yellow-400' },
-    orange: { from: 'from-orange-500/20', border: 'border-orange-500/40', text: 'text-orange-400' },
-    blue: { from: 'from-blue-500/20', border: 'border-blue-500/40', text: 'text-blue-400' },
-    green: { from: 'from-emerald-500/20', border: 'border-emerald-500/40', text: 'text-emerald-400' },
-    white: { from: 'from-white/15', border: 'border-white/40', text: 'text-white' },
-  };
-  const p = palette[color || 'yellow'] || palette.yellow;
-  return (
-    // Scroll-safe: a long safety message scrolls inside its clip instead of
-    // being invisibly cut top+bottom by overflow-hidden + centered flex.
-    <div className="h-full w-full overflow-y-auto overflow-x-hidden">
-      <div className="flex items-center justify-center p-[clamp(1rem,3vw,4rem)]" style={{ minHeight: '100%' }}>
-      <div className={`w-full max-w-5xl bg-gradient-to-br ${p.from} to-transparent border-2 ${p.border} rounded-[clamp(1.5rem,3vw,3rem)] text-center relative overflow-hidden`} style={{ padding: 'clamp(1.5rem,4vw,5rem)' }}>
-        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
-        <div className="relative">
-          <p className={`font-black uppercase tracking-[0.4em] ${p.text} mb-[clamp(0.75rem,1.5vw,1.5rem)] flex items-center justify-center gap-3`} style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
-            <span>⚠ {kicker || 'Safety Reminder'}</span>
-            {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
-          </p>
-          <div className="mb-[clamp(0.75rem,1.5vw,1.5rem)]" style={{ fontSize: 'clamp(3rem, 8vw, 7rem)' }}>{icon || '⚠️'}</div>
-          <h2 className="font-black text-white tracking-tight leading-tight" style={{ fontSize: 'clamp(2rem, 5.5vw, 4.5rem)' }}>{title || 'Think Safety First'}</h2>
-          {body && <p className="text-white/70 mt-[clamp(0.75rem,1.5vw,1.5rem)] leading-relaxed max-w-3xl mx-auto" style={{ fontSize: 'clamp(0.95rem, 1.6vw, 1.5rem)' }}>{body}</p>}
-        </div>
-      </div>
-      </div>
-    </div>
-  );
-};
+// Safety slide — one message, laid out like a real shop safety sign
+// (components/TvSign): colored band with the signal word, big icon, headline.
+const TvSafetySlide: React.FC<{ title?: string; body?: string; color?: string; icon?: string; cycleInfo?: { current: number; total: number }; word?: string; symbol?: string; meta?: string }> = ({ title, body, color, icon, cycleInfo, word, symbol, meta }) => (
+  <TvSign
+    tone={asTone(color, 'yellow')}
+    word={word}
+    symbol={symbol}
+    icon={icon || '⚠️'}
+    title={title || 'Think Safety First'}
+    body={body}
+    meta={meta ?? (cycleInfo ? `${cycleInfo.current} of ${cycleInfo.total}` : undefined)}
+  />
+);
 
-// Message slide — announcement
-const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, cycleInfo }) => {
-  const palette: Record<string, string> = {
-    blue: 'from-blue-500/20 border-blue-500/40 text-blue-400',
-    yellow: 'from-yellow-500/20 border-yellow-500/40 text-yellow-400',
-    red: 'from-red-500/20 border-red-500/40 text-red-400',
-    green: 'from-emerald-500/20 border-emerald-500/40 text-emerald-400',
-    white: 'from-white/15 border-white/40 text-white',
-    orange: 'from-orange-500/20 border-orange-500/40 text-orange-400',
-  };
-  const cls = palette[color || 'blue'] || palette.blue;
-  return (
-    <div className="h-full w-full overflow-y-auto overflow-x-hidden">
-      <div className="flex items-center justify-center p-[clamp(1rem,3vw,4rem)]" style={{ minHeight: '100%' }}>
-      <div className={`w-full max-w-5xl bg-gradient-to-br ${cls.split(' ')[0]} to-transparent border-2 ${cls.split(' ')[1]} rounded-[clamp(1.5rem,3vw,3rem)] text-center`} style={{ padding: 'clamp(2rem,5vw,6rem)' }}>
-        <p className={`font-black uppercase tracking-[0.4em] ${cls.split(' ')[2]} mb-[clamp(0.75rem,1.5vw,1.5rem)] flex items-center justify-center gap-3`} style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>
-          <span>Announcement</span>
-          {cycleInfo && <span className="text-white/40">· {cycleInfo.current} of {cycleInfo.total}</span>}
-        </p>
-        <h2 className="font-black text-white tracking-tight leading-tight" style={{ fontSize: 'clamp(2.5rem, 7vw, 5.5rem)' }}>{title || 'Message'}</h2>
-        {body && <p className="text-white/70 mt-[clamp(1rem,2vw,2rem)] leading-relaxed max-w-3xl mx-auto" style={{ fontSize: 'clamp(1.125rem, 2vw, 1.875rem)' }}>{body}</p>}
-      </div>
-      </div>
-    </div>
-  );
-};
+// Message slide — announcement, same sign layout with an Announcement band.
+const TvMessageSlide: React.FC<{ title?: string; body?: string; color?: string; cycleInfo?: { current: number; total: number } }> = ({ title, body, color, cycleInfo }) => (
+  <TvSign
+    tone={asTone(color, 'blue')}
+    word="Announcement"
+    symbol="📢"
+    title={title || 'Message'}
+    body={body}
+    meta={cycleInfo ? `${cycleInfo.current} of ${cycleInfo.total}` : undefined}
+  />
+);
 
 // ── AT-RISK JOBS slide — jobs predicted to miss their due date ────────
 // Memoized: the ETA computation walks every open job × every log — it must NOT
@@ -2994,7 +2962,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
           const i = (slideCycleCounts[slide.id] || 1) - 1;
           if (slide.tipLibrary !== false && i % 2 === 1) {
             const t = tipForPass((i - 1) / 2);
-            return <TvSafetySlide title={t.title} body={t.body} color={t.color} icon={t.icon} kicker={TIP_KIND_LABEL[t.kind]} />;
+            const band = t.kind === 'fod' ? { word: 'FOD Prevention' } : t.kind === 'quality' ? { word: 'Quality', symbol: '✔' } : t.kind === 'shop' ? { word: 'Shop Tip', symbol: '★' } : {};
+            return <TvSafetySlide title={t.title} body={t.body} color={t.color} icon={t.icon} {...band} meta={`Tip ${SHOP_TIPS.indexOf(t) + 1} of ${SHOP_TIPS.length}`} />;
           }
           const own = slide.tipLibrary !== false ? Math.floor(i / 2) : i;
           const m = msgs[own % msgs.length];
