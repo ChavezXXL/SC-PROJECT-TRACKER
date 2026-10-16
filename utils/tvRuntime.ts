@@ -317,7 +317,9 @@ export function describePrevSession(raw: string | null): string {
     // then the TV's home screen hides the page — both are kept as clues.
     const popup = p.blurAt ? `; a pop-up or menu came up at ${clockLabel(p.blurAt)}` : '';
     const hidden = p.hiddenAt ? `; screen hidden since ${clockLabel(p.hiddenAt)}` : '';
-    return `stopped without closing — crash, out of memory, browser closed or device asleep (last alive ${clockLabel(p.lastBeat || p.startedAt)}${popup}${hidden})`;
+    const stretch = p.chainSince && p.chainSince < p.startedAt
+      ? `; on screen since ${clockLabel(p.chainSince)}, refreshed ${p.refreshes || 0}×` : '';
+    return `stopped without closing — crash, out of memory, browser closed or device asleep (last alive ${clockLabel(p.lastBeat || p.startedAt)}${popup}${hidden}${stretch})`;
   } catch { return ''; }
 }
 
@@ -370,13 +372,22 @@ export function takeInputCounts(now: number = Date.now()): string {
  * Never throws.
  */
 export function startTvSession(startedAt: number): { previous: string; previousLog: string; crash: TvCrash | null; stop: () => void } {
-  let previous = '', previousLog = '', lastAlive = 0;
+  let previous = '', previousLog = '', lastAlive = 0, prevChain = 0, prevRefreshes = 0, prevEnd = 0;
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     previous = describePrevSession(raw);
     const p = raw ? JSON.parse(raw) : null;
     lastAlive = Number(p?.lastBeat || p?.startedAt) || 0;
+    prevEnd = Number(p?.exitAt || p?.lastBeat || p?.startedAt) || 0;
+    prevChain = Number(p?.chainSince || p?.startedAt) || 0;
+    prevRefreshes = Number(p?.refreshes) || 0;
   } catch {}
+  // A planned reload a moment ago continues the same stretch on screen;
+  // anything else (a stop, the board closed, a TV switched on) starts anew.
+  const continues = !!previous && !isUnplannedExit(previous) && !/^board closed/i.test(previous)
+    && prevChain > 0 && startedAt - prevEnd < 5 * 60_000;
+  const chainSince = continues ? prevChain : startedAt;
+  const refreshes = continues ? prevRefreshes + 1 : 0;
   try { previousLog = readPrevTvLog(localStorage.getItem(LOG_KEY)); } catch {}
   let crash: TvCrash | null;
   if (isUnplannedExit(previous)) {
@@ -399,7 +410,7 @@ export function startTvSession(startedAt: number): { previous: string; previousL
   const save = (extra: Record<string, unknown> = {}) => {
     if (leaving) return;
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ startedAt, lastBeat: Date.now(), ...(hiddenAt ? { hiddenAt } : {}), ...(blurAt ? { blurAt } : {}), ...extra }));
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ startedAt, lastBeat: Date.now(), chainSince, refreshes, ...(hiddenAt ? { hiddenAt } : {}), ...(blurAt ? { blurAt } : {}), ...extra }));
     } catch {}
   };
   save();

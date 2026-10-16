@@ -2029,11 +2029,13 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
     const onVis = () => { if (!document.hidden && tvMode) acquire(); };
     document.addEventListener('visibilitychange', onVis);
 
-    // Periodic heartbeat every 30s: re-acquire the wake lock + do a DOM write.
-    // 30s beats the 5-min background-throttle tier used by Chromium-based TVs.
+    // Every 30 s: re-request the wake lock if the browser dropped it, and do a
+    // DOM write. (It used to release and re-request every time — on the shop's
+    // Fire TV that left the lock off for moments, which kept switching the
+    // backup keep-awake video on and off all day.)
     const heartbeat = window.setInterval(() => {
       if (!tvMode || cancelled) return;
-      acquire();
+      if (!lock || lock.released) acquire();
       try { document.body.dataset.tvHeartbeat = String(Date.now()); } catch {}
     }, 30_000);
 
@@ -2254,8 +2256,12 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode) return;
     let stop: (() => void) | null = null;
+    let missed = 0;
     const sync = () => {
-      const need = !wakeHeldRef.current;
+      // Two checks in a row (a minute) without the lock — a brief re-request
+      // isn't a reason to start a video.
+      missed = wakeHeldRef.current ? 0 : missed + 1;
+      const need = missed >= 2;
       if (need && !stop) { stop = startKeepAwakeVideo(); tvEvent('keep-awake: video fallback (no wake lock)'); }
       if (!need && stop) { stop(); stop = null; tvEvent('keep-awake: wake lock held, video off'); }
     };
@@ -2731,6 +2737,37 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   const slideDuration = (settings.tvSlideDuration || 15) * 1000;
   const [tvSlideIdx, setTvSlideIdx] = useState(0);
   const [tvFade, setTvFade] = useState(true);
+
+  // ── Fresh start every 30 minutes on low-memory TV sticks ─────────────
+  // The shop's 1 GB Fire TV closed the board ~50 minutes into every session,
+  // with the page still on screen and no error: memory the browser doesn't
+  // report piling up until it gives out. A quick reload right after a slide
+  // change starts the page fresh long before that. Only when the app's own
+  // server answers, so it never reloads into an error page.
+  const slideChangedAtRef = useRef(Date.now());
+  useEffect(() => { slideChangedAtRef.current = Date.now(); }, [tvSlideIdx]);
+  useEffect(() => {
+    if (!standalone || isPreview || !tvMode) return;
+    if (((navigator as any).deviceMemory ?? 8) > 2) return;
+    const EVERY = 30 * 60_000;
+    let busy = false;
+    const id = window.setInterval(() => {
+      const up = Date.now() - startedAtRef.current;
+      if (up < EVERY || busy || navigator.onLine === false) return;
+      // Just after a slide change, so it looks like the next slide; or anyway
+      // once it's 3 minutes late (after hours there are no slides).
+      if (Date.now() - slideChangedAtRef.current > 4000 && up < EVERY + 3 * 60_000) return;
+      busy = true;
+      fetch(`/manifest.json?alive=${Date.now()}`, { cache: 'no-store' })
+        .then(r => {
+          if (!r.ok) throw new Error(String(r.status));
+          setTvExitReason('fresh start (every 30 min on this TV)');
+          window.location.reload();
+        })
+        .catch(() => { busy = false; });
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [standalone, isPreview, tvMode]);
 
   // Auto-rotate through TV slides (only while in TV mode, and not paused via Spacebar).
   //

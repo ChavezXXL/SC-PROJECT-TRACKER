@@ -171,6 +171,28 @@ ok('hour clamped to 0-23', new Date(at(14) + msUntilDailyRefresh(99, at(14))).ge
   ok('…and becomes the kept crash', !!s7.crash && s7.crash.text.includes('pop-up or menu came up'));
   s7.stop();
 
+  // How long it's been on screen across planned refreshes: a stop after
+  // two planned refreshes says when the stretch began.
+  for (const k of Object.keys(handlers)) delete handlers[k];
+  const base = Date.now();
+  startTvSession(base);                                  // after "board closed" → a new stretch
+  setTvExitReason('fresh start'); fire('wpagehide');
+  setTvExitReason('');
+  for (const k of Object.keys(handlers)) delete handlers[k];
+  startTvSession(base + 1000);                           // planned refresh → same stretch (1×)
+  setTvExitReason('fresh start'); fire('wpagehide');
+  setTvExitReason('');
+  for (const k of Object.keys(handlers)) delete handlers[k];
+  startTvSession(base + 2000);                           // again (2×), then it dies
+  const rec = JSON.parse(store.get('fabtrack_tv_session') || '{}');
+  ok('planned refreshes continue the stretch', rec.chainSince === base && rec.refreshes === 2);
+  for (const k of Object.keys(handlers)) delete handlers[k];
+  const s9 = startTvSession(base + 3000);
+  ok('a stop says how long it had been on screen', s9.previous.startsWith('stopped without closing') && s9.previous.includes('on screen since') && s9.previous.includes('refreshed 2×'));
+  const rec2 = JSON.parse(store.get('fabtrack_tv_session') || '{}');
+  ok('…and the next start begins a new stretch', rec2.chainSince === base + 3000 && rec2.refreshes === 0);
+  s9.stop();
+
   g.localStorage = saved.localStorage; g.window = saved.window; g.document = saved.document;
 }
 
