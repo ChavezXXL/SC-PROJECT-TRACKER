@@ -10,8 +10,12 @@
 //   • Shop totals: hours, workers, revenue, open rework
 //
 // Exported:
+//   buildRecapData(opts)    → RecapData
 //   buildRecapHtml(data)    → HTML string
-//   sendDailyRecap(opts)    → Promise<{ ok, error? }>
+//   buildRecapText(data)    → plain-text fallback
+//   recapSubject(data, tz?) → subject line of the "Send now" recap
+//   sendDailyRecap(opts)    → Promise<{ ok, error? }> — asks the server to
+//                             build + send the recap (Settings → "Send now")
 // ═════════════════════════════════════════════════════════════════════
 
 import type { TimeLog, Job, User } from '../types';
@@ -78,9 +82,10 @@ function todayBounds(): { start: number; end: number } {
   return { start, end: start + 86_400_000 - 1 };
 }
 
-function formatDate(ts: number): string {
+function formatDate(ts: number, timeZone?: string): string {
   return new Date(ts).toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    ...(timeZone ? { timeZone } : {}),
   });
 }
 
@@ -129,6 +134,8 @@ export interface RecapData {
   openReworkCount: number;
   activeWorkersToday: number;
   jobInsights: JobInsight[];
+  /** IANA zone dates are printed in (server builds run in UTC). */
+  timeZone?: string;
 }
 
 export interface RecapOptions {
@@ -143,6 +150,9 @@ export interface RecapOptions {
   /** Override "today" start timestamp (UTC ms). When omitted, uses local midnight.
    *  Pass this from server-side functions to get timezone-correct day boundaries. */
   todayStart?: number;
+  /** Shop timezone for printed dates. Server-side builds pass it — their clock
+   *  is UTC, so an evening recap would otherwise be dated tomorrow. */
+  timeZone?: string;
 }
 
 // ── Core data builder ─────────────────────────────────────────────────
@@ -286,6 +296,7 @@ export function buildRecapData(opts: RecapOptions): RecapData {
     openReworkCount: opts.openReworkCount ?? 0,
     activeWorkersToday: workerSummaries.length,
     jobInsights,
+    timeZone: opts.timeZone,
   };
 }
 
@@ -402,7 +413,7 @@ export function buildRecapHtml(data: RecapData): string {
           <td style="background:linear-gradient(135deg,#92400e,#b45309,#d97706);padding:28px 32px 24px;">
             <p style="margin:0 0 3px;font-size:10px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#fcd34d;opacity:0.9;">Daily Recap</p>
             <h1 style="margin:0 0 4px;font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.02em;">${escapeHtml(shopName)}</h1>
-            <p style="margin:0;font-size:13px;color:#fde68a;opacity:0.8;">${formatDate(date)}</p>
+            <p style="margin:0;font-size:13px;color:#fde68a;opacity:0.8;">${formatDate(date, data.timeZone)}</p>
           </td>
         </tr>
 
@@ -542,7 +553,7 @@ export function buildRecapText(data: RecapData): string {
   const { shopName, date, workerSummaries, completedToday, totalMins, totalRevenue, totalLaborCost, weekLaborCost, shopRate, openReworkCount, jobInsights } = data;
   const lines: string[] = [
     `DAILY RECAP — ${shopName}`,
-    formatDate(date),
+    formatDate(date, data.timeZone),
     '═'.repeat(44),
     '',
     `Total hours: ${fmtHours(totalMins)}  |  Workers: ${data.activeWorkersToday}  |  Jobs done: ${completedToday.length}  |  Rework: ${openReworkCount}`,
@@ -588,28 +599,37 @@ export function buildRecapText(data: RecapData): string {
   return lines.join('\n');
 }
 
+// ── Subject ───────────────────────────────────────────────────────────
+
+/** "Daily Recap — Shop — Oct 19 · Ana, Luis" — dated in `timeZone`, else the
+ *  zone the data was built for, else this machine's. */
+export function recapSubject(data: RecapData, timeZone: string | undefined = data.timeZone): string {
+  const workerNames = data.workerSummaries.map(w => w.name).join(', ');
+  const day = new Date(data.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(timeZone ? { timeZone } : {}) });
+  // One header line — a name with a line break in it can't add headers.
+  return `Daily Recap — ${data.shopName} — ${day}${workerNames ? ` · ${workerNames}` : ''}`
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ');
+}
+
 // ── Sender ────────────────────────────────────────────────────────────
 
+/**
+ * Settings → "Send now". The server builds the recap from the shop's live data
+ * and sends it to the recap addresses saved in Settings — the browser only
+ * asks for it and supplies no recipients, subject or body (at most one every
+ * 10 minutes). `opts.to` just guards against an empty address; the rest of
+ * `opts` is no longer used.
+ */
 export async function sendDailyRecap(opts: RecapOptions): Promise<{ ok: boolean; error?: string }> {
   if (!opts.to?.trim()) return { ok: false, error: 'No recipient email configured.' };
-
-  const data = buildRecapData(opts);
-  const html = buildRecapHtml(data);
-  const text = buildRecapText(data);
-
-  const workerNames = data.workerSummaries.map(w => w.name).join(', ');
-  const subject = `Daily Recap — ${data.shopName} — ${new Date(data.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}${workerNames ? ` · ${workerNames}` : ''}`;
-
-  // Build recipient list: primary + any CC
-  const toAddresses = [opts.to.trim(), ...(opts.ccEmails?.map(e => e.trim()).filter(Boolean) ?? [])];
 
   try {
     const res = await fetch('/.netlify/functions/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: toAddresses, subject, html, text }),
+      body: JSON.stringify({ kind: 'daily-recap' }),
     });
-    const result = await res.json() as any;
+    const result = await res.json().catch(() => ({})) as any;
     if (!res.ok) return { ok: false, error: result?.error || `HTTP ${res.status}` };
     return { ok: true };
   } catch (e: any) {

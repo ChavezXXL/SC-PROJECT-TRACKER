@@ -3,10 +3,12 @@
 // Manual trigger endpoint for the daily recap email.
 //
 // Hit this URL from your browser to send a test recap RIGHT NOW:
-//   https://your-site.netlify.app/.netlify/functions/test-recap
-//   (or on Netlify alias: https://app.fabtrack.io/.netlify/functions/test-recap)
+//   https://your-site.netlify.app/.netlify/functions/test-recap?key=…
+//   (or on Netlify alias: https://app.fabtrack.io/.netlify/functions/test-recap?key=…)
 //
 // Returns JSON with { ok, details } so you can see exactly what happened.
+// The recap is built by _shared/recapEmail.ts — the same server-side builder
+// behind Settings → "Send now" (send-email { kind: 'daily-recap' }).
 //
 // Same env vars as daily-recap-cron:
 //   VITE_FIREBASE_API_KEY, VITE_FIREBASE_PROJECT_ID
@@ -14,58 +16,10 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import type { Handler } from '@netlify/functions';
-import type { Job, TimeLog, User, SystemSettings } from '../../types';
-import { buildRecapData, buildRecapHtml, buildRecapText } from '../../utils/sendDailyRecap';
+import type { SystemSettings } from '../../types';
+import { buildServerRecap, fetchDoc, fsRestFromEnv } from './_shared/recapEmail';
 
 const JSON_H = { 'Content-Type': 'application/json' };
-
-// ── Firestore REST helpers ─────────────────────────────────────────────
-
-function fsVal(v: any): any {
-  if (v == null) return null;
-  if ('stringValue'    in v) return v.stringValue;
-  if ('integerValue'   in v) return Number(v.integerValue);
-  if ('doubleValue'    in v) return v.doubleValue;
-  if ('booleanValue'   in v) return v.booleanValue;
-  if ('nullValue'      in v) return null;
-  if ('timestampValue' in v) return new Date(v.timestampValue).getTime();
-  if ('arrayValue'     in v) return (v.arrayValue.values || []).map(fsVal);
-  if ('mapValue'       in v) {
-    const obj: any = {};
-    for (const [k, vv] of Object.entries(v.mapValue.fields || {})) obj[k] = fsVal(vv as any);
-    return obj;
-  }
-  return undefined;
-}
-
-function fsDoc(raw: any): any {
-  const parts = (raw.name || '').split('/');
-  const out: any = { id: parts[parts.length - 1] };
-  for (const [k, v] of Object.entries(raw.fields || {})) out[k] = fsVal(v as any);
-  return out;
-}
-
-async function fetchDoc(col: string, id: string, apiKey: string, projectId: string): Promise<any | null> {
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}/${id}?key=${apiKey}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return fsDoc(await res.json());
-}
-
-async function fetchCollection(col: string, apiKey: string, projectId: string): Promise<any[]> {
-  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}`;
-  const docs: any[] = [];
-  let pageToken: string | undefined;
-  do {
-    const url = `${base}?key=${apiKey}&pageSize=300${pageToken ? `&pageToken=${pageToken}` : ''}`;
-    const res = await fetch(url);
-    const data: any = await res.json();
-    if (!res.ok) break;
-    (data.documents || []).forEach((d: any) => docs.push(fsDoc(d)));
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-  return docs;
-}
 
 // ── Handler ────────────────────────────────────────────────────────────
 
@@ -88,18 +42,17 @@ export const handler: Handler = async (event) => {
   const fail = (msg: string) => { console.error('[test-recap]', msg); log.push('✗  ' + msg); };
 
   // 1. Check env vars
-  const apiKey    = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
-  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
+  const fs        = fsRestFromEnv();
   const resendKey = process.env.RESEND_API_KEY;
   const from      = process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>';
 
-  if (!apiKey) { fail('VITE_FIREBASE_API_KEY not set in Netlify env'); }
-  else { info(`Firebase project: ${projectId}`); }
+  if (!fs.apiKey) { fail('VITE_FIREBASE_API_KEY not set in Netlify env'); }
+  else { info(`Firebase project: ${fs.projectId}`); }
 
   if (!resendKey) { fail('RESEND_API_KEY not set in Netlify env'); }
   else { info('RESEND_API_KEY present'); }
 
-  if (!apiKey || !resendKey) {
+  if (!fs.apiKey || !resendKey) {
     return {
       statusCode: 500,
       headers: JSON_H,
@@ -108,7 +61,7 @@ export const handler: Handler = async (event) => {
   }
 
   // 2. Load settings
-  const settings = await fetchDoc('settings', 'system', apiKey, projectId) as SystemSettings | null;
+  const settings = await fetchDoc(fs, 'settings', 'system').catch(() => null) as SystemSettings | null;
   if (!settings) {
     fail('settings/system doc not found in Firestore');
     return { statusCode: 500, headers: JSON_H, body: JSON.stringify({ ok: false, log }) };
@@ -124,48 +77,23 @@ export const handler: Handler = async (event) => {
     return { statusCode: 400, headers: JSON_H, body: JSON.stringify({ ok: false, log, hint: 'Set a recap email address in Settings → Schedule → Daily Email Recap' }) };
   }
 
-  // 3. Load data
-  const tz = (settings as any).recapTimezone || 'America/Los_Angeles';
-  const dtf = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  const now = new Date();
-  const parts = dtf.formatToParts(now);
-  const get = (t: string) => parseInt(parts.find((p: any) => p.type === t)?.value ?? '0', 10);
-  const msFromMidnight = (get('hour') * 3600 + get('minute') * 60 + get('second')) * 1000 + now.getMilliseconds();
-  const todayStart = now.getTime() - msFromMidnight;
+  // 3. Load data + build the recap (shared server-side builder)
+  let recap: Awaited<ReturnType<typeof buildServerRecap>>;
+  try {
+    recap = await buildServerRecap(fs, settings);
+  } catch (e: any) {
+    fail(`Couldn't load shop data: ${e?.message}`);
+    return { statusCode: 500, headers: JSON_H, body: JSON.stringify({ ok: false, log }) };
+  }
+  const { counts } = recap;
+  info(`Loaded ${counts.jobs} jobs, ${counts.logs} logs, ${counts.users} users, ${counts.openRework} open rework`);
 
-  const [allJobs, logs, users, reworkDocs] = await Promise.all([
-    fetchCollection('jobs',   apiKey, projectId) as Promise<Job[]>,
-    fetchCollection('logs',   apiKey, projectId) as Promise<TimeLog[]>,
-    fetchCollection('users',  apiKey, projectId) as Promise<User[]>,
-    fetchCollection('rework', apiKey, projectId),
-  ]);
-
-  const openReworkCount = reworkDocs.filter((r: any) => r.status !== 'resolved').length;
-  info(`Loaded ${allJobs.length} jobs, ${logs.length} logs, ${users.length} users, ${openReworkCount} open rework`);
-
-  const shopName = settings.companyName || 'FabTrack IO';
-  const ccEmails = (settings.recapEmailCC || '').split(',').map((e: string) => e.trim()).filter(Boolean);
-
-  const data = buildRecapData({
-    to: settings.recapEmail.trim(),
-    ccEmails,
-    logs,
-    allJobs,
-    users,
-    shopName,
-    shopRate: settings.shopRate,
-    openReworkCount,
-    todayStart,
-  });
-
-  const html = buildRecapHtml(data);
-  const text = buildRecapText(data);
-
-  const dateLabel = new Date(todayStart + 12 * 3_600_000).toLocaleDateString('en-US', {
-    timeZone: tz, weekday: 'long', month: 'long', day: 'numeric',
-  });
-  const subject = `[TEST] ${shopName} — Daily Recap · ${dateLabel}`;
-  const to = [settings.recapEmail.trim(), ...ccEmails];
+  const subject = `[TEST] ${recap.shopName} — Daily Recap · ${recap.dateLabel}`;
+  const to = recap.to;
+  if (to.length === 0) {
+    warn('The saved recap address does not look like an email address');
+    return { statusCode: 400, headers: JSON_H, body: JSON.stringify({ ok: false, log }) };
+  }
 
   info(`Sending test recap to: ${to.join(', ')}`);
   info(`Subject: ${subject}`);
@@ -175,7 +103,7 @@ export const handler: Handler = async (event) => {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to, subject, html, text }),
+      body: JSON.stringify({ from, to, subject, html: recap.html, text: recap.text }),
     });
     const result: any = await res.json();
     if (!res.ok) {
@@ -196,9 +124,9 @@ export const handler: Handler = async (event) => {
         sentTo: to,
         resendId: result.id,
         stats: {
-          workers: data.activeWorkersToday,
-          jobsDone: data.completedToday.length,
-          jobInsights: data.jobInsights.length,
+          workers: recap.data.activeWorkersToday,
+          jobsDone: recap.data.completedToday.length,
+          jobInsights: recap.data.jobInsights.length,
         },
       }),
     };
