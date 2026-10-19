@@ -7709,7 +7709,7 @@ const ROLE_META: Record<UserRole, { label: string; description: string; color: s
 };
 
 // --- ADMIN: EMPLOYEES ---
-const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) => {
+const AdminEmployees = ({ addToast, confirm, currentUser }: { addToast: any, confirm: any, currentUser?: User | null }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [editingUser, setEditingUser] = useState<Partial<User>>({});
   const [showModal, setShowModal] = useState(false);
@@ -7724,14 +7724,33 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
     return () => { u1(); u2(); };
   }, []);
 
-  const handleDelete = (id: string) => confirm({
-    title: 'Remove User',
-    message: 'Are you sure you want to remove this user? This cannot be undone.',
-    onConfirm: () => DB.deleteUser(id)
-  });
+  // Managers run the floor but don't manage admins: they can't edit or remove
+  // an admin, or make anyone — themselves included — an admin. And nobody can
+  // remove, switch off or demote themselves or the last admin (there'd be no
+  // way back in the app).
+  const isAdmin = currentUser?.role === 'admin';
+  const activeAdmins = users.filter(u => u.role === 'admin' && u.isActive !== false);
+  const canManage = (u: Partial<User>) => isAdmin || u.role !== 'admin';
+  const roleChoices: ('employee' | 'manager' | 'admin')[] = isAdmin ? ['employee', 'manager', 'admin'] : ['employee', 'manager'];
+
+  const handleDelete = (u: User) => {
+    if (u.id === currentUser?.id) { addToast('error', "You can't remove your own account — ask another admin."); return; }
+    if (!canManage(u)) { addToast('error', 'Only an admin can remove an admin.'); return; }
+    if (u.role === 'admin' && u.isActive !== false && activeAdmins.length <= 1) { addToast('error', "That's the last admin — make someone else an admin first."); return; }
+    confirm({
+      title: 'Remove User',
+      message: `Remove ${u.name}? Their time history stays in the reports. This cannot be undone.`,
+      onConfirm: () => DB.deleteUser(u.id)
+    });
+  };
 
   const openNew = () => { setEditingUser({ role: 'employee', isActive: true }); setWizardStep(1); setShowModal(true); };
-  const openEdit = (u: User) => { setEditingUser(u); setWizardStep(2); setShowModal(true); };
+  // The PIN field starts EMPTY when editing — a member's PIN is never shown
+  // (leave it blank to keep it, or type a new one).
+  const openEdit = (u: User) => {
+    if (!canManage(u)) { addToast('error', 'Only an admin can edit an admin.'); return; }
+    setEditingUser({ ...u, pin: '' }); setWizardStep(2); setShowModal(true);
+  };
   const closeModal = () => { setShowModal(false); setEditingUser({}); setWizardStep(1); };
 
   // Auto-generate next available employee ID (EMP-001, EMP-002, ...)
@@ -7743,13 +7762,16 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
   };
 
   const handleSave = async () => {
-    if (!editingUser.name || !editingUser.username || !editingUser.pin) { addToast('error', 'Missing fields'); return; }
-    if (editingUser.pin.length < 4) { addToast('error', 'PIN must be at least 4 digits'); return; }
+    const original = editingUser.id ? users.find(u => u.id === editingUser.id) : undefined;
+    const typedPin = (editingUser.pin || '').trim();
+    const pin = typedPin || original?.pin || '';   // blank when editing = keep the PIN
+    if (!editingUser.name || !editingUser.username || !pin) { addToast('error', 'Missing fields'); return; }
+    if (typedPin && typedPin.length < 4) { addToast('error', 'PIN must be at least 4 digits'); return; }
     if (users.some(u => u.username.toLowerCase() === editingUser.username!.toLowerCase() && u.id !== editingUser.id)) {
       addToast('error', 'Username already taken');
       return;
     }
-    if (users.some(u => u.pin === editingUser.pin && u.id !== editingUser.id)) {
+    if (typedPin && users.some(u => u.pin === typedPin && u.id !== editingUser.id)) {
       addToast('error', 'PIN already in use by another member');
       return;
     }
@@ -7757,24 +7779,38 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
       addToast('error', 'Hourly rate cannot be negative');
       return;
     }
+    const role = editingUser.role || 'employee';
+    const isActive = editingUser.isActive !== false;
+    if (!isAdmin && (role === 'admin' || original?.role === 'admin')) {
+      addToast('error', 'Only an admin can make or change an admin.'); return;
+    }
+    if (original && original.id === currentUser?.id && (role !== original.role || !isActive)) {
+      addToast('error', "You can't change your own role or switch yourself off — ask another admin."); return;
+    }
+    if (original?.role === 'admin' && original.isActive !== false && (role !== 'admin' || !isActive) && activeAdmins.length <= 1) {
+      addToast('error', "That's the last admin — make someone else an admin first."); return;
+    }
     const newUser: User = {
       id: editingUser.id || crypto.randomUUID(),
       employeeId: editingUser.employeeId || nextEmployeeId(),
       name: editingUser.name,
       username: editingUser.username,
-      pin: editingUser.pin,
-      role: editingUser.role || 'employee',
-      isActive: editingUser.isActive !== false,
+      pin,
+      role,
+      isActive,
       hourlyRate: editingUser.hourlyRate || undefined,
     };
+    let result: 'saved' | 'queued' | void;
     try {
-      await DB.saveUser(newUser);
+      // A rate cleared in the editor is deleted (a merge save would keep the old one).
+      result = await DB.saveUser(newUser, { clear: original?.hourlyRate && !newUser.hourlyRate ? ['hourlyRate'] : [] });
     } catch (e: any) {
       addToast('error', 'Save failed: ' + (e?.message || 'Unknown error'));
       return;
     }
     closeModal();
-    addToast('success', `${editingUser.id ? 'Updated' : 'Welcome'} ${newUser.name} (${newUser.employeeId})`);
+    if (result === 'queued') addToast('info', `${newUser.name} saved on this device — it syncs when the internet is back.`);
+    else addToast('success', `${editingUser.id ? 'Updated' : 'Welcome'} ${newUser.name} (${newUser.employeeId})`);
   };
 
   const randomPin = () => String(Math.floor(1000 + Math.random() * 9000));
@@ -7846,10 +7882,14 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                         {u.hourlyRate ? <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">${u.hourlyRate.toFixed(2)}/hr</span> : null}
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                      <button aria-label={`Edit ${u.name}`} onClick={() => openEdit(u)} className="p-1.5 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Edit"><Edit2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
-                      <button aria-label={`Remove ${u.name}`} onClick={() => handleDelete(u.id)} className="p-1.5 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Remove"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
-                    </div>
+                    {canManage(u) && (
+                      <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
+                        <button aria-label={`Edit ${u.name}`} onClick={() => openEdit(u)} className="p-1.5 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Edit"><Edit2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                        {u.id !== currentUser?.id && (
+                          <button aria-label={`Remove ${u.name}`} onClick={() => handleDelete(u)} className="p-1.5 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Remove"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -7898,7 +7938,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Pick a role</p>
                     <p className="text-[11px] text-zinc-600">Controls what this person can see and do.</p>
                   </div>
-                  {(['employee', 'manager', 'admin'] as const).map(r => {
+                  {roleChoices.map(r => {
                     const meta = ROLE_META[r];
                     const Icon = meta.icon;
                     const active = editingUser.role === r;
@@ -7974,8 +8014,8 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                   {isEditing && (
                     <div>
                       <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Role</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {(['employee', 'manager', 'admin'] as const).map(r => {
+                      <div className={`grid ${roleChoices.length === 3 ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+                        {roleChoices.map(r => {
                           const meta = ROLE_META[r];
                           const active = editingUser.role === r;
                           return (
@@ -8006,7 +8046,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                   )}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">PIN (4+ digits)</label>
+                      <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">{isEditing ? 'New PIN' : 'PIN (4+ digits)'}</label>
                       <button type="button" onClick={() => setEditingUser({ ...editingUser, pin: randomPin() })} className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold">Generate</button>
                     </div>
                     <input
@@ -8018,6 +8058,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
                       value={editingUser.pin || ''}
                       onChange={e => setEditingUser({ ...editingUser, pin: e.target.value.replace(/\D/g, '') })}
                     />
+                    {isEditing && <p className="text-[10px] text-zinc-600 mt-1.5">Leave blank to keep their current PIN.</p>}
                   </div>
                   {(editingUser.role === 'admin' || editingUser.role === 'manager' || editingUser.role === 'employee') && (
                     <div>
@@ -8142,7 +8183,7 @@ const AdminEmployees = ({ addToast, confirm }: { addToast: any, confirm: any }) 
             <div className="px-5 py-4 border-t border-white/10 bg-zinc-950/50 flex items-center justify-between gap-3 shrink-0">
               <button
                 type="button"
-                onClick={() => wizardStep > 1 ? setWizardStep(wizardStep - 1) : closeModal()}
+                onClick={() => !isEditing && wizardStep > 1 ? setWizardStep(wizardStep - 1) : closeModal()}
                 className="px-4 py-2.5 text-zinc-400 hover:text-white font-medium transition-colors"
               >
                 {wizardStep === 1 || isEditing ? 'Cancel' : 'Back'}
@@ -8549,7 +8590,8 @@ export default function App() {
   }
 
   if (portalCustomer) {
-    return <CustomerPortal customerFilter={portalCustomer} quoteId={portalQuoteId} />;
+    // The portal resolves a ?c= short link itself once settings load.
+    return <CustomerPortal customerFilter={portalCustomer} quoteId={portalQuoteId} slug={new URLSearchParams(window.location.search).get('portal') ? null : new URLSearchParams(window.location.search).get('c')} />;
   }
 
   if (!user || view === 'login') {
@@ -8825,7 +8867,7 @@ export default function App() {
           )}
           {view === 'admin-calendar' && <JobsView key="cal" user={user} addToast={addToast} setPrintable={setPrintable} confirm={setConfirm} onOpenPOScanner={() => { /* AI scan disabled */ }} calendarOnly />}
           {view === 'admin-logs' && <LogsView addToast={addToast} confirm={setConfirm} />}
-          {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} />}
+          {view === 'admin-team' && <AdminEmployees addToast={addToast} confirm={setConfirm} currentUser={user} />}
           {/* Settings are admin-only (the sidebar already hid them from managers;
               the phone header button and in-app links didn't). */}
           {view === 'admin-settings' && (user?.role === 'admin'

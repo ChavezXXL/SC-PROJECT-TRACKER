@@ -5,6 +5,7 @@ import * as DB from './services/mockDb';
 import { printQuotePDF } from './services/pdfService';
 import { fmtMoneyK } from './utils/format';
 import { normDate } from './utils/date';
+import { daysUntilDue } from './utils/dueDates';
 import { Overlay } from './components/Overlay';
 import { useConfirm } from './components/useConfirm';
 import { usePrompt } from './components/usePrompt';
@@ -233,20 +234,17 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   // without the admin having to manually track each one.
   useEffect(() => {
     if (quotes.length === 0) return;
-    const now = Date.now();
+    // Whole calendar days (the shared due-date rule): expired the day AFTER
+    // its valid-until date.
     const toExpire = quotes.filter(q => {
       if (q.status !== 'sent' && q.status !== 'draft') return false;
-      if (!q.validUntil) return false;
-      const us = q.validUntil.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      const iso = q.validUntil.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      let expiresMs: number;
-      if (us) expiresMs = new Date(+us[3], +us[1] - 1, +us[2], 23, 59, 59).getTime();
-      else if (iso) expiresMs = new Date(+iso[1], +iso[2] - 1, +iso[3], 23, 59, 59).getTime();
-      else { const d = new Date(q.validUntil); if (isNaN(d.getTime())) return false; expiresMs = d.getTime(); }
-      return expiresMs < now;
+      const left = daysUntilDue(q.validUntil);
+      return left !== null && left < 0;
     });
     if (toExpire.length > 0) {
-      Promise.all(toExpire.map(q => DB.saveQuote({ ...q, status: 'expired' })))
+      // Status only, re-checked against the server copy — a device with an old
+      // copy can't undo a date extended or an approval made elsewhere.
+      Promise.all(toExpire.map(q => DB.expireQuote(q.id, q.validUntil)))
         .then(() => addToast('info', `${toExpire.length} quote${toExpire.length > 1 ? 's' : ''} auto-expired`))
         .catch(() => {});
     }
@@ -547,11 +545,20 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       createdAt: editing?.createdAt || Date.now(),
       createdBy: user.id,
       createdByName: user.name,
-      ...(editing ? { sentAt: editing.sentAt, acceptedAt: editing.acceptedAt, declinedAt: editing.declinedAt, linkedJobId: editing.linkedJobId, viewedAt: editing.viewedAt, lastViewedAt: editing.lastViewedAt, viewCount: editing.viewCount, viewHistory: editing.viewHistory } : {}),
       ...(revisions.length > 0 ? { revisions } : {}),
     };
+    // On an edit, the fields other flows own — the customer's answer, views,
+    // the linked job — are left out, so this editor's copy (opened a while
+    // ago) can't put them back the way they were. And fields emptied here are
+    // deleted (a merge save would keep the old discount, tax, date, notes…).
+    let clear: string[] = [];
+    if (editing) {
+      for (const k of ['status', 'sentAt', 'acceptedAt', 'declinedAt', 'linkedJobId', 'viewedAt', 'lastViewedAt', 'viewCount', 'viewHistory'] as const) delete (quote as any)[k];
+      clear = (['shipTo', 'projectFields', 'discountPct', 'discountAmt', 'taxRate', 'taxAmt', 'validUntil', 'jobDescription', 'notes', 'terms'] as const)
+        .filter(k => (editing as any)[k] !== undefined && (editing as any)[k] !== null && (editing as any)[k] !== '' && (quote as any)[k] === undefined);
+    }
     try {
-      await DB.saveQuote(quote);
+      await DB.saveQuote(quote, { clear });
       // Auto-save client contact info for next time
       if (billTo.name && (billTo.email || billTo.phone || billTo.address || billTo.contactPerson)) {
         // Just this customer's entry — never re-save the whole contact book.
@@ -586,13 +593,16 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     }
     const updates: Partial<Quote> = { status };
     if (status === 'sent') updates.sentAt = Date.now();
-    if (status === 'accepted') updates.acceptedAt = Date.now();
+    if (status === 'accepted' && !q.acceptedAt) updates.acceptedAt = Date.now();
     try {
-      await DB.saveQuote({ ...q, ...updates } as Quote);
+      // Status fields only — never this list's copy of the whole quote.
+      await DB.updateQuoteFields(q.id, updates);
       addToast('success', `Quote marked as ${status}`);
-      // Only spawn a job on the FIRST accept — re-accepting (Send-tab link, or
-      // dragging a card back through the pipeline) must not create a duplicate.
-      if (status === 'accepted' && !q.acceptedAt && !q.linkedJobId) {
+      // Spawn the job once: until the quote has a linked job. (It used to also
+      // require no acceptedAt — so a quote the CUSTOMER approved in the portal,
+      // which sets acceptedAt, never became a job.) Re-accepting can't
+      // duplicate: linkedJobId is recorded right after the job is created.
+      if (status === 'accepted' && !q.linkedJobId) {
         // Build a rich job description from the quote — processes detected + line items
         const matchedProcesses: ProcessTemplate[] = [];
         q.items.forEach(item => {
@@ -617,11 +627,17 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
           if (matchingStage) initialStageId = matchingStage.id;
         }
 
+        // The customer's PO and part number come from the quote's project
+        // fields when it has them (the quote number and a line description
+        // made the customer's real PO impossible to match later). Pieces count
+        // only per-piece lines — not the setup lot or hourly lines.
+        const field = (re: RegExp) => Object.entries(q.projectFields || {}).find(([k, v]) => re.test(k) && (v || '').trim())?.[1]?.trim();
+        const pieceLines = q.items.filter(i => !i.unit || /^(ea|each|pc|pcs|piece|pieces|part|parts)$/i.test(i.unit.trim()));
         const newJobId = await onJobCreate({
-          poNumber: q.quoteNumber,
-          partNumber: q.items[0]?.description?.slice(0, 60) || 'See quote',
+          poNumber: field(/purchase\s*order|^p\.?o\.?\s*(#|no\.?|number)?$/i) || q.quoteNumber,
+          partNumber: field(/part\s*(no|#|number)/i) || q.items[0]?.description?.slice(0, 60) || 'See quote',
           customer: q.customer,
-          quantity: q.items.reduce((a, i) => a + i.qty, 0),
+          quantity: (pieceLines.length ? pieceLines : q.items).reduce((a, i) => a + i.qty, 0),
           // Leave the production due date blank — validUntil is the OFFER expiry,
           // not a delivery date. The admin sets the real due date on the job.
           dueDate: '',
@@ -633,7 +649,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
         });
         // Record the spawned job on the quote so we never create a second one.
         if (typeof newJobId === 'string') {
-          try { await DB.saveQuote({ ...q, ...updates, linkedJobId: newJobId } as Quote); } catch {}
+          try { await DB.updateQuoteFields(q.id, { linkedJobId: newJobId }); } catch {}
         }
         addToast('success', matchedProcesses.length > 0
           ? `Job created — routing: ${matchedProcesses.map(p => p.name).join(' → ')}`
@@ -1642,7 +1658,7 @@ ${settings.companyPhone || ''}`.trim()
             ...(declineNoteText.trim() ? { declineNotes: declineNoteText.trim() } : {}),
           };
           try {
-            await DB.saveQuote({ ...q, ...updates } as Quote);
+            await DB.updateQuoteFields(q.id, updates);
             addToast('success', 'Quote marked as declined');
           } catch { addToast('error', 'Failed to update'); }
           setPendingDeclineQuote(null);

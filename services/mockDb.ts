@@ -23,7 +23,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction, TvDevice, TvPairing, ChecklistTick } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, QuoteViewEvent, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction, TvDevice, TvPairing, ChecklistTick } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
 import { setShopStages, isShippedStageId } from "../utils/dueDates";
@@ -1394,20 +1394,32 @@ export function subscribeUsers(cb: (users: User[]) => void) {
   return localSubscribe(() => readLS<User[]>(LS.users, []), cb);
 }
 
-export async function saveUser(user: User) {
+/**
+ * Save a team member. `clear` lists fields emptied in the editor (e.g. an
+ * hourly rate removed) — a merge save skips undefined, so they're deleted
+ * explicitly. Resolves 'queued' when offline (it syncs later) instead of
+ * hanging the dialog.
+ */
+export async function saveUser(user: User, opts: { clear?: string[] } = {}): Promise<'saved' | 'queued' | void> {
+  const clear = (opts.clear || []).filter(f => (user as any)[f] === undefined);
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.users, user.id), sanitize(user), { merge: true });
+        const payload: Record<string, unknown> = sanitize(user);
+        for (const f of clear) payload[f] = deleteField();
+        const result = await settleWrite(setDoc(doc(dbInstance, COL.users, user.id), payload, { merge: true }));
         firebaseStatus = { connected: true };
+        return result;
       } catch (e) {
         throw handleError(e);
       }
-      return;
   }
   const users = readLS<User[]>(LS.users, []);
   const idx = users.findIndex((u) => u.id === user.id);
-  if (idx >= 0) users[idx] = user;
-  else users.push(user);
+  if (idx >= 0) {
+    const merged: any = { ...users[idx], ...sanitize(user) };
+    for (const f of clear) delete merged[f];
+    users[idx] = merged;
+  } else users.push(user);
   writeLS(LS.users, users);
 }
 
@@ -1418,7 +1430,7 @@ export async function saveUser(user: User) {
 export async function deleteUser(id: string) {
   if (dbInstance) {
       try {
-        await deleteDoc(doc(dbInstance, COL.users, id));
+        await settleWrite(deleteDoc(doc(dbInstance, COL.users, id)));
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);
@@ -2048,16 +2060,117 @@ export function subscribeQuotes(cb: (quotes: Quote[]) => void) {
   return localSubscribe(() => readLS<Quote[]>(LS.quotes, []), cb);
 }
 
-export async function saveQuote(quote: Quote) {
+/**
+ * Save a quote from the office editor. `clear` lists fields emptied in the
+ * editor (a removed discount, tax, valid-until date, notes…) — a merge save
+ * skips undefined, so they used to stay, and the customer saw a discount line
+ * the total didn't include. Resolves 'queued' offline instead of hanging.
+ */
+export async function saveQuote(quote: Quote, opts: { clear?: string[] } = {}): Promise<'saved' | 'queued' | void> {
+  const clear = (opts.clear || []).filter(f => (quote as any)[f] === undefined);
   if (dbInstance) {
-    try { await setDoc(doc(dbInstance, COL.quotes, quote.id), sanitize(quote), { merge: true }); firebaseStatus = { connected: true }; }
+    try {
+      const payload: Record<string, unknown> = sanitize(quote);
+      for (const f of clear) payload[f] = deleteField();
+      const result = await settleWrite(setDoc(doc(dbInstance, COL.quotes, quote.id), payload, { merge: true }));
+      firebaseStatus = { connected: true };
+      return result;
+    }
     catch (e) { throw handleError(e); }
-    return;
   }
   const quotes = readLS<Quote[]>(LS.quotes, []);
   const idx = quotes.findIndex(q => q.id === quote.id);
-  if (idx >= 0) quotes[idx] = quote; else quotes.push(quote);
+  if (idx >= 0) {
+    const merged: any = { ...quotes[idx], ...sanitize(quote) };
+    for (const f of clear) delete merged[f];
+    quotes[idx] = merged;
+  } else quotes.push(quote);
   writeLS(LS.quotes, quotes);
+}
+
+/** Write just these fields of a quote (status changes, the linked job). */
+export async function updateQuoteFields(quoteId: string, patch: Partial<Quote>): Promise<'saved' | 'queued' | void> {
+  if (dbInstance) {
+    try {
+      const result = await settleWrite(updateDoc(doc(dbInstance, COL.quotes, quoteId), sanitize(patch) as any));
+      firebaseStatus = { connected: true };
+      return result;
+    } catch (e) { throw handleError(e); }
+  }
+  patchQuoteLS(quoteId, () => patch);
+}
+
+// ── Quote writes from the customer portal and auto-expiry ────────────
+// Each changes only its own fields, read and written in one transaction
+// against the server copy. The portal used to save its whole first-loaded
+// copy of the quote — on open and again on tab close — which could undo a
+// revised price, or the customer's own approval.
+function patchQuoteLS(quoteId: string, fn: (q: Quote) => Partial<Quote> | null) {
+  const quotes = readLS<Quote[]>(LS.quotes, []);
+  const idx = quotes.findIndex(q => q.id === quoteId);
+  if (idx < 0) return;
+  const patch = fn(quotes[idx]);
+  if (patch) { quotes[idx] = { ...quotes[idx], ...patch }; writeLS(LS.quotes, quotes); }
+}
+async function patchQuote(quoteId: string, fn: (q: Quote) => Partial<Quote> | null): Promise<void> {
+  if (!dbInstance) { patchQuoteLS(quoteId, fn); return; }
+  const ref = doc(dbInstance, COL.quotes, quoteId);
+  await runTransaction(dbInstance, async (tx: any) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const patch = fn(snap.data() as Quote);
+    if (patch) tx.update(ref, sanitize(patch));
+  });
+}
+
+/** A customer opened a quote link: counters + one history entry (once per browser tab session). */
+export async function recordQuoteView(quoteId: string, event: QuoteViewEvent): Promise<void> {
+  await patchQuote(quoteId, q => {
+    const history = q.viewHistory || [];
+    if (history.some(h => h.sessionId === event.sessionId)) return null;
+    return {
+      viewedAt: q.viewedAt || event.at,
+      lastViewedAt: event.at,
+      viewCount: (q.viewCount || 0) + 1,
+      viewHistory: [...history, event].slice(-50),
+    };
+  });
+}
+
+/** How long a portal visit lasted (sent as the tab closes) — only that visit's entry changes. */
+export async function recordQuoteViewDuration(quoteId: string, sessionId: string, durationMs: number): Promise<void> {
+  await patchQuote(quoteId, q => {
+    const history = q.viewHistory || [];
+    if (!history.some(h => h.sessionId === sessionId)) return null;
+    return { viewHistory: history.map(h => (h.sessionId === sessionId ? { ...h, durationMs } : h)) };
+  });
+}
+
+/**
+ * The customer's answer from the portal. Only while the quote is still open
+ * on the server: one already answered or expired can't be flipped. Throws
+ * 'quote-closed' otherwise.
+ */
+export async function answerQuote(quoteId: string, answer: 'accepted' | 'declined'): Promise<void> {
+  let closed = false;
+  await patchQuote(quoteId, q => {
+    if (q.status !== 'sent' && q.status !== 'draft') { closed = true; return null; }
+    return answer === 'accepted' ? { status: 'accepted', acceptedAt: Date.now() } : { status: 'declined', declinedAt: Date.now() };
+  });
+  if (closed) throw new Error('quote-closed');
+}
+
+/**
+ * Mark a quote expired — status only, and only if, on the server, it's still
+ * open with the same valid-until date this device saw (so a date extended or
+ * an approval made elsewhere is never undone by a device with an old copy).
+ */
+export async function expireQuote(quoteId: string, validUntilSeen: string | undefined): Promise<void> {
+  await patchQuote(quoteId, q => {
+    if (q.status !== 'sent' && q.status !== 'draft') return null;
+    if ((q.validUntil || '') !== (validUntilSeen || '')) return null;
+    return { status: 'expired' };
+  });
 }
 
 export async function deleteQuote(id: string) {

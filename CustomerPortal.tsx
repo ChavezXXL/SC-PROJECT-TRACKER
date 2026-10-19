@@ -4,8 +4,9 @@ import type { Job, SystemSettings, JobStage, Quote, QuoteViewEvent } from './typ
 import * as DB from './services/mockDb';
 import { stagesForCustomer } from './utils/stageRouting';
 import { fmt } from './utils/date';
-import { dueState } from './utils/dueDates';
+import { dueState, daysUntilDue } from './utils/dueDates';
 import { customerKey } from './utils/customers';
+import { makeClientSlug } from './utils/url';
 
 /** Human-friendly "3 days ago" / "2 hrs ago" — for the "last updated" hint. */
 function relativeTime(ts: number): string {
@@ -63,6 +64,8 @@ function groupByYear(jobs: Job[]): YearBucket[] {
 interface CustomerPortalProps {
   customerFilter: string;
   quoteId?: string | null;
+  /** The short-link slug (?c=…), resolved here once the shop's settings load. */
+  slug?: string | null;
 }
 
 const DEFAULT_STAGES: JobStage[] = [
@@ -85,10 +88,20 @@ function getStageIndex(job: Job, stages: JobStage[]): number {
   return idx >= 0 ? idx : 0;
 }
 
-export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, quoteId }) => {
+export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter: filterFromUrl, quoteId, slug }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
+  // A short link (?c=slug) names the customer once the shop's settings have
+  // loaded. It used to be looked up only in this browser's cached settings, so
+  // on a customer's first visit (nothing cached) the slug itself was used as
+  // the name and they saw "No jobs". A slug not saved in settings still works:
+  // it's matched against each job's customer name turned into a slug.
+  const customerFilter = useMemo(() => {
+    if (!slug) return filterFromUrl;
+    for (const [name, s] of Object.entries(settings.clientSlugs || {})) if (s === slug) return name;
+    return jobs.find(j => j.customer && makeClientSlug(j.customer) === slug)?.customer || filterFromUrl;
+  }, [slug, filterFromUrl, settings.clientSlugs, jobs]);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'quote' | 'jobs'>(quoteId ? 'quote' : 'jobs');
   const [approvalDone, setApprovalDone] = useState(false);
@@ -123,31 +136,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
       sessionId,
       userAgent: navigator.userAgent.slice(0, 120),
     };
-    // Append + update counters. Skip if this session already logged (defensive).
-    const history = linkedQuote.viewHistory || [];
-    if (history.some(h => h.sessionId === sessionId)) return;
-    const updated: Quote = {
-      ...linkedQuote,
-      viewedAt: linkedQuote.viewedAt || now,
-      lastViewedAt: now,
-      viewCount: (linkedQuote.viewCount || 0) + 1,
-      viewHistory: [...history, newEvent].slice(-50), // cap history at 50 entries
-    };
-    DB.saveQuote(updated).catch(() => {});
+    // Counters + one history entry, written against the server copy — never
+    // this page's copy of the whole quote (which could be an older version).
+    DB.recordQuoteView(linkedQuote.id, newEvent).catch(() => {});
   }, [linkedQuote?.id]);
 
   // Flush a duration update when tab closes so admins can see how long a customer spent
   useEffect(() => {
     if (!linkedQuote) return;
+    const quoteIdNow = linkedQuote.id;
     const handler = () => {
       try {
-        const durationMs = Date.now() - viewStartRef.current;
-        const sessionId = viewSessionIdRef.current;
-        const history = (linkedQuote.viewHistory || []).map(h =>
-          h.sessionId === sessionId ? { ...h, durationMs } : h
-        );
-        // Use sendBeacon-friendly synchronous path via localStorage writeLS flow
-        DB.saveQuote({ ...linkedQuote, viewHistory: history }).catch(() => {});
+        // Only this visit's history entry changes (best effort as the tab closes).
+        DB.recordQuoteViewDuration(quoteIdNow, viewSessionIdRef.current, Date.now() - viewStartRef.current).catch(() => {});
       } catch {}
     };
     window.addEventListener('beforeunload', handler);
@@ -190,35 +191,27 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
   const activeJobs = customerJobs.filter(j => j.status !== 'completed');
   const completedJobs = customerJobs.filter(j => j.status === 'completed');
 
-  const handleApprove = async () => {
+  // The answer changes only the quote's status, and only while it's still
+  // open on the server (DB.answerQuote) — an answered or expired quote can't
+  // be flipped from an old page.
+  const answer = async (choice: 'accepted' | 'declined') => {
     if (!linkedQuote || isSubmitting || approvalDone) return;
     setIsSubmitting(true);
     setApprovalError(null);
     try {
-      await DB.saveQuote({ ...linkedQuote, status: 'accepted', acceptedAt: Date.now() });
+      await DB.answerQuote(linkedQuote.id, choice);
       setApprovalDone(true);
-    } catch (e) {
-      console.error('Failed to approve quote:', e);
-      setApprovalError('Something went wrong approving this quote. Please try again or contact us directly.');
+    } catch (e: any) {
+      console.error(`Failed to ${choice === 'accepted' ? 'approve' : 'decline'} quote:`, e);
+      setApprovalError(e?.message === 'quote-closed'
+        ? 'This quote is no longer open — it may have expired or already been answered. Please contact us for an updated quote.'
+        : `Something went wrong ${choice === 'accepted' ? 'approving this quote' : 'submitting your response'}. Please try again or contact us directly.`);
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const handleDecline = async () => {
-    if (!linkedQuote || isSubmitting || approvalDone) return;
-    setIsSubmitting(true);
-    setApprovalError(null);
-    try {
-      await DB.saveQuote({ ...linkedQuote, status: 'declined', declinedAt: Date.now() });
-      setApprovalDone(true);
-    } catch (e) {
-      console.error('Failed to decline quote:', e);
-      setApprovalError('Something went wrong submitting your response. Please try again or contact us directly.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const handleApprove = () => answer('accepted');
+  const handleDecline = () => answer('declined');
 
   // Current portal URL — canonical short form if a slug is defined for this customer
   const canonicalUrl = (() => {
@@ -301,22 +294,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter, 
                 <p className="text-zinc-400 text-sm mt-1">Contact us if you'd like to discuss revisions.</p>
               </div>
             ) : (() => {
-                // Expiration countdown — urgency badge driven by days remaining
-                const validDate = linkedQuote.validUntil
-                  ? (() => {
-                      const raw = linkedQuote.validUntil;
-                      // Accept both MM/DD/YYYY and YYYY-MM-DD
-                      const us = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-                      if (us) return new Date(+us[3], +us[1] - 1, +us[2], 23, 59, 59);
-                      const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-                      if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3], 23, 59, 59);
-                      const d = new Date(raw);
-                      return isNaN(d.getTime()) ? null : d;
-                    })()
-                  : null;
-                const msLeft = validDate ? validDate.getTime() - Date.now() : null;
-                const daysLeft = msLeft !== null ? Math.ceil(msLeft / 86400000) : null;
-                const isExpired = daysLeft !== null && daysLeft < 0;
+                // Expiration countdown in whole calendar days (the shared due-date
+                // rule): 0 on the last valid day, -1 the day after. Hour math said
+                // "Expires tomorrow" on the last day and "Expires today" a day late.
+                const daysLeft = daysUntilDue(linkedQuote.validUntil);
+                const isExpired = linkedQuote.status === 'expired' || (daysLeft !== null && daysLeft < 0);
                 const isUrgent = daysLeft !== null && daysLeft >= 0 && daysLeft <= 3;
 
                 if (isExpired) {
