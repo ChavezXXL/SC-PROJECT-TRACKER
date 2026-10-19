@@ -1204,10 +1204,7 @@ export async function startTimeLog(
         
         firebaseStatus = { connected: true };
         // Server-push admin devices so they get a notification even with browser closed
-        notifyAdminsClockEvent(
-          'clock-in', userName, operation,
-          [partNumber, customer].filter(Boolean).join(' · '),
-        ).catch(() => {});
+        notifyAdminsClockEvent('clock-in', id).catch(() => {});
     } catch (e) {
         throw handleError(e);
     }
@@ -1279,10 +1276,7 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
         // alarm, admin force-stop, job-switch) must NOT buzz the admin's phone.
         const routine = /^(sweep:|alarm:|admin:|auto:)/.test(updates.stopReason || '');
         if (!routine) {
-          notifyAdminsClockEvent(
-            'clock-out', existing.userName, existing.operation,
-            [existing.partNumber, existing.customer].filter(Boolean).join(' · '),
-          ).catch(() => {});
+          notifyAdminsClockEvent('clock-out', logId).catch(() => {});
         }
       } catch (e) {
         throw handleError(e);
@@ -1999,39 +1993,43 @@ export async function savePushSubscription(
 // ── Server-push helper — clock-in / clock-out admin alerts ───────────
 // Calls /.netlify/functions/notify-clockin which delivers a Web Push to
 // every admin device via VAPID, even when their browser is fully closed.
+// Only the event type and the log's id go up: the function reads that log
+// itself and writes the notification text from it.
 // Fire-and-forget: never throws — a failed push must not break a clock-in.
+async function postAdminNotify(
+  eventType: 'clock-in' | 'clock-out' | 'over-estimate',
+  logId: string,
+): Promise<void> {
+  if (!logId) return;
+  // 409 = the server can't see the log in that state yet (on a slow connection
+  // the clock-in/out write can still be in flight) — ask again a bit later.
+  for (const waitMs of [0, 4_000, 12_000]) {
+    if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
+    try {
+      const res = await fetch('/.netlify/functions/notify-clockin', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ eventType, logId }),
+      });
+      if (res.status !== 409) return;
+    } catch { return; /* silent — notification is best-effort */ }
+  }
+}
+
 async function notifyAdminsClockEvent(
   eventType: 'clock-in' | 'clock-out',
-  workerName: string,
-  operation: string,
-  jobLabel: string,
+  logId: string,
 ): Promise<void> {
-  try {
-    await fetch('/.netlify/functions/notify-clockin', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ eventType, workerName, operation, jobLabel }),
-    });
-  } catch { /* silent — notification is best-effort */ }
+  await postAdminNotify(eventType, logId);
 }
 
 // ── Server-push helper — over-estimate alert ─────────────────────────
 // Fires when a running timer passes its job's expected-hours budget so the
 // owner can step in. Reuses the notify-clockin function (admin fan-out) with
-// the 'over-estimate' event type. Fire-and-forget — never throws.
-export async function notifyAdminsOverEstimate(
-  workerName: string,
-  operation: string,
-  jobLabel: string,
-  detail: string,
-): Promise<void> {
-  try {
-    await fetch('/.netlify/functions/notify-clockin', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ eventType: 'over-estimate', workerName, operation, jobLabel, detail }),
-    });
-  } catch { /* silent — notification is best-effort */ }
+// the 'over-estimate' event type; the server checks the budget itself.
+// Fire-and-forget — never throws.
+export async function notifyAdminsOverEstimate(logId: string): Promise<void> {
+  await postAdminNotify('over-estimate', logId);
 }
 
 export function getWorkingElapsedMs(log: TimeLog): number {
