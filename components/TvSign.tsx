@@ -1,4 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
+
+// Emoji as pictures (Twemoji), not font glyphs: the shop's Fire TV font is
+// from 2018 and drew newer emoji — 🦺 vest, 🪖 helmet, 🪜 ladder — as an
+// empty box. Falls back to the plain glyph if the picture can't load.
+const TWEMOJI = 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/svg/';
+export function emojiFile(e: string): string {
+  const cps = [...e].map(c => c.codePointAt(0)!.toString(16));
+  const keycap = cps.includes('20e3');
+  return cps.filter(cp => keycap || cp !== 'fe0f').join('-');
+}
+export function TvEmoji({ e, size }: { e: string; size: string }) {
+  const [failed, setFailed] = useState(false);
+  // (No \p{…} regex: an older TV web engine can't even parse one.)
+  if (failed || ![...e].some(c => (c.codePointAt(0) || 0) > 0x2100)) return <span style={{ fontSize: size, lineHeight: 1 }}>{e}</span>;
+  return <img src={`${TWEMOJI}${emojiFile(e)}.svg`} alt="" draggable={false} onError={() => setFailed(true)} style={{ width: size, height: size }} />;
+}
 
 // A TV message laid out like a real shop safety sign (ANSI Z535 style): a
 // bold colored band with the signal word, then a big icon, headline and
@@ -60,7 +76,7 @@ export function TvSign({ tone, word, symbol, icon, title, body, meta }: {
           {icon && (
             <div aria-hidden="true" className="shrink-0 flex items-center justify-center"
               style={{ width: box, height: box, borderRadius: '24%', background: `${t.edge}1f`, border: `2px solid ${t.edge}66`, fontSize: 'clamp(2.4rem, min(8.8vw, 16.5vh), 10.5rem)', lineHeight: 1 }}>
-              {icon}
+              <TvEmoji e={icon} size="0.9em" />
             </div>
           )}
           <div className="min-w-0 flex-1">

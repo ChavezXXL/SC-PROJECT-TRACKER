@@ -3,14 +3,19 @@ package io.fabtrack.tv;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Debug;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
@@ -34,12 +39,16 @@ import android.widget.Toast;
  */
 public class MainActivity extends Activity {
     static final String TAG = "FabTrackTV";
-    static final String VERSION = "1.1";
+    static final String VERSION = "1.2";
     static final String BOARD_URL = "https://scprojtrac.netlify.app/tv";
     static final String PREFS = "fabtrack_tv";
 
     private static final long BEAT_MS = 15_000;
     private static final long HUNG_MS = 45_000;
+    /** The TV's web engine hoards graphics memory (410 MB after 22 h on the
+     *  shop's 1.5 GB TV, which then froze). Past this, start a fresh engine. */
+    private static final int GFX_LIMIT_MB = 300;
+    private static final long MEM_CHECK_MS = 5 * 60_000;
 
     private FrameLayout root;
     private WebView web;
@@ -48,6 +57,7 @@ public class MainActivity extends Activity {
     private boolean pingPending = false;
     private long pingSentAt = 0;
     private long lastBackAt = 0;
+    private long lastFreshAt = 0;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -60,6 +70,7 @@ public class MainActivity extends Activity {
         prefs().edit().remove("user_left_at").apply();   // opened again → guard it again
         Watchdog.schedule(this);
         openBoard(null);
+        handler.postDelayed(memCheck, MEM_CHECK_MS);
     }
 
     // ── The board ────────────────────────────────────────────────────────
@@ -210,6 +221,76 @@ public class MainActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         if (web != null) { try { web.destroy(); } catch (Throwable ignored) { } web = null; }
         super.onDestroy();
+    }
+
+    // ── Memory upkeep ────────────────────────────────────────────────────
+
+    private final Runnable memCheck = new Runnable() {
+        public void run() {
+            try {
+                int gfx = graphicsMb();
+                if (gfx > GFX_LIMIT_MB && resumed) {
+                    long now = SystemClock.elapsedRealtime();
+                    if (lastFreshAt > 0 && now - lastFreshAt < 60 * 60_000) {
+                        // A fresh engine didn't give it back: start the app over.
+                        plannedExit("app restart (memory upkeep)", new Runnable() { public void run() { restartApp(); } });
+                        return;
+                    }
+                    lastFreshAt = now;
+                    Log.w(TAG, "graphics memory " + gfx + " MB — fresh web engine");
+                    plannedExit("fresh engine (memory upkeep)", new Runnable() { public void run() { openBoard("refresh"); } });
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "memory check failed", t);
+            }
+            handler.postDelayed(this, MEM_CHECK_MS);
+        }
+    };
+
+    /** This process's graphics memory (GPU textures etc.), in MB. */
+    private static int graphicsMb() {
+        if (Build.VERSION.SDK_INT < 23) return 0;
+        Debug.MemoryInfo mi = new Debug.MemoryInfo();
+        Debug.getMemoryInfo(mi);
+        String g = mi.getMemoryStat("summary.graphics");
+        return g == null ? 0 : Integer.parseInt(g) / 1024;
+    }
+
+    /** Tell the board this is planned (so its report doesn't call it a crash), then do it. */
+    private void plannedExit(String why, final Runnable then) {
+        if (web == null) { then.run(); return; }
+        String js = "try{window.__fabtrackExitReason=" + org.json.JSONObject.quote(why)
+                + ";window.dispatchEvent(new Event('pagehide'))}catch(e){}";
+        web.evaluateJavascript(js, null);
+        handler.postDelayed(then, 500);
+    }
+
+    /** Start the whole app over in a couple of seconds (frees memory a new engine can't). */
+    private void restartApp() {
+        Log.w(TAG, "restarting the app to free memory");
+        try {
+            Intent i = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+            PendingIntent pi = PendingIntent.getActivity(this, 2, i, flags);
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (am != null) am.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 2000, pi);
+        } catch (Throwable ignored) { }
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    /**
+     * Mouse moves never reach the board. A USB mouse jiggler sends ~40 a
+     * second; the board doesn't use them, and when the TV was short of memory
+     * they piled up (72 waiting) until Android called the app frozen. The TV
+     * still counts them as activity, so the jiggler keeps it awake.
+     */
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent ev) {
+        if (ev.isFromSource(InputDevice.SOURCE_MOUSE)) {
+            int a = ev.getActionMasked();
+            if (a == MotionEvent.ACTION_HOVER_MOVE || a == MotionEvent.ACTION_HOVER_ENTER || a == MotionEvent.ACTION_HOVER_EXIT) return true;
+        }
+        return super.dispatchGenericMotionEvent(ev);
     }
 
     // ── Remote control ───────────────────────────────────────────────────

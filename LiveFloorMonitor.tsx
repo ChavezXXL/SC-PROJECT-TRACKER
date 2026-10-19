@@ -3332,6 +3332,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
                 <button
                   key={s.id}
                   type="button"
+                  tabIndex={-1}
                   onClick={() => { setTvFade(false); setTimeout(() => { setTvSlideIdx(i); setTvFade(true); }, 300); }}
                   aria-label={`Show ${slideLabel(s)}`}
                   aria-current={i === tvSlideIdx ? 'true' : undefined}

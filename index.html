@@ -282,6 +282,9 @@
                 /* Buttons and links set their own cursor, which brought the
                    jiggler's arrow back over the slide dots — none anywhere. */
                 body.tv-mode:not(.tv-pointer) * { cursor: none !important; }
+                /* A TV remote's arrows used to park a focus ring on the slide
+                   dots (they were focusable buttons) instead of changing slides. */
+                body.tv-mode *:focus { outline: none !important; box-shadow: none; }
                 /* Cursor + hover controls only after REAL interaction (tv-pointer is
                    set by the board) — a mouse jiggler must not keep them on screen. */
                 body.tv-mode.tv-pointer { cursor: default; }

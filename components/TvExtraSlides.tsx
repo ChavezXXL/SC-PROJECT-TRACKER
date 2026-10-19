@@ -92,6 +92,12 @@ export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: num
 // audits, visits) — plus a "due next" list readable from across the shop.
 
 const holidayCache = new Map<number, HolidayRecord[]>();
+// Ask for this year's holidays as soon as the board loads, so the calendar
+// has them the first time it comes up (on the TV they filled in seconds late).
+if (typeof window !== 'undefined') {
+  const y = new Date().getFullYear();
+  getHolidays(y).then(h => { holidayCache.set(y, h); }).catch(() => {});
+}
 
 const ymd = (d: Date) => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
