@@ -541,10 +541,10 @@ const SampleModal = ({
       createdAt: form.createdAt || now,
       updatedAt: now,
       createdBy: form.createdBy || 'admin',
-      // Preserve existing work data when editing
-      workEntries: (sample as Sample)?.workEntries,
-      activeEntry: (sample as Sample)?.activeEntry,
-      totalWorkedMs: (sample as Sample)?.totalWorkedMs,
+      // Timer data (workEntries / activeEntry / totalWorkedMs) is left out on
+      // purpose: the save merges, so the live values stay. Writing the copy
+      // taken when this editor opened undid any timer started or stopped
+      // meanwhile — a stopped timer came back running, a finished entry vanished.
     };
     try {
       await onSave(s);
@@ -1050,8 +1050,8 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
 
   const handleSave = async (sample: Sample) => {
     try {
-      await DB.saveSample(sample);
-      addToast('success', 'Sample saved');
+      const r = await DB.saveSample(sample);
+      addToast('success', r === 'queued' ? 'Sample saved on this device — will sync' : 'Sample saved');
       setShowModal(false);
       setEditingSample(null);
     } catch (e: any) {
@@ -1141,7 +1141,8 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
     const sample = samples.find(s => s.id === sampleId);
     if (!sample) return;
     try {
-      await DB.saveSample({ ...sample, pricePerPart: price, quotedAt: Date.now(), updatedAt: Date.now() });
+      // Price fields only (merge) — the whole sample would rewrite timer data
+      await DB.saveSample({ id: sample.id, pricePerPart: price, quotedAt: Date.now(), updatedAt: Date.now() } as Sample);
       addToast('success', `Locked $${price.toFixed(2)}/pc for ${sample.partNumber}`);
     } catch (e) {
       console.error('[SamplesView] save price failed:', e);

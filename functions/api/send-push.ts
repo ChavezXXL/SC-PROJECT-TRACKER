@@ -2,9 +2,17 @@
 // ═════════════════════════════════════════════════════════════════════
 // /api/send-push — Cloudflare Pages Function
 //
-// Web push delivery endpoint, ported from the old Netlify function.
-// Same request/response shape so the client (Settings push panel + future
-// scheduled cron) requires no changes.
+// Cloudflare copy of netlify/functions/send-push.ts (the live one), kept in
+// step with it: Settings → Push Notifications → "Register This Device" calls
+// it right after subscribing, to prove server push reaches the device.
+//
+// Request (POST JSON): { subscription: PushSubscription (toJSON()) }
+//
+// The notification is always the fixed test message below — no caller text
+// is forwarded — and it is delivered only to a subscription on a real
+// browser push service (netlify/functions/_shared/pushSafety.ts). This copy
+// used to forward any title/body to any URL the caller supplied, so the
+// server could be made to POST to internal or arbitrary hosts.
 //
 // Uses the `web-push` npm package via Cloudflare's `nodejs_compat` flag.
 //
@@ -15,6 +23,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 import webpush from 'web-push';
+import { PUSH_TIMEOUT_MS, isGonePushError, safeSubscription } from '../../netlify/functions/_shared/pushSafety';
 
 interface Env {
   VAPID_PUBLIC_KEY?: string;
@@ -22,11 +31,15 @@ interface Env {
   VAPID_SUBJECT?: string;
 }
 
-const JSON_HEADERS = {
-  'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+/** The one notification this endpoint sends. */
+const TEST_PUSH = {
+  title: '🚀 Server Push Works',
+  body: 'This notification came from the server — works when app is closed.',
+  tag: 'server-push-test',
+  url: '/',
+  requireInteraction: false,
 };
 
 function json(status: number, body: Record<string, unknown>): Response {
@@ -35,7 +48,7 @@ function json(status: number, body: Record<string, unknown>): Response {
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   if (request.method === 'OPTIONS') {
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: JSON_HEADERS });
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...JSON_HEADERS, 'Access-Control-Allow-Methods': 'POST, OPTIONS' } });
   }
   if (request.method !== 'POST') {
     return json(405, { error: 'Method not allowed' });
@@ -43,16 +56,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
 
   const pub = env.VAPID_PUBLIC_KEY;
   const priv = env.VAPID_PRIVATE_KEY;
-  const subject = env.VAPID_SUBJECT || 'mailto:admin@fabtrack.io';
-
+  const subject = env.VAPID_SUBJECT || 'mailto:hello@fabtrack.io';
   if (!pub || !priv) {
-    return json(500, {
-      error:
-        'VAPID keys not configured. Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT in Cloudflare → Pages → Settings → Environment Variables.',
-    });
+    return json(500, { error: 'Push is not configured on the server.' });
   }
-
-  webpush.setVapidDetails(subject, pub, priv);
 
   let body: any;
   try {
@@ -61,31 +68,17 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     return json(400, { error: 'Invalid JSON body' });
   }
 
-  const { subscription, title, body: msgBody, tag, url, actions, logId, requireInteraction } = body;
-  if (!subscription || !subscription.endpoint) {
-    return json(400, { error: 'Missing subscription.endpoint' });
+  const subscription = safeSubscription(body?.subscription);
+  if (!subscription) {
+    return json(400, { error: 'Not a browser push subscription' });
   }
 
-  const payload = JSON.stringify({
-    title: title || 'FabTrack IO',
-    body: msgBody || '',
-    tag,
-    url,
-    actions,
-    logId,
-    requireInteraction: !!requireInteraction,
-  });
-
+  webpush.setVapidDetails(subject, pub, priv);
   try {
-    await webpush.sendNotification(subscription, payload, { TTL: 60 * 60 });
+    await webpush.sendNotification(subscription, JSON.stringify(TEST_PUSH), { TTL: 60 * 60, timeout: PUSH_TIMEOUT_MS });
     return json(200, { ok: true });
   } catch (e: any) {
-    const status = e?.statusCode || 500;
-    if (status === 404 || status === 410) {
-      return json(410, { error: 'Subscription gone', gone: true });
-    }
-    return json(status >= 400 && status < 600 ? status : 500, {
-      error: e?.message || 'Push delivery failed',
-    });
+    if (isGonePushError(e)) return json(410, { error: 'Subscription gone', gone: true });
+    return json(502, { error: 'The push service did not accept the message' });
   }
 };

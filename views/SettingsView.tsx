@@ -1196,7 +1196,7 @@ const MachineManager = ({ settings, onSaveSettings }: { settings: SystemSettings
 };
 
 // --- CUSTOMER MANAGER — discovers + dedupes customers pulled from actual jobs ---
-const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any; settings: SystemSettings; onSaveSettings: (s: SystemSettings) => void }) => {
+const CustomerManager = ({ addToast, settings, onSaveSettings, onSaveNow }: { addToast: any; settings: SystemSettings; onSaveSettings: (s: SystemSettings) => void; onSaveNow?: (changes: Partial<SystemSettings>) => Promise<boolean> }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [canonicalName, setCanonicalName] = useState('');
@@ -1509,6 +1509,7 @@ const CustomerManager = ({ addToast, settings, onSaveSettings }: { addToast: any
             setEditingProfile(null);
           }}
           onSaveSettings={onSaveSettings}
+          onSaveNow={onSaveNow}
           addToast={addToast}
         />
       )}
@@ -1548,6 +1549,7 @@ const CustomerProfileEditor = ({
   onClose,
   onSave,
   onSaveSettings,
+  onSaveNow,
   addToast,
 }: {
   name: string;
@@ -1555,6 +1557,7 @@ const CustomerProfileEditor = ({
   onClose: () => void;
   onSave: (c: import('../types').CustomerContact) => void;
   onSaveSettings?: (s: SystemSettings) => void;
+  onSaveNow?: (changes: Partial<SystemSettings>) => Promise<boolean>;
   addToast: any;
 }) => {
   const existing = settings.clientContacts?.[name];
@@ -1723,9 +1726,19 @@ const CustomerProfileEditor = ({
             />
             <button
               type="button"
-              onClick={() => {
-                const url = buildPortalUrl(form.name || name, { ...settings, clientSlugs: { ...(settings.clientSlugs || {}), [form.name || name]: slug } });
-                navigator.clipboard.writeText(url).then(() => addToast('success', 'Portal link copied')).catch(() => prompt('Copy:', url));
+              onClick={async () => {
+                // The link only opens once its name is saved — it used to copy a
+                // just-typed name that was still waiting on the autosave.
+                const key = form.name || name;
+                const slugs = { ...(settings.clientSlugs || {}) };
+                if (slug) slugs[key] = slug; else delete slugs[key];
+                const url = buildPortalUrl(key, { ...settings, clientSlugs: slugs });
+                // Copy inside the tap (browsers refuse clipboard writes after an await)
+                const copied = navigator.clipboard.writeText(url).catch(() => { prompt('Copy:', url); });
+                const saved = onSaveNow ? await onSaveNow({ clientSlugs: slugs }) : true;
+                await copied;
+                if (saved) addToast('success', 'Portal link copied');
+                else addToast('error', "Link copied, but its name didn't save yet — it won't open until it does");
               }}
               className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 shrink-0"
               title="Copy full portal URL"
@@ -3454,12 +3467,12 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   // the user's newest unsaved keystrokes.
   const editSeqRef = useRef(0);
   // Honest save indicator — driven by the REAL save promise, not a blind timer.
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'queued' | 'error'>('idle');
   const saveStateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashSaveState = (s: 'saved' | 'error') => {
+  const flashSaveState = (s: 'saved' | 'queued' | 'error') => {
     setSaveState(s);
     if (saveStateTimer.current) clearTimeout(saveStateTimer.current);
-    saveStateTimer.current = setTimeout(() => setSaveState('idle'), s === 'error' ? 4000 : 1800);
+    saveStateTimer.current = setTimeout(() => setSaveState('idle'), s === 'saved' ? 1800 : 4000);
   };
 
   // ── Saving ─────────────────────────────────────────────────────────
@@ -3491,12 +3504,13 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     const mySeq = editSeqRef.current;
     setSaveState('saving');
     try {
-      await DB.saveSettingsChanges(changes as any);
+      // 'queued' = offline: kept on this device, syncs by itself (no endless "Saving…")
+      const result = await DB.saveSettingsChanges(changes as any);
       const next: any = { ...baseRef.current };
       for (const [k, v] of Object.entries(changes)) { if (v === undefined) delete next[k]; else next[k] = JSON.parse(JSON.stringify(v)); }
       baseRef.current = next;
       if (editSeqRef.current === mySeq) dirtyRef.current = false;
-      flashSaveState('saved');
+      flashSaveState(result === 'queued' ? 'queued' : 'saved');
       return true;
     } catch {
       flashSaveState('error');   // stays dirty — retried on the next edit / leave
@@ -3696,11 +3710,13 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           className={`fixed bottom-6 inset-x-0 mx-auto w-fit z-[80] flex items-center gap-2 px-4 py-2 rounded-full border shadow-2xl backdrop-blur-xl text-xs font-black animate-fade-in pointer-events-none ${
             saveState === 'saving' ? 'bg-zinc-900/95 border-white/15 text-zinc-300' :
             saveState === 'saved'  ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-300' :
+            saveState === 'queued' ? 'bg-amber-950/95 border-amber-500/40 text-amber-300' :
                                      'bg-red-950/95 border-red-500/40 text-red-300'
           }`}
         >
           {saveState === 'saving' && <><span className="w-3 h-3 rounded-full border-2 border-zinc-500 border-t-white animate-spin" aria-hidden="true" /> Saving…</>}
           {saveState === 'saved' && <><CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> Saved</>}
+          {saveState === 'queued' && <><CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> Saved on this device — will sync when back online</>}
           {saveState === 'error' && <><AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> Couldn't save — check connection</>}
         </div>
       )}
@@ -4252,7 +4268,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
 
             {/* Customers — full profile editor + per-customer workflow routing */}
             <div data-settings-anchor="production-customers" className="rounded-2xl">
-              <CustomerManager addToast={addToast} settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} />
+              <CustomerManager addToast={addToast} settings={settings} onSaveSettings={(s: SystemSettings) => setSettings(s)} onSaveNow={saveNow} />
             </div>
 
             {/* Vendors — reusable supplier records used by Purchase Orders */}

@@ -24,6 +24,7 @@ import * as DB from '../services/mockDb';
 import { createGpsSession, startTracking, stopTracking, sessionMiles, sessionMinutes, type GpsSession } from '../services/gpsTracker';
 import { directionsUrl, formatMiles } from '../utils/geo';
 import { fmt, todayFmt } from '../utils/date';
+import { shrinkImage } from '../utils/imageShrink';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/useConfirm';
 
@@ -376,7 +377,8 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           onCancel={() => cancelRun(active)}
           onUpdateStop={async (stopId, patch) => {
             const stops = active.stops.map(s => s.id === stopId ? { ...s, ...patch } : s);
-            await DB.saveDelivery({ ...active, stops });
+            try { return await DB.saveDelivery({ ...active, stops }); }
+            catch (e: any) { addToast('error', e?.message || 'Could not save — check connection'); return 'failed'; }
           }}
           onEditDetails={() => setEditingId(active.id)}
           addToast={addToast}
@@ -455,7 +457,7 @@ const ActiveRunCard: React.FC<{
   allJobs: Job[];
   onFinish: () => void;
   onCancel: () => void;
-  onUpdateStop: (stopId: string, patch: Partial<DeliveryStop>) => void;
+  onUpdateStop: (stopId: string, patch: Partial<DeliveryStop>) => Promise<unknown>;
   onEditDetails: () => void;
   addToast: Props['addToast'];
 }> = ({ delivery, liveMiles, jobs, allJobs, onFinish, onCancel, onUpdateStop, onEditDetails, addToast }) => {
@@ -565,7 +567,7 @@ const ActiveStopRow: React.FC<{
   stop: DeliveryStop;
   index: number;
   jobs: Job[];
-  onUpdate: (p: Partial<DeliveryStop>) => void;
+  onUpdate: (p: Partial<DeliveryStop>) => Promise<unknown>;
   addToast: Props['addToast'];
 }> = ({ stop, index, jobs, onUpdate, addToast }) => {
   const def = stopTypeDef(stop.stopType);
@@ -605,15 +607,20 @@ const ActiveStopRow: React.FC<{
     onUpdate({ completedAt: Date.now() });
   };
 
-  const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      onUpdate({ photoUrl: reader.result as string });
-      addToast('success', '📸 Proof of delivery photo saved');
-    };
-    reader.readAsDataURL(file);
+    // The photo is stored inside the run's record (no cloud storage on the free
+    // plan) — a full-size phone photo pushed it past the 1 MB limit and the
+    // "saved" photo was lost. Shrink it first; only say saved once it is.
+    try {
+      const photoUrl = await shrinkImage(file);
+      const r = await onUpdate({ photoUrl });
+      if (r === 'failed') return;   // the save error is already on screen
+      addToast('success', r === 'queued' ? '📸 Photo saved on this phone — will sync' : '📸 Proof of delivery photo saved');
+    } catch (err: any) {
+      addToast('error', err?.message || 'Could not read that photo');
+    }
   };
 
   const linkedJobs = jobs.filter(j => stop.jobIds.includes(j.id));

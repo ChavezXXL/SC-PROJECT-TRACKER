@@ -68,6 +68,7 @@ import * as DB from '../services/mockDb';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/useConfirm';
 import { fmtMoneyK } from '../utils/format';
+import { shrinkImage, FILE_BUDGET_BYTES } from '../utils/imageShrink';
 import { printPurchaseOrderPDF } from '../services/pdfService';
 
 interface Props {
@@ -288,12 +289,17 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
     );
     if (reason === null) return; // user cancelled
     const newNumber = `${DB.nextPurchaseOrderNumber(pos).replace(/PO-(\d+)-(\d+)/, (_, y, n) => `PO-${y}-${n}`)}-RW`;
-    // Tag each line item description so the vendor knows it's rework
+    // Tag each line item description so the vendor knows it's rework. Priced
+    // at $0: a redo is normally on the vendor, and the copy carried the full
+    // price — once placed, the same job was charged for the processing twice.
+    // If the vendor does bill the redo, enter the price in the editor.
     const reworkItems = p.items.map(item => ({
       ...item,
       id: `li_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
       description: item.description.startsWith('[REWORK]') ? item.description : `[REWORK] ${item.description}`,
       receivedQty: undefined,
+      unitPrice: 0,
+      total: 0,
     }));
     const reworkPO: PurchaseOrder = {
       ...p,
@@ -301,6 +307,7 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       poNumber: newNumber,
       status: 'draft',
       items: reworkItems,
+      subtotal: 0, taxAmt: 0, shippingAmt: 0, total: 0,
       orderedDate: Date.now(),
       requiredDate: undefined,
       expectedDate: undefined,
@@ -318,7 +325,7 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       internalNotes: `REWORK of ${p.poNumber}${reason ? ` — Reason: ${reason}` : ''}${p.internalNotes ? `\n\nOriginal notes: ${p.internalNotes}` : ''}`,
     };
     await DB.savePurchaseOrder(reworkPO);
-    addToast('success', `↩ Rework PO ${newNumber} created — same vendor, items tagged [REWORK]`);
+    addToast('success', `↩ Rework PO ${newNumber} created at $0 — same vendor, items tagged [REWORK]. Enter a price if the vendor charges.`);
     setEditing(reworkPO);
   };
 
@@ -428,10 +435,13 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
           currentUser={user}
           onClose={() => { setEditing(null); setCreating(false); }}
           onSave={async (po) => {
-            await DB.savePurchaseOrder(po);
-            addToast('success', `Saved ${po.poNumber}`);
-            setEditing(null);
-            setCreating(false);
+            // Errors used to vanish (unhandled) and the editor just sat there.
+            try {
+              const r = await DB.savePurchaseOrder(po);
+              addToast('success', `Saved ${po.poNumber}${r === 'queued' ? ' — on this device, will sync' : ''}`);
+              setEditing(null);
+              setCreating(false);
+            } catch (e: any) { addToast('error', e?.message || 'Save failed — check connection'); }
           }}
           addToast={addToast}
         />
@@ -444,9 +454,11 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
           currentUser={user}
           onClose={() => setReceiving(null)}
           onSave={async (po) => {
-            await DB.savePurchaseOrder(po);
-            addToast('success', `${po.poNumber} receipt recorded`);
-            setReceiving(null);
+            try {
+              const r = await DB.savePurchaseOrder(po);
+              addToast('success', `${po.poNumber} receipt recorded${r === 'queued' ? ' — on this device, will sync' : ''}`);
+              setReceiving(null);
+            } catch (e: any) { addToast('error', e?.message || 'Save failed — check connection'); }
           }}
         />
       )}
@@ -825,31 +837,51 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
     update({ qualityRequirements: cur.includes(req) ? cur.filter(q => q !== req) : [...cur, req] });
   };
 
-  // Attachments
+  // Attachments live inside the PO record (no cloud storage on the free plan)
+  // and a record can't pass 1 MB. The old 5 MB limit let a file "attach" and
+  // then the whole PO failed to save. Photos are shrunk; other files must be
+  // small, and the PO as a whole has to keep fitting.
   const addAttachment = async (files: FileList | null, target: 'po' | { lineIdx: number }) => {
     if (!files?.length) return;
+    const maxFileBytes = Math.floor(FILE_BUDGET_BYTES * 3 / 4);   // base64 grows 4/3
+    let used = JSON.stringify(po).length;
+    const added: POAttachment[] = [];
     for (const file of Array.from(files)) {
-      if (file.size > 5_000_000) { addToast('error', `${file.name}: max 5 MB`); continue; }
-      const reader = new FileReader();
-      await new Promise<void>(resolve => {
-        reader.onload = () => {
-          const att: POAttachment = {
-            id: `att_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-            name: file.name, url: reader.result as string,
-            mimeType: file.type, size: file.size,
-            kind: /pdf|dwg|step|iges|sldprt|sldasm/i.test(file.name) ? 'drawing' : 'other',
-          };
-          if (target === 'po') {
-            update({ attachments: [...(po.attachments || []), att] });
-          } else {
-            const items = [...po.items];
-            items[target.lineIdx] = { ...items[target.lineIdx], attachments: [...(items[target.lineIdx].attachments || []), att] };
-            update({ items });
-          }
-          resolve();
-        };
-        reader.readAsDataURL(file);
+      let url: string;
+      try {
+        if (file.type.startsWith('image/')) url = await shrinkImage(file, 300_000);
+        else if (file.size > maxFileBytes) {
+          addToast('error', `${file.name} is too big to attach (max ${Math.round(maxFileBytes / 1000)} KB) — save a smaller copy or a photo of it`);
+          continue;
+        } else {
+          url = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(new Error('could not read the file'));
+            reader.readAsDataURL(file);
+          });
+        }
+      } catch (e: any) { addToast('error', `${file.name}: ${e?.message || 'could not attach'}`); continue; }
+      if (used + url.length > 950_000) {
+        addToast('error', `No room left on this PO for ${file.name} — remove an attachment first`);
+        continue;
+      }
+      used += url.length;
+      const isImage = file.type.startsWith('image/');
+      added.push({
+        id: `att_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+        name: file.name, url,
+        mimeType: isImage ? 'image/jpeg' : file.type, size: isImage ? Math.round(url.length * 3 / 4) : file.size,
+        kind: /pdf|dwg|step|iges|sldprt|sldasm/i.test(file.name) ? 'drawing' : 'other',
       });
+    }
+    if (!added.length) return;
+    if (target === 'po') {
+      update({ attachments: [...(po.attachments || []), ...added] });
+    } else {
+      const items = [...po.items];
+      items[target.lineIdx] = { ...items[target.lineIdx], attachments: [...(items[target.lineIdx].attachments || []), ...added] };
+      update({ items });
     }
   };
   const removeAttachment = (attId: string, target: 'po' | { lineIdx: number }) => {

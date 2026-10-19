@@ -1113,6 +1113,19 @@ async function settleWrite(p: Promise<unknown>, ms = SERVER_WAIT_MS): Promise<'s
   } finally { clearTimeout(timer); }
 }
 
+/** Firestore rejects a document over 1 MiB — but only on the server, after a
+ *  queued write already "saved" on the device, so the change was silently
+ *  lost (big delivery photos, PO attachments). Check before writing. */
+const DOC_LIMIT_BYTES = 1_000_000;
+export class TooBigError extends Error {}
+function assertFitsInDoc(data: unknown, what: string) {
+  let size = 0;
+  try { size = JSON.stringify(data)?.length || 0; } catch { return; }
+  if (size > DOC_LIMIT_BYTES) {
+    throw new TooBigError(`This ${what} is too big to save (${(size / 1_000_000).toFixed(1)} MB, limit 1 MB) — remove or shrink a photo or file`);
+  }
+}
+
 const SLOW = 'server-slow';
 function slowAfter(ms: number, onTimer: (t: ReturnType<typeof setTimeout>) => void): Promise<never> {
   return new Promise((_, rej) => { onTimer(setTimeout(() => rej(new Error(SLOW)), ms)); });
@@ -1610,14 +1623,15 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
  * settings another device changed in the meantime. Each changed top-level
  * field is replaced whole (nested maps included), so removed map keys stick.
  */
-export async function saveSettingsChanges(changes: Partial<Record<keyof SystemSettings, unknown>>): Promise<void> {
+export async function saveSettingsChanges(changes: Partial<Record<keyof SystemSettings, unknown>>): Promise<'saved' | 'queued'> {
   const keys = Object.keys(changes);
-  if (keys.length === 0) return;
+  if (keys.length === 0) return 'saved';
   const cached = readLS<any>(LS.settings, {});
   for (const k of keys) {
     const v = (changes as any)[k];
     if (v === undefined) delete cached[k]; else cached[k] = v;
   }
+  let result: 'saved' | 'queued' = 'saved';
   if (dbInstance) {
     const ref = doc(dbInstance, COL.settings, 'system');
     const payload: Record<string, unknown> = {};
@@ -1625,22 +1639,25 @@ export async function saveSettingsChanges(changes: Partial<Record<keyof SystemSe
       const v = (changes as any)[k];
       payload[k] = v === undefined ? deleteField() : sanitize(v);
     }
+    const write = updateDoc(ref, payload).catch(async (e: any) => {
+      if (!/not-found|No document/i.test(String(e?.code || '') + String(e?.message || ''))) throw e;
+      // First save for a brand-new shop — create the doc (deletes are moot).
+      const created: Record<string, unknown> = {};
+      for (const k of keys) { const v = (changes as any)[k]; if (v !== undefined) created[k] = sanitize(v); }
+      await setDoc(ref, created, { merge: true });
+    });
     try {
-      await updateDoc(ref, payload);
+      // Offline the write only resolves when the server acks — Settings sat on
+      // "Saving…" forever. It's kept on this device and syncs by itself.
+      result = await settleWrite(write);
     } catch (e: any) {
-      if (/not-found|No document/i.test(String(e?.code || '') + String(e?.message || ''))) {
-        // First save for a brand-new shop — create the doc (deletes are moot).
-        const created: Record<string, unknown> = {};
-        for (const k of keys) { const v = (changes as any)[k]; if (v !== undefined) created[k] = sanitize(v); }
-        await setDoc(ref, created, { merge: true });
-      } else {
-        writeLS(LS.settings, cached);   // keep the edit on this device
-        throw handleError(e);
-      }
+      writeLS(LS.settings, cached);   // keep the edit on this device
+      throw handleError(e);
     }
-    firebaseStatus = { connected: true };
+    if (result === 'saved') firebaseStatus = { connected: true };
   }
   writeLS(LS.settings, cached);
+  return result;
 }
 
 export async function saveSettings(settings: SystemSettings) {
@@ -2011,8 +2028,15 @@ export async function sweepStaleLogs(): Promise<number> {
 }
 
 // ── Web Push Subscriptions ────────────────────────────────────────
-// role + name are stored so the server-side notify-clockin function can
-// filter admin subscriptions without having to join the users collection.
+// One doc per DEVICE (keyed by its push endpoint), belonging to whoever
+// signed in on it last, and removed when they sign out. It used to be one
+// doc per user + device, so a shared shop tablet collected a doc for every
+// person who ever signed in on it and kept receiving their pushes (an
+// admin's clock-in alerts, someone's "still clocked in?") after they left.
+// role + name are stored so the server can filter admin devices without
+// joining the users collection.
+const pushDeviceKey = (endpoint: string) => 'dev_' + btoa(endpoint).slice(-40).replace(/[^a-zA-Z0-9]/g, '');
+
 export async function savePushSubscription(
   userId: string,
   subscription: any,
@@ -2021,15 +2045,41 @@ export async function savePushSubscription(
 ): Promise<void> {
   const db = dbInstance;
   if (!db) return;
-  const endpoint: string = subscription.endpoint || '';
-  const key = userId + '_' + btoa(endpoint).slice(-20).replace(/[^a-zA-Z0-9]/g, '');
-  await setDoc(doc(db, COL.pushSubscriptions, key), {
+  const endpoint: string = subscription?.endpoint || '';
+  if (!endpoint) return;
+  // Callers without the user's role (Settings' "register this device") must
+  // not leave the previous owner's role on the device.
+  if (role === undefined || name === undefined) {
+    const u = readLS<User[]>(LS.users, []).find(x => x.id === userId);
+    role = role ?? u?.role; name = name ?? u?.name;
+  }
+  const key = pushDeviceKey(endpoint);
+  await settleWrite(setDoc(doc(db, COL.pushSubscriptions, key), {
     userId,
     subscription,
     role:      role || '',
     name:      name || '',
     updatedAt: Date.now(),
-  }, { merge: true });
+  }, { merge: true }));
+  // Copies of this device under the old per-user keys.
+  try {
+    const same = await getDocs(query(collection(db, COL.pushSubscriptions), where('subscription.endpoint', '==', endpoint)));
+    await Promise.all(same.docs.filter((d: any) => d.id !== key).map((d: any) => deleteDoc(d.ref)));
+  } catch { /* best effort */ }
+}
+
+/** Sign-out: this device stops receiving the signed-out person's pushes. */
+export async function removeThisDevicePush(): Promise<void> {
+  const db = dbInstance;
+  if (!db || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager?.getSubscription();
+    if (!sub?.endpoint) return;
+    await settleWrite(deleteDoc(doc(db, COL.pushSubscriptions, pushDeviceKey(sub.endpoint))));
+    const same = await getDocs(query(collection(db, COL.pushSubscriptions), where('subscription.endpoint', '==', sub.endpoint)));
+    await Promise.all(same.docs.map((d: any) => deleteDoc(d.ref)));
+  } catch { /* best effort — never block sign-out */ }
 }
 
 // ── Server-push helper — clock-in / clock-out admin alerts ───────────
@@ -2087,6 +2137,18 @@ export function getWorkingElapsedMs(log: TimeLog): number {
 // --------------------
 // QUOTES
 // --------------------
+
+/** One quote, live — the customer portal's quote link. Listening to every
+ *  quote for that read one document per quote on every visit. */
+export function subscribeQuote(id: string, cb: (quote: Quote | null) => void) {
+  if (dbInstance) {
+    return onSnapshot(doc(dbInstance, COL.quotes, id), (snap: any) => {
+      firebaseStatus = { connected: true };
+      cb(snap.exists() ? (snap.data() as Quote) : null);
+    }, () => cb(readLS<Quote[]>(LS.quotes, []).find(q => q.id === id) || null));
+  }
+  return localSubscribe(() => readLS<Quote[]>(LS.quotes, []).find(q => q.id === id) || null, cb);
+}
 
 export function subscribeQuotes(cb: (quotes: Quote[]) => void) {
   if (dbInstance) {
@@ -2251,21 +2313,25 @@ export function subscribeSamples(cb: (samples: Sample[]) => void): () => void {
   return localSubscribe(() => readLS<Sample[]>(LS_SAMPLES, []), cb);
 }
 
-export async function saveSample(sample: Sample): Promise<void> {
+export async function saveSample(sample: Sample): Promise<'saved' | 'queued'> {
   if (dbInstance) {
+    const data = sanitize(sample);
+    assertFitsInDoc(data, 'sample');
     try {
-      await setDoc(doc(dbInstance, COL.samples, sample.id), sanitize(sample), { merge: true });
-      firebaseStatus = { connected: true };
+      // settleWrite: offline the sample timers sat on a spinner until the server answered
+      const r = await settleWrite(setDoc(doc(dbInstance, COL.samples, sample.id), data, { merge: true }));
+      if (r === 'saved') firebaseStatus = { connected: true };
+      return r;
     } catch (e) {
       throw handleError(e);
     }
-    return;
   }
   const samples = readLS<Sample[]>(LS_SAMPLES, []);
   const idx = samples.findIndex(s => s.id === sample.id);
-  if (idx >= 0) samples[idx] = sample;
+  if (idx >= 0) samples[idx] = { ...samples[idx], ...sample };   // merge, like the Firestore path
   else samples.push(sample);
   writeLS(LS_SAMPLES, samples);
+  return 'saved';
 }
 
 export async function deleteSample(id: string): Promise<void> {
@@ -2310,18 +2376,22 @@ export function subscribeCustomerPos(cb: (pos: CustomerPoFile[]) => void): () =>
   return localSubscribe(() => readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []), cb);
 }
 
-export async function saveCustomerPo(po: CustomerPoFile): Promise<void> {
+export async function saveCustomerPo(po: CustomerPoFile): Promise<'saved' | 'queued'> {
   if (dbInstance) {
+    const data = sanitize(po);
+    assertFitsInDoc(data, 'customer PO');
     try {
-      await setDoc(doc(dbInstance, COL.customerPos, po.id), sanitize(po), { merge: true });
-      firebaseStatus = { connected: true };
+      // settleWrite: offline, "Filing…" spun until the server answered
+      const r = await settleWrite(setDoc(doc(dbInstance, COL.customerPos, po.id), data, { merge: true }));
+      if (r === 'saved') firebaseStatus = { connected: true };
+      return r;
     } catch (e) { throw handleError(e); }
-    return;
   }
   const list = readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []);
   const idx = list.findIndex(p => p.id === po.id);
   if (idx >= 0) list[idx] = po; else list.push(po);
   writeLS(LS_CUSTOMER_POS, list);
+  return 'saved';
 }
 
 export async function deleteCustomerPo(id: string): Promise<void> {
@@ -2820,19 +2890,22 @@ export function subscribeDeliveries(cb: (deliveries: Delivery[]) => void): () =>
   );
 }
 
-export async function saveDelivery(d: Delivery): Promise<void> {
+export async function saveDelivery(d: Delivery): Promise<'saved' | 'queued'> {
   const withUpdated: Delivery = { ...d, updatedAt: Date.now() };
   if (dbInstance) {
+    const data = sanitize(withUpdated);
+    assertFitsInDoc(data, 'delivery run');
     try {
-      await setDoc(doc(dbInstance, COL.deliveries, d.id), sanitize(withUpdated), { merge: true });
-      firebaseStatus = { connected: true };
+      const r = await settleWrite(setDoc(doc(dbInstance, COL.deliveries, d.id), data, { merge: true }));
+      if (r === 'saved') firebaseStatus = { connected: true };
+      return r;
     } catch (e) { throw handleError(e); }
-    return;
   }
   const list = readLS<Delivery[]>(LS_DELIVERIES, []);
   const idx = list.findIndex(x => x.id === d.id);
   if (idx >= 0) list[idx] = withUpdated; else list.push(withUpdated);
   writeLS(LS_DELIVERIES, list);
+  return 'saved';
 }
 
 export async function deleteDelivery(id: string): Promise<void> {
@@ -2937,19 +3010,22 @@ export function subscribePurchaseOrders(cb: (pos: PurchaseOrder[]) => void): () 
   );
 }
 
-export async function savePurchaseOrder(po: PurchaseOrder): Promise<void> {
+export async function savePurchaseOrder(po: PurchaseOrder): Promise<'saved' | 'queued'> {
   const stamped: PurchaseOrder = { ...po, updatedAt: Date.now() };
   if (dbInstance) {
+    const data = sanitize(stamped);
+    assertFitsInDoc(data, 'purchase order');
     try {
-      await setDoc(doc(dbInstance, COL.purchaseOrders, po.id), sanitize(stamped), { merge: true });
-      firebaseStatus = { connected: true };
+      const r = await settleWrite(setDoc(doc(dbInstance, COL.purchaseOrders, po.id), data, { merge: true }));
+      if (r === 'saved') firebaseStatus = { connected: true };
+      return r;
     } catch (e) { throw handleError(e); }
-    return;
   }
   const list = readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []);
   const idx = list.findIndex(x => x.id === po.id);
   if (idx >= 0) list[idx] = stamped; else list.push(stamped);
   writeLS(LS_PURCHASE_ORDERS, list);
+  return 'saved';
 }
 
 export async function deletePurchaseOrder(id: string): Promise<void> {
@@ -3057,12 +3133,12 @@ export async function startSampleWork(
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.samples, sampleId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);   // offline: this device's copy, not a hang
       if (!snap.exists()) throw new Error("Sample not found.");
-      await updateDoc(ref, sanitize({
+      await settleWrite(updateDoc(ref, sanitize({
         activeEntry: entry,
         updatedAt: now,
-      }));
+      })));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -3123,7 +3199,7 @@ export async function stopSampleWork(sampleId: string, notes?: string): Promise<
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.samples, sampleId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);   // offline: this device's copy, not a hang
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
       if (!sample.activeEntry) return;
@@ -3150,12 +3226,12 @@ export async function stopSampleWork(sampleId: string, notes?: string): Promise<
       const existingEntries = sample.workEntries || [];
       const newTotalWorked = (sample.totalWorkedMs || 0) + workingMs;
 
-      await updateDoc(ref, sanitize({
+      await settleWrite(updateDoc(ref, sanitize({
         activeEntry: null,
         workEntries: [...existingEntries, completed],
         totalWorkedMs: newTotalWorked,
         updatedAt: now,
-      }));
+      })));
       // ── Bridge to rate-learning engine ──
       await _bridgeSampleWorkToTimeLog(sample, completed, durationSeconds);
       firebaseStatus = { connected: true };
@@ -3206,14 +3282,14 @@ export async function pauseSampleWork(sampleId: string, reason?: string): Promis
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.samples, sampleId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);   // offline: this device's copy, not a hang
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
       if (!sample.activeEntry || sample.activeEntry.pausedAt) return;
-      await updateDoc(ref, sanitize({
+      await settleWrite(updateDoc(ref, sanitize({
         activeEntry: { ...sample.activeEntry, pausedAt: now },
         updatedAt: now,
-      }));
+      })));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -3237,16 +3313,16 @@ export async function resumeSampleWork(sampleId: string): Promise<void> {
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.samples, sampleId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);   // offline: this device's copy, not a hang
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
       if (!sample.activeEntry || !sample.activeEntry.pausedAt) return;
       const pausedDuration = now - sample.activeEntry.pausedAt;
       const totalPausedMs = (sample.activeEntry.totalPausedMs || 0) + pausedDuration;
-      await updateDoc(ref, sanitize({
+      await settleWrite(updateDoc(ref, sanitize({
         activeEntry: { ...sample.activeEntry, pausedAt: null, totalPausedMs },
         updatedAt: now,
-      }));
+      })));
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);

@@ -90,7 +90,9 @@ function getStageIndex(job: Job, stages: JobStage[]): number {
 
 export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter: filterFromUrl, quoteId, slug }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [linkedQuote, setLinkedQuote] = useState<Quote | null>(null);
+  const [quoteMissing, setQuoteMissing] = useState(false);
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   // A short link (?c=slug) names the customer once the shop's settings have
   // loaded. It used to be looked up only in this browser's cached settings, so
@@ -100,25 +102,31 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter: 
   const customerFilter = useMemo(() => {
     if (!slug) return filterFromUrl;
     for (const [name, s] of Object.entries(settings.clientSlugs || {})) if (s === slug) return name;
-    return jobs.find(j => j.customer && makeClientSlug(j.customer) === slug)?.customer || filterFromUrl;
-  }, [slug, filterFromUrl, settings.clientSlugs, jobs]);
+    // The shop's customer list answers before (or without) loading any jobs.
+    const known = [...(settings.clients || []), ...Object.keys(settings.clientContacts || {})];
+    return known.find(n => makeClientSlug(n) === slug)
+      || jobs.find(j => j.customer && makeClientSlug(j.customer) === slug)?.customer
+      || filterFromUrl;
+  }, [slug, filterFromUrl, settings.clientSlugs, settings.clients, settings.clientContacts, jobs]);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'quote' | 'jobs'>(quoteId ? 'quote' : 'jobs');
   const [approvalDone, setApprovalDone] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false); // blocks approve/decline double-fire race
 
+  // Reads: a quote link listens to that one quote; the shop's job list loads
+  // only for job status (no quote, or the customer opens that tab). Every
+  // visit used to read every job and every quote the shop has.
+  const needJobs = !quoteId || tab === 'jobs';
+  useEffect(() => DB.subscribeSettings(setSettings), []);
+  useEffect(() => (quoteId ? DB.subscribeQuote(quoteId, q => { setLinkedQuote(q); setQuoteMissing(!q); }) : undefined), [quoteId]);
   useEffect(() => {
-    const u1 = DB.subscribeJobs(setJobs);
-    const u2 = DB.subscribeSettings(setSettings);
-    const u3 = DB.subscribeQuotes(setQuotes);
-    return () => { u1(); u2(); u3(); };
-  }, []);
+    if (!needJobs) return;
+    return DB.subscribeJobs(list => { setJobs(list); setJobsLoaded(true); });
+  }, [needJobs]);
 
   const stages = (settings.jobStages?.length) ? [...settings.jobStages].sort((a, b) => a.order - b.order) : DEFAULT_STAGES;
 
-  // Find the specific quote if linked
-  const linkedQuote = quoteId ? quotes.find(q => q.id === quoteId) : null;
 
   // ─── ENGAGEMENT TRACKING (Round 2 #14) ─────────────────────────
   // Log a view event when a customer opens the quote link. Dedupes per tab via
@@ -261,11 +269,22 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter: 
           <p className="text-zinc-500 text-xs uppercase font-bold tracking-widest">Customer</p>
           <h2 className="text-2xl font-black text-white mt-1">{customerName}</h2>
           {linkedQuote?.billTo?.contactPerson && <p className="text-sm text-zinc-400 mt-1">{linkedQuote.billTo.contactPerson}</p>}
-          <div className="flex gap-4 mt-3">
-            <div className="text-sm"><span className="text-zinc-500">Active Jobs:</span> <span className="text-amber-400 font-bold">{totalActive}</span></div>
-            <div className="text-sm"><span className="text-zinc-500">Completed:</span> <span className="text-emerald-400 font-bold">{totalCompleted}</span></div>
-          </div>
+          {jobsLoaded && (
+            <div className="flex gap-4 mt-3">
+              <div className="text-sm"><span className="text-zinc-500">Active Jobs:</span> <span className="text-amber-400 font-bold">{totalActive}</span></div>
+              <div className="text-sm"><span className="text-zinc-500">Completed:</span> <span className="text-emerald-400 font-bold">{totalCompleted}</span></div>
+            </div>
+          )}
         </div>
+
+        {/* Deleted / mistyped quote link — say so instead of an empty page */}
+        {quoteId && quoteMissing && tab === 'quote' && (
+          <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-8 text-center">
+            <p className="text-zinc-300 font-bold">This quote link is no longer available.</p>
+            <p className="text-zinc-500 text-sm mt-1">Contact us for an updated quote, or check the status of your jobs.</p>
+            <button onClick={() => setTab('jobs')} className="mt-4 bg-amber-600 hover:bg-amber-500 text-white text-sm font-bold px-4 py-2 rounded-lg">See job status</button>
+          </div>
+        )}
 
         {/* ── Tab switcher (if quote linked) ── */}
         {linkedQuote && (
@@ -464,7 +483,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter: 
               </p>
             )}
 
-            {customerJobsAll.length === 0 && (
+            {!jobsLoaded && (
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-12 text-center text-zinc-500 text-sm">Loading your jobs…</div>
+            )}
+            {jobsLoaded && customerJobsAll.length === 0 && (
               <div className="bg-zinc-900/50 border border-white/5 rounded-2xl p-12 text-center">
                 <Package className="w-12 h-12 text-zinc-600 mx-auto mb-3" aria-hidden="true" />
                 <p className="text-zinc-400 font-bold">No jobs yet</p>

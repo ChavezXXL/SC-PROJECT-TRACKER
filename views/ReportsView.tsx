@@ -15,6 +15,7 @@ import * as DB from '../services/mockDb';
 import { Avatar, useIsMobile } from '../App';
 import { fmtMoneyK } from '../utils/format';
 import { calcJobProfit, GRADE_COLORS, GRADE_LABELS } from '../utils/jobProfit';
+import { jobMoney, groupLogsByJob } from '../utils/jobBudget';
 import { getPartHistory } from '../utils/partHistory';
 
 // Accurate minutes from a completed log — prefers stored durationSeconds
@@ -79,6 +80,7 @@ export const ReportsView = () => {
     [logs, cutoff, period, customCutoffEnd]
   );
   const activeWorkers = useMemo(() => users.filter(u => u.isActive !== false && u.role !== 'admin'), [users]);
+  const logsByJob = useMemo(() => groupLogsByJob(logs), [logs]);   // per-job figures use the whole job
   const shopRate = settings.shopRate || 0;
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
 
@@ -1037,9 +1039,12 @@ export const ReportsView = () => {
       {/* ── Estimated vs Actual ── */}
       {(() => {
         const quotedJobs = jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd) && (j.quoteAmount || j.expectedHours)).map(j => {
-          const jLogs = completedLogs.filter(l => l.jobId === j.id);
-          const actualHrs = jLogs.reduce((a, l) => a + logMins(l), 0) / 60;
-          const actualCost = actualHrs * ((shopRate || 0) + ohRate);
+          // The whole job, not just the slice of it inside the date range — a
+          // job started last month showed a fraction of its hours here. Same
+          // cost rule as the profit table above (locked snapshot, else live).
+          const m = jobMoney(j, logsByJob.get(j.id) || [], users, settings, allPOs);
+          const actualHrs = m.laborHours;
+          const actualCost = m.totalCost;
           const estHrs = j.expectedHours || 0;
           const quotedAmt = j.quoteAmount || 0;
           const hrsVariance = estHrs > 0 ? ((actualHrs - estHrs) / estHrs * 100) : 0;

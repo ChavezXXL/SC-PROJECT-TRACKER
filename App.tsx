@@ -8014,6 +8014,7 @@ export default function App() {
     sessionCheckedRef.current = user.id;
     DB.verifySessionUser(user.id).then(res => {
       if (res.status === 'gone') {
+        DB.removeThisDevicePush();
         setUser(null);
         addToast('error', 'Your account is no longer active — please sign in again.');
       } else if (res.status === 'ok' && (res.user.role !== user.role || res.user.name !== user.name)) {
@@ -8155,6 +8156,9 @@ export default function App() {
   // here made every sign-in on a shared tablet re-read all jobs and logs.
   // A tenant switch / account sign-out still clears them (AuthContext).
   const handleLogout = useCallback(() => {
+    // This device stops getting the signed-out person's pushes (fire-and-forget;
+    // the next person to sign in re-registers it as theirs).
+    DB.removeThisDevicePush();
     setUser(null);
   }, []);
 

@@ -14,6 +14,7 @@ import * as DB from '../services/mockDb';
 import { Overlay } from '../components/Overlay';
 import { scanDocument } from '../services/poScanner';
 import { normDate, todayFmt } from '../utils/date';
+import { shrinkImage, PHOTO_BUDGET_BYTES } from '../utils/imageShrink';
 import {
   derivePo, resolveStages, matchJobForPo, isJobComplete, readyToInvoiceList, normKey,
 } from '../utils/poOrganizer';
@@ -305,7 +306,11 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         try {
           const small = await compressImage(dataUrlToFile(draftPreview), 1400, 0.6);
           photoUrl = await DB.uploadCustomerPoPhoto(dataUrlToBlob(small), draft.id!);
-        } catch { /* keep base64 fallback */ }
+        } catch {
+          // No cloud storage (free plan) → the photo lives in the record itself,
+          // so it must fit; a full-size photo made the save fail on the server.
+          photoUrl = await shrinkImage(draftPreview, PHOTO_BUDGET_BYTES);
+        }
       }
 
       const rec: CustomerPoFile = {
@@ -332,8 +337,8 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         uploadedBy: draft.uploadedBy,
         updatedAt: Date.now(),
       };
-      await DB.saveCustomerPo(rec);
-      addToast('success', editing ? 'PO updated' : 'PO filed');
+      const result = await DB.saveCustomerPo(rec);
+      addToast('success', `${editing ? 'PO updated' : 'PO filed'}${result === 'queued' ? ' — saved on this device, will sync' : ''}`);
       closeModal();
     } catch (e: any) {
       addToast('error', `Save failed${e?.message ? ` — ${e.message}` : ''}`);
