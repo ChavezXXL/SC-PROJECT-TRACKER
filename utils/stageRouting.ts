@@ -131,6 +131,9 @@ export function shouldAutoRoute(job: Job, candidate: JobStage): boolean {
   if (!candidate) return false;
   if (candidate.isComplete) return false;
   if (job.currentStage === candidate.id) return false;
+  // A held job stays held: moving its stage set it back to in-progress, so
+  // "Start anyway" on a held job silently cleared the office's hold.
+  if (job.status === 'hold') return false;
   return true;
 }
 
