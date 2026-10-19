@@ -140,15 +140,12 @@ const PushRegistrationPanel = ({ addToast, userId }: { addToast: any; userId?: s
 
       if (hasBackend) {
         try {
+          // The server always sends its own fixed "🚀 Server Push Works" test
+          // message — only the subscription goes up.
           const res = await fetch('/.netlify/functions/send-push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              subscription: sub.toJSON(),
-              title: '🚀 Server Push Works',
-              body: 'This notification came from the Netlify function — works when app is closed.',
-              tag: 'server-push-test',
-            }),
+            body: JSON.stringify({ subscription: sub.toJSON() }),
           });
           if (!res.ok) {
             const text = await res.text();

@@ -1,28 +1,24 @@
 // netlify/functions/send-push.ts
 // ═════════════════════════════════════════════════════════════════════
-// Web Push delivery endpoint.
-//
-// Called from the client when a device registers, and (later) by a
-// scheduled function that walks stored subscriptions and fires reminders.
+// Web Push test endpoint — Settings → Push Notifications → "Register This
+// Device" calls it right after subscribing, to prove server push reaches the
+// device. (Scheduled pushes go out from the cron functions directly.)
 //
 // Request (POST JSON):
-//   {
-//     subscription: PushSubscription (toJSON()),
-//     title: string,
-//     body: string,
-//     tag?: string,
-//     url?: string,                     // where tapping the notification opens
-//     actions?: NotificationAction[],   // lock-screen buttons
-//     logId?: string,                   // for TIMER_ACTION messages
-//     requireInteraction?: boolean
-//   }
+//   { subscription: PushSubscription (toJSON()) }
+//
+// The notification is always the fixed test message below — no caller text
+// is ever forwarded — and it is delivered only to a subscription on a real
+// browser push service (see _shared/pushSafety.ts); anything else is refused
+// before any request leaves the server.
 //
 // Response:
 //   200 { ok: true } on success
-//   400 with { error } on malformed input
-//   410 with { error, gone: true } when subscription has expired (caller
+//   400 { error } on malformed input / a subscription that isn't on a push service
+//   410 { error, gone: true } when the subscription has expired (caller
 //       should remove it from storage)
-//   500 with { error } on internal failure
+//   502 { error } when the push service didn't accept it
+//   500 { error } when push isn't configured
 //
 // Env vars required in Netlify dashboard:
 //   VAPID_PUBLIC_KEY   — must match the client's VAPID_KEY constant
@@ -32,8 +28,18 @@
 
 import type { Handler } from '@netlify/functions';
 import webpush from 'web-push';
+import { PUSH_TIMEOUT_MS, isGonePushError, safeSubscription } from './_shared/pushSafety';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+/** The one notification this endpoint sends. */
+const TEST_PUSH = {
+  title: '🚀 Server Push Works',
+  body: 'This notification came from the Netlify function — works when app is closed.',
+  tag: 'server-push-test',
+  url: '/',
+  requireInteraction: false,
+};
 
 export const handler: Handler = async (event) => {
   // CORS preflight — also used by the client's backend-presence probe.
@@ -62,8 +68,6 @@ export const handler: Handler = async (event) => {
     };
   }
 
-  webpush.setVapidDetails(subject, pub, priv);
-
   let body: any;
   try {
     body = JSON.parse(event.body || '{}');
@@ -71,45 +75,32 @@ export const handler: Handler = async (event) => {
     return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { subscription, title, body: msgBody, tag, url, actions, logId, requireInteraction } = body;
-  if (!subscription || !subscription.endpoint) {
-    return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Missing subscription.endpoint' }) };
+  const subscription = safeSubscription(body?.subscription);
+  if (!subscription) {
+    return {
+      statusCode: 400,
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ error: 'Not a browser push subscription' }),
+    };
   }
 
-  // This endpoint has no login yet (that needs the auth migration), so at
-  // least keep what it can deliver harmless: short plain text, and a tap that
-  // only opens a page of this app — an outside link here would be a phishing
-  // notification wearing the shop's name. (The service worker enforces the
-  // same rule on its side.)
-  const safeUrl = typeof url === 'string' && url.startsWith('/') && !url.startsWith('//') ? url : '/';
-  const payload = JSON.stringify({
-    title: String(title || process.env.SHOP_NAME || 'FabTrack IO').slice(0, 80),
-    body: String(msgBody || '').slice(0, 240),
-    tag: typeof tag === 'string' ? tag.slice(0, 80) : undefined,
-    url: safeUrl,
-    actions: Array.isArray(actions) ? actions.slice(0, 2) : undefined,
-    logId,
-    requireInteraction: !!requireInteraction,
-  });
+  webpush.setVapidDetails(subject, pub, priv);
 
   try {
-    await webpush.sendNotification(subscription, payload, { TTL: 60 * 60 }); // 1h TTL
+    await webpush.sendNotification(subscription, JSON.stringify(TEST_PUSH), { TTL: 60 * 60, timeout: PUSH_TIMEOUT_MS }); // 1h TTL
     return { statusCode: 200, headers: JSON_HEADERS, body: JSON.stringify({ ok: true }) };
   } catch (e: any) {
-    const status = e?.statusCode || 500;
     // 404 / 410 → subscription has been unregistered by the push service.
     // Caller should delete it from storage so we stop trying.
-    if (status === 404 || status === 410) {
+    if (isGonePushError(e)) {
       return {
         statusCode: 410,
         headers: JSON_HEADERS,
         body: JSON.stringify({ error: 'Subscription gone', gone: true }),
       };
     }
-    return {
-      statusCode: status >= 400 && status < 600 ? status : 500,
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ error: e?.message || 'Push delivery failed' }),
-    };
+    // Never echo the underlying error (connection details, push-service body).
+    console.warn(`[send-push] delivery failed: ${e?.statusCode || e?.code || 'error'}`);
+    return { statusCode: 502, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Push delivery failed' }) };
   }
 };
