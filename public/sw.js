@@ -173,6 +173,8 @@ self.addEventListener('notificationclick', event => {
         if ('focus' in allClients[0]) allClients[0].focus();
         return;
       }
+      let done = false;
+      let message = '';
       try {
         const res = await fetch('/.netlify/functions/timer-action', {
           method: 'POST',
@@ -180,23 +182,38 @@ self.addEventListener('notificationclick', event => {
           body: JSON.stringify({ action, logId, userId }),
         });
         const result = await res.json().catch(() => ({}));
-        if (result.ok) {
-          await self.registration.showNotification(result.message || '✓ Done', {
-            body: 'Tap to open FabTrack IO', icon: '/brand/ftio-icon.png',
+        // Success only when the server confirms the timer was actually saved.
+        done = res.ok && result.ok === true;
+        message = typeof result.message === 'string' ? result.message : '';
+      } catch { /* offline / unreachable — handled as not done */ }
+
+      if (!done) {
+        // The tap didn't take (write refused, timer changed, offline). Say so —
+        // never "Stopped" for a timer that's still running — keep the live-timer
+        // notification, and bring the app up so the worker can fix it there.
+        const verb = action === 'pause' ? 'pause' : action === 'resume' ? 'resume' : 'stop';
+        try {
+          await self.registration.showNotification(`Couldn't ${verb} the timer — open FabTrack`, {
+            body: 'Tap to open FabTrack IO and check your timer.', icon: '/brand/ftio-icon.png',
             badge: '/brand/ftio-icon.png', tag: `timer-confirm-${logId}`,
-            data: { url: '/' }, requireInteraction: false,
+            data: { url: '/' }, requireInteraction: true,
           });
-          if (action === 'stop') {
-            const timerNotifs = await self.registration.getNotifications({ tag: `live-timer-${logId}` });
-            timerNotifs.forEach(n => n.close());
-          }
-        } else {
-          // Couldn't do it from here — open the app so the worker can.
-          await clients.openWindow(url);
-        }
-      } catch {
-        await clients.openWindow(url);
+        } catch {}
+        try { await clients.openWindow(url); } catch {}
+        return;
       }
+
+      try {
+        await self.registration.showNotification(message || '✓ Done', {
+          body: 'Tap to open FabTrack IO', icon: '/brand/ftio-icon.png',
+          badge: '/brand/ftio-icon.png', tag: `timer-confirm-${logId}`,
+          data: { url: '/' }, requireInteraction: false,
+        });
+        if (action === 'stop') {
+          const timerNotifs = await self.registration.getNotifications({ tag: `live-timer-${logId}` });
+          timerNotifs.forEach(n => n.close());
+        }
+      } catch {}
     })());
     return;
   }
