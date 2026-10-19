@@ -28,7 +28,7 @@ const DOT: Record<RiskTier, string> = {
 /** Tiny tier pill. title carries the top reason so hover explains itself. */
 export const RiskPill = ({ risk }: { risk: JobRisk }) => (
   <span
-    title={risk.reasons[0] || ''}
+    title={risk.workerReasons[0] || ''}
     className={`inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded border ${PILL[risk.tier]}`}
   >
     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${DOT[risk.tier]}`} />
@@ -113,7 +113,7 @@ export const RiskBanner = ({ risk, fam, vets }: { risk: JobRisk; fam: Familiarit
         <p className="text-sm font-black text-red-300 flex items-center gap-1.5">
           <ShieldX className="w-4 h-4 shrink-0" /> RED JOB — {risk.guidance}
         </p>
-        <p className="text-xs text-red-200/80 mt-1">{risk.reasons[0]}{famContext(fam, [])}</p>
+        <p className="text-xs text-red-200/80 mt-1">{risk.workerReasons[0]}{famContext(fam, [])}</p>
       </div>
     );
   }
@@ -124,7 +124,7 @@ export const RiskBanner = ({ risk, fam, vets }: { risk: JobRisk; fam: Familiarit
           <ShieldAlert className="w-4 h-4 shrink-0" /> YELLOW JOB — {risk.guidance}
         </p>
         <p className="text-xs text-amber-200/80 mt-1">
-          {risk.reasons[0]}
+          {risk.workerReasons[0]}
           {famContext(fam, vets)}
         </p>
       </div>

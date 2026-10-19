@@ -27,6 +27,7 @@ import type {
 } from '../types';
 import * as DB from '../services/mockDb';
 import { ShopFlowMap } from '../components/ShopFlowMap';
+import { fmtMinutes } from '../utils/jobSteps';
 import { OperationsStageMapper } from '../components/OperationsStageMapper';
 import { VendorsManager } from '../components/VendorsManager';
 import { Modal } from '../components/Modal';
@@ -2944,11 +2945,16 @@ const SampleTimesEntry: React.FC<{
       return;
     }
     try {
+      // A log's minutes always come from its start/end times, so move the
+      // start to match the typed minutes (editing only the minutes used to be
+      // recomputed straight back to the old value).
+      const end = original.endTime || Date.now();
       await DB.updateTimeLog({
         ...original,
         sessionQty: q,
-        durationMinutes: m,
-        durationSeconds: Math.round(m * 60),
+        startTime: end - Math.round(m * 60) * 1000,
+        endTime: end,
+        totalPausedMs: 0,
         updatedAt: Date.now(),
       });
       addToast('success', `Updated: ${original.partNumber} · ${original.operation} — ${q} pcs / ${m}m`);
@@ -5098,7 +5104,9 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
     .reduce((a, l) => a + (lMs(l)), 0);
 
   const weekHours = progress?.weekHours || 0;
-  const weekOps = progress?.weekOpCount || 0;
+  // Counted from the logs, Sunday to Saturday like the History tab — the
+  // progress doc counted Monday-based weeks in UTC, so the two disagreed.
+  const weekOps = recentLogs.filter(l => l.endTime && new Date(l.startTime) >= weekStart).length;
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 text-zinc-500">
@@ -5245,7 +5253,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
         <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-4 text-center overflow-hidden">
           <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Today</p>
           <p className="text-2xl sm:text-3xl font-black text-emerald-400 tabular mt-1 leading-none">
-            {todayMins >= 60 ? `${Math.floor(todayMins/60)}h ${todayMins%60}m` : `${todayMins}m`}
+            {fmtMinutes(todayMins)}
           </p>
           <div className="h-0.5 rounded-full bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent mt-2" aria-hidden="true" />
         </div>
@@ -5334,7 +5342,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
               const isToday = i === dailyData.length - 1;
               return (
                 <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-mono text-zinc-500">{d.mins >= 60 ? `${Math.floor(d.mins/60)}h` : d.mins > 0 ? `${d.mins}m` : ''}</span>
+                  <span className="text-[10px] font-mono text-zinc-500">{d.mins >= 60 ? `${Math.floor(d.mins/60)}h` : d.mins >= 1 ? `${Math.round(d.mins)}m` : ''}</span>
                   <div className="w-full flex items-end" style={{ height: 80 }}>
                     <div
                       className={`w-full rounded-t-md transition-all duration-700 ${isToday ? 'bg-gradient-to-t from-orange-600 to-amber-400' : d.mins > 0 ? 'bg-gradient-to-t from-zinc-700 to-zinc-500' : 'bg-zinc-800'}`}
@@ -5359,7 +5367,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
             {/* Stacked bar */}
             <div className="w-full h-4 bg-zinc-800 rounded-full overflow-hidden flex">
               {opBreakdown.map(([op, mins], i) => (
-                <div key={op} className={`h-full ${opColors[i % opColors.length]}`} style={{ width: `${(mins / totalOpMins) * 100}%` }} title={`${op}: ${mins >= 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins}m`}`} />
+                <div key={op} className={`h-full ${opColors[i % opColors.length]}`} style={{ width: `${(mins / totalOpMins) * 100}%` }} title={`${op}: ${fmtMinutes(mins)}`} />
               ))}
             </div>
             {/* Legend */}
@@ -5368,7 +5376,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
                 <div key={op} className="flex items-center gap-2">
                   <div className={`w-2.5 h-2.5 rounded-full ${opColors[i % opColors.length]}`} />
                   <span className="text-xs text-zinc-300 font-medium">{op}</span>
-                  <span className="text-xs text-zinc-500 font-mono">{mins >= 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins}m`}</span>
+                  <span className="text-xs text-zinc-500 font-mono">{fmtMinutes(mins)}</span>
                 </div>
               ))}
             </div>
@@ -5392,7 +5400,7 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
                   <p className="text-xs text-zinc-500 mt-0.5">{[...j.ops].join(' · ')}</p>
                 </div>
                 <span className="text-xs font-mono text-zinc-400 bg-zinc-800 px-2 py-1 rounded">
-                  {j.mins >= 60 ? `${Math.floor(j.mins/60)}h ${j.mins%60}m` : `${j.mins}m`}
+                  {fmtMinutes(j.mins)}
                 </span>
               </div>
             ))}

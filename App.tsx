@@ -26,6 +26,7 @@ import { ShopActionsPanel } from './components/ShopActionsPanel';
 import { FocusStrip } from './components/FocusStrip';
 import { RiskPill, FamiliarityChip, RiskBanner, RiskCrewPanel } from './components/RiskBadge';
 import { buildPartRiskIndex, computeJobRisk, workerFamiliarity, partVeterans, type JobRisk, type Familiarity, type WorkerPartExperience } from './utils/jobRisk';
+import { jobSteps, stepProgress, nextStep, stepDone, stepTickedBy, logMinutes, fmtMinutes, normOp } from './utils/jobSteps';
 // ── Lazy views ────────────────────────────────────────────────────────────
 // Post-login screens load on demand — cuts the startup bundle roughly in half
 // so the login/dashboard paint much sooner. LiveFloorMonitor, CustomerPortal
@@ -879,7 +880,7 @@ const LiveTimer = ({ startTime, pausedAt, totalPausedMs }: { startTime: number, 
 };
 
 // --- ACTIVE JOB PANEL ---
-const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | null, log: TimeLog, onStop: (id: string) => Promise<void>, onPause?: (id: string) => Promise<void>, onResume?: (id: string) => Promise<void> }) => {
+const ActiveJobPanel = ({ job, log, onStop, onPause, onResume, priorMinutes = 0 }: { job: Job | null, log: TimeLog, onStop: (id: string) => Promise<void>, onPause?: (id: string) => Promise<void>, onResume?: (id: string) => Promise<void>, /** Finished time already logged on this job (everyone), in minutes. */ priorMinutes?: number }) => {
   const [isStopping, setIsStopping] = useState(false);
   const isMounted = useRef(true);
   useEffect(() => () => { isMounted.current = false; }, []);
@@ -898,11 +899,15 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
     return () => clearInterval(id);
   }, [log.startTime, log.pausedAt, log.totalPausedMs]);
 
+  // The estimate is for the WHOLE job (every operation, every worker), so
+  // compare it with everything logged on the job plus this timer — this
+  // timer alone said "over budget" too late, or when the job wasn't.
   const estMs   = job?.expectedHours ? job.expectedHours * 3_600_000 : 0;
-  const pctUsed = estMs > 0 ? elapsedMs / estMs : 0;
+  const jobMs   = priorMinutes * 60_000 + elapsedMs;
+  const pctUsed = estMs > 0 ? jobMs / estMs : 0;
   const isOverEst    = estMs > 0 && pctUsed >= 1;
   const isApproaching = estMs > 0 && pctUsed >= 0.75 && !isOverEst;
-  const minsRemaining = estMs > 0 ? Math.max(0, Math.round((estMs - elapsedMs) / 60000)) : 0;
+  const minsRemaining = estMs > 0 ? Math.max(0, Math.round((estMs - jobMs) / 60000)) : 0;
 
   // Drive the UI purely from the log state. The subscription updates log within
   // ~100-500ms after pause/resume, which is fast enough for perceived-instant feedback.
@@ -951,18 +956,21 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
           </div>
           <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-1">PO Number</p>
           <h2 className="text-4xl md:text-5xl font-black text-white mb-1">{job ? job.poNumber : 'Unknown'}</h2>
-          <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job ? job.jobIdsDisplay : ''}</span></p>
-          <div className="text-xl text-amber-400 font-medium mb-4 flex items-center gap-2">
+          {/* Job ID only when it isn't just the PO number again */}
+          {job?.jobIdsDisplay && job.jobIdsDisplay !== job.poNumber && (
+            <p className="text-sm text-zinc-500 mb-3">Job ID: <span className="font-mono text-zinc-400">{job.jobIdsDisplay}</span></p>
+          )}
+          <div className="text-xl text-amber-400 font-medium mb-4 mt-2 flex items-center gap-2">
             <span className="px-3 py-1 bg-amber-500/10 rounded-lg border border-amber-500/20">{log.operation}</span>
           </div>
 
           {/* Pace warning banner — shown only when job has an estimate */}
           {isOverEst && (
-            <div className="mb-4 w-full max-w-sm bg-red-500/15 border border-red-500/40 rounded-xl px-4 py-3 flex items-start gap-3 animate-pulse">
+            <div className="mb-4 w-full max-w-sm bg-red-500/15 border border-red-500/40 rounded-xl px-4 py-3 flex items-start gap-3">
               <span className="text-red-400 text-lg mt-0.5">⚠</span>
               <div>
-                <p className="text-red-400 font-black text-sm uppercase tracking-wide">Over Estimate</p>
-                <p className="text-red-300/70 text-xs mt-0.5">You've exceeded the {job!.expectedHours}h budget on this job. Let your supervisor know.</p>
+                <p className="text-red-400 font-black text-sm uppercase tracking-wide">Past the estimate</p>
+                <p className="text-red-300/70 text-xs mt-0.5">This job has {fmtMinutes(jobMs / 60000)} logged against a {job!.expectedHours}h estimate. Let your supervisor know.</p>
               </div>
             </div>
           )}
@@ -970,8 +978,8 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
             <div className="mb-4 w-full max-w-sm bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-start gap-3">
               <span className="text-amber-400 text-lg mt-0.5">⏱</span>
               <div>
-                <p className="text-amber-400 font-bold text-sm">Approaching Estimate</p>
-                <p className="text-amber-300/60 text-xs mt-0.5">{minsRemaining} min remaining of {job!.expectedHours}h budget. Pick up the pace.</p>
+                <p className="text-amber-400 font-bold text-sm">Close to the estimate</p>
+                <p className="text-amber-300/60 text-xs mt-0.5">About {fmtMinutes(minsRemaining)} left of the {job!.expectedHours}h estimate for the whole job.</p>
               </div>
             </div>
           )}
@@ -1014,9 +1022,17 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
                 )}
                 <div className="grid grid-cols-2 gap-y-3 gap-x-4 flex-1">
                   <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Part Number</label><div className="text-sm font-bold text-white break-words">{job.partNumber}</div></div>
-                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">PO Number</label><div className="text-sm font-bold text-white break-words">{job.poNumber}</div></div>
-                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Quantity</label><div className="text-sm font-bold text-white">{job.quantity} <span className="text-xs font-normal text-zinc-500">units</span></div></div>
-                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Due Date</label><div className="text-sm font-bold text-white">{job.dueDate || 'N/A'}</div></div>
+                  <div><label className="text-[10px] text-zinc-500 uppercase font-bold">Quantity</label><div className="text-sm font-bold text-white">{job.quantity} <span className="text-xs font-normal text-zinc-500">pcs</span></div></div>
+                  <div className="col-span-2"><label className="text-[10px] text-zinc-500 uppercase font-bold">Due</label>
+                    {(() => {
+                      const d = dueState(job);
+                      return (
+                        <div className={`text-sm font-bold ${d === 'overdue' ? 'text-red-400' : d === 'today' || d === 'soon' ? 'text-orange-400' : 'text-white'}`}>
+                          {job.dueDate ? `${fmt(job.dueDate)} · ${dueLabel(job.dueDate)}` : '—'}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
               {/* Special Instructions */}
@@ -1027,12 +1043,12 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
                 </div>
               )}
               {/* Notes */}
-              <div className="mt-auto pt-3 border-t border-white/10">
-                <label className="text-[10px] text-zinc-500 uppercase font-bold mb-1 block">Notes</label>
-                <div className="text-zinc-300 text-xs leading-relaxed bg-black/20 p-3 rounded-lg border border-white/5">
-                  {job.info || <span className="text-zinc-600 italic">No notes for this job.</span>}
+              {job.info && (
+                <div className="mt-auto pt-3 border-t border-white/10">
+                  <label className="text-[10px] text-zinc-500 uppercase font-bold mb-1 block">Notes</label>
+                  <div className="text-zinc-300 text-xs leading-relaxed bg-black/20 p-3 rounded-lg border border-white/5">{job.info}</div>
                 </div>
-              </div>
+              )}
             </>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 p-8 text-center">
@@ -1049,10 +1065,36 @@ const ActiveJobPanel = ({ job, log, onStop, onPause, onResume }: { job: Job | nu
 };
 
 // --- JOB SELECTION CARD ---
-// `disabled` = this worker already has a timer running. The card stays open
-// for drawings, the checklist and notes; only starting is blocked (the whole
-// card used to go dead mid-job). `startingKey` = "jobId|op" being started.
-const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) => void, disabled?: boolean, startingKey?: string | null, operations: string[], defaultExpanded?: boolean, user?: { id: string; name: string }, addToast?: any, activeLogs?: TimeLog[], knownOps?: string[], risk?: JobRisk, familiarity?: Familiarity, vets?: WorkerPartExperience[] }> = ({ job, onStart, disabled, startingKey = null, operations, defaultExpanded, user, addToast, activeLogs = [], knownOps = [], risk, familiarity, vets = [] }) => {
+// The worker's view of one job. Closed, it shows only what's needed to pick a
+// job from the list: photo, PO, part and quantity, when it's due, one flag
+// when it changes what you do, who's on it and the next step. Open, it shows
+// what to watch out for, the instructions, the job's steps (each with its own
+// Start button, the time logged on it, and a tick for when it's finished),
+// other operations, drawings and notes.
+// `disabled` = this worker already has a timer running; the card still opens
+// for the steps, drawings and notes — only starting is blocked.
+// `startingKey` = "jobId|op" being started.
+const firstNameOf = (n?: string) => (n || '').trim().split(/\s+/)[0] || 'Someone';
+
+const JobSelectionCard: React.FC<{
+  job: Job;
+  onStart: (id: string, op: string) => void;
+  disabled?: boolean;
+  startingKey?: string | null;
+  operations: string[];
+  defaultExpanded?: boolean;
+  user?: { id: string; name: string };
+  addToast?: any;
+  /** Everyone's running timers — who's on this job right now. */
+  activeLogs?: TimeLog[];
+  /** This job's logs (finished and running) — time logged per step. */
+  jobLogs?: TimeLog[];
+  /** Operations this job / this part has actually been run through before. */
+  doneBeforeOps?: string[];
+  risk?: JobRisk;
+  familiarity?: Familiarity;
+  vets?: WorkerPartExperience[];
+}> = ({ job, onStart, disabled, startingKey = null, operations, defaultExpanded, user, addToast, activeLogs = [], jobLogs = [], doneBeforeOps = [], risk, familiarity, vets = [] }) => {
   const [expanded, setExpanded] = useState(defaultExpanded || false);
   const [showAllOps, setShowAllOps] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
@@ -1076,35 +1118,63 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
       }
     }
   }, [defaultExpanded]);
+
   const due = dueState(job);
   const isOverdue = due === 'overdue';
   const isDueSoon = due === 'today' || due === 'soon';
-  const priorityColors: Record<string, string> = {
-    urgent: 'border-red-500/40 bg-red-500/5',
-    high: 'border-orange-500/30 bg-orange-500/5',
-    normal: 'border-white/5',
-    low: 'border-white/5',
+  const borderClass = isOverdue || job.priority === 'urgent' ? 'border-red-500/40 bg-red-500/5'
+    : job.priority === 'high' ? 'border-orange-500/30 bg-orange-500/5'
+    : 'border-white/5';
+  // At most one flag on the closed card, and only when it changes what you do.
+  const flag = job.status === 'hold' ? { text: '⏸ On hold', cls: 'text-zinc-200 bg-zinc-700/70 border-white/15' }
+    : job.priority === 'urgent' ? { text: 'Urgent', cls: 'text-red-300 bg-red-500/10 border-red-500/30' }
+    : risk?.tier === 'red' ? { text: 'Red job', cls: 'text-red-300 bg-red-500/10 border-red-500/30' }
+    : job.priority === 'high' ? { text: 'High', cls: 'text-orange-300 bg-orange-500/10 border-orange-500/25' }
+    : risk?.tier === 'yellow' ? { text: 'Yellow job', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/30' }
+    : null;
+  const onIt = activeLogs.filter(l => l.jobId === job.id);
+  const whoText = onIt.length === 0 ? ''
+    : onIt.length === 1 ? `${firstNameOf(onIt[0].userName)} on ${(onIt[0].operation || 'it').toLowerCase()}`
+    : `${[...new Set(onIt.map(l => firstNameOf(l.userName)))].join(', ')} on it`;
+  const steps = jobSteps(job, operations, jobLogs);
+  const doneCount = steps.filter(s => s.done).length;
+  const next = steps.find(s => !s.done);
+  const stepOps = new Set(steps.map(s => normOp(s.item.label)));
+  const busy = !!startingKey;
+
+  const tick = (item: JobChecklistItem, done: boolean) => {
+    if (!user) return;
+    DB.setChecklistTick(job.id, item.id, { done, by: user.id, name: user.name, at: Date.now() })
+      .then(() => { if (done) addToast?.('success', `✓ ${item.label} done`); })
+      .catch(() => addToast?.('error', "Couldn't save that tick — check the Wi-Fi and try again"));
   };
-  const borderClass = isOverdue ? 'border-red-500/40 bg-red-500/5' : priorityColors[job.priority || 'normal'];
+
+  const startBtn = (op: string, highlight: boolean) => (
+    <button key={op} disabled={disabled || busy} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
+      className={`${highlight
+        ? 'bg-gradient-to-br from-amber-500/20 to-amber-500/[0.06] hover:from-amber-500 hover:to-orange-500 border-amber-500/40 text-amber-200 hover:text-white'
+        : 'bg-zinc-800 hover:bg-amber-600 hover:text-white border-white/5 text-zinc-300'} border py-3 px-4 min-h-[48px] rounded-xl text-sm transition-colors font-bold active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5`}>
+      {startingKey === `${job.id}|${op}`
+        ? <><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Starting…</>
+        : <>{highlight && <span className="text-[10px] opacity-70">↺</span>}{op}</>}
+    </button>
+  );
+  const stepStartBtn = (op: string, highlight: boolean) => (
+    <button disabled={disabled || busy} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
+      aria-label={`Start ${op}`}
+      className={`shrink-0 min-h-[44px] px-3.5 rounded-lg text-sm font-bold flex items-center gap-1.5 border transition-colors active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${highlight
+        ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950 border-amber-400'
+        : 'bg-zinc-800 hover:bg-amber-600 hover:text-white text-zinc-200 border-white/10'}`}>
+      {startingKey === `${job.id}|${op}`
+        ? <><span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Starting…</>
+        : <><Play className="w-3.5 h-3.5" aria-hidden="true" /> Start</>}
+    </button>
+  );
 
   return (
     <div ref={cardRef} data-job-id={job.id} className={`border rounded-2xl overflow-hidden transition-all duration-300 ${borderClass} ${expanded ? 'ring-2 ring-amber-500/50' : 'hover:bg-zinc-800/50'} ${defaultExpanded ? 'ring-2 ring-amber-500 shadow-lg shadow-amber-500/10' : ''}`}>
-      <div className="p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)}>
-        <div className="flex justify-between items-start mb-1">
-          <div>
-            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-0.5">PO Number</p>
-            <h3 className="text-xl font-black text-white leading-tight">{job.poNumber}</h3>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end min-w-0">
-            {job.status === 'hold' && <span className="text-[10px] font-black text-zinc-200 bg-zinc-700/70 border border-white/15 px-1.5 py-0.5 rounded">⏸ ON HOLD</span>}
-            {risk && <RiskPill risk={risk} />}
-            {job.priority === 'urgent' && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded animate-pulse">  URGENT</span>}
-            {job.priority === 'high' && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">  HIGH</span>}
-            {(job.jobNotes?.length || 0) > 0 && <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">📝 {job.jobNotes!.length} note{job.jobNotes!.length > 1 ? 's' : ''}</span>}
-            <span className="bg-zinc-950 text-zinc-400 text-xs px-2 py-1 rounded font-mono">{job.quantity} units</span>
-          </div>
-        </div>
-        <div className="flex items-start gap-3 mt-2">
+      <div className="p-4 sm:p-5 cursor-pointer bg-zinc-900/50" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
+        <div className="flex items-start gap-3">
           {job.partImage && (
             <button
               type="button"
@@ -1118,54 +1188,39 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
               </span>
             </button>
           )}
-          <div className="text-sm text-zinc-500 space-y-1 min-w-0 flex-1">
-          <p className="truncate">Part: <span className="text-zinc-300 font-medium">{job.partNumber}</span></p>
-          {familiarity && <FamiliarityChip fam={familiarity} />}
-          {/* Job ID defaults to the PO number when nobody set a distinct one
-              (see handleSave) — showing it again right under the PO number
-              header is pure duplication for the common case, so only render
-              it when it's actually telling the worker something new. */}
-          {job.jobIdsDisplay && job.jobIdsDisplay !== job.poNumber && (
-            <p className="text-xs text-zinc-600">Job ID: <span className="text-zinc-500 font-mono">{job.jobIdsDisplay}</span></p>
-          )}
-          {job.dueDate && (
-            <p className={`text-sm font-bold flex items-center gap-1 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
-              {due === 'overdue' ? `OVERDUE · ${dueLabel(job.dueDate)} (${fmt(job.dueDate)})`
-                : due === 'today' ? `Due TODAY · ${fmt(job.dueDate)}`
-                : due === 'soon' ? `Due soon · ${fmt(job.dueDate)}`
-                : `Due ${fmt(job.dueDate)}`}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="text-xl font-black text-white leading-tight truncate">PO {job.poNumber}</h3>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {flag && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${flag.cls}`}>{flag.text}</span>}
+                <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </div>
+            </div>
+            <p className="text-sm text-zinc-400 truncate mt-0.5">
+              <span className="text-zinc-200 font-medium">{job.partNumber}</span>
+              {(job.quantity || 0) > 0 && <> · {job.quantity} pcs</>}
             </p>
-          )}
-          {/* Who's clocked in on this job right now */}
-          {activeLogs.filter(l => l.jobId === job.id).length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap mt-1">
-              {activeLogs.filter(l => l.jobId === job.id).map(l => (
-                <span key={l.id} className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-900/50 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  {l.userName.split(' ')[0]} · {l.operation}
-                </span>
-              ))}
-            </div>
-          )}
-          {/* Show progress indicators when present */}
-          {((job.checklist?.length || 0) > 0 || (job.attachments?.length || 0) > 0) && (
-            <div className="flex items-center gap-1.5 flex-wrap mt-1">
-              {(job.checklist?.length || 0) > 0 && (() => {
-                const total = job.checklist!.length;
-                const done = job.checklist!.filter(c => c.done).length;
-                return (
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${done === total ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-purple-400 bg-purple-500/10 border-purple-500/20'}`}>
-                    ✓ {done}/{total} ops
-                  </span>
-                );
-              })()}
-              {(job.attachments?.length || 0) > 0 && (
-                <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded">📎 {job.attachments!.length} file{job.attachments!.length > 1 ? 's' : ''}</span>
-              )}
-            </div>
-          )}
+            {job.dueDate && (
+              <p className={`text-sm font-bold mt-0.5 ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
+                {due === 'overdue' ? `OVERDUE · ${dueLabel(job.dueDate)} (${fmt(job.dueDate)})`
+                  : due === 'today' ? `Due TODAY · ${fmt(job.dueDate)}`
+                  : due === 'soon' ? `Due soon · ${fmt(job.dueDate)}`
+                  : `Due ${fmt(job.dueDate)}`}
+              </p>
+            )}
           </div>
         </div>
+        {(steps.length > 0 || whoText) && (
+          <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between gap-3 text-sm">
+            <span className="min-w-0 truncate text-zinc-400">
+              {next ? <>Next: <span className="text-white font-bold">{next.item.label}</span></>
+                : steps.length > 0 ? <span className="text-emerald-400 font-bold">✓ All steps done</span> : null}
+            </span>
+            <span className="shrink-0 text-xs text-zinc-500 truncate max-w-[60%] text-right">
+              {[steps.length > 0 && next ? `${doneCount} of ${steps.length} done` : '', whoText].filter(Boolean).join(' · ')}
+            </span>
+          </div>
+        )}
         {/* Lightbox modal — portaled to body so parent transforms can't break fixed positioning */}
         {showImageLightbox && job.partImage && createPortal(
           <div
@@ -1187,118 +1242,86 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           </div>,
           document.body
         )}
-        {!expanded && (
-          <div className="mt-4 flex items-center text-amber-400 text-xs font-bold uppercase tracking-wide">
-            {disabled ? 'Tap for drawings & notes' : 'Tap to choose operation'} <ArrowRight className="w-3 h-3 ml-1" />
-          </div>
-        )}
       </div>
       {expanded && (
-        <div className="p-4 bg-zinc-950/50 border-t border-white/5 animate-fade-in">
+        <div className="p-4 bg-zinc-950/50 border-t border-white/5 space-y-3 animate-fade-in">
           {risk && familiarity && <RiskBanner risk={risk} fam={familiarity} vets={vets} />}
-          {job.info && (
-            <div className="mb-3 p-2 bg-zinc-900 rounded-lg text-xs text-zinc-400 border border-white/5">
-              <span className="text-zinc-500 font-bold uppercase text-[10px]">Notes: </span>{job.info}
+          {(job.specialInstructions || job.info || (job.jobIdsDisplay && job.jobIdsDisplay !== job.poNumber)) && (
+            <div className="p-3 bg-zinc-900 rounded-lg border border-white/5 text-sm space-y-1.5">
+              {job.specialInstructions && (
+                <p className="text-yellow-100/90 leading-relaxed"><span className="text-[10px] font-black uppercase tracking-wider text-yellow-400 mr-1.5">Instructions</span>{job.specialInstructions}</p>
+              )}
+              {job.info && (
+                <p className="text-zinc-300 leading-relaxed"><span className="text-[10px] font-black uppercase tracking-wider text-zinc-500 mr-1.5">Notes</span>{job.info}</p>
+              )}
+              {/* Job ID only when it's not just the PO number again. */}
+              {job.jobIdsDisplay && job.jobIdsDisplay !== job.poNumber && (
+                <p className="text-xs text-zinc-500">Job ID <span className="font-mono text-zinc-400">{job.jobIdsDisplay}</span></p>
+              )}
             </div>
           )}
 
-          {/* Operation Checklist — workers can tick off ops live on the floor */}
-          {(job.checklist?.length || 0) > 0 && (
-            <div className="mb-3 bg-purple-500/5 border border-purple-500/20 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest">✓ Operations Checklist</p>
-                {(() => {
-                  const total = job.checklist!.length;
-                  const done = job.checklist!.filter(c => c.done).length;
-                  const pct = Math.round((done / total) * 100);
-                  return <span className={`text-[10px] font-black tabular ${pct === 100 ? 'text-emerald-400' : 'text-purple-400'}`}>{done}/{total} · {pct}%</span>;
-                })()}
-              </div>
-              <div className="space-y-1">
-                {job.checklist!.map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!user) return;
-                      const next = (job.checklist || []).map(c =>
-                        c.id === item.id
-                          ? (c.done
-                              ? { ...c, done: false, doneAt: undefined, doneBy: undefined, doneByName: undefined }
-                              : { ...c, done: true, doneAt: Date.now(), doneBy: user.id, doneByName: user.name })
-                          : c
-                      );
-                      // Only the checklist is written — re-saving the whole job from this
-                      // card's copy could undo an office edit (due date, qty, photo).
-                      DB.setJobChecklist(job.id, next)
-                        .then(() => { if (!item.done) addToast?.('success', `✓ ${item.label}`); })
-                        .catch(() => addToast?.('error', "Couldn't save that tick — check the Wi-Fi and try again"));
-                    }}
-                    className={`w-full min-h-[44px] flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-all text-left ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900 border-white/10 hover:border-purple-400/30'}`}
-                  >
-                    <span className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${item.done ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-600'}`}>
-                      {item.done && <CheckCircle className="w-3 h-3 text-white" aria-hidden="true" />}
-                    </span>
-                    <span className={`flex-1 text-sm ${item.done ? 'text-zinc-500 line-through' : 'text-white'}`}>{item.label}</span>
-                    {item.doneByName && <span className="text-[9px] text-emerald-400/70 shrink-0">✓ {item.doneByName.split(' ')[0]}</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {disabled && (
+            <p className="text-xs font-bold text-amber-400/90">Your timer is running — stop it above to start this job.</p>
           )}
 
-          {/* Attachments — workers can download drawings/cert docs from the floor */}
-          {(job.attachments?.length || 0) > 0 && (
-            <div className="mb-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
-              <p className="text-[10px] text-indigo-400 uppercase font-black tracking-widest mb-2">📎 Drawings & Files ({job.attachments!.length})</p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {job.attachments!.map(att => {
-                  const icon = att.category === 'drawing' ? '📐' : att.category === 'photo' ? '📷' : att.category === 'cert' ? '📜' : att.category === 'inspection' ? '🔍' : '📎';
+          {/* Steps — the job's checklist, each step with its own Start button
+              and a tick for when it's finished (also offered at Stop). */}
+          {steps.length > 0 && (
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1.5">Steps · {doneCount} of {steps.length} done</p>
+              <div className="rounded-xl border border-white/10 divide-y divide-white/5 overflow-hidden">
+                {steps.map(s => {
+                  const isNext = next?.item.id === s.item.id;
+                  const sub = s.done
+                    ? [s.doneBy ? `Done by ${s.doneBy}` : 'Done', s.loggedMinutes >= 1 ? fmtMinutes(s.loggedMinutes) : ''].filter(Boolean).join(' · ')
+                    : [s.runningBy.length ? `${s.runningBy.join(', ')} on it now` : '',
+                       s.loggedMinutes >= 1 ? `${fmtMinutes(s.loggedMinutes)} so far${s.workers.length ? ` · ${s.workers.join(', ')}` : ''}` : ''].filter(Boolean).join(' · ');
                   return (
-                    <a
-                      key={att.id}
-                      href={att.dataUrl}
-                      download={att.name}
-                      target="_blank"
-                      rel="noopener"
-                      onClick={e => e.stopPropagation()}
-                      className="flex items-center gap-2 bg-zinc-900 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-lg p-2 transition-all"
-                    >
-                      <span className="text-lg shrink-0">{icon}</span>
-                      <span className="text-[11px] text-white truncate flex-1">{att.name}</span>
-                    </a>
+                    <div key={s.item.id} className={`flex items-center gap-2 pl-1.5 pr-2 py-1.5 ${s.done ? 'bg-emerald-500/[0.04]' : isNext ? 'bg-amber-500/[0.05]' : 'bg-zinc-900/60'}`}>
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); tick(s.item, !s.done); }}
+                        aria-label={s.done ? `Mark ${s.item.label} not done` : `Mark ${s.item.label} done`}
+                        className="w-11 h-11 flex items-center justify-center shrink-0 rounded-lg hover:bg-white/5"
+                      >
+                        {s.done
+                          ? <CheckCircle className="w-6 h-6 text-emerald-400" aria-hidden="true" />
+                          : <span aria-hidden="true" className={`w-6 h-6 rounded-full border-2 ${isNext ? 'border-amber-400/70' : 'border-zinc-600'}`} />}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-sm font-bold truncate ${s.done ? 'text-zinc-500 line-through' : 'text-white'}`}>{s.item.label}</p>
+                        {sub && <p className="text-[11px] text-zinc-500 truncate">{sub}</p>}
+                      </div>
+                      {s.operation && !s.done && stepStartBtn(s.operation, isNext)}
+                    </div>
                   );
                 })}
               </div>
             </div>
           )}
 
-          {disabled && (
-            <p className="mb-2 text-xs font-bold text-amber-400/90">Your timer is running — stop it above to start this job.</p>
-          )}
           {(() => {
-            // Job memory: this job's / this part's previously-used operations
-            // come FIRST — the rest hide behind "All operations" so a repeat
-            // job is one glance, one tap, instead of scanning the whole list.
-            // Only offer remembered ops that STILL exist in settings — an op the
-            // admin deleted must not be startable from history.
-            const usual = knownOps.filter(op => op && op.trim() && operations.includes(op));
+            // A job with steps: everything else hides behind "Other operation".
+            if (steps.length > 0) {
+              const others = operations.filter(op => !stepOps.has(normOp(op)));
+              if (others.length === 0) return null;
+              return (<>
+                <button onClick={e => { e.stopPropagation(); setShowAllOps(s => !s); }}
+                  className="w-full min-h-[44px] text-xs font-bold text-zinc-400 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                  {showAllOps ? <>Hide other operations <ChevronUp className="w-3 h-3" /></> : <>Other operation ({others.length}) <ChevronDown className="w-3 h-3" /></>}
+                </button>
+                {showAllOps && <div className="grid grid-cols-2 gap-2 animate-fade-in">{others.map(op => startBtn(op, false))}</div>}
+              </>);
+            }
+            // No steps: the operations this job / part has really run before
+            // come first, the rest behind "All operations". Only ops that
+            // still exist in settings can be started.
+            const usual = doneBeforeOps.filter(op => op && op.trim() && operations.includes(op));
             const rest = operations.filter(op => !usual.includes(op));
-            const busy = !!startingKey;
-            const startBtn = (op: string, highlight: boolean) => (
-              <button key={op} disabled={disabled || busy} onClick={e => { e.stopPropagation(); onStart(job.id, op); }}
-                className={`${highlight
-                  ? 'bg-gradient-to-br from-amber-500/20 to-amber-500/[0.06] hover:from-amber-500 hover:to-orange-500 border-amber-500/40 text-amber-200 hover:text-white'
-                  : 'bg-zinc-800 hover:bg-amber-600 hover:text-white border-white/5 text-zinc-300'} border py-3 px-4 min-h-[48px] rounded-xl text-sm transition-colors font-bold active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5`}>
-                {startingKey === `${job.id}|${op}`
-                  ? <><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Starting…</>
-                  : <>{highlight && <span className="text-[10px] opacity-70">↺</span>}{op}</>}
-              </button>
-            );
             if (usual.length === 0) {
               return (<>
-                <p className="text-xs text-zinc-500 uppercase font-bold mb-3">Select Operation:</p>
+                <p className="text-xs text-zinc-500 uppercase font-bold">Select operation</p>
                 <div className="grid grid-cols-2 gap-2">
                   {operations.map(op => startBtn(op, false))}
                   {operations.length === 0 && <p className="col-span-2 text-xs text-zinc-500 text-center py-2">No operations configured.</p>}
@@ -1306,22 +1329,45 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
               </>);
             }
             return (<>
-              <p className="text-xs text-amber-400/90 uppercase font-bold mb-2 flex items-center gap-1.5">↺ Done on this job before</p>
+              <p className="text-xs text-amber-400/90 uppercase font-bold flex items-center gap-1.5">↺ Run on this part before</p>
               <div className="grid grid-cols-2 gap-2">{usual.map(op => startBtn(op, true))}</div>
               {rest.length > 0 && (
                 <button onClick={e => { e.stopPropagation(); setShowAllOps(s => !s); }}
-                  className="mt-2 w-full min-h-[44px] text-xs font-bold text-zinc-400 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                  className="w-full min-h-[44px] text-xs font-bold text-zinc-400 hover:text-white flex items-center justify-center gap-1 transition-colors">
                   {showAllOps ? <>Hide other operations <ChevronUp className="w-3 h-3" /></> : <>All operations ({rest.length}) <ChevronDown className="w-3 h-3" /></>}
                 </button>
               )}
               {showAllOps && rest.length > 0 && (
-                <div className="grid grid-cols-2 gap-2 mt-1 animate-fade-in">{rest.map(op => startBtn(op, false))}</div>
+                <div className="grid grid-cols-2 gap-2 animate-fade-in">{rest.map(op => startBtn(op, false))}</div>
               )}
             </>);
           })()}
 
+          {/* Drawings & files — one row of chips; tap one to open it */}
+          {(job.attachments?.length || 0) > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {job.attachments!.map(att => {
+                const icon = att.category === 'drawing' ? '📐' : att.category === 'photo' ? '📷' : att.category === 'cert' ? '📜' : att.category === 'inspection' ? '🔍' : '📎';
+                return (
+                  <a
+                    key={att.id}
+                    href={att.dataUrl}
+                    download={att.name}
+                    target="_blank"
+                    rel="noopener"
+                    onClick={e => e.stopPropagation()}
+                    className="flex items-center gap-1.5 max-w-full bg-zinc-900 hover:bg-indigo-500/10 border border-white/10 hover:border-indigo-500/30 rounded-lg px-2.5 py-2 min-h-[40px] transition-all"
+                  >
+                    <span className="shrink-0">{icon}</span>
+                    <span className="text-xs text-white truncate">{att.name}</span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+
           {/* Notes toggle */}
-          <button onClick={(e) => { e.stopPropagation(); setShowNotes(!showNotes); }} className="mt-3 w-full flex items-center justify-between bg-zinc-900 hover:bg-zinc-800 border border-white/5 rounded-lg px-3 py-2 transition-colors">
+          <button onClick={(e) => { e.stopPropagation(); setShowNotes(!showNotes); }} className="w-full flex items-center justify-between bg-zinc-900 hover:bg-zinc-800 border border-white/5 rounded-lg px-3 py-2 min-h-[44px] transition-colors">
             <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
               📝 Notes {(job.jobNotes?.length || 0) > 0 && <span className="bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded-full text-[10px]">{job.jobNotes!.length}</span>}
             </span>
@@ -1329,13 +1375,11 @@ const JobSelectionCard: React.FC<{ job: Job, onStart: (id: string, op: string) =
           </button>
 
           {showNotes && (
-            <div className="mt-2 space-y-2 animate-fade-in">
-              {/* Existing notes */}
-              {(job.jobNotes || []).sort((a, b) => b.timestamp - a.timestamp).map(n => (
+            <div className="space-y-2 animate-fade-in">
+              {/* Existing notes, newest first (sorted copy — never the live array) */}
+              {[...(job.jobNotes || [])].sort((a, b) => b.timestamp - a.timestamp).map(n => (
                 <div key={n.id} className="bg-zinc-900 border border-white/5 rounded-lg px-3 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm text-zinc-200 leading-relaxed">{n.text}</p>
-                  </div>
+                  <p className="text-sm text-zinc-200 leading-relaxed">{n.text}</p>
                   <div className="flex items-center gap-2 mt-1.5">
                     <span className="text-[10px] font-bold text-amber-400">{n.userName}</span>
                     <span className="text-[10px] text-zinc-600">{new Date(n.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
@@ -1672,12 +1716,23 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 
   // Part history index for Green/Yellow/Red + "you've run this before".
   // Live logs win over the one-shot history on id collisions (fresher fields).
-  const riskIndex = useMemo(() => {
+  const knownLogs = useMemo(() => {
     const byId = new Map<string, TimeLog>();
     for (const l of riskHistLogs) byId.set(l.id, l);
     for (const l of riskLogsAll) byId.set(l.id, l);
-    return buildPartRiskIndex(riskJobs, [...byId.values()], riskRework);
-  }, [riskJobs, riskLogsAll, riskHistLogs, riskRework]);
+    return [...byId.values()];
+  }, [riskLogsAll, riskHistLogs]);
+  const riskIndex = useMemo(() => buildPartRiskIndex(riskJobs, knownLogs, riskRework), [riskJobs, knownLogs, riskRework]);
+  // Each job's logs — time per step on the job cards, and the job's total
+  // for the running timer's estimate check.
+  const logsByJob = useMemo(() => {
+    const m = new Map<string, TimeLog[]>();
+    for (const l of knownLogs) {
+      const list = m.get(l.jobId);
+      if (list) list.push(l); else m.set(l.jobId, [l]);
+    }
+    return m;
+  }, [knownLogs]);
 
   // ── Sync active timer state to Service Worker for lock-screen notification ──
   const prevLogIdRef = useRef<string | null>(null);
@@ -1859,11 +1914,15 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     return () => navigator.serviceWorker.removeEventListener('message', handler);
   }, [addToast]);
 
-  const knownOpsFor = (job: Job) => [...new Set([
+  // Operations this job / this part has REALLY been run through before (any
+  // worker) — the card's "Run on this part before" quick starts. (Planned
+  // checklist steps used to be mixed in, so a brand-new job looked worked on.)
+  const doneBeforeOpsFor = (job: Job) => [...new Set([
     ...(opsMemory.byJob.get(job.id) || []),
     ...(opsMemory.byPart.get((job.partNumber || '').trim().toLowerCase()) || []),
-    ...((job.checklist || []).map(c => c.label)),
   ])];
+  // What the job needs — those plus its planned steps — for "you know the ops".
+  const jobOpsFor = (job: Job) => [...new Set([...doneBeforeOpsFor(job), ...((job.checklist || []).map(c => c.label))])];
 
   const handleStartJob = async (jobId: string, operation: string) => {
     if (_startInFlight.has(user.id)) return;   // drop double-tap
@@ -1878,7 +1937,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
     // hands are never asked.
     if (job) {
       const risk = computeJobRisk(job, riskIndex);
-      if (risk.tier === 'red' && workerFamiliarity(job.partNumber, riskIndex, user.id, knownOpsFor(job)).level === 'new' && !(await askConfirm({
+      if (risk.tier === 'red' && workerFamiliarity(job.partNumber, riskIndex, user.id, jobOpsFor(job)).level === 'new' && !(await askConfirm({
         title: 'RED job — your first time on this part',
         message: `${risk.guidance} Has the owner or a senior OK'd you running it?`,
         tone: 'warning', confirmLabel: "Yes, I'm cleared",
@@ -1930,6 +1989,24 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       swPost({ type: 'TIMER_STOP' });
       cancelTimerNotification(logId);
       addToast('success', `Stopped · ${formatDuration(workedMins)}${activeJob ? ` on PO ${activeJob.poNumber}` : ''}${stoppedLog ? ` · ${stoppedLog.operation}` : ''}${willSync()}`);
+      // Stopping isn't always finishing (lunch, end of day), so ask: one tap
+      // ticks the step off and the next step shows for everyone.
+      const stoppedJob = stoppedJobId ? jobs.find(j => j.id === stoppedJobId) : undefined;
+      const step = stoppedJob && stoppedLog
+        ? (stoppedJob.checklist || []).find(i => normOp(i.label) === normOp(stoppedLog.operation) && !stepDone(stoppedJob, i))
+        : undefined;
+      if (stoppedJob && step) {
+        askConfirm({
+          title: `Is ${step.label} finished on PO ${stoppedJob.poNumber}?`,
+          message: 'Tick it off so the next step shows up for everyone.',
+          tone: 'info', confirmLabel: "Yes, it's done", cancelLabel: 'Not yet',
+        }).then(yes => {
+          if (!yes) return;
+          DB.setChecklistTick(stoppedJob.id, step.id, { done: true, by: user.id, name: user.name, at: Date.now() })
+            .then(() => addToast('success', `✓ ${step.label} done`))
+            .catch(() => addToast('error', "Couldn't save that tick — check the Wi-Fi and try again"));
+        });
+      }
       if (stoppedJobId) {
         setScannedJobId(stoppedJobId);
         setTab('jobs');
@@ -2092,6 +2169,7 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
       )}
 
       {activeLog && <div ref={activePanelRef}><ActiveJobPanel job={activeJob} log={activeLog} onStop={handleStopJob}
+        priorMinutes={(logsByJob.get(activeLog.jobId) || []).filter(l => l.endTime && l.id !== activeLog.id).reduce((a, l) => a + logMinutes(l), 0)}
         onPause={async (id) => { try { await DB.pauseTimeLog(id, 'manual'); swPost({ type: 'TIMER_PAUSE', logId: id }); addToast('info', 'Timer Paused'); } catch { addToast('error', 'Failed to pause'); } }}
         onResume={async (id) => { try { await DB.resumeTimeLog(id); swPost({ type: 'TIMER_RESUME', logId: id }); addToast('success', 'Timer Resumed'); } catch { addToast('error', 'Failed to resume'); } }}
       /></div>}
@@ -2243,19 +2321,16 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
               </div>
             );
           })()}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredJobs.map(job => {
-              // Ops this job/part has actually used before (any worker) — feeds
-              // the picker AND the "you know these ops" familiarity check.
-              const jobKnownOps = knownOpsFor(job);
-              return (
-                <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} startingKey={startingKey} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
-                  knownOps={jobKnownOps}
-                  risk={computeJobRisk(job, riskIndex)}
-                  familiarity={workerFamiliarity(job.partNumber, riskIndex, user.id, jobKnownOps)}
-                  vets={partVeterans(job.partNumber, riskIndex, user.id)} />
-              );
-            })}
+          {/* items-start: an opened card mustn't stretch its row-mates into tall empty boxes */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+            {filteredJobs.map(job => (
+              <JobSelectionCard key={job.id} job={job} onStart={(id, op) => { handleStartJob(id, op); setScannedJobId(null); }} disabled={!!activeLog} startingKey={startingKey} operations={ops} defaultExpanded={job.id === scannedJobId} user={user} addToast={addToast} activeLogs={shopActiveLogs}
+                jobLogs={logsByJob.get(job.id)}
+                doneBeforeOps={doneBeforeOpsFor(job)}
+                risk={computeJobRisk(job, riskIndex)}
+                familiarity={workerFamiliarity(job.partNumber, riskIndex, user.id, jobOpsFor(job))}
+                vets={partVeterans(job.partNumber, riskIndex, user.id)} />
+            ))}
             {filteredJobs.length === 0 && <div className="col-span-full py-12 text-center text-zinc-500">No active jobs found matching "{search}".</div>}
           </div>
         </div>
@@ -4604,10 +4679,22 @@ function compressImage(file: File | Blob, maxW = 800, quality = 0.7): Promise<st
 // ══════════════════════════════════════════════════════════════════
 import type { JobChecklistItem, JobAttachment } from './types';
 
-const JobChecklistSection = ({ job, onUpdate, user }: { job: Job; onUpdate: (items: JobChecklistItem[]) => void; user: User | null }) => {
+// The steps (labels, order) are edited here and saved with the job; ticks go
+// straight to the job one step at a time (onTick → DB.setChecklistTick) and
+// show the LIVE ticks, so the floor's check-offs appear here as they happen.
+const JobChecklistSection = ({ job, ticks, operations = [], onUpdate, onTick }: {
+  job: Job;
+  ticks?: Job['checklistTicks'];
+  /** The shop's operations — a step named like one gets a Start button on the floor. */
+  operations?: string[];
+  onUpdate: (items: JobChecklistItem[]) => void;
+  /** Absent for a job not saved yet — nothing to tick until it exists. */
+  onTick?: (item: JobChecklistItem, done: boolean) => void;
+}) => {
   const items = job.checklist || [];
   const [newLabel, setNewLabel] = useState('');
-  const doneCount = items.filter(i => i.done).length;
+  const live = { checklistTicks: ticks };
+  const doneCount = items.filter(i => stepDone(live, i)).length;
   const pct = items.length > 0 ? Math.round((doneCount / items.length) * 100) : 0;
 
   const addItem = () => {
@@ -4619,14 +4706,6 @@ const JobChecklistSection = ({ job, onUpdate, user }: { job: Job; onUpdate: (ite
     };
     onUpdate([...items, item]);
     setNewLabel('');
-  };
-  const toggle = (id: string) => {
-    const next = items.map(i => i.id === id
-      ? (i.done
-          ? { ...i, done: false, doneAt: undefined, doneBy: undefined, doneByName: undefined }
-          : { ...i, done: true, doneAt: Date.now(), doneBy: user?.id, doneByName: user?.name })
-      : i);
-    onUpdate(next);
   };
   const rename = (id: string, label: string) => onUpdate(items.map(i => i.id === id ? { ...i, label } : i));
   const remove = (id: string) => onUpdate(items.filter(i => i.id !== id));
@@ -4661,24 +4740,31 @@ const JobChecklistSection = ({ job, onUpdate, user }: { job: Job; onUpdate: (ite
 
       {/* Checklist items */}
       <div className="space-y-1.5">
-        {items.map((item, idx) => (
-          <div key={item.id} className={`flex items-center gap-2 p-2.5 rounded-lg border transition-all ${item.done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-950 border-white/5 hover:border-white/15'}`}>
-            <button
-              type="button"
-              onClick={() => toggle(item.id)}
-              aria-label={item.done ? `Mark "${item.label}" incomplete` : `Mark "${item.label}" complete`}
-              className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${item.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-zinc-600 hover:border-purple-400'}`}
-            >
-              {item.done && <CheckCircle className="w-3 h-3 text-white" aria-hidden="true" />}
-            </button>
+        {items.map((item, idx) => {
+          const done = stepDone(live, item);
+          const by = done ? stepTickedBy(live, item) : null;
+          return (
+          <div key={item.id} className={`flex items-center gap-2 p-2.5 rounded-lg border transition-all ${done ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-950 border-white/5 hover:border-white/15'}`}>
+            {onTick ? (
+              <button
+                type="button"
+                onClick={() => onTick(item, !done)}
+                aria-label={done ? `Mark "${item.label}" not done` : `Mark "${item.label}" done`}
+                className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-zinc-600 hover:border-purple-400'}`}
+              >
+                {done && <CheckCircle className="w-3 h-3 text-white" aria-hidden="true" />}
+              </button>
+            ) : (
+              <span className="w-5 text-center text-[11px] font-bold text-zinc-600 shrink-0 tabular">{idx + 1}</span>
+            )}
             <input
               value={item.label}
               onChange={e => rename(item.id, e.target.value)}
-              className={`flex-1 bg-transparent text-sm outline-none ${item.done ? 'text-zinc-500 line-through' : 'text-white'}`}
+              className={`flex-1 bg-transparent text-sm outline-none ${done ? 'text-zinc-500 line-through' : 'text-white'}`}
             />
-            {item.done && item.doneByName && (
-              <span className="text-[9px] text-emerald-400/70 truncate shrink-0" title={`Completed ${item.doneAt ? new Date(item.doneAt).toLocaleString() : ''}`}>
-                by {item.doneByName.split(' ')[0]}
+            {by?.name && (
+              <span className="text-[9px] text-emerald-400/70 truncate shrink-0" title={by.at ? `Done ${new Date(by.at).toLocaleString()}` : undefined}>
+                by {by.name.split(' ')[0]}
               </span>
             )}
             <div className="flex flex-col shrink-0">
@@ -4687,7 +4773,8 @@ const JobChecklistSection = ({ job, onUpdate, user }: { job: Job; onUpdate: (ite
             </div>
             <button type="button" onClick={() => remove(item.id)} aria-label="Remove step" className="text-zinc-600 hover:text-red-400 p-1 shrink-0"><X className="w-3.5 h-3.5" aria-hidden="true" /></button>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Add new item */}
@@ -4696,15 +4783,19 @@ const JobChecklistSection = ({ job, onUpdate, user }: { job: Job; onUpdate: (ite
           value={newLabel}
           onChange={e => setNewLabel(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
-          placeholder="Add operation (e.g. Deburr edges, QC inspect, Pack)..."
+          list="job-step-ops"
+          placeholder="Add a step — pick an operation or type one"
           className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500/50"
         />
+        <datalist id="job-step-ops">
+          {operations.filter(op => !items.some(i => normOp(i.label) === normOp(op))).map(op => <option key={op} value={op} />)}
+        </datalist>
         <button type="button" onClick={addItem} disabled={!newLabel.trim()} className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1">
           <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add
         </button>
       </div>
       {items.length === 0 && (
-        <p className="text-[10px] text-zinc-600 italic text-center">💡 Break big jobs into steps. Workers check them off on the shop floor — nothing gets missed.</p>
+        <p className="text-[10px] text-zinc-600 italic text-center">💡 Break big jobs into steps. A step named like an operation gets its own Start button on the floor, and workers check steps off as they finish them.</p>
       )}
     </div>
   );
@@ -4975,6 +5066,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // Snapshot only when the editor opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showModal]);
+  // Closing the editor forgets the job it showed, so nothing later (Scan PO,
+  // the next New Job) can land on top of it.
+  const closeJobEditor = () => { setShowModal(false); setEditingJob({}); };
+  // Deleting a job keeps the hours logged on it (DB.deleteJob) — say so.
+  const keptHoursNote = (ids: string[]) => {
+    const want = new Set(ids);
+    const seen = new Set<string>();
+    let mins = 0;
+    for (const l of [...allLogs, ...adminHistLogs]) {
+      if (!want.has(l.jobId) || seen.has(l.id) || !l.endTime) continue;
+      seen.add(l.id);
+      mins += logMinutes(l);
+    }
+    return mins >= 1 ? ` Workers logged ${fmtMinutes(mins)} on ${ids.length > 1 ? 'them' : 'it'} — those hours stay in their time records.` : '';
+  };
   const [bulkBusy, setBulkBusy] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
@@ -5410,10 +5516,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       expectedHours: editingJob.expectedHours || undefined,
       // Material / consumable cost (entered during job lifecycle or at close-out)
       materialCost: editingJob.materialCost || undefined,
-      // Portal note — only persist when text is non-empty so we don't
-      // bloat the doc with empty shells on every save.
-      portalNote: editingJob.portalNote?.text?.trim()
-        ? { ...editingJob.portalNote, updatedAt: Date.now(), updatedBy: user?.name }
+      // Portal note — kept when it has text or an expected date. Its time is
+      // re-stamped only when the note itself changed: stamping it on every
+      // save made a two-week-old note show as "New update · just now".
+      portalNote: (editingJob.portalNote?.text?.trim() || editingJob.portalNote?.expectedDate)
+        ? (() => {
+            const note = editingJob.portalNote!;
+            const was = (openedJobRef.current as Partial<Job>).portalNote;
+            const changed = !was || (was.text || '') !== (note.text || '') || (was.expectedDate || '') !== (note.expectedDate || '');
+            return changed ? { ...note, text: note.text || '', updatedAt: Date.now(), updatedBy: user?.name } : was;
+          })()
         : undefined,
     };
     // Stage fields are owned EXCLUSIVELY by DB.advanceJobStage (which uses
@@ -5446,6 +5558,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     // Checklist: only persist when edited in this modal session, so a stale
     // snapshot can't wipe check-offs made from the floor card meanwhile.
     if (!checklistDirtyRef.current) delete (job as any).checklist;
+    // Ticks are written one step at a time (DB.setChecklistTick), never from
+    // the editor's copy.
+    delete (job as any).checklistTicks;
     if (editingJob.id) {
       // Notes are only ever ADDED (DB.addJobNote, arrayUnion). Writing the
       // editor's copy erased any note a worker added while it was open.
@@ -5550,7 +5665,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={() => { setEditingJob({}); setShowModal(true); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all shadow-lg shadow-amber-900/20"><Plus className="w-4 h-4" /> New Job</button>
-          <button onClick={() => setShowScanner(true)} title="Scan a PO document to auto-fill a new job" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Scan className="w-4 h-4 text-amber-400" /> Scan PO</button>
+          <button onClick={() => { setEditingJob({}); setShowScanner(true); }} title="Scan a PO document to auto-fill a new job" className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-all"><Scan className="w-4 h-4 text-amber-400" /> Scan PO</button>
           <button
             onClick={() => setShowClientUpdate(true)}
             title="Generate a status message for a customer based on their open jobs"
@@ -6073,7 +6188,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const ids: string[] = Array.from(selectedJobIds);
               confirm({
                 title: `Delete ${ids.length} jobs?`,
-                message: `This permanently deletes ${ids.length} job${ids.length > 1 ? 's' : ''}. Cannot be undone.`,
+                message: `This permanently deletes ${ids.length} job${ids.length > 1 ? 's' : ''}. Cannot be undone.${keptHoursNote(ids)}`,
                 onConfirm: async () => {
                   await Promise.all(ids.map(id => DB.deleteJob(id)));
                   addToast('success', `Deleted ${ids.length} jobs`);
@@ -6310,8 +6425,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       {((j.checklist?.length || 0) > 0 || (j.attachments?.length || 0) > 0 || (j.expectedHours || 0) > 0 || liveTotalHrs > 0) && (
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                           {(j.checklist?.length || 0) > 0 && (() => {
-                            const total = j.checklist!.length;
-                            const done = j.checklist!.filter(c => c.done).length;
+                            const { done, total } = stepProgress(j);
                             const pct = Math.round((done / total) * 100);
                             return (
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${pct === 100 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-purple-400 bg-purple-500/10 border-purple-500/20'}`} title={`${done} of ${total} operations complete`}>
@@ -6587,7 +6701,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         )}
                       </button>
                       <button aria-label={`Edit job ${j.poNumber || ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-amber-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" aria-hidden="true" /></button>
-                      <button aria-label={`Delete job ${j.poNumber || ''}`} onClick={() => confirm({ title: "Delete Job", message: "Permanently delete?", onConfirm: () => DB.deleteJob(j.id) })} className="hidden sm:flex p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+                      <button aria-label={`Delete job ${j.poNumber || ''}`} onClick={() => confirm({ title: "Delete Job", message: `Permanently delete PO ${j.poNumber || j.jobIdsDisplay || ''}?${keptHoursNote([j.id])}`, onConfirm: () => DB.deleteJob(j.id) })} className="hidden sm:flex p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
                     </div>
                   </td>
                 </tr>
@@ -6632,7 +6746,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     <Scan className="w-3.5 h-3.5" /> Scan PO
                   </button>
                 )}
-                <button type="button" aria-label="Close" onClick={() => setShowModal(false)}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+                <button type="button" aria-label="Close" onClick={closeJobEditor}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
               </div>
             </div>
             <div ref={modalBodyRef} className="p-4 sm:p-8 overflow-y-auto space-y-5 sm:space-y-8">
@@ -7321,8 +7435,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               {/* ── Operation Checklist — always visible, saved with job ── */}
               <JobChecklistSection
                 job={editingJob as Job}
+                ticks={jobs.find(x => x.id === editingJob.id)?.checklistTicks}
+                operations={ops}
                 onUpdate={(items) => { checklistDirtyRef.current = true; setEditingJob(prev => ({ ...prev, checklist: items })); }}
-                user={user}
+                onTick={editingJob.id ? (item, done) => {
+                  DB.setChecklistTick(editingJob.id!, item.id, { done, by: user?.id || '', name: user?.name || '', at: Date.now() })
+                    .catch(() => addToast('error', "Couldn't save that tick — check the internet and try again"));
+                } : undefined}
               />
 
               {/* ── Attachments / Blueprints — always visible, saved with job ── */}
@@ -7427,7 +7546,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               })()}
             </div>
             <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3 sticky bottom-0 z-10">
-              <button onClick={() => setShowModal(false)} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
+              <button onClick={closeJobEditor} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
               <button onClick={handleSave} disabled={savingJob} aria-busy={savingJob} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-60 disabled:cursor-wait text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-900/20 flex items-center gap-2 transition-all">
                 {savingJob ? 'Saving…' : editingJob.id ? <><Save className="w-4 h-4" /> Save Changes</> : <>Create Job <ArrowRight className="w-4 h-4" /></>}
               </button>
@@ -7453,7 +7572,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
             if (ppp && qty && ppp > 0 && qty > 0 && !patch.quoteAmount) {
               patch.quoteAmount = parseFloat((ppp * qty).toFixed(2));
             }
-            setEditingJob(prev => ({ ...prev, ...patch }));
+            // Only a NEW job being filled in takes the scan. An existing job is
+            // never the target — that saved the scanned PO over it.
+            setEditingJob(prev => (prev.id ? { ...patch } : { ...prev, ...patch }));
             setShowScanner(false);
             setShowModal(true);
           }}
@@ -8383,12 +8504,12 @@ export default function App() {
     setToasts(p => [...p, { id: Date.now().toString(), type, message }]);
   }, []);
 
-  // Logout — tear down shared Firestore listeners BEFORE the re-render so
-  // stale multicast callbacks can't leak or pollute the next session. The
-  // always-on settings/theme effects below are keyed on user?.id so they
-  // re-subscribe cleanly after the wipe.
+  // Logout (PIN sign-out on the same shop). The shared listeners are NOT torn
+  // down: everyone in the shop sees the same jobs and logs, and they close by
+  // themselves after a while idle (mockDb multicast linger). Tearing them down
+  // here made every sign-in on a shared tablet re-read all jobs and logs.
+  // A tenant switch / account sign-out still clears them (AuthContext).
   const handleLogout = useCallback(() => {
-    DB.clearMulticastCache();
     setUser(null);
   }, []);
 

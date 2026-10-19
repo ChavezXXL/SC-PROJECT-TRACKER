@@ -223,6 +223,10 @@ export interface Job {
   linkedQuoteId?: string;      // the quote that created this job
   // ── Operation checklist (Jobs R1 #1) ──
   checklist?: JobChecklistItem[];
+  /** Who ticked which checklist step, keyed by item id — one field per step
+   *  (DB.setChecklistTick), so ticks never overwrite each other. Wins over the
+   *  older `done` flags kept on the items themselves. */
+  checklistTicks?: Record<string, ChecklistTick>;
   // ── Multiple attachments (Jobs R1 #2) — drawings, PDFs, cert docs ──
   attachments?: JobAttachment[];
   // ── Time estimates (Jobs R1 #3) — expected vs actual per stage ──
@@ -271,10 +275,19 @@ export interface Job {
   importId?: string;
 }
 
+/** One step ticked (or un-ticked) on the floor. */
+export interface ChecklistTick {
+  done: boolean;
+  by: string;          // user id
+  name: string;
+  at: number;
+}
+
 /** A single checklist / routing operation within a job. */
 export interface JobChecklistItem {
   id: string;
   label: string;
+  /** Older ticks were stored here; new ticks go to Job.checklistTicks. */
   done: boolean;
   doneBy?: string;             // user id who checked it
   doneByName?: string;

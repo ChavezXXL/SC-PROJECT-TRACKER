@@ -23,7 +23,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
-import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction, TvDevice, TvPairing } from "../types";
+import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote, ReworkEntry, Delivery, Vendor, PurchaseOrder, CustomerPoFile, ShopAction, TvDevice, TvPairing, ChecklistTick } from "../types";
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
 import { setShopStages, isShippedStageId } from "../utils/dueDates";
@@ -40,6 +40,7 @@ import {
 // we explicitly switch `getTenantId()` to return something else.
 import { colPath, resolveCurrentTenantId } from "../backend/tenantContext";
 import { newTvToken } from "../utils/tvRuntime";
+import { finalizeDuration, timeLogEditPatch, newTimeLogRecord } from "../utils/timeLogEdit";
 
 /** Current tenant resolver. Reads from URL param → localStorage →
  *  legacy SC Deburring fallback (LEGACY_TENANT_ID). AuthProvider writes
@@ -302,15 +303,22 @@ function retryingSnapshot(
 // React re-renders 8×, heavy memory, freezes on low-end phones.
 //
 // Fix: one Firebase listener per collection, shared across all callers.
-// The last unsubscribe tears the listener down.  Cache key = collection
-// path (already tenant-scoped by COL.*).
+// Cache key = collection path (already tenant-scoped by COL.*).
 //
+// When the last subscriber leaves, the listener stays open a while
+// (MC_LINGER_MS) before closing. On a shared floor tablet one worker signs
+// out and the next signs in minutes or hours later; re-opening a listener
+// after Firestore's ~30-minute resume window re-reads every job (~325) and
+// the newest 500 logs — the biggest cost of a sign-in. An open, idle
+// listener only costs the documents that actually change.
+const MC_LINGER_MS = 4 * 3600_000;
 type MCEntry<T> = {
   cbs:     Set<(v: T) => void>;
   last:    T | undefined;
   hasLast: boolean;
   unsub:   (() => void) | null;
   tenant:  string;   // tenant at attach time — stale-listener guard on tenant switch
+  linger:  ReturnType<typeof setTimeout> | null;
 };
 const _mc = new Map<string, MCEntry<any>>();
 
@@ -321,7 +329,7 @@ function multicast<T>(
 ): () => void {
   let m = _mc.get(key) as MCEntry<T> | undefined;
   if (!m) {
-    m = { cbs: new Set(), last: undefined, hasLast: false, unsub: null, tenant: getTenantId() };
+    m = { cbs: new Set(), last: undefined, hasLast: false, unsub: null, tenant: getTenantId(), linger: null };
     _mc.set(key, m);
     m.unsub = create(v => {
       const e = _mc.get(key) as MCEntry<T>;
@@ -338,6 +346,7 @@ function multicast<T>(
       e.cbs.forEach(fn => { try { fn(v); } catch {} });
     });
   }
+  if (m.linger) { clearTimeout(m.linger); m.linger = null; }
   m.cbs.add(cb);
   // Deliver cached value immediately so components don't flash empty state
   if (m.hasLast) {
@@ -348,16 +357,21 @@ function multicast<T>(
     const e = _mc.get(key) as MCEntry<T> | undefined;
     if (!e) return;
     e.cbs.delete(cb);
-    if (e.cbs.size === 0) {
-      e.unsub?.();
-      _mc.delete(key);
+    if (e.cbs.size === 0 && !e.linger) {
+      e.linger = setTimeout(() => {
+        e.linger = null;
+        if (_mc.get(key) === e && e.cbs.size === 0) {
+          e.unsub?.();
+          _mc.delete(key);
+        }
+      }, MC_LINGER_MS);
     }
   };
 }
 
-/** Call on logout / tenant switch to tear down all shared listeners. */
+/** Call on a tenant switch / account sign-out to tear down all shared listeners now. */
 export function clearMulticastCache() {
-  _mc.forEach(e => e.unsub?.());
+  _mc.forEach(e => { if (e.linger) clearTimeout(e.linger); e.unsub?.(); });
   _mc.clear();
 }
 
@@ -473,6 +487,28 @@ export async function setJobChecklist(jobId: string, checklist: NonNullable<Job[
   const jobs = readLS<Job[]>(LS.jobs, []);
   const idx = jobs.findIndex(j => j.id === jobId);
   if (idx >= 0) { jobs[idx] = { ...jobs[idx], checklist }; writeLS(LS.jobs, jobs); }
+}
+
+/**
+ * Tick or un-tick ONE checklist step. Written as its own field
+ * (checklistTicks.<itemId>), so two people ticking different steps at once —
+ * or the office saving the job editor meanwhile — can't erase each other's
+ * ticks. (The whole checklist array used to be saved; last write won.)
+ */
+export async function setChecklistTick(jobId: string, itemId: string, tick: ChecklistTick): Promise<'saved' | 'queued' | void> {
+  if (dbInstance) {
+    try {
+      const result = await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), new FieldPath('checklistTicks', itemId), sanitize(tick)));
+      firebaseStatus = { connected: true };
+      return result;
+    } catch (e) { throw handleError(e); }
+  }
+  const jobs = readLS<Job[]>(LS.jobs, []);
+  const idx = jobs.findIndex(j => j.id === jobId);
+  if (idx >= 0) {
+    jobs[idx] = { ...jobs[idx], checklistTicks: { ...(jobs[idx].checklistTicks || {}), [itemId]: tick } };
+    writeLS(LS.jobs, jobs);
+  }
 }
 
 export async function setJobPhoto(jobId: string, partImage: string | null): Promise<void> {
@@ -713,17 +749,15 @@ export async function renameCustomer(oldNames: string[], newName: string): Promi
   return count;
 }
 
+/**
+ * Delete a job. Its time logs STAY: they're people's worked hours (payroll,
+ * weekly report), the same rule as deleting a user. Each log carries its own
+ * job label, so it still reads right with the job gone. (This used to
+ * cascade-delete them — deleting a duplicate job wiped hours someone worked.)
+ */
 export async function deleteJob(id: string) {
   if (dbInstance) {
       try {
-        // Cascade-delete this job's time logs FIRST — otherwise they become
-        // orphans pointing at a job that no longer exists, silently corrupting
-        // labor-cost and worker-hour reports. (Previously only the localStorage
-        // branch cascaded; Firestore left orphans behind.)
-        try {
-          const snap = await queryDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', id)));
-          await settleWrite(Promise.all(snap.docs.map((d: any) => deleteDoc(d.ref))));
-        } catch (e) { console.warn('deleteJob: log cascade failed', e); }
         await settleWrite(deleteDoc(doc(dbInstance, COL.jobs, id)));
         firebaseStatus = { connected: true };
       } catch (e) {
@@ -733,8 +767,6 @@ export async function deleteJob(id: string) {
   }
   const jobs = readLS<Job[]>(LS.jobs, []).filter((j) => j.id !== id);
   writeLS(LS.jobs, jobs);
-  const logs = readLS<TimeLog[]>(LS.logs, []).filter((l) => l.jobId !== id);
-  writeLS(LS.logs, logs);
 }
 
 export async function completeJob(id: string) {
@@ -911,12 +943,64 @@ export function subscribeActiveLogs(cb: (logs: TimeLog[]) => void) {
  *
  * Shared across every caller in the tab (worker screen + admin Jobs view
  * both want it) via a module-level cache: concurrent callers await the same
- * in-flight read instead of issuing two ~5000-doc reads back to back, and a
- * remount within the TTL reuses the cached result instead of re-fetching.
+ * in-flight read, and a remount within the TTL reuses the cached result.
+ *
+ * Kept on the device, too (IndexedDB): it used to re-read EVERY log
+ * (~1,700+) on each worker sign-in and each Jobs/Calendar visit after a
+ * reload — a big share of the free daily read quota. Now a refresh asks only
+ * for logs started in the last few days (that catches timers that ended or
+ * were edited since); the whole history is re-read at most once a week,
+ * which also drops deleted logs. Edits to older logs can show up to a week
+ * late here — fine for what this feeds (part history / familiarity).
  */
 const LOG_HISTORY_TTL_MS = 10 * 60_000;
+const LOG_HISTORY_OVERLAP_MS = 3 * 86_400_000;
+const LOG_HISTORY_FULL_EVERY_MS = 7 * 86_400_000;
 let logHistoryCache: { at: number; max: number; data: TimeLog[] } | null = null;
 let logHistoryPromise: Promise<TimeLog[]> | null = null;
+
+// Tiny IndexedDB key/value store for device-side caches. Every call is
+// best-effort: no IndexedDB (or a blocked one) just means no cache.
+let kvDbPromise: Promise<IDBDatabase | null> | null = null;
+function kvDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (!kvDbPromise) {
+    kvDbPromise = new Promise(resolve => {
+      try {
+        const req = indexedDB.open('fabtrack-cache', 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore('kv'); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch { resolve(null); }
+    });
+  }
+  return kvDbPromise;
+}
+async function kvGet<T>(key: string): Promise<T | undefined> {
+  const kv = await kvDb();
+  if (!kv) return undefined;
+  return new Promise(resolve => {
+    try {
+      const r = kv.transaction('kv', 'readonly').objectStore('kv').get(key);
+      r.onsuccess = () => resolve(r.result as T);
+      r.onerror = () => resolve(undefined);
+    } catch { resolve(undefined); }
+  });
+}
+async function kvSet(key: string, value: unknown): Promise<void> {
+  const kv = await kvDb();
+  if (!kv) return;
+  return new Promise(resolve => {
+    try {
+      const tx = kv.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch { resolve(); }
+  });
+}
 
 export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
   if (logHistoryCache && logHistoryCache.max >= max && Date.now() - logHistoryCache.at < LOG_HISTORY_TTL_MS) {
@@ -927,12 +1011,25 @@ export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
   logHistoryPromise = (async () => {
     let data: TimeLog[];
     if (dbInstance) {
+      const key = 'logHistory:' + COL.logs;
+      const stored = await kvGet<{ v: 1; fullAt: number; data: TimeLog[] }>(key);
+      const now = Date.now();
       try {
-        const snap = await getDocs(query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(max)));
+        if (stored?.v === 1 && stored.data?.length && now - stored.fullAt < LOG_HISTORY_FULL_EVERY_MS) {
+          const newest = stored.data.reduce((m, l) => Math.max(m, l.startTime || 0), 0);
+          const snap = await getDocs(query(collection(dbInstance, COL.logs), where('startTime', '>=', newest - LOG_HISTORY_OVERLAP_MS), orderBy('startTime', 'desc'), limit(max)));
+          const byId = new Map(stored.data.map(l => [l.id, l]));
+          snap.docs.forEach((d: any) => { const l = d.data() as TimeLog; byId.set(l.id || d.id, l); });
+          data = [...byId.values()].sort((a, b) => (b.startTime || 0) - (a.startTime || 0)).slice(0, max);
+          kvSet(key, { v: 1, fullAt: stored.fullAt, data });
+        } else {
+          const snap = await getDocs(query(collection(dbInstance, COL.logs), orderBy('startTime', 'desc'), limit(max)));
+          data = snap.docs.map((d: any) => d.data() as TimeLog);
+          kvSet(key, { v: 1, fullAt: now, data });
+        }
         firebaseStatus = { connected: true };
-        data = snap.docs.map((d: any) => d.data() as TimeLog);
       } catch {
-        data = readLS<TimeLog[]>(LS.logs, []);
+        data = stored?.data?.length ? stored.data : readLS<TimeLog[]>(LS.logs, []);
       }
     } else {
       data = readLS<TimeLog[]>(LS.logs, []);
@@ -1140,38 +1237,8 @@ function markJobInProgress(jobId: string) {
   }).catch(() => { /* the clock-in itself is what matters */ });
 }
 
-/** Hard ceiling on a single session's working time — matches the 14h safety
- *  sweep. Stops a corrupt startTime (e.g. epoch 0) or runaway timer from
- *  recording absurd hours that would dominate payroll + rate learning. */
-const MAX_SESSION_MS = 14 * 3600000;
-
-/**
- * Compute finalized duration fields for a log being stopped — the SINGLE
- * source of truth so the Firestore + localStorage branches can never diverge.
- * Guards (each fixes a real payroll-corruption bug found in audit):
- *   • pause delta only counts if the pause began before endTime (no negative
- *     delta inflating working time when a forced cutoff predates the pause)
- *   • totalPausedMs clamped to [0, wall] (corrupt pause can't 0-floor or inflate)
- *   • workingMs clamped to [0, MAX_SESSION_MS] (no absurd multi-day durations)
- */
-function finalizeDuration(
-  log: { startTime: number; pausedAt?: number | null; totalPausedMs?: number },
-  endTime: number,
-): { totalPausedMs: number; durationSeconds: number; durationMinutes: number; anomaly: boolean } {
-  const startTime = log.startTime || 0;
-  let totalPausedMs = log.totalPausedMs || 0;
-  if (log.pausedAt && log.pausedAt < endTime) totalPausedMs += endTime - log.pausedAt;
-  const wallMs = endTime - startTime;
-  // endTime before startTime (clock skew / bad edit) → anomaly, clamp to 0
-  const anomaly = wallMs < 0 || totalPausedMs < 0 || totalPausedMs > Math.max(0, wallMs) || wallMs - totalPausedMs > MAX_SESSION_MS;
-  totalPausedMs = Math.min(Math.max(0, totalPausedMs), Math.max(0, wallMs));
-  const workingMs = Math.min(Math.max(0, wallMs - totalPausedMs), MAX_SESSION_MS);
-  const durationSeconds = Math.floor(workingMs / 1000);
-  // 2-decimal minutes — must match updateTimeLog (90s → 1.5 min, not 2) so
-  // stop vs. edit paths never record different durations for the same session.
-  const durationMinutes = Math.round((durationSeconds / 60) * 100) / 100;
-  return { totalPausedMs, durationSeconds, durationMinutes, anomaly };
-}
+// finalizeDuration (stop) and timeLogEditPatch (edit) live in
+// utils/timeLogEdit.ts — one set of duration rules for both paths.
 
 export async function stopTimeLog(logId: string, sessionQty?: number, notes?: string, forcedEndTime?: number, stopReason?: string) {
   const endTime = forcedEndTime ?? Date.now();
@@ -1248,41 +1315,48 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
   }
 }
 
-export async function updateTimeLog(log: TimeLog) {
-  // Recalculate duration if end time exists
-  if (log.endTime) {
-     const wallMs = log.endTime - log.startTime;
-     const pausedMs = log.totalPausedMs || 0;
-     const workingMs = Math.max(0, wallMs - pausedMs);
-     log.durationSeconds = Math.max(0, Math.floor(workingMs / 1000));
-     // 2-decimal minutes — short sample sessions (90s for 2pc) must keep
-     // sub-minute precision or per-piece rate learning is off by 30%+.
-     log.durationMinutes = Math.round((log.durationSeconds / 60) * 100) / 100;
-     log.status = 'completed';
-  } else {
-     log.endTime = undefined;
-     log.durationMinutes = undefined;
-     log.durationSeconds = undefined;
-     log.status = 'in_progress';
-  }
-  log.updatedAt = Date.now();
-
+/**
+ * Save an edited log (or write a new one, e.g. a rate sample). Only the
+ * fields that actually changed are written, so:
+ *   • clearing End Time really puts the timer back on the clock (a merge used
+ *     to drop the cleared value and keep the old one);
+ *   • the editor's stale copy can't undo a pause/resume the worker made while
+ *     the editor was open;
+ *   • durations always follow the times and pauses (utils/timeLogEdit).
+ */
+export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | void> {
+  const now = Date.now();
   if (dbInstance) {
       try {
-        await setDoc(doc(dbInstance, COL.logs, log.id), sanitize(log), { merge: true });
+        const ref = doc(dbInstance, COL.logs, log.id);
+        const snap = await readDoc(ref);
+        if (!snap.exists()) {
+          const result = await settleWrite(setDoc(ref, sanitize(newTimeLogRecord(log, now))));
+          firebaseStatus = { connected: true };
+          return result;
+        }
+        const { set, clear } = timeLogEditPatch(snap.data() as TimeLog, log, now);
+        const payload: Record<string, unknown> = sanitize(set);
+        for (const k of clear) payload[k] = deleteField();
+        const result = await settleWrite(updateDoc(ref, payload as any));
         firebaseStatus = { connected: true };
+        return result;
       } catch (e) {
         throw handleError(e);
       }
-      return;
   }
 
   const logs = readLS<TimeLog[]>(LS.logs, []);
   const idx = logs.findIndex(l => l.id === log.id);
-  if (idx >= 0) {
-    logs[idx] = log;
-    writeLS(LS.logs, logs);
+  if (idx < 0) {
+    logs.push(newTimeLogRecord(log, now));
+  } else {
+    const { set, clear } = timeLogEditPatch(logs[idx], log, now);
+    const merged: any = { ...logs[idx], ...set };
+    for (const k of clear) delete merged[k];
+    logs[idx] = merged;
   }
+  writeLS(LS.logs, logs);
 }
 
 export async function deleteTimeLog(logId: string) {

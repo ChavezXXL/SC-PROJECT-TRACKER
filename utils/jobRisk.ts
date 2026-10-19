@@ -91,8 +91,23 @@ export interface JobRisk {
   overridden: boolean;
   /** Plain-English reasons, most important first. */
   reasons: string[];
+  /** The same reasons with no dollar amounts — what the floor sees. */
+  workerReasons: string[];
   /** What the tier means operationally — one line for the floor. */
   guidance: string;
+}
+
+/**
+ * A reason as the floor should read it: what a job is worth is office
+ * business, so dollar amounts never reach a worker's screen.
+ */
+export function reasonForWorker(r: string): string {
+  return r
+    .replace(/^Brand-new part with \$[\d,.]+ on the line$/, 'Brand-new part on a high-value order')
+    .replace(/^\$[\d,.]+ job — big exposure even on a proven part$/, 'High-value job — extra care even on a proven part')
+    .replace(/\s*\(?\$\s?[\d,.]+[kKmM]?\)?/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 export type FamiliarityLevel = 'expert' | 'familiar' | 'family' | 'ops' | 'new';
@@ -406,7 +421,7 @@ export function computeJobRisk(
     reasons.unshift(job.riskNote ? `Set by admin: ${job.riskNote}` : 'Tier set manually by admin');
   }
 
-  return { tier, autoTier: auto, overridden, reasons, guidance: GUIDANCE[tier] };
+  return { tier, autoTier: auto, overridden, reasons, workerReasons: reasons.map(reasonForWorker), guidance: GUIDANCE[tier] };
 }
 
 /**

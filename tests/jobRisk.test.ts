@@ -1,4 +1,4 @@
-import { buildPartRiskIndex, computeJobRisk, workerFamiliarity, partVeterans, partFamilyKey, scanCriticality } from '../utils/jobRisk';
+import { buildPartRiskIndex, computeJobRisk, workerFamiliarity, partVeterans, partFamilyKey, scanCriticality, reasonForWorker } from '../utils/jobRisk';
 
 const NOW = new Date('2026-07-14T12:00:00Z').getTime();
 const DAY = 86400000;
@@ -68,6 +68,15 @@ ok('"failed" does not match FAI', scanCriticality(job({ info: 'previous lot fail
 { const idx = buildPartRiskIndex([job({ id: 'j1' }), job({ id: 'j2' }), job({ id: 'j3' })], [1, 2, 3].map(i => log({ jobId: 'j' + i })), [], NOW); ok('3 runs = expert', workerFamiliarity('P-100', idx, 'u1').level === 'expert'); }
 { const idx = buildPartRiskIndex([job({ id: 'j1' })], [log({ jobId: 'j1', isSample: true }), log({ jobId: 'j1', userId: 'u2', endTime: null })], [], NOW); ok('sample + open logs ignored', workerFamiliarity('P-100', idx, 'u1').level === 'new' && workerFamiliarity('P-100', idx, 'u2').level === 'new'); }
 { const idx = buildPartRiskIndex([job({ id: 'j1', partNumber: '0077426-01' })], [log({ jobId: 'j1', userName: 'Victor' })], [], NOW); const v = partVeterans('0077426-00', idx, 'u9'); ok('family veterans marked viaSimilar', v.length === 1 && v[0].viaSimilar === true); }
+
+// ── What the floor sees: no dollar amounts ─────────────────────────
+{ const j = job({ id: 'n2', partNumber: 'NEWPART-2', quoteAmount: 2000 }); const r = risk([j], j);
+  ok('office still sees the job value', r.reasons[0].includes('$2,000'));
+  ok('worker reason has no $', !r.workerReasons.some(x => x.includes('$')) && r.workerReasons[0] === 'Brand-new part on a high-value order'); }
+{ const o = job({ id: 'o1', quoteAmount: 9000 }); const r = risk([done('d1', 60), done('d2', 20), o], o);
+  ok('big proven job: yellow, office reason has the value', r.tier === 'yellow' && r.reasons[0].startsWith('$9,000'));
+  ok('big proven job: worker reason has no $', r.workerReasons[0] === 'High-value job — extra care even on a proven part'); }
+ok('any other $ amount stripped for the floor', !reasonForWorker('Set by admin: $12,500 aerospace lot').includes('$'));
 
 console.log(`${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
