@@ -109,11 +109,14 @@ const isUrgent = (j: Job) => j.priority === 'urgent' || j.priority === 'high';
 // Sizes follow the screen's width AND height (a 960×540 TV and a 4K panel alike).
 const fs = {
   tiny: 'clamp(0.62rem, min(1.15vw, 2.3vh), 1rem)',
-  small: 'clamp(0.68rem, min(1.25vw, 2.5vh), 1.05rem)',
-  body: 'clamp(0.85rem, min(1.6vw, 3.2vh), 1.35rem)',
-  day: 'clamp(0.85rem, min(1.7vw, 3.3vh), 1.45rem)',
+  small: 'clamp(0.75rem, min(1.4vw, 2.7vh), 1.1rem)',
+  body: 'clamp(0.95rem, min(1.8vw, 3.5vh), 1.45rem)',
+  day: 'clamp(1rem, min(2.2vw, 4.2vh), 1.8rem)',
+  badge: 'clamp(0.75rem, min(1.45vw, 2.8vh), 1.2rem)',
+  cell: 'clamp(0.72rem, min(1.4vw, 2.7vh), 1.15rem)',
   title: 'clamp(1.2rem, min(3.2vw, 6vh), 2.6rem)',
 };
+const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birthdays, events = [], showCustomers = true }: {
   jobs: Job[];
@@ -126,12 +129,15 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
   const todayN = ymd(now);
   const tomorrowN = ymd(new Date(year, month, now.getDate() + 1));
   const [holidays, setHolidays] = useState<HolidayRecord[]>(() => holidayCache.get(year) || []);
+  const endYear = new Date(year, month, now.getDate() + 28).getFullYear();
   useEffect(() => {
-    if (holidayCache.has(year)) return;
+    const years = endYear === year ? [year] : [year, endYear];
+    if (years.every(y => holidayCache.has(y))) { setHolidays(years.flatMap(y => holidayCache.get(y) || [])); return; }
     let alive = true;
-    getHolidays(year).then(h => { holidayCache.set(year, h); if (alive) setHolidays(h); }).catch(() => {});
+    Promise.all(years.map(y => holidayCache.get(y) ? Promise.resolve(holidayCache.get(y)!) : getHolidays(y).then(h => { holidayCache.set(y, h); return h; })))
+      .then(all => { if (alive) setHolidays(all.flat()); }).catch(() => {});
     return () => { alive = false; };
-  }, [year]);
+  }, [year, endYear]);
 
   // Open jobs with a due date, soonest first; urgent ones first within a day.
   const openDue = useMemo(() => {
@@ -149,8 +155,8 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
     return m;
   }, [openDue]);
   const overdue = useMemo(() => openDue.filter(d => d.n < todayN), [openDue, todayN]);
-  // Five on short screens (a 960×540 TV), so the last one isn't clipped.
-  const dueNext = useMemo(() => openDue.filter(d => d.n >= todayN).slice(0, typeof window !== 'undefined' && window.innerHeight < 700 ? 5 : 6), [openDue, todayN]);
+  // Four on short screens (a 960×540 TV), so the last one isn't clipped.
+  const dueNext = useMemo(() => openDue.filter(d => d.n >= todayN).slice(0, typeof window !== 'undefined' && window.innerHeight < 700 ? 4 : 6), [openDue, todayN]);
 
   const holidayByDay = useMemo(() => {
     const m = new Map<number, string>();
@@ -168,11 +174,16 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
   }, [events]);
   const bdaysOn = (mm: number, dd: number) => birthdays.filter(b => b.month === mm && b.day === dd).map(b => b.name.trim().split(/\s+/)[0]);
 
-  const first = new Date(year, month, 1);
-  const daysIn = new Date(year, month + 1, 0).getDate();
-  const cells: (number | null)[] = [...Array(first.getDay()).fill(null), ...Array.from({ length: daysIn }, (_, i) => i + 1)];
-  while (cells.length % 7) cells.push(null);
-  const rows = cells.length / 7;
+  // Four weeks from this Sunday: big enough to read across the shop (a whole
+  // month made every box tiny on a 32" TV), and it never runs out of days at
+  // the end of a month.
+  const start = new Date(year, month, now.getDate() - now.getDay());
+  const days: Date[] = Array.from({ length: 28 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
+  const last = days[27];
+  const rows = 4;
+  const rangeTitle = start.getMonth() === last.getMonth()
+    ? `${MONTH_LONG[start.getMonth()]} ${start.getDate()} – ${last.getDate()}`
+    : `${MON[start.getMonth()]} ${start.getDate()} – ${MON[last.getMonth()]} ${last.getDate()}`;
 
   // Coming up: shop days, birthdays and holidays in the next 30 days.
   const upcoming = useMemo(() => {
@@ -198,7 +209,7 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="shrink-0 flex items-end justify-between gap-2" style={{ marginBottom: 'clamp(0.2rem, 0.8vh, 0.5rem)' }}>
           <h2 className="font-black text-white leading-none" style={{ fontSize: fs.title }}>
-            {first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            {rangeTitle}
           </h2>
           <p className="font-bold text-white/45 flex items-center gap-3 whitespace-nowrap" style={{ fontSize: fs.tiny }}>
             <span><span className="text-amber-300">■</span> due</span><span className="text-red-300">■ late</span>
@@ -206,12 +217,12 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
           </p>
         </div>
         <div className="grid grid-cols-7 gap-1 shrink-0" style={{ marginBottom: '0.2rem' }}>
-          {DOW.map(d => <div key={d} className="text-center font-black text-white/40 uppercase" style={{ fontSize: fs.tiny }}>{d}</div>)}
+          {DOW.map(d => <div key={d} className="text-center font-black text-white/45 uppercase" style={{ fontSize: fs.small }}>{d}</div>)}
         </div>
         <div className="flex-1 min-h-0 grid grid-cols-7 gap-1" style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
-          {cells.map((day, i) => {
-            if (!day) return <div key={i} />;
-            const n = year * 10000 + (month + 1) * 100 + day;
+          {days.map((d, i) => {
+            const day = d.getDate();
+            const n = ymd(d);
             const dayJobs = dueByDay.get(n) || [];
             const isToday = n === todayN;
             const past = n < todayN;
@@ -220,7 +231,7 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
             const weekend = (i % 7) === 0 || (i % 7) === 6;
             const shopDays = eventsByDay.get(n) || [];
             const holiday = holidayByDay.get(n);
-            const names = bdaysOn(month + 1, day);
+            const names = bdaysOn(d.getMonth() + 1, day);
             const badge = late ? 'bg-red-600 text-white' : isToday && dayJobs.length ? 'bg-orange-500 text-black' : soon && dayJobs.length ? 'bg-amber-400 text-black' : 'bg-white/15 text-white/85';
             // Two lines fit: the shop's own days first, then holiday,
             // birthdays, then which parts are due.
@@ -230,17 +241,17 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
               ...(names.length ? [{ t: `🎂 ${names.join(', ')}`, c: 'text-pink-200' }] : []),
               ...dayJobs.map(j => ({ t: jobLabel(j), c: late ? 'text-red-200' : isUrgent(j) ? 'text-amber-200' : 'text-white/65' })),
             ];
-            const shown = lines.slice(0, 2);
+            // Stacked — day, then the due badge, then a line — because a big
+            // day number and its badge side by side don't fit a TV-width box.
+            const shown = lines.slice(0, dayJobs.length > 0 ? 1 : 2);
             const more = lines.length - shown.length;
             return (
               <div key={i} className={`rounded-lg border overflow-hidden flex flex-col min-w-0 ${isToday ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/60' : shopDays.length ? 'border-teal-400/40 bg-teal-500/10' : names.length ? 'border-pink-500/40 bg-pink-500/10' : weekend ? 'border-white/5 bg-zinc-900/30' : 'border-white/5 bg-zinc-900/60'}`}
-                style={{ padding: 'clamp(0.15rem, 0.6vh, 0.4rem)', gap: '0.05rem' }}>
-                <div className="flex items-center justify-between gap-1">
-                  <span className={`font-black tabular leading-none ${isToday ? 'text-amber-300' : past ? 'text-white/35' : 'text-white/85'}`} style={{ fontSize: fs.day }}>{day}</span>
-                  {dayJobs.length > 0 && <span className={`rounded px-1 font-black tabular leading-tight ${badge}`} style={{ fontSize: fs.tiny }}>{dayJobs.length} due</span>}
-                </div>
+                style={{ padding: 'clamp(0.15rem, 0.6vh, 0.4rem)', gap: '0.15rem' }}>
+                <span className={`font-black tabular leading-none whitespace-nowrap ${isToday ? 'text-amber-300' : past ? 'text-white/35' : 'text-white/90'}`} style={{ fontSize: fs.day }}>{i === 0 || day === 1 ? `${MON[d.getMonth()]} ${day}` : day}</span>
+                {dayJobs.length > 0 && <span className={`self-start whitespace-nowrap rounded px-1 font-black tabular leading-tight ${badge}`} style={{ fontSize: fs.badge }}>{dayJobs.length} due</span>}
                 {shown.map((l, k) => (
-                  <p key={k} className={`font-bold truncate leading-tight ${l.c} ${past && !late ? 'opacity-60' : ''}`} style={{ fontSize: fs.tiny }}>
+                  <p key={k} className={`font-bold truncate leading-tight ${l.c} ${past && !late ? 'opacity-60' : ''}`} style={{ fontSize: fs.cell }}>
                     {l.t}{k === shown.length - 1 && more > 0 ? ` +${more}` : ''}
                   </p>
                 ))}
@@ -251,7 +262,7 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
       </div>
 
       {/* Due next + coming up. A div, not <aside>: TV mode hides every aside. */}
-      <div className="w-[30%] max-w-sm shrink-0 flex flex-col min-w-0" style={{ gap: 'clamp(0.4rem, 1.2vh, 0.75rem)' }}>
+      <div className="w-[28%] max-w-sm shrink-0 flex flex-col min-w-0" style={{ gap: 'clamp(0.4rem, 1.2vh, 0.75rem)' }}>
         <div className="rounded-xl border border-white/10 bg-zinc-900/60 min-h-0 flex flex-col overflow-hidden" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.9rem)', flex: '1 1 60%' }}>
           <div className="flex items-baseline justify-between gap-2 shrink-0">
             <p className="font-black text-white/45 uppercase tracking-widest" style={{ fontSize: fs.tiny }}>Due next</p>
