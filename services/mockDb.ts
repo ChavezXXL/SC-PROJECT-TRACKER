@@ -1044,6 +1044,43 @@ export async function fetchLogHistory(max = 5000): Promise<TimeLog[]> {
   }
 }
 
+/** Keep this device's cached history in step with an edit (next) or a delete (null) made here. */
+function patchCachedHistory(logId: string, next: TimeLog | null) {
+  const apply = (list: TimeLog[]) => (next ? list.map(l => (l.id === logId ? next : l)) : list.filter(l => l.id !== logId));
+  if (logHistoryCache) logHistoryCache = { ...logHistoryCache, data: apply(logHistoryCache.data) };
+  if (!dbInstance) return;
+  const key = 'logHistory:' + COL.logs;
+  kvGet<{ v: 1; fullAt: number; data: TimeLog[] }>(key).then(stored => {
+    if (stored?.data?.some(l => l.id === logId)) kvSet(key, { ...stored, data: apply(stored.data) });
+  });
+}
+
+/**
+ * Every log this device knows, newest first: the live stream (newest 500)
+ * over the cached deep history (fetchLogHistory). For reports, exports and
+ * job totals that reach back further than the last couple of months — the
+ * live stream alone silently cut them off.
+ *
+ * Inside the live stream's time window the live list is the truth (so a log
+ * deleted there disappears); older logs come from the history.
+ */
+export function subscribeAllLogs(cb: (logs: TimeLog[]) => void): () => void {
+  let live: TimeLog[] | null = null;
+  let history: TimeLog[] = [];
+  let alive = true;
+  const emit = () => {
+    if (!alive || live === null) return;
+    // Fewer than 500 live logs means the live stream already holds them all.
+    const liveOldest = live.length >= 500 ? live.reduce((m, l) => Math.min(m, l.startTime || 0), Infinity) : -Infinity;
+    const liveIds = new Set(live.map(l => l.id));
+    const older = history.filter(l => (l.startTime || 0) < liveOldest && !liveIds.has(l.id));
+    cb([...live, ...older].sort((a, b) => (b.startTime || 0) - (a.startTime || 0)));
+  };
+  fetchLogHistory().then(h => { history = h; emit(); }).catch(() => {});
+  const unsub = subscribeLogs(l => { live = l; emit(); });
+  return () => { alive = false; unsub(); };
+}
+
 // UPDATED: Now accepts partNumber, customer, and jobIdsDisplay for snapshotting
 /** All currently-open (not-yet-stopped) logs for a worker.
  *
@@ -1329,10 +1366,14 @@ export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | 
           firebaseStatus = { connected: true };
           return result;
         }
-        const { set, clear } = timeLogEditPatch(snap.data() as TimeLog, log, now);
+        const cur = snap.data() as TimeLog;
+        const { set, clear } = timeLogEditPatch(cur, log, now);
         const payload: Record<string, unknown> = sanitize(set);
         for (const k of clear) payload[k] = deleteField();
         const result = await settleWrite(updateDoc(ref, payload as any));
+        const merged: any = { ...cur, ...set };
+        for (const k of clear) delete merged[k];
+        patchCachedHistory(log.id, merged);
         firebaseStatus = { connected: true };
         return result;
       } catch (e) {
@@ -1356,7 +1397,8 @@ export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | 
 export async function deleteTimeLog(logId: string) {
   if (dbInstance) {
       try {
-        await deleteDoc(doc(dbInstance, COL.logs, logId));
+        await settleWrite(deleteDoc(doc(dbInstance, COL.logs, logId)));
+        patchCachedHistory(logId, null);
         firebaseStatus = { connected: true };
       } catch (e) {
         throw handleError(e);

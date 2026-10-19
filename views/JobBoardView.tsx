@@ -35,7 +35,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
     const u2 = DB.subscribeSettings(setShopSettings);
-    const u3 = DB.subscribeLogs(l => setAllLogs(l.filter(x => x.endTime)));
+    const u3 = DB.subscribeAllLogs(l => setAllLogs(l.filter(x => x.endTime)));   // whole job history, not the newest 500
     const u4 = DB.subscribeUsers(setWorkers);
     const u5 = DB.subscribePurchaseOrders(setAllPOs);
     return () => { u1(); u2(); u3(); u4(); u5(); };

@@ -2979,7 +2979,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
     const unsub2 = DB.subscribeJobs(setJobs);
     const unsub3 = DB.subscribeLogs(all => setLogs(all.filter(l => l.endTime).sort((a, b) => (b.endTime || 0) - (a.endTime || 0)).slice(0, 5)));
-    const unsub4 = DB.subscribeLogs(setAllLogs);
+    const unsub4 = DB.subscribeAllLogs(setAllLogs);   // month figures need more than the newest 500
     const unsub5 = DB.subscribeSettings(setShopSettings);
     const unsub6 = DB.subscribeUsers(setDashWorkers);
     const unsub7 = DB.subscribeRework(setReworkEntries);
@@ -5092,6 +5092,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
   const [workers, setWorkers] = useState<User[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [allPOs, setAllPOs] = useState<PurchaseOrder[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<User | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
@@ -5131,8 +5132,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
     const u2 = DB.subscribeSettings((s) => { setOps(s.customOperations || []); setClients(s.clients || []); setShopSettings(s); });
-    const u3 = DB.subscribeUsers((u) => setWorkers(u.filter((w: User) => w.isActive !== false)));
-    const u4 = DB.subscribeLogs(l => setAllLogs(l.filter(x => x.endTime)));
+    // Everyone (incl. switched-off people) for labor rates in job profit; only
+    // active people for picking a worker.
+    const u3 = DB.subscribeUsers((u) => { setAllUsers(u); setWorkers(u.filter((w: User) => w.isActive !== false)); });
+    const u4 = DB.subscribeAllLogs(l => setAllLogs(l.filter(x => x.endTime)));   // job hours from the whole history, not the newest 500
     const u5 = DB.subscribeRework(setReworkEntries);
     const u6 = DB.subscribeActiveLogs(setActiveLogs);
     const u7 = DB.subscribePurchaseOrders(setAllPOs);
@@ -5598,9 +5601,23 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         } catch { /* keep base64 */ }
       }
     }
+    // A finished job's locked profit follows a quote or material cost entered
+    // after close-out (the dashboard asks for exactly that). It used to keep
+    // the close-out numbers forever — "Loss −100%" for a job closed before its
+    // quote went in, in every report.
+    const liveJob = editingJob.id ? jobs.find(x => x.id === editingJob.id) : undefined;
+    const money = (v: unknown) => Number(v) || 0;
+    let relocked: Job['profitSnapshot'] | undefined;
+    if (liveJob?.status === 'completed' && liveJob.profitSnapshot
+      && (money(opened.quoteAmount) !== money(job.quoteAmount) || money(opened.materialCost) !== money(job.materialCost))) {
+      let jobLogs = allLogs.filter(l => l.jobId === liveJob.id);
+      try { jobLogs = await DB.getLogsForJob(liveJob.id); } catch { /* fall back to the loaded set */ }
+      relocked = buildProfitSnapshot(calcJobProfit({ ...liveJob, quoteAmount: job.quoteAmount, materialCost: job.materialCost } as Job, jobLogs, allUsers, shopSettings, allPOs));
+    }
     try {
       const isNew = !editingJob.id;
       const result = await DB.saveJob(job, { clear: [...clear] });
+      if (relocked) await DB.updateJobFields(job.id, { profitSnapshot: relocked });
       // A plain (merge) save can't delete a field — undefined is skipped — so
       // a removed photo used to reappear. Delete it explicitly.
       if (clearPhoto) await DB.setJobPhoto(job.id, null);
@@ -5634,7 +5651,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const choice = await askShipDate({ count: 1, label: `PO ${j.poNumber}`, lastWorkMs: lastWork || null, shippedMs: j.shippedAt || null });
     if (!choice) return;
     const shippedAt = await resolveShipAt(choice, async () => lastWork || null, j.shippedAt);
-    const breakdown = calcJobProfit(j, jobLogs, workers, shopSettings, allPOs);
+    // All users — a worker since switched off is still paid their own rate.
+    const breakdown = calcJobProfit(j, jobLogs, allUsers, shopSettings, allPOs);
     const snapshot = buildProfitSnapshot(breakdown);
     try {
       if (completedStage) {
@@ -5652,7 +5670,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const gradeMsg = breakdown.grade === 'great' ? '🟢 Great margin!' : breakdown.grade === 'good' ? '🔵 Good job' : breakdown.grade === 'tight' ? '🟡 Tight margin' : '🔴 Loss';
     const onTime = shippedOnTime({ dueDate: j.dueDate, shippedAt });
     addToast('success', `✅ "${j.poNumber}" complete${onTime === true ? ' — on time' : onTime === false ? ' — late' : ''} · ${gradeMsg}`);
-  }, [allLogs, workers, shopSettings, allPOs, user, editingJob, askShipDate]);
+  }, [allLogs, allUsers, shopSettings, allPOs, user, editingJob, askShipDate]);
 
   return (
     <div className="space-y-6">
@@ -7357,7 +7375,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         placeholder="0.00"
                       />
                     </div>
-                    <p className="text-[10px] text-zinc-600 mt-1">Abrasives, media, consumables used. You'll also be prompted at close-out.</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">Abrasives, media, consumables used. On a finished job, changing it updates the job's locked profit.</p>
                   </div>
                 )}
                 {editingJob.id && (
@@ -8554,8 +8572,9 @@ export default function App() {
     setUser(null);
   }, []);
 
-  // Auto lunch pause hook
-  useAutoLunch(addToast);
+  // Auto lunch pause — only on the shop's own screens (signed-in staff, the
+  // wall TV), never on a customer's portal page or the sign-in screen.
+  useAutoLunch(addToast, !portalCustomer && (!!user || tvRoute.active));
 
   // Theme effect — apply light/dark class to body.
   // Keyed on user?.id so it re-subscribes after logout wipes the multicast cache.

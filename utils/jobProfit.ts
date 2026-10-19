@@ -94,9 +94,13 @@ export function calcJobProfit(
   }
 
   const materialCost   = job.materialCost ?? 0;
+  // Outside processing: only POs actually placed (not drafts or cancelled),
+  // and a PO covering several jobs is split evenly between them — it used to
+  // charge its full total to EVERY linked job (one $900 anodize PO on three
+  // jobs cost $2,700).
   const outsourcedCost = allPOs
-    .filter(po => po.linkedJobIds?.includes(job.id))
-    .reduce((sum, po) => sum + (po.total ?? 0), 0);
+    .filter(po => po.linkedJobIds?.includes(job.id) && po.status !== 'draft' && po.status !== 'cancelled')
+    .reduce((sum, po) => sum + (po.total ?? 0) / Math.max(1, new Set(po.linkedJobIds).size), 0);
 
   const revenue   = job.quoteAmount ?? 0;
   const totalCost = laborCost + materialCost + outsourcedCost;

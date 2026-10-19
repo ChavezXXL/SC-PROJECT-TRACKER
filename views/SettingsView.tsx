@@ -3538,7 +3538,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   useEffect(() => {
     if (!needsShopData) return;
     const u1 = DB.subscribeJobs(setShopJobs);
-    const u2 = DB.subscribeLogs(setShopLogs);
+    const u2 = DB.subscribeAllLogs(setShopLogs);   // backfill must see every session of a job
     return () => { u1(); u2(); };
   }, [needsShopData]);
 

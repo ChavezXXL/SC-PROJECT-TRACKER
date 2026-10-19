@@ -78,7 +78,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [settings, setSettings] = useState<SystemSettings | null>(null);
 
   useEffect(() => {
-    const unsub1 = DB.subscribeLogs(setLogs);
+    const unsub1 = DB.subscribeAllLogs(setLogs);   // all of them — "All Time", 90 days and the export were cut at the newest 500
     const unsub2 = DB.subscribeUsers(setUsers);
     const unsub3 = DB.subscribeJobs(setJobs);
     const unsub4 = DB.subscribeSettings((s) => { setOps(s.customOperations || []); setSettings(s); });

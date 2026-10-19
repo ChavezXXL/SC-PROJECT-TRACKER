@@ -48,7 +48,7 @@ export const PricingView = ({ addToast }: any) => {
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
-    const u2 = DB.subscribeLogs(setLogs);
+    const u2 = DB.subscribeAllLogs(setLogs);   // every log, not just the newest 500
     const u3 = DB.subscribeSettings(setSettings);
     return () => { u1(); u2(); u3(); };
   }, []);

@@ -54,7 +54,9 @@ export const ReportsView = () => {
   const isMobile = useIsMobile();
 
   useEffect(() => {
-    const u1 = DB.subscribeLogs(setLogs);
+    // Every log, not just the newest 500 (~2–3 months): "All" and long custom
+    // ranges compared all-time revenue against recent labor only.
+    const u1 = DB.subscribeAllLogs(setLogs);
     const u2 = DB.subscribeUsers(setUsers);
     const u3 = DB.subscribeJobs(setJobs);
     const u4 = DB.subscribeSettings(setSettings);
@@ -80,8 +82,13 @@ export const ReportsView = () => {
   const shopRate = settings.shopRate || 0;
   const ohRate = (settings.monthlyOverhead || 0) / (settings.monthlyWorkHours || 160);
 
-  // Per-worker stats
-  const workerStats = useMemo(() => activeWorkers.map(w => {
+  // Per-worker stats — today's crew plus anyone else (the owner, someone since
+  // switched off) who logged time in this period.
+  const reportWorkers = useMemo(() => {
+    const logged = new Set(completedLogs.map(l => l.userId));
+    return users.filter(u => (u.isActive !== false && u.role !== 'admin') || logged.has(u.id));
+  }, [users, completedLogs]);
+  const workerStats = useMemo(() => reportWorkers.map(w => {
     const wLogs = completedLogs.filter(l => l.userId === w.id);
     const totalMins = wLogs.reduce((a, l) => a + logMins(l), 0);
     const totalHrs = totalMins / 60;
@@ -91,12 +98,14 @@ export const ReportsView = () => {
     const cost = totalHrs * (rate + ohRate);
     const avgMinsPerSession = wLogs.length > 0 ? totalMins / wLogs.length : 0;
     return { user: w, logs: wLogs, totalMins, totalHrs, jobCount: jobIds.length, operations, cost, sessions: wLogs.length, avgMinsPerSession };
-  }).sort((a, b) => b.totalHrs - a.totalHrs), [activeWorkers, completedLogs, shopRate, ohRate]);
+  }).sort((a, b) => b.totalHrs - a.totalHrs), [reportWorkers, completedLogs, shopRate, ohRate]);
 
-  // Totals
-  const totalHrs = workerStats.reduce((a, w) => a + w.totalHrs, 0);
-  const totalCost = workerStats.reduce((a, w) => a + w.cost, 0);
-  const totalSessions = workerStats.reduce((a, w) => a + w.sessions, 0);
+  // Totals from every log in the period (so they match the Operations
+  // Breakdown below) — they used to sum only the active, non-admin roster.
+  const rateByUser = useMemo(() => new Map(users.map(u => [u.id, (u as any).hourlyRate || 0])), [users]);
+  const totalHrs = completedLogs.reduce((a, l) => a + logMins(l), 0) / 60;
+  const totalCost = completedLogs.reduce((a, l) => a + (logMins(l) / 60) * ((rateByUser.get(l.userId) || shopRate) + ohRate), 0);
+  const totalSessions = completedLogs.length;
   const completedJobs = useMemo(
     () => jobs.filter(j => j.status === 'completed' && j.completedAt && j.completedAt >= cutoff && (period !== 'custom' || j.completedAt <= customCutoffEnd)),
     [jobs, cutoff, period, customCutoffEnd]

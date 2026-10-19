@@ -90,7 +90,7 @@ export const CustomersView = ({ addToast }: any) => {
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
-    const u2 = DB.subscribeLogs(setLogs);
+    const u2 = DB.subscribeAllLogs(setLogs);   // every log, not just the newest 500
     return () => { u1(); u2(); };
   }, []);
 

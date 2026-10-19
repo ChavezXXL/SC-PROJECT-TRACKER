@@ -75,7 +75,7 @@ export const WeeklyReportView = () => {
 
   useEffect(() => {
     const u1 = DB.subscribeJobs(setJobs);
-    const u2 = DB.subscribeLogs(setLogs);
+    const u2 = DB.subscribeAllLogs(setLogs);   // past weeks too, not just the newest 500 logs
     const u3 = DB.subscribeUsers(setUsers);
     const u4 = DB.subscribeSettings(setSettings);
     const u5 = DB.subscribeRework(setRework);

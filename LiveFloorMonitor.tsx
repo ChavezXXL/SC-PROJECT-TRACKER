@@ -530,14 +530,39 @@ function ssSet(key: string) {
   try { sessionStorage.setItem(key, '1'); } catch {}
 }
 
-export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', message: string) => void) {
+// The shop's date and HH:MM (settings.recapTimezone), like the shift alarms
+// and the server cron. Lunch used to follow each device's own clock, so a tab
+// open in another time zone paused every timer in the shop at ITS noon.
+function shopDateAndTime(tz?: string): { today: string; hhmm: string } {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (tz) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour12: false, year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      }).formatToParts(now);
+      const get = (t: string) => parts.find(x => x.type === t)?.value || '';
+      const h = parseInt(get('hour'), 10) % 24, m = parseInt(get('minute'), 10);
+      if (get('year') && Number.isFinite(h) && Number.isFinite(m)) {
+        return { today: `${get('year')}-${+get('month')}-${+get('day')}`, hhmm: `${pad(h)}:${pad(m)}` };
+      }
+    } catch { /* unknown time zone — fall back to this device's clock */ }
+  }
+  return { today: `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`, hhmm: `${pad(now.getHours())}:${pad(now.getMinutes())}` };
+}
+
+/**
+ * Auto lunch pause / resume. `enabled` is off on screens that aren't the
+ * shop's own (a customer's portal, the sign-in page) — those used to pause
+ * every running timer too.
+ */
+export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', message: string) => void, enabled = true) {
   useEffect(() => {
+    if (!enabled) return;
     let lastHhmm: string | null = null;   // null until the first check — never act on load
     const check = () => {
       const settings = DB.getSettings();
-      const now = new Date();
-      const today = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;   // this device's date, like hhmm
-      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const { today, hhmm } = shopDateAndTime(settings.recapTimezone);
       const prev = lastHhmm;
       lastHhmm = hhmm;
 
@@ -569,7 +594,7 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
     check();
     const i = setInterval(check, 30000);
     return () => clearInterval(i);
-  }, [addToast]);
+  }, [addToast, enabled]);
 }
 
 // ── BIG CLOCK ───────────────────────────────────────────────────
