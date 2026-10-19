@@ -211,8 +211,9 @@ export function classifyEmailRequest(body: unknown, trusted: boolean): EmailRequ
 
 export const RECAP_NOW_GAP_MS = 10 * 60_000;
 /** Keeps "Send now" well inside Resend's 100 emails/day and the Firestore read
- *  budget (every recap reads the whole shop) — the scheduled recap is separate. */
-export const RECAP_NOW_DAILY_CAP = 5;
+ *  budget (every recap reads the whole shop, ~2,000 reads of the 50k/day free
+ *  quota) — the scheduled recap is separate. */
+export const RECAP_NOW_DAILY_CAP = 3;
 
 export interface RecapNowStamp { lastSentAt?: unknown; day?: unknown; count?: unknown }
 
