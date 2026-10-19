@@ -3,13 +3,15 @@ import type { Job, TeamBirthday, ShopEvent } from '../types';
 import { dueNum, isJobClosed } from '../utils/dueDates';
 import { getHolidays, type HolidayRecord } from '../services/holidays';
 import { tvEvent } from '../utils/tvRuntime';
+import { TvEmoji } from './TvSign';
 
 // ── Aerospace News ───────────────────────────────────────────────────
-// Headlines from netlify/functions/news (a fixed list of public feeds).
-// Kept for the life of the page and refreshed every 20 minutes; each pass
-// of the slide shows the next page of five.
+// Stories from netlify/functions/news (a fixed list of public feeds), each
+// with its picture and opening lines. Kept for the life of the page and
+// refreshed every 20 minutes; each pass of the slide features the next
+// story — big, with its photo — and lists the two or three after it.
 
-interface NewsItem { title: string; source: string; at: number }
+interface NewsItem { title: string; source: string; at: number; summary?: string; image?: string }
 let newsCache: { fetchedAt: number; updatedAt: number; items: NewsItem[] } | null = null;
 let newsLoading: Promise<void> | null = null;
 
@@ -34,53 +36,109 @@ const agoLabel = (at: number, now: number) => {
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 };
 
+const leadIndex = (pass: number, n: number) => (n ? ((pass % n) + n) % n : 0);
+
+// Download a picture ahead of time so it's ready the moment its slide comes
+// up. (Held here so the download isn't dropped half-way.)
+let warmPicture: HTMLImageElement | null = null;
+function warm(src?: string) {
+  if (!src || typeof Image === 'undefined' || warmPicture?.src === src) return;
+  warmPicture = new Image();
+  warmPicture.referrerPolicy = 'no-referrer';
+  warmPicture.src = src;
+}
+
+/** Get the stories (if stale) and the photo the slide's coming pass will feature — called one slide early. */
+export function prefetchNews(pass: number) {
+  loadNews().then(() => {
+    const items = newsCache?.items || [];
+    warm(items[leadIndex(pass, items.length)]?.image);
+  });
+}
+
+// When a story has no picture (or it won't load): a panel with the source's name.
+const SOURCE_ICON: Record<string, string> = { Payload: '🚀', 'Breaking Defense': '🛡️', 'The Aviationist': '🛩️' };
+
+// Longer headlines get smaller type, so every one fits in about three lines.
+const leadTitleSize = (t: string) =>
+  t.length <= 50 ? 'clamp(1.75rem, min(3.7vw, 6.8vh), 3.5rem)'
+    : t.length <= 80 ? 'clamp(1.5rem, min(3.1vw, 5.8vh), 3rem)'
+      : 'clamp(1.3rem, min(2.6vw, 4.9vh), 2.5rem)';
+
 export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: number }) {
   const [data, setData] = useState(newsCache);
   const [tried, setTried] = useState(false);
+  const [brokenPic, setBrokenPic] = useState('');
   useEffect(() => {
     let alive = true;
     loadNews().then(() => { if (alive) { setData(newsCache); setTried(true); } });
     return () => { alive = false; };
   }, []);
-  // Five headlines on a full-HD screen; fewer on short ones (a 960×540 TV
-  // stick) so two-line headlines never run into each other.
-  const PER = typeof window !== 'undefined' && window.innerHeight < 620 ? 3 : window.innerHeight < 820 ? 4 : 5;
   const items = data?.items || [];
-  const pages = Math.max(1, Math.ceil(items.length / PER));
-  const page = ((pass % pages) + pages) % pages;
-  const shown = items.slice(page * PER, page * PER + PER);
+  const n = items.length;
+  const idx = leadIndex(pass, n);
+  const lead = n ? items[idx] : null;
+  // Three more stories on a full-HD screen, two on a 960×540 TV stick.
+  const short = typeof window !== 'undefined' && window.innerHeight < 620;
+  const more: NewsItem[] = [];
+  for (let k = 1; k < n && more.length < (short ? 2 : 3); k++) more.push(items[(idx + k) % n]);
   const now = Date.now();
+  const pic = lead?.image && lead.image !== brokenPic ? lead.image : '';
   return (
-    <div className="h-full flex flex-col overflow-hidden px-[clamp(1rem,2.5vw,3rem)] py-[clamp(0.75rem,1.5vw,1.5rem)]">
-      <div className="shrink-0 flex items-end justify-between gap-3 flex-wrap border-b border-white/10 pb-3">
-        <div>
-          <p className="font-black text-sky-400/90 uppercase tracking-[0.3em]" style={{ fontSize: 'clamp(0.625rem, 0.85vw, 0.75rem)' }}>✈ Aerospace News</p>
-          <h2 className="font-black text-white" style={{ fontSize: 'clamp(1.5rem, 3.2vw, 2.6rem)' }}>What's happening in the industry</h2>
-        </div>
+    <div className="h-full flex flex-col overflow-hidden px-[clamp(1rem,2.5vw,3rem)] py-[clamp(0.6rem,1.4vw,1.5rem)]">
+      <div className="shrink-0 flex items-center justify-between gap-3 pb-[clamp(0.4rem,1.2vh,0.9rem)]">
+        <p className="flex items-center gap-2 font-black text-sky-400 uppercase tracking-[0.25em]" style={{ fontSize: 'clamp(0.8rem, min(1.25vw, 2.3vh), 1.15rem)' }}>
+          <TvEmoji e="✈️" size="1.3em" /> Aerospace News
+        </p>
         {data && (
-          <p className="text-white/40 font-bold tabular" style={{ fontSize: 'clamp(0.7rem, 1vw, 0.95rem)' }}>
-            {pages > 1 ? `Page ${page + 1} of ${pages} · ` : ''}Updated {new Date(data.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          <p className="text-white/45 font-bold tabular" style={{ fontSize: 'clamp(0.7rem, min(1.05vw, 2vh), 1rem)' }}>
+            {n > 1 ? `Story ${idx + 1} of ${n} · ` : ''}Updated {new Date(data.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
           </p>
         )}
       </div>
-      {shown.length === 0 ? (
+      {!lead ? (
         <div className="flex-1 flex items-center justify-center text-center">
           <p className="text-white/50 font-bold" style={{ fontSize: 'clamp(1rem, 2vw, 1.6rem)' }}>
-            {data ? 'No new headlines right now — check back soon.' : tried ? 'The news is unavailable right now — it will be back soon.' : 'Loading the latest aerospace news…'}
+            {data ? 'No new stories right now — check back soon.' : tried ? 'The news is unavailable right now — it will be back soon.' : 'Loading the latest aerospace news…'}
           </p>
         </div>
       ) : (
-        <ol className="flex-1 min-h-0 flex flex-col justify-evenly overflow-hidden">
-          {shown.map((h, i) => (
-            <li key={`${page}-${i}`} className="shrink-0 border-b border-white/5 last:border-b-0 py-[clamp(0.25rem,0.8vh,0.75rem)]">
-              <p className="font-black text-white leading-snug line-clamp-2" style={{ fontSize: i === 0 ? 'clamp(1.2rem, 2.6vw, 2.2rem)' : 'clamp(1rem, 2vw, 1.7rem)' }}>{h.title}</p>
-              <p className="mt-1 flex items-center gap-2 font-bold" style={{ fontSize: 'clamp(0.65rem, 0.95vw, 0.9rem)' }}>
-                <span className="text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded px-1.5 py-0.5">{h.source}</span>
-                <span className="text-white/40 tabular">{agoLabel(h.at, now)}</span>
-              </p>
-            </li>
-          ))}
-        </ol>
+        <div className="flex-1 min-h-0 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-[clamp(1rem,2.5vw,2.75rem)]">
+          {/* The photo — never anything drawn over it. */}
+          <div className="relative min-h-0 rounded-2xl overflow-hidden border border-white/10 bg-white/[0.04]">
+            {pic ? (
+              <img key={pic} src={pic} alt="" referrerPolicy="no-referrer" decoding="async" draggable={false}
+                onError={() => setBrokenPic(pic)} className="absolute inset-0 w-full h-full object-cover" />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-sky-900/50 via-slate-900/40 to-indigo-950/70">
+                <TvEmoji e={SOURCE_ICON[lead.source] || '✈️'} size="clamp(3rem, min(9vw, 16vh), 8rem)" />
+                <p className="font-black text-white/60 uppercase tracking-[0.2em]" style={{ fontSize: 'clamp(0.8rem, min(1.4vw, 2.6vh), 1.3rem)' }}>{lead.source}</p>
+              </div>
+            )}
+          </div>
+          <div className="min-h-0 flex flex-col overflow-hidden">
+            <p className="shrink-0 flex items-center gap-2 font-bold" style={{ fontSize: 'clamp(0.75rem, min(1.2vw, 2.2vh), 1.1rem)' }}>
+              <span className="text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded-md px-2 py-0.5">{lead.source}</span>
+              <span className="text-white/45 tabular">{agoLabel(lead.at, now)}</span>
+            </p>
+            <h2 className="shrink-0 mt-[clamp(0.3rem,1vh,0.75rem)] font-black text-white leading-[1.12] line-clamp-4" style={{ fontSize: leadTitleSize(lead.title) }}>{lead.title}</h2>
+            {lead.summary && (
+              <p className="shrink-0 mt-[clamp(0.3rem,1.2vh,0.9rem)] text-white/70 font-medium leading-snug line-clamp-3" style={{ fontSize: 'clamp(0.95rem, min(1.7vw, 3.2vh), 1.6rem)' }}>{lead.summary}</p>
+            )}
+            {more.length > 0 && (
+              <div className="mt-auto pt-[clamp(0.4rem,1.2vh,1rem)] min-h-0 overflow-hidden">
+                <p className="font-black text-white/35 uppercase tracking-[0.25em] border-t border-white/10 pt-[clamp(0.3rem,1vh,0.7rem)]" style={{ fontSize: 'clamp(0.6rem, min(0.95vw, 1.8vh), 0.85rem)' }}>Also in the news</p>
+                {more.map((h, i) => (
+                  <div key={i} className="mt-[clamp(0.2rem,0.8vh,0.6rem)] flex items-baseline gap-2" style={{ fontSize: 'clamp(0.9rem, min(1.55vw, 2.9vh), 1.45rem)' }}>
+                    <span className="text-sky-400 font-black shrink-0">›</span>
+                    <p className={`flex-1 min-w-0 font-bold text-white/85 leading-snug ${short ? 'truncate' : 'line-clamp-2'}`}>{h.title}</p>
+                    <span className="shrink-0 text-white/35 font-semibold whitespace-nowrap" style={{ fontSize: '0.75em' }}>{h.source}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

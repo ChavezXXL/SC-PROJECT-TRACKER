@@ -29,7 +29,7 @@ export const TV_SLIDE_CATALOG: Record<CatalogSlideType, TvSlideMeta> = {
   weather:       { label: 'Weather', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400', single: true },
   'flow-map':    { label: 'Shop Flow Map', desc: 'Jobs moving through each stage, with live workers', icon: '🗺️', color: 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400', single: true },
   calendar:      { label: 'Calendar', desc: 'This month — which jobs are due each day, holidays, birthdays and shop days', icon: '📅', color: 'bg-sky-500/15 border-sky-500/30 text-sky-400', single: true },
-  news:          { label: 'Aerospace News', desc: 'Latest aviation, aerospace and space headlines — updates by itself', icon: '📰', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400', single: true },
+  news:          { label: 'Aerospace News', desc: 'Top aerospace stories with photos — updates by itself', icon: '📰', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400', single: true },
   safety:        { label: 'Safety Message', desc: 'Big, bold safety reminders that rotate', icon: '⚠️', color: 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400', single: false },
   message:       { label: 'Announcement', desc: 'Your own messages — title, text and color', icon: '📢', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400', single: false },
 };

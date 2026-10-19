@@ -44,7 +44,7 @@ import {
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm, TvStopNotice } from './components/TvScreens';
 import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
 import { TvPartPhoto } from './components/TvPartPhoto';
-import { TvNewsSlide, TvCalendarSlide, TvBirthdaySlide } from './components/TvExtraSlides';
+import { TvNewsSlide, TvCalendarSlide, TvBirthdaySlide, prefetchNews } from './components/TvExtraSlides';
 import { tipForPass, SHOP_TIPS } from './utils/safetyTips';
 import { TvSign, asTone } from './components/TvSign';
 
@@ -2882,6 +2882,15 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       return { ...prev, [slide.id]: (prev[slide.id] || 0) + 1 };
     });
   }, [tvSlideIdx, tvMode]);
+
+  // Get the news — and the photo its next showing features — one slide
+  // early, so the slide comes up complete instead of loading on screen.
+  useEffect(() => {
+    if (!tvMode || configuredTvSlides.length === 0) return;
+    const next = configuredTvSlides[(tvSlideIdx + 1) % configuredTvSlides.length];
+    if (next?.type === 'news') prefetchNews(slideCycleCounts[next.id] || 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tvSlideIdx, tvMode, configuredTvSlides]);
 
 
   // ── WEEKLY LEADERBOARD DATA ───────────────────────────────────
