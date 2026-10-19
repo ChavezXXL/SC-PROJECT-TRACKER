@@ -2,9 +2,32 @@
 // Reads live time data + the cron heartbeat and calls out every problem.
 import React, { useState, useEffect, useMemo } from 'react';
 import { ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import { doc, onSnapshot } from 'firebase/firestore';
 import type { Job, TimeLog, User, SystemSettings } from '../types';
 import { computeTimekeepingHealth, type HealthSeverity } from '../utils/timekeepingHealth';
-import * as DB from '../services/mockDb';
+import { HEARTBEAT_COLLECTION, HEARTBEAT_DOC, heartbeatIssue, parseHeartbeat, type CronHeartbeat } from '../utils/cronHeartbeat';
+import { initFirebaseFromLocalStorage } from '../services/firebaseClient';
+
+/**
+ * Live view of push_meta/cron-heartbeat, which the 5-minute cron rewrites at
+ * the end of every run. One listener costs one read per run (≈12/hour) — less
+ * than polling, and it updates the moment a run finishes. null = no heartbeat
+ * (offline mode, never ran, or unreadable).
+ */
+function subscribeCronHeartbeat(cb: (hb: CronHeartbeat | null) => void): () => void {
+  const fb = initFirebaseFromLocalStorage();   // the app's existing Firestore instance
+  if (!fb.ok || !fb.db) { cb(null); return () => {}; }
+  try {
+    return onSnapshot(
+      doc(fb.db, HEARTBEAT_COLLECTION, HEARTBEAT_DOC),
+      snap => cb(snap.exists() ? parseHeartbeat(snap.data()) : null),
+      () => cb(null),
+    );
+  } catch {
+    cb(null);
+    return () => {};
+  }
+}
 
 const SEV: Record<HealthSeverity, { dot: string; text: string; bg: string; border: string; label: string }> = {
   critical: { dot: 'bg-red-500',    text: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/30',    label: 'Critical' },
@@ -20,21 +43,29 @@ export const TimekeepingHealthPanel: React.FC<{
   onView?: () => void;   // jump to Logs
 }> = ({ logs, jobs, users, settings, onView }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const [cronLastRunMs, setCronLastRunMs] = useState<number | null | undefined>(undefined);
+  const [heartbeat, setHeartbeat] = useState<CronHeartbeat | null>(null);
+  // Local clock tick (no reads): when the engine dies its heartbeat stops
+  // changing, so nothing else would re-check how old it is.
+  const [tick, setTick] = useState(0);
 
-  // Poll the cron heartbeat every 2 min so a dead 24/7 engine surfaces fast.
+  useEffect(() => subscribeCronHeartbeat(setHeartbeat), []);
   useEffect(() => {
-    let alive = true;
-    const load = () => DB.getCronHeartbeatMs().then(v => { if (alive) setCronLastRunMs(v); }).catch(() => {});
-    load();
-    const id = setInterval(load, 120000);
-    return () => { alive = false; clearInterval(id); };
+    const id = setInterval(() => setTick(t => t + 1), 5 * 60_000);
+    return () => clearInterval(id);
   }, []);
 
-  const health = useMemo(
-    () => computeTimekeepingHealth({ logs, jobs, users, settings, cronLastRunMs: cronLastRunMs ?? null }),
-    [logs, jobs, users, settings, cronLastRunMs],
-  );
+  const health = useMemo(() => {
+    const h = computeTimekeepingHealth({ logs, jobs, users, settings, cronLastRunMs: heartbeat?.lastRunMs ?? null });
+    // The last run happened but reported failures (pushes that didn't go
+    // through, database errors) → a warning alongside the brain's own checks.
+    const runIssue = heartbeatIssue(heartbeat, (settings as any)?.recapTimezone || 'America/Los_Angeles');
+    if (!runIssue) return h;
+    const order: Record<HealthSeverity, number> = { critical: 0, warning: 1, info: 2 };
+    const issues = [...h.issues, runIssue].sort((a, b) => order[a.severity] - order[b.severity] || b.count - a.count);
+    return { ...h, issues, warningCount: h.warningCount + 1 };
+    // `tick` re-runs this every 5 min so a stale heartbeat is noticed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logs, jobs, users, settings, heartbeat, tick]);
 
   const { issues, criticalCount, warningCount, infoCount } = health;
   const allClear = issues.length === 0;
