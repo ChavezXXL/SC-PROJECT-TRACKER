@@ -868,12 +868,12 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                     }
                   </div>
                   <div className="flex items-center gap-2 text-xs mt-1 flex-wrap">
-                    {group.poNumber && <span className="text-zinc-500 font-mono">Job ID: {group.jobId}</span>}
-                    {group.poNumber && <span className="text-zinc-700"></span>}
+                    {/* Job ID only when it differs from the PO shown above */}
+                    {group.poNumber && group.jobId !== group.poNumber && <><span className="text-zinc-500 font-mono">Job {group.jobId}</span><span className="text-zinc-700">·</span></>}
                     <span className="text-zinc-500">Part: <span className="text-zinc-300">{group.partNumber}</span></span>
-                    {group.quantity > 0 && <><span className="text-zinc-700"></span><span className="text-zinc-500">Qty: <span className="text-zinc-300">{group.quantity}</span></span></>}
-                    {group.customer && <><span className="text-zinc-700"></span><span className="text-zinc-400">{group.customer}</span></>}
-                    {group.dueDate  && <><span className="text-zinc-700"></span><span className="text-zinc-500">Due: <span className="text-zinc-300">{fmt(group.dueDate)}</span></span></>}
+                    {group.quantity > 0 && <><span className="text-zinc-700">·</span><span className="text-zinc-500">Qty: <span className="text-zinc-300">{group.quantity}</span></span></>}
+                    {group.customer && <><span className="text-zinc-700">·</span><span className="text-zinc-400">{group.customer}</span></>}
+                    {group.dueDate  && <><span className="text-zinc-700">·</span><span className="text-zinc-500">Due: <span className="text-zinc-300">{fmt(group.dueDate)}</span></span></>}
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     {group.runningCount > 0 && (

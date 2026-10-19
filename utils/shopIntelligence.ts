@@ -20,7 +20,8 @@
 import type { Job, TimeLog, User, SystemSettings, PurchaseOrder } from '../types';
 import { calcJobProfit } from './jobProfit';
 import { customerKey } from './customers';
-import { shippedOnTime } from './dueDates';
+import { shippedOnTime, isJobClosed } from './dueDates';
+import { jobBudgets, groupLogsByJob } from './jobBudget';
 import { isPlaceholderPartNumber } from './partKey';
 
 // ─────────────────────────────────────────────────────────────
@@ -90,35 +91,31 @@ export function computeInsights(
   const insights: ShopInsight[] = [];
   const now = Date.now();
   const shopRate = settings.shopRate ?? 0;
-  // NaN-safe (matches jobProfit): a corrupt monthlyWorkHours must not turn every
-  // labor-cost insight into NaN, which silently suppresses all loss warnings.
-  const ohMonthly = Number(settings.monthlyOverhead) || 0;
-  const ohPerHour = ohMonthly > 0 ? ohMonthly / Math.max(1, Number(settings.monthlyWorkHours) || 160) : 0;
 
   // ─── 1. UNDERQUOTED open jobs ──────────────────────────────
-  // Jobs where labor already burned through more than the quote
+  // Jobs that have already spent more than the quote. Same rule as the
+  // dashboard's "over budget" chip and the Jobs list badge (utils/jobBudget) —
+  // this used to be labor × shop rate at 110%, so the Brain, the chip and the
+  // badge each named a different set of jobs with different dollar figures.
   if (shopRate > 0) {
-    const openJobs = jobs.filter(j => j.status !== 'completed' && (j.quoteAmount ?? 0) > 0);
+    const openJobs = jobs.filter(j => !isJobClosed(j));
+    const budgets = jobBudgets(openJobs, groupLogsByJob(allLogs), users, settings, allPOs);
     for (const job of openJobs) {
-      const mins = jobLaborMinutes(job, allLogs);
-      const laborCost = (mins / 60) * (shopRate + ohPerHour);
-      const quote = job.quoteAmount ?? 0;
-      if (laborCost > quote * 1.1) {
-        // Already burned more than 110% of the quote
-        const overBy = laborCost - quote;
-        insights.push({
-          id: `underquoted_${job.id}`,
-          type: 'underquoted',
-          severity: laborCost > quote * 1.5 ? 'critical' : 'warning',
-          title: `"${job.poNumber}" is over budget`,
-          body: `Labor alone is ${fmtMoney(laborCost)} on a ${fmtMoney(quote)} quote — ${fmtMoney(overBy)} over. ${
-            job.customer ? `Customer: ${job.customer}.` : ''
-          } Consider adjusting the quote or flagging for review.`,
-          action: 'View Job',
-          actionView: 'admin-jobs',
-          metadata: { jobId: job.id, laborCost, quote, overBy },
-        });
-      }
+      const b = budgets.get(job.id);
+      if (!b?.overBudget) continue;
+      const overBy = -b.remaining;
+      insights.push({
+        id: `underquoted_${job.id}`,
+        type: 'underquoted',
+        severity: b.cost > b.quote * 1.5 ? 'critical' : 'warning',
+        title: `"${job.poNumber}" is over budget`,
+        body: `${fmtMoney(b.cost)} spent so far on a ${fmtMoney(b.quote)} quote — ${fmtMoney(overBy)} over. ${
+          job.customer ? `Customer: ${job.customer}.` : ''
+        } Consider adjusting the quote or flagging for review.`,
+        action: 'View Job',
+        actionView: 'admin-jobs',
+        metadata: { jobId: job.id, laborCost: b.cost, quote: b.quote, overBy },
+      });
     }
   }
 

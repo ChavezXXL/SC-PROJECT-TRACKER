@@ -69,6 +69,9 @@ export const TimekeepingHealthPanel: React.FC<{
 
   const { issues, criticalCount, warningCount, infoCount } = health;
   const allClear = issues.length === 0;
+  // Nothing wrong → nothing to show. A permanent green "all clear" card was
+  // one more thing to read on a crowded dashboard.
+  if (allClear) return null;
 
   return (
     <div className={`rounded-2xl border overflow-hidden ${allClear ? 'bg-emerald-500/[0.06] border-emerald-500/20' : 'bg-zinc-900/50 border-white/5'}`}>

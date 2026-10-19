@@ -56,9 +56,9 @@ function lazyView<T extends React.ComponentType<any>>(loader: () => Promise<{ de
   );
 }
 const CustomerPosView = lazyView(() => import('./views/CustomerPosView').then(m => ({ default: m.CustomerPosView })));
-// Charts load only for the owner's dashboard donut (see components/RevenueDonut).
-const RevenueDonut = lazyView(() => import('./components/RevenueDonut'));
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
+import { groupLogsByJob, jobBudgets, jobMoney, type JobBudget } from './utils/jobBudget';
+import { RowMenu } from './components/RowMenu';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
 const SamplesView = lazyView(() => import('./SamplesView').then(m => ({ default: m.SamplesView })));
@@ -1581,6 +1581,7 @@ function systemStopReason(reason?: string): string | null {
 
 const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User, addToast: any, onLogout: () => void, notifBell?: React.ReactNode }) => {
   const { confirm: askConfirm, ConfirmHost } = useConfirm();
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<'jobs' | 'history' | 'scan' | 'progress'>('jobs');
   const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
   const lastActiveIdRef = useRef<string | null>(null);
@@ -2104,20 +2105,23 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto h-full flex flex-col pb-20">
-      {/* Worker hero — personalized greeting + today stats */}
-      <div className="card-shine bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden relative">
+      {/* Worker hero — greeting + today stats. Kept to one compact row on phones
+          (it used to fill half the screen and push the job list below the fold). */}
+      <div className="card-shine bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-3 sm:p-6 overflow-hidden relative">
         <div aria-hidden="true" className="absolute top-0 right-0 w-40 h-40 bg-amber-500/10 blur-3xl rounded-full" />
-        <div className="relative flex items-center gap-4">
-          <Avatar name={user.name} size="xl" ring dot={activeLog ? 'live' : undefined} />
+        <div className="relative flex items-center gap-3 sm:gap-4">
+          <Avatar name={user.name} size={isMobile ? 'lg' : 'xl'} ring dot={activeLog ? 'live' : undefined} />
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{greeting}</p>
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight truncate mt-0.5">{user.name}</h2>
-            <div className="flex flex-wrap items-center gap-2 mt-1.5">
-              {user.employeeId && <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-800/60 border border-white/5 px-1.5 py-0.5 rounded">{user.employeeId}</span>}
-              <span className="text-[10px] font-bold text-zinc-500 flex items-center gap-1">
+            <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest hidden sm:block">{greeting}</p>
+            <h2 className="text-lg sm:text-2xl font-black text-white tracking-tight truncate sm:mt-0.5">{user.name}</h2>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 sm:mt-1.5">
+              {user.employeeId && <span className="hidden sm:inline text-[10px] font-mono font-bold text-zinc-400 bg-zinc-800/60 border border-white/5 px-1.5 py-0.5 rounded">{user.employeeId}</span>}
+              <span className="text-[11px] sm:text-[10px] font-bold text-zinc-500 flex items-center gap-1">
                 <span className={`w-1.5 h-1.5 rounded-full ${activeLog ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`} />
                 {activeLog ? 'Clocked in' : 'Not clocked in'}
               </span>
+              {/* Phones: today's numbers inline instead of a second stats row */}
+              <span className="sm:hidden text-[11px] text-zinc-500">· today <span className="font-black text-white tabular">{todayHours}</span> · <span className="font-black text-amber-400 tabular">{todayJobs}</span> job{todayJobs !== 1 ? 's' : ''}</span>
               {showSyncWarning && (
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${!sync.online ? 'text-red-300 bg-red-500/10 border-red-500/30' : 'text-amber-300 bg-amber-500/10 border-amber-500/30'}`}>
                   {!sync.online ? 'Offline — taps are saved here and sync later' : 'Reconnecting…'}
@@ -2137,17 +2141,6 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
               <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</p>
               <p className="text-xl font-black text-amber-400 tabular mt-0.5">{todayJobs}</p>
             </div>
-          </div>
-        </div>
-        {/* Mobile stats row */}
-        <div className="sm:hidden grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-white/5">
-          <div className="text-center">
-            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Today</p>
-            <p className="text-lg font-black text-white tabular mt-0.5">{todayHours}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Jobs</p>
-            <p className="text-lg font-black text-blue-400 tabular mt-0.5">{todayJobs}</p>
           </div>
         </div>
       </div>
@@ -2270,30 +2263,27 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
           {quickResume.length > 0 && !activeLog && !resumeStarting && (
             <div className="mb-4">
               <p className="text-[11px] font-black text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5 text-amber-400" /> Jump back in</p>
+              {/* Slim rows — three tall cards here pushed the job list off a phone screen */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {quickResume.map(({ job, operation }) => (
                   <button key={`${job.id}|${operation}`} disabled={resumeStarting}
                     onClick={() => { if (resumeStarting || activeLog) return; setResumeStarting(true); handleStartJob(job.id, operation); }}
-                    className="flex items-center gap-3 text-left bg-gradient-to-br from-amber-500/15 to-amber-500/[0.04] hover:from-amber-500/25 border border-amber-500/30 rounded-xl p-2 transition-all active:scale-95 disabled:opacity-50">
-                    {/* Part photo — instant visual recognition of the job */}
-                    {job.partImage ? (
-                      <img src={job.partImage} alt="" className="w-12 h-12 rounded-lg object-cover border border-white/10 shrink-0" loading="lazy" />
-                    ) : (
-                      <div className="w-12 h-12 rounded-lg bg-zinc-800/80 border border-white/10 flex items-center justify-center shrink-0">
-                        <Image className="w-5 h-5 text-zinc-600" aria-hidden="true" />
-                      </div>
+                    className="flex items-center gap-2.5 text-left bg-gradient-to-br from-amber-500/15 to-amber-500/[0.04] hover:from-amber-500/25 border border-amber-500/30 rounded-xl px-3 py-2 min-h-[48px] transition-all active:scale-95 disabled:opacity-50">
+                    {/* Part photo when there is one — instant recognition; no empty placeholder */}
+                    {job.partImage && (
+                      <img src={job.partImage} alt="" className="w-9 h-9 rounded-lg object-cover border border-white/10 shrink-0" loading="lazy" />
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-black text-white truncate">{job.poNumber}</p>
-                      <p className="text-[11px] text-amber-300/90 truncate flex items-center gap-1"><Play className="w-3 h-3 shrink-0" /> {operation}</p>
-                      <p className="text-[10px] text-zinc-500 truncate">{job.partNumber}</p>
+                      <p className="text-[11px] truncate"><span className="text-amber-300/90 font-bold">▶ {operation}</span>{job.partNumber && <span className="text-zinc-500"> · {job.partNumber}</span>}</p>
                     </div>
+                    <Play className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
                   </button>
                 ))}
               </div>
             </div>
           )}
-          <div className="relative mb-6">
+          <div className="relative mb-4">
             <Search className="absolute left-4 top-3.5 w-5 h-5 text-zinc-500" />
             <input type="text" placeholder="Search by Job #, PO, or Part..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-amber-500 focus:outline-none shadow-sm" />
           </div>
@@ -2958,7 +2948,6 @@ const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsig
 const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [activeLogs, setActiveLogs] = useState<TimeLog[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [logs, setLogs] = useState<TimeLog[]>([]);
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [shopSettings, setShopSettings] = useState<SystemSettings>(DB.getSettings());
   const [dashWorkers, setDashWorkers] = useState<User[]>([]);
@@ -2969,16 +2958,22 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
   const [dashCustomerPos, setDashCustomerPos] = useState<CustomerPoFile[]>([]);
   const [dashActions, setDashActions] = useState<ShopAction[]>([]);
   const [showCanWeTakeIt, setShowCanWeTakeIt] = useState(false);
-  const [hoveredCustIdx, setHoveredCustIdx] = useState<number | null>(null);
   const [attentionDismissed, setAttentionDismissed] = useState<boolean>(() => {
     try { return sessionStorage.getItem('attention_dismissed') === '1'; } catch { return false; }
   });
-  const isMobile = useIsMobile();
+  // The analysis panels (money, trends, flow map…) sit behind "More insights"
+  // so the page opens on today's work. Remembered per device.
+  const [showMore, setShowMore] = useState<boolean>(() => {
+    try { return localStorage.getItem('dash_more_insights') === '1'; } catch { return false; }
+  });
+  const toggleMore = () => setShowMore(v => {
+    try { localStorage.setItem('dash_more_insights', v ? '0' : '1'); } catch {}
+    return !v;
+  });
 
   useEffect(() => {
     const unsub1 = DB.subscribeActiveLogs(setActiveLogs);
     const unsub2 = DB.subscribeJobs(setJobs);
-    const unsub3 = DB.subscribeLogs(all => setLogs(all.filter(l => l.endTime).sort((a, b) => (b.endTime || 0) - (a.endTime || 0)).slice(0, 5)));
     const unsub4 = DB.subscribeAllLogs(setAllLogs);   // month figures need more than the newest 500
     const unsub5 = DB.subscribeSettings(setShopSettings);
     const unsub6 = DB.subscribeUsers(setDashWorkers);
@@ -2988,7 +2983,7 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     const unsub10 = DB.subscribeSamples(setDashSamples);
     const unsub11 = DB.subscribeCustomerPos(setDashCustomerPos);
     const unsub12 = DB.subscribeShopActions(setDashActions);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); };
+    return () => { unsub1(); unsub2(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); };
   }, []);
 
   // ── Live tick — re-renders every 60s so time-derived memos (attack plan
@@ -3047,6 +3042,17 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
     () => computeInsights(jobs, allLogs, dashWorkers, shopSettings, dashAllPOs),
     [jobs, allLogs, dashWorkers, shopSettings, dashAllPOs],
   );
+
+  // Money uses the same rule as the Jobs page (utils/jobBudget): labor at each
+  // person's rate + overhead + material + outside POs; closed jobs use their
+  // locked snapshot.
+  const logsByJob = useMemo(() => groupLogsByJob(allLogs), [allLogs]);
+  const openBudgets = useMemo(
+    () => jobBudgets(jobs.filter(j => !isJobClosed(j)), logsByJob, dashWorkers, shopSettings, dashAllPOs),
+    [jobs, logsByJob, dashWorkers, shopSettings, dashAllPOs],
+  );
+  const moneyOf = (j: Job) => jobMoney(j, logsByJob.get(j.id) || [], dashWorkers, shopSettings, dashAllPOs);
+  const hasOpenActions = dashActions.some(a => !a.done);
 
   // ── Today's Attack Plan — ranked "run these in this order" queue ──────────
   // Risk level first (critical → at-risk → watch), then earliest due date,
@@ -3274,12 +3280,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         const missingQuotes = jobs.filter(j => j.status === 'completed' && !(j.quoteAmount && j.quoteAmount > 0)).length;
         const longRunning = activeLogs.filter(l => l.startTime < Date.now() - 4 * 3600000).length;
 
-        // Brain: over-budget active jobs
-        const rate = shopSettings.shopRate || 0;
-        const overBudgetCount = rate > 0 ? jobs.filter(j => j.status !== 'completed' && j.quoteAmount && j.quoteAmount > 0).filter(j => {
-          const mins = allLogs.filter(l => l.jobId === j.id && !l.isSample).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-          return (mins / 60) * rate > j.quoteAmount!;
-        }).length : 0;
+        // Over-budget open jobs — same rule as the Jobs list badge
+        const overBudgetCount = [...openBudgets.values()].filter(b => b.overBudget).length;
 
         // Customer duplicate detection — same normalizer as SettingsView.
         // Track UNIQUE original names per key (not job counts). After a
@@ -3366,18 +3368,58 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         );
       })()}
 
-      {/* 🎯 FOCUS THIS WEEK — the owner report's punchline, jumps to the full report */}
-      <FocusStrip
-        jobs={jobs}
-        logs={allLogs}
-        rework={reworkEntries}
-        actions={dashActions}
-        users={dashWorkers}
-        settings={shopSettings}
-        onOpen={() => setView('admin-weekly')}
-      />
+      <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+        {/* Working now — people on the clock + today's hours; tap for the live floor */}
+        <button type="button" onClick={() => setView('admin-live')} title="Open the live floor"
+          className={`card-shine hover-lift-glow text-left p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${activeWorkersCount > 0 ? 'bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/10' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Working</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] text-emerald-400 mt-0.5 truncate" title={`${liveJobsCount} job${liveJobsCount !== 1 ? 's' : ''} running · ${todayHrsDisplay} logged today`}>{todayHrsDisplay} today</p></div>
+          <Activity className={`w-7 h-7 sm:w-8 sm:h-8 text-emerald-500 shrink-0 ${activeWorkersCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
+        </button>
+        {/* Open Jobs */}
+        <button type="button" onClick={() => setView('admin-jobs')} title="Open the jobs list" className="card-shine hover-lift-glow text-left bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden hover:border-white/10">
+          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">Not finished yet</p></div>
+          <Briefcase className="text-zinc-600 w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
+        </button>
+        {/* Overdue — tap to open Jobs filtered to the overdue ones */}
+        <button type="button" onClick={() => openJobsFiltered('overdue', setView)} title="Show the overdue jobs"
+          className={`card-shine hover-lift-glow text-left p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10 hover:bg-red-500/15' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0"><p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-2xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] mt-0.5 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>{overdueJobs.length > 0 ? 'Tap to see them' : 'Past due'}</p></div>
+          <AlertTriangle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
+        </button>
+        {/* Pipeline value */}
+        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${pipelineValue > 0 ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0">
+            <p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Pipeline</p>
+            <h3 className={`text-lg sm:text-xl font-black truncate ${pipelineValue > 0 ? 'text-emerald-400' : 'text-zinc-600'}`}>
+              {pipelineValue > 0 ? `$${pipelineValue >= 1000 ? (pipelineValue / 1000).toFixed(1) + 'k' : pipelineValue.toFixed(0)}` : '—'}
+            </h3>
+            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">Open orders</p>
+          </div>
+          <DollarSign className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${pipelineValue > 0 ? 'text-emerald-500' : 'text-zinc-700'}`} />
+        </div>
+        {/* On-time rate */}
+        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${onTimePct === null ? 'bg-zinc-900/50 border-white/5' : onTimePct >= 90 ? 'bg-emerald-500/5 border-emerald-500/20' : onTimePct >= 70 ? 'bg-amber-500/5 border-amber-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+          <div className="min-w-0">
+            <p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">On-Time</p>
+            <h3 className={`text-lg sm:text-xl font-black truncate ${onTimePct === null ? 'text-zinc-600' : onTimePct >= 90 ? 'text-emerald-400' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
+              {onTimePct === null ? '—' : `${onTimePct}%`}
+            </h3>
+            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">90-day delivery</p>
+          </div>
+          <CheckCircle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${onTimePct === null ? 'text-zinc-700' : onTimePct >= 90 ? 'text-emerald-500' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`} />
+        </div>
+        {/* Ready to Invoice — customer POs whose job is done but not billed */}
+        <button onClick={() => setView('admin-customer-pos')} title="Customer POs ready to invoice" className={`text-left card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${invoiceCount > 0 ? 'bg-orange-500/10 border-orange-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
+          <div className="min-w-0">
+            <p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${invoiceCount > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>To Invoice</p>
+            <h3 className={`text-xl sm:text-2xl font-black ${invoiceCount > 0 ? 'text-orange-400' : 'text-zinc-600'}`}>{invoiceCount}</h3>
+            <p className={`text-[10px] mt-0.5 truncate ${invoiceCount > 0 ? 'text-orange-400/70' : 'text-zinc-600'}`}>{invoiceTotal > 0 ? `$${invoiceTotal >= 1000 ? (invoiceTotal / 1000).toFixed(1) + 'k' : invoiceTotal.toFixed(0)} unbilled` : 'POs done'}</p>
+          </div>
+          <FileText className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${invoiceCount > 0 ? 'text-orange-500' : 'text-zinc-700'}`} />
+        </button>
+      </div>
 
-      {/* 🛡 TIMEKEEPING HEALTH — payroll-data watchdog (only shows issues or "all clear") */}
+      {/* 🛡 TIMEKEEPING HEALTH — payroll-data watchdog (only shows when something's wrong) */}
       <TimekeepingHealthPanel
         logs={allLogs}
         jobs={jobs}
@@ -3385,12 +3427,6 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         settings={shopSettings}
         onView={() => setView('admin-logs')}
       />
-
-      {/* 📈 SHOP TRENDS — the brain's memory: last week vs your 4-week normal */}
-      <ShopTrendsPanel jobs={jobs} logs={allLogs} rework={reworkEntries} />
-
-      {/* ✅ SHOP ACTIONS — assigned, dated, measurable */}
-      <ShopActionsPanel actions={dashActions} users={dashWorkers} currentUserName={user?.name} addToast={addToast} />
 
       {/* ⚡ TODAY'S ATTACK PLAN — ranked run-order for the floor */}
       {attackPlan.ranked.length > 0 && (
@@ -3452,66 +3488,6 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
           </div>
         </div>
       )}
-
-      <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-3 sm:gap-4">
-        {/* Live Activity */}
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Live</p><h3 className="text-xl sm:text-2xl font-black text-white">{liveJobsCount}</h3><p className="text-[10px] text-emerald-400 mt-0.5 truncate">Jobs running</p></div>
-          <Activity className={`w-7 h-7 sm:w-8 sm:h-8 text-emerald-500 shrink-0 ${liveJobsCount > 0 ? 'animate-pulse' : 'opacity-20'}`} />
-        </div>
-        {/* Open Jobs */}
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Open Jobs</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeJobsCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">In progress</p></div>
-          <Briefcase className="text-zinc-600 w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
-        </div>
-        {/* Overdue — tap to open Jobs filtered to the overdue ones */}
-        <button type="button" onClick={() => openJobsFiltered('overdue', setView)} title="Show the overdue jobs"
-          className={`card-shine hover-lift-glow text-left p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${overdueJobs.length > 0 ? 'bg-red-500/10 border-red-500/30 shadow-lg shadow-red-900/10 hover:bg-red-500/15' : 'bg-zinc-900/50 border-white/5'}`}>
-          <div className="min-w-0"><p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-500'}`}>Overdue</p><h3 className={`text-xl sm:text-2xl font-black ${overdueJobs.length > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{overdueJobs.length}</h3><p className={`text-[10px] mt-0.5 truncate ${overdueJobs.length > 0 ? 'text-red-400/70' : 'text-zinc-600'}`}>{overdueJobs.length > 0 ? 'Tap to see them' : 'Past due'}</p></div>
-          <AlertTriangle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${overdueJobs.length > 0 ? 'text-red-500' : 'text-zinc-700'}`} />
-        </button>
-        {/* Floor Staff */}
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Floor Staff</p><h3 className="text-xl sm:text-2xl font-black text-white">{activeWorkersCount}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">Clocked in</p></div>
-          <Users className="text-emerald-500 w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
-        </div>
-        {/* Today's hours */}
-        <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden">
-          <div className="min-w-0"><p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Today</p><h3 className="text-lg sm:text-xl font-black text-white truncate">{todayHrsDisplay}</h3><p className="text-[10px] text-zinc-500 mt-0.5 truncate">Hours logged</p></div>
-          <Clock className="text-blue-400 w-7 h-7 sm:w-8 sm:h-8 opacity-60 shrink-0" />
-        </div>
-        {/* Pipeline value */}
-        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${pipelineValue > 0 ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-zinc-900/50 border-white/5'}`}>
-          <div className="min-w-0">
-            <p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">Pipeline</p>
-            <h3 className={`text-lg sm:text-xl font-black truncate ${pipelineValue > 0 ? 'text-emerald-400' : 'text-zinc-600'}`}>
-              {pipelineValue > 0 ? `$${pipelineValue >= 1000 ? (pipelineValue / 1000).toFixed(1) + 'k' : pipelineValue.toFixed(0)}` : '—'}
-            </h3>
-            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">Open order value</p>
-          </div>
-          <DollarSign className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${pipelineValue > 0 ? 'text-emerald-500' : 'text-zinc-700'}`} />
-        </div>
-        {/* On-time rate */}
-        <div className={`card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${onTimePct === null ? 'bg-zinc-900/50 border-white/5' : onTimePct >= 90 ? 'bg-emerald-500/5 border-emerald-500/20' : onTimePct >= 70 ? 'bg-amber-500/5 border-amber-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
-          <div className="min-w-0">
-            <p className="text-zinc-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate">On-Time</p>
-            <h3 className={`text-lg sm:text-xl font-black truncate ${onTimePct === null ? 'text-zinc-600' : onTimePct >= 90 ? 'text-emerald-400' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
-              {onTimePct === null ? '—' : `${onTimePct}%`}
-            </h3>
-            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">90-day delivery</p>
-          </div>
-          <CheckCircle className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${onTimePct === null ? 'text-zinc-700' : onTimePct >= 90 ? 'text-emerald-500' : onTimePct >= 70 ? 'text-amber-400' : 'text-red-400'}`} />
-        </div>
-        {/* Ready to Invoice — customer POs whose job is done but not billed */}
-        <button onClick={() => setView('admin-customer-pos')} title="Customer POs ready to invoice" className={`text-left card-shine hover-lift-glow p-3 sm:p-5 rounded-2xl flex justify-between items-center gap-2 overflow-hidden border ${invoiceCount > 0 ? 'bg-orange-500/10 border-orange-500/30' : 'bg-zinc-900/50 border-white/5'}`}>
-          <div className="min-w-0">
-            <p className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${invoiceCount > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>To Invoice</p>
-            <h3 className={`text-xl sm:text-2xl font-black ${invoiceCount > 0 ? 'text-orange-400' : 'text-zinc-600'}`}>{invoiceCount}</h3>
-            <p className={`text-[10px] mt-0.5 truncate ${invoiceCount > 0 ? 'text-orange-400/70' : 'text-zinc-600'}`}>{invoiceTotal > 0 ? `$${invoiceTotal >= 1000 ? (invoiceTotal / 1000).toFixed(1) + 'k' : invoiceTotal.toFixed(0)} unbilled` : 'POs done'}</p>
-          </div>
-          <FileText className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${invoiceCount > 0 ? 'text-orange-500' : 'text-zinc-700'}`} />
-        </button>
-      </div>
 
       {/* ── TODAY'S PULSE — what happened today + who's working ── */}
       {(() => {
@@ -3638,7 +3614,10 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
                     : <p className="text-xs text-zinc-600 mt-0.5">Nobody clocked in yet</p>
                   }
                 </div>
-                <Users className={`w-5 h-5 shrink-0 ${workerPulse.length > 0 ? 'text-emerald-400' : 'text-zinc-700'}`} />
+                {/* Stopping someone's timer lives on the live floor */}
+                <button onClick={() => setView('admin-live')} className="shrink-0 text-[11px] font-bold text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
+                  Live floor <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
               </div>
 
               {workerPulse.length > 0 ? (
@@ -3687,920 +3666,508 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
         );
       })()}
 
-      {/* ── WEEKLY CAPACITY FORECAST — ETA engine output ── */}
-      {(() => {
-        // Only show when we have real data (at least one job with expected hours or part history)
-        const openJobsForCap = jobs.filter(j => !isJobClosed(j));
-        if (openJobsForCap.length === 0) return null;
-        const dashEtaMap2 = new Map<string, ReturnType<typeof computeJobETA>>();
-        for (const job of openJobsForCap) {
-          const history = getPartHistory(job.partNumber || '', jobs, allLogs);
-          dashEtaMap2.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
-        }
-        const workerCount2 = Math.max(1, dashWorkers.filter(w => w.isActive !== false).length || activeLogs.length || 1);
-        const activeCount2 = new Set(activeLogs.map(l => l.userId)).size;
-        const fc = computeCapacityForecast(dashEtaMap2, workerCount2, activeCount2);
-        if (fc.totalRemainingHours === 0) return null; // nothing to forecast
-
-        const barPct = Math.min(100, fc.capacityPct);
-        const barColor = fc.overloaded ? '#ef4444' : fc.capacityPct > 75 ? '#f97316' : '#10b981';
-        const statusLabel = fc.overloaded
-          ? `Overloaded — ${Math.round(fc.capacityPct - 100)}% more work than capacity`
-          : fc.capacityPct > 75
-          ? `Heavy — ${Math.round(fc.capacityPct)}% of weekly capacity`
-          : `On track — ${Math.round(fc.capacityPct)}% of weekly capacity`;
-
-        return (
-          <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4">
-            <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Weekly Capacity</span>
-                <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${fc.overloaded ? 'text-red-400 bg-red-500/10 border-red-500/30' : fc.capacityPct > 75 ? 'text-orange-400 bg-orange-500/10 border-orange-500/30' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'}`}>
-                  {statusLabel}
-                </span>
-              </div>
-              <div className="flex items-center gap-3 text-[11px] text-zinc-500">
-                <span><span className="font-black text-white">{fc.totalRemainingHours.toFixed(0)}h</span> remaining</span>
-                <span>·</span>
-                <span><span className="font-black text-white">{fc.weeklyCapacityHours.toFixed(0)}h</span> capacity ({fc.workdaysLeft}d left)</span>
-                {fc.jobsCritical > 0 && <><span>·</span><span className="font-black text-red-400">{fc.jobsCritical} critical</span></>}
-                {fc.jobsAtRisk > 0 && <><span>·</span><span className="font-black text-orange-400">{fc.jobsAtRisk} at-risk</span></>}
-              </div>
-            </div>
-            <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${barPct}%`, background: barColor }}
-              />
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ── SHOP BRAIN — intelligent pattern detection ── */}
-      {shopInsights.length > 0 && (
-        <ShopBrainPanel insights={shopInsights} setView={setView} onMakeTask={async (insight) => {
-          try {
-            await DB.saveShopAction({
-              id: crypto.randomUUID(),
-              title: insight.title,
-              notes: insight.body,
-              done: false,
-              createdAt: Date.now(),
-              createdBy: user?.name,
-              source: 'brain',
-              sourceInsightId: insight.id,
-            });
-            addToast('success', 'Added to Shop Actions — assign it a person & date');
-          } catch { addToast('error', 'Could not create the action'); }
-        }} />
+      {/* ✅ SHOP ACTIONS — up front only while something is still open */}
+      {hasOpenActions && (
+        <ShopActionsPanel actions={dashActions} users={dashWorkers} currentUserName={user?.name} addToast={addToast} />
       )}
 
-      {/* ── SHOP FLOW MAP — visual of jobs moving through each stage.
-          Two-column layout on desktop: the scrollable flow on the left (fills
-          its container), a health-summary panel on the right. On mobile the
-          panel stacks below so nothing gets squeezed. Eliminates the "empty
-          space on the right" issue when only a few stages are configured. */}
-      <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5 overflow-hidden">
-        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-          <div>
-            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-              <Activity className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Shop Flow Map
-            </h3>
-            <p className="text-[11px] text-zinc-600 mt-0.5">Tap a stage for jobs inside · glowing = workers on it · flame = stuck</p>
-          </div>
-        </div>
-        {(() => {
-          const stages = getStages(shopSettings);
-          const openJobs = jobs.filter(j => j.status !== 'completed');
-          // ── Single source of truth — same metrics the Flow Map renders.
-          //    Previously this block had its own stuck-job math + simplistic
-          //    label-string matching for "live stages", which gave numbers
-          //    that disagreed with the Flow Map below it. Now identical. ──
-          const metrics = computeStageMetrics(jobs, stages);
-          const stuckCount = [...metrics.values()].reduce((a, m) => a + m.stuckCount, 0);
-          // Live stages = unique stages where a worker is currently clocked in,
-          // matched via the same smart routing (acronyms, stems, token overlap).
-          const liveStageSet = new Set<string>();
-          for (const log of activeLogs) {
-            const match = findStageForOperation(log.operation, stages);
-            if (match && !match.isComplete) liveStageSet.add(match.id);
-          }
-          const liveStages = liveStageSet.size;
-          // Bottleneck — stage with the most open jobs, using resolveJobStage
-          // so legacy jobs (no currentStage field) land in the right column.
-          const byStageCount = new Map<string, number>();
-          for (const j of openJobs) {
-            const resolved = resolveJobStage(j, stages);
-            if (!resolved || resolved.isComplete) continue;
-            byStageCount.set(resolved.id, (byStageCount.get(resolved.id) || 0) + 1);
-          }
-          let topStage: { label: string; count: number; color: string } | null = null;
-          byStageCount.forEach((count, sid) => {
-            const st = stages.find(s => s.id === sid);
-            if (!st || st.isComplete) return;
-            if (!topStage || count > topStage.count) {
-              topStage = { label: st.label, count, color: st.color };
+      {/* ── MORE INSIGHTS — money, trends and analysis. Closed by default so the
+          page opens on what needs doing today; the choice is remembered. ── */}
+      <button type="button" onClick={toggleMore} aria-expanded={showMore}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-zinc-900/50 border border-white/5 hover:bg-zinc-900/80 hover:border-white/10 transition-colors text-left">
+        <span className="flex items-center gap-2.5 min-w-0">
+          <Sparkles className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
+          <span className="min-w-0">
+            <span className="block text-sm font-black text-white">{showMore ? 'Hide insights' : 'More insights'}</span>
+            <span className="block text-[11px] text-zinc-500 truncate">Money, capacity, trends, flow map, worker stats, recent activity</span>
+          </span>
+        </span>
+        <ChevronDown className={`w-4 h-4 text-zinc-400 shrink-0 transition-transform ${showMore ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+
+      {showMore && (
+        <div className="space-y-6">
+          {/* 🎯 FOCUS THIS WEEK — the owner report's punchline, jumps to the full report */}
+          <FocusStrip
+            jobs={jobs}
+            logs={allLogs}
+            rework={reworkEntries}
+            actions={dashActions}
+            users={dashWorkers}
+            settings={shopSettings}
+            onOpen={() => setView('admin-weekly')}
+          />
+
+          {/* ── WEEKLY CAPACITY FORECAST — ETA engine output ── */}
+          {(() => {
+            // Only show when we have real data (at least one job with expected hours or part history)
+            const openJobsForCap = jobs.filter(j => !isJobClosed(j));
+            if (openJobsForCap.length === 0) return null;
+            const dashEtaMap2 = new Map<string, ReturnType<typeof computeJobETA>>();
+            for (const job of openJobsForCap) {
+              const history = getPartHistory(job.partNumber || '', jobs, allLogs);
+              dashEtaMap2.set(job.id, computeJobETA(job, allLogs, activeLogs, history, DB.getWorkingElapsedMs));
             }
-          });
-          return (
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_200px] gap-4">
-              {/* LEFT — flow + recent moves fill the main column */}
-              <div className="min-w-0">
-                <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} />
-                <RecentStageMoves jobs={jobs} stages={stages} limit={8} />
-              </div>
-              {/* RIGHT — summary panel, keeps the card visually balanced */}
-              <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 lg:gap-2 lg:border-l lg:border-white/5 lg:pl-4">
-                <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5">
-                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Open Jobs</p>
-                  <p className="text-xl lg:text-2xl font-black text-white tabular">{openJobs.length}</p>
-                </div>
-                <div className={`bg-zinc-950/40 border rounded-xl p-2.5 ${stuckCount > 0 ? 'border-red-500/30' : 'border-white/5'}`}>
-                  <p className={`text-[9px] font-black uppercase tracking-widest ${stuckCount > 0 ? 'text-red-400' : 'text-zinc-600'}`}>Stuck 3d+</p>
-                  <p className={`text-xl lg:text-2xl font-black tabular ${stuckCount > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{stuckCount}</p>
-                </div>
-                <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5">
-                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Live Stages</p>
-                  <p className="text-xl lg:text-2xl font-black text-emerald-400 tabular flex items-center gap-1">
-                    {liveStages > 0 && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-                    {liveStages}
-                  </p>
-                </div>
-                {topStage && (
-                  <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5 min-w-0">
-                    <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Heaviest</p>
-                    <p className="text-xs font-black truncate" style={{ color: (topStage as any).color }}>{(topStage as any).label}</p>
-                    <p className="text-[10px] text-zinc-500 tabular">{(topStage as any).count} job{(topStage as any).count !== 1 ? 's' : ''}</p>
+            const workerCount2 = Math.max(1, dashWorkers.filter(w => w.isActive !== false).length || activeLogs.length || 1);
+            const activeCount2 = new Set(activeLogs.map(l => l.userId)).size;
+            const fc = computeCapacityForecast(dashEtaMap2, workerCount2, activeCount2);
+            if (fc.totalRemainingHours === 0) return null; // nothing to forecast
+
+            const barPct = Math.min(100, fc.capacityPct);
+            const barColor = fc.overloaded ? '#ef4444' : fc.capacityPct > 75 ? '#f97316' : '#10b981';
+            const statusLabel = fc.overloaded
+              ? `Overloaded — ${Math.round(fc.capacityPct - 100)}% more work than capacity`
+              : fc.capacityPct > 75
+              ? `Heavy — ${Math.round(fc.capacityPct)}% of weekly capacity`
+              : `On track — ${Math.round(fc.capacityPct)}% of weekly capacity`;
+
+            return (
+              <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4">
+                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Weekly Capacity</span>
+                    <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${fc.overloaded ? 'text-red-400 bg-red-500/10 border-red-500/30' : fc.capacityPct > 75 ? 'text-orange-400 bg-orange-500/10 border-orange-500/30' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'}`}>
+                      {statusLabel}
+                    </span>
                   </div>
-                )}
+                  <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                    <span><span className="font-black text-white">{fc.totalRemainingHours.toFixed(0)}h</span> remaining</span>
+                    <span>·</span>
+                    <span><span className="font-black text-white">{fc.weeklyCapacityHours.toFixed(0)}h</span> capacity ({fc.workdaysLeft}d left)</span>
+                    {fc.jobsCritical > 0 && <><span>·</span><span className="font-black text-red-400">{fc.jobsCritical} critical</span></>}
+                    {fc.jobsAtRisk > 0 && <><span>·</span><span className="font-black text-orange-400">{fc.jobsAtRisk} at-risk</span></>}
+                  </div>
+                </div>
+                <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${barPct}%`, background: barColor }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── SHOP BRAIN — intelligent pattern detection ── */}
+          {shopInsights.length > 0 && (
+            <ShopBrainPanel insights={shopInsights} setView={setView} onMakeTask={async (insight) => {
+              try {
+                await DB.saveShopAction({
+                  id: crypto.randomUUID(),
+                  title: insight.title,
+                  notes: insight.body,
+                  done: false,
+                  createdAt: Date.now(),
+                  createdBy: user?.name,
+                  source: 'brain',
+                  sourceInsightId: insight.id,
+                });
+                addToast('success', 'Added to Shop Actions — assign it a person & date');
+              } catch { addToast('error', 'Could not create the action'); }
+            }} />
+          )}
+
+          {/* 📈 SHOP TRENDS — the brain's memory: last week vs your 4-week normal */}
+          <ShopTrendsPanel jobs={jobs} logs={allLogs} rework={reworkEntries} />
+
+          {/* ── SHOP FLOW MAP — visual of jobs moving through each stage.
+              Two-column layout on desktop: the scrollable flow on the left (fills
+              its container), a health-summary panel on the right. On mobile the
+              panel stacks below so nothing gets squeezed. Eliminates the "empty
+              space on the right" issue when only a few stages are configured. */}
+          <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5 overflow-hidden">
+            <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+              <div>
+                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Shop Flow Map
+                </h3>
+                <p className="text-[11px] text-zinc-600 mt-0.5">Tap a stage for jobs inside · glowing = workers on it · flame = stuck</p>
               </div>
             </div>
-          );
-        })()}
-      </div>
-
-      {/* ── FINANCIAL OVERVIEW ── */}
-      {(shopSettings.shopRate || 0) > 0 && (() => {
-        const rate = shopSettings.shopRate || 0;
-        const ohRate = (shopSettings.monthlyOverhead || 0) / (shopSettings.monthlyWorkHours || 160);
-        const completedJobs = jobs.filter(j => j.status === 'completed');
-        const thisMonthStart = new Date(); thisMonthStart.setDate(1); thisMonthStart.setHours(0,0,0,0);
-        const thisWeekStart = new Date(); thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay()); thisWeekStart.setHours(0,0,0,0);
-
-        const calcJobFinancials = (j: any) => {
-          const jLogs = allLogs.filter(l => l.jobId === j.id && l.endTime);
-          const _lm = (l: any) => l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0);
-          const hrs = jLogs.reduce((a: number, l: any) => a + _lm(l), 0) / 60;
-          const laborCost = jLogs.reduce((acc: number, l: any) => {
-            const w = dashWorkers.find(w => w.id === l.userId);
-            const r = w?.hourlyRate || rate;
-            return acc + (_lm(l) / 60) * r;
-          }, 0);
-          const cost = laborCost + (hrs * ohRate);
-          const revenue = j.quoteAmount || 0;
-          const profit = revenue > 0 ? revenue - cost : null;
-          return { hrs, cost, revenue, profit };
-        };
-
-        const monthJobs = completedJobs.filter(j => (j.completedAt || 0) >= thisMonthStart.getTime());
-        const weekJobs = completedJobs.filter(j => (j.completedAt || 0) >= thisWeekStart.getTime());
-
-        const monthTotals = monthJobs.reduce((acc, j) => {
-          const f = calcJobFinancials(j);
-          return { hrs: acc.hrs + f.hrs, cost: acc.cost + f.cost, revenue: acc.revenue + f.revenue, jobs: acc.jobs + 1 };
-        }, { hrs: 0, cost: 0, revenue: 0, jobs: 0 });
-        const monthProfit = monthTotals.revenue > 0 ? monthTotals.revenue - monthTotals.cost : null;
-
-        const weekTotals = weekJobs.reduce((acc, j) => {
-          const f = calcJobFinancials(j);
-          return { hrs: acc.hrs + f.hrs, cost: acc.cost + f.cost, revenue: acc.revenue + f.revenue, jobs: acc.jobs + 1 };
-        }, { hrs: 0, cost: 0, revenue: 0, jobs: 0 });
-        const weekProfit = weekTotals.revenue > 0 ? weekTotals.revenue - weekTotals.cost : null;
-
-        // Jobs without quotes (need attention)
-        const unquoted = completedJobs.filter(j => !(j.quoteAmount && j.quoteAmount > 0));
-
-        // Margin calculations
-        const monthMargin = monthTotals.revenue > 0 ? ((monthTotals.revenue - monthTotals.cost) / monthTotals.revenue * 100) : 0;
-        const weekMargin = weekTotals.revenue > 0 ? ((weekTotals.revenue - weekTotals.cost) / weekTotals.revenue * 100) : 0;
-
-        // ── On-Time Delivery (OTD) — rolling 30 days ──
-        const otdWindow = Date.now() - 30 * 86400000;
-        const otd = onTimeRate(completedJobs.filter(j => (j.shippedAt || j.completedAt || 0) >= otdWindow));
-        const otdOnTime = otd.onTime;
-        const otdPct = otd.pct;
-        const otdLate = otd.judged - otd.onTime;
-
-        // Active jobs with live costs (estimated vs actual)
-        const activeJobsWithCosts = jobs.filter(j => j.status !== 'completed' && j.quoteAmount).map(j => {
-          const f = calcJobFinancials(j);
-          const remaining = (j.quoteAmount || 0) - f.cost;
-          const usedPct = j.quoteAmount ? Math.min(100, (f.cost / j.quoteAmount) * 100) : 0;
-          return { ...j, ...f, remaining, usedPct };
-        }).sort((a, b) => b.usedPct - a.usedPct).slice(0, 5);
-
-        // Revenue per customer this month
-        const custRev = new Map<string, { revenue: number; cost: number; jobs: number }>();
-        monthJobs.forEach(j => {
-          const c = j.customer || 'Unknown';
-          const f = calcJobFinancials(j);
-          const cur = custRev.get(c) || { revenue: 0, cost: 0, jobs: 0 };
-          cur.revenue += f.revenue; cur.cost += f.cost; cur.jobs++;
-          custRev.set(c, cur);
-        });
-        const topCustomers = Array.from(custRev.entries()).filter(([, d]) => d.revenue > 0).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 5);
-
-        // Average cost per hour
-        const avgCostPerHr = monthTotals.hrs > 0 ? monthTotals.cost / monthTotals.hrs : 0;
-        const avgRevenuePerHr = monthTotals.hrs > 0 ? monthTotals.revenue / monthTotals.hrs : 0;
-
-        return (
-          <div className="space-y-4">
-            {/* Top KPI Cards */}
-            <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3">
-              {/* On-Time Delivery — machine-shop standard KPI */}
-              <div className={`card-shine hover-lift-glow border rounded-2xl p-3 sm:p-4 overflow-hidden relative ${otdPct === null ? 'bg-zinc-900/50 border-white/5' : otdPct >= 90 ? 'bg-emerald-500/10 border-emerald-500/25' : otdPct >= 70 ? 'bg-zinc-900/50 border-white/5' : 'bg-red-500/10 border-red-500/25'}`}>
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">On-Time Delivery</p>
-                <p className={`text-base sm:text-xl md:text-2xl font-black truncate tabular ${otdPct === null ? 'text-zinc-600' : otdPct >= 90 ? 'text-emerald-400' : otdPct >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
-                  {otdPct === null ? '—' : `${otdPct}%`}
-                </p>
-                <p className="text-[10px] text-zinc-600 truncate">
-                  {otd.judged === 0 ? 'No data (30d)' : `${otdOnTime}/${otd.judged} on time · 30d`}
-                </p>
-                {otdPct !== null && (
-                  <div className="mt-1.5 h-1 rounded-full bg-zinc-800 overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-700 ${otdPct >= 90 ? 'bg-emerald-500' : otdPct >= 70 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${otdPct}%` }} />
-                  </div>
-                )}
-              </div>
-              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">Monthly Revenue</p>
-                <p className="text-base sm:text-xl md:text-2xl font-black text-emerald-400 truncate tabular">{fmtMoneyK(monthTotals.revenue)}</p>
-                <p className="text-[10px] text-zinc-600 truncate">{monthTotals.jobs} jobs completed</p>
-              </div>
-              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">Monthly Costs</p>
-                <p className="text-base sm:text-xl md:text-2xl font-black text-orange-400 truncate tabular">{fmtMoneyK(monthTotals.cost)}</p>
-                <p className="text-[10px] text-zinc-600 truncate">{monthTotals.hrs.toFixed(0)}h labor + overhead</p>
-              </div>
-              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">Net Profit</p>
-                <p className={`text-base sm:text-xl md:text-2xl font-black truncate tabular ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {monthProfit !== null ? fmtMoneySigned(monthProfit) : '—'}
-                </p>
-                <p className="text-[10px] text-zinc-600 truncate">{monthMargin > 0 ? `${monthMargin.toFixed(0)}% margin` : 'No quoted jobs'}</p>
-              </div>
-              <div className="card-shine hover-lift-glow bg-zinc-900/50 border border-white/5 rounded-2xl p-3 sm:p-4 overflow-hidden">
-                <p className="text-[10px] text-zinc-500 uppercase font-bold truncate tracking-wider">$/Hour Earned</p>
-                <p className={`text-base sm:text-xl md:text-2xl font-black truncate tabular ${monthTotals.hrs > 0 ? 'text-amber-400' : 'text-zinc-600'}`}>{monthTotals.hrs > 0 ? `$${avgRevenuePerHr.toFixed(0)}` : '—'}</p>
-                <p className="text-[10px] text-zinc-600 truncate">{monthTotals.hrs > 0 ? `Cost: $${avgCostPerHr.toFixed(0)}/hr` : 'No hours logged'}</p>
-              </div>
-            </div>
-
-            {/* Week vs Month Comparison */}
-            <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
-              <div className="p-4 border-b border-white/5 flex items-center justify-between">
-                <h3 className="font-bold text-white text-sm flex items-center gap-2"><Calculator className="w-4 h-4 text-emerald-400" /> Profit & Loss</h3>
-                {unquoted.length > 0 && <span className="text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded-lg font-bold">{unquoted.length} missing quote</span>}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-white/5">
-                <div className="p-3 sm:p-4 space-y-2">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase">This Week</p>
-                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Revenue</span><span className="text-emerald-400 font-mono">${weekTotals.revenue.toLocaleString()}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Labor</span><span className="text-orange-400 font-mono">${weekTotals.cost.toFixed(0)}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Hours</span><span className="text-zinc-300 font-mono">{weekTotals.hrs.toFixed(1)}h</span></div>
-                  <div className="border-t border-white/5 pt-2 flex justify-between items-center">
-                    <span className="text-xs font-bold text-zinc-400">Profit</span>
-                    <div className="text-right">
-                      <span className={`text-lg font-black ${weekProfit && weekProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {weekProfit !== null ? `${weekProfit >= 0 ? '+' : ''}$${weekProfit.toFixed(0)}` : weekTotals.cost > 0 ? `-$${weekTotals.cost.toFixed(0)}` : '$0'}
-                      </span>
-                      {weekMargin > 0 && <p className="text-[10px] text-zinc-500">{weekMargin.toFixed(0)}% margin</p>}
-                    </div>
-                  </div>
-                </div>
-                <div className="p-3 sm:p-4 space-y-2">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase">This Month</p>
-                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Revenue</span><span className="text-emerald-400 font-mono">${monthTotals.revenue.toLocaleString()}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Labor</span><span className="text-orange-400 font-mono">${monthTotals.cost.toFixed(0)}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-zinc-500">Hours</span><span className="text-zinc-300 font-mono">{monthTotals.hrs.toFixed(1)}h</span></div>
-                  <div className="border-t border-white/5 pt-2 flex justify-between items-center">
-                    <span className="text-xs font-bold text-zinc-400">Profit</span>
-                    <div className="text-right">
-                      <span className={`text-lg font-black ${monthProfit && monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {monthProfit !== null ? `${monthProfit >= 0 ? '+' : ''}$${monthProfit.toFixed(0)}` : '—'}
-                      </span>
-                      {monthMargin > 0 && <p className="text-[10px] text-zinc-500">{monthMargin.toFixed(0)}% margin</p>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* ── Monthly Revenue Goal Progress ── */}
             {(() => {
-              const goal = shopSettings.monthlyRevenueGoal;
-              if (!goal || goal <= 0) return null;
-              const pct = Math.min(100, (monthTotals.revenue / goal) * 100);
-              // Pace: how many days into the month, projected finish
-              const totalDays = new Date(thisMonthStart.getFullYear(), thisMonthStart.getMonth() + 1, 0).getDate();
-              const daysPassed = new Date().getDate();
-              const daysLeft = totalDays - daysPassed;
-              const paceRevenue = daysPassed > 0 ? (monthTotals.revenue / daysPassed) * totalDays : 0;
-              const onPace = paceRevenue >= goal * 0.9;
-              const aheadPace = paceRevenue >= goal;
-              const barColor = aheadPace ? '#10b981' : onPace ? '#f59e0b' : '#ef4444';
-              const statusText = aheadPace ? '🟢 On track to exceed goal' : onPace ? '🟡 Slightly behind pace' : `🔴 Pacing for ${goal > 0 ? `$${Math.round(paceRevenue).toLocaleString()}` : '$0'} — push harder`;
+              const stages = getStages(shopSettings);
+              const openJobs = jobs.filter(j => j.status !== 'completed');
+              // ── Single source of truth — same metrics the Flow Map renders.
+              //    Previously this block had its own stuck-job math + simplistic
+              //    label-string matching for "live stages", which gave numbers
+              //    that disagreed with the Flow Map below it. Now identical. ──
+              const metrics = computeStageMetrics(jobs, stages);
+              const stuckCount = [...metrics.values()].reduce((a, m) => a + m.stuckCount, 0);
+              // Live stages = unique stages where a worker is currently clocked in,
+              // matched via the same smart routing (acronyms, stems, token overlap).
+              const liveStageSet = new Set<string>();
+              for (const log of activeLogs) {
+                const match = findStageForOperation(log.operation, stages);
+                if (match && !match.isComplete) liveStageSet.add(match.id);
+              }
+              const liveStages = liveStageSet.size;
+              // Bottleneck — stage with the most open jobs, using resolveJobStage
+              // so legacy jobs (no currentStage field) land in the right column.
+              const byStageCount = new Map<string, number>();
+              for (const j of openJobs) {
+                const resolved = resolveJobStage(j, stages);
+                if (!resolved || resolved.isComplete) continue;
+                byStageCount.set(resolved.id, (byStageCount.get(resolved.id) || 0) + 1);
+              }
+              let topStage: { label: string; count: number; color: string } | null = null;
+              byStageCount.forEach((count, sid) => {
+                const st = stages.find(s => s.id === sid);
+                if (!st || st.isComplete) return;
+                if (!topStage || count > topStage.count) {
+                  topStage = { label: st.label, count, color: st.color };
+                }
+              });
               return (
-                <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                  <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-                    <div>
-                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Monthly Goal</p>
-                      <p className="text-xs text-zinc-400 mt-0.5">{statusText}</p>
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_200px] gap-4">
+                  {/* LEFT — flow + recent moves fill the main column */}
+                  <div className="min-w-0">
+                    <ShopFlowMap jobs={jobs} stages={stages} activeLogs={activeLogs} />
+                    <RecentStageMoves jobs={jobs} stages={stages} limit={8} />
+                  </div>
+                  {/* RIGHT — summary panel, keeps the card visually balanced */}
+                  <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 lg:gap-2 lg:border-l lg:border-white/5 lg:pl-4">
+                    <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5">
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Open Jobs</p>
+                      <p className="text-xl lg:text-2xl font-black text-white tabular">{openJobs.length}</p>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-base font-black tabular" style={{ color: barColor }}>
-                        ${monthTotals.revenue >= 1000 ? (monthTotals.revenue/1000).toFixed(1)+'k' : monthTotals.revenue.toFixed(0)}
-                        <span className="text-zinc-600 font-normal text-xs"> / ${goal >= 1000 ? (goal/1000).toFixed(0)+'k' : goal.toLocaleString()}</span>
+                    <div className={`bg-zinc-950/40 border rounded-xl p-2.5 ${stuckCount > 0 ? 'border-red-500/30' : 'border-white/5'}`}>
+                      <p className={`text-[9px] font-black uppercase tracking-widest ${stuckCount > 0 ? 'text-red-400' : 'text-zinc-600'}`}>Stuck 3d+</p>
+                      <p className={`text-xl lg:text-2xl font-black tabular ${stuckCount > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{stuckCount}</p>
+                    </div>
+                    <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5">
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Live Stages</p>
+                      <p className="text-xl lg:text-2xl font-black text-emerald-400 tabular flex items-center gap-1">
+                        {liveStages > 0 && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                        {liveStages}
                       </p>
-                      <p className="text-[10px] text-zinc-600">{daysLeft} day{daysLeft !== 1 ? 's' : ''} left</p>
                     </div>
-                  </div>
-                  <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${barColor}99, ${barColor})`, boxShadow: `0 0 12px ${barColor}60` }}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-1 text-[10px] text-zinc-600">
-                    <span>{pct.toFixed(0)}% of goal</span>
-                    <span>{pct >= 100 ? '🎉 Goal hit!' : `$${Math.max(0, goal - monthTotals.revenue) >= 1000 ? ((goal - monthTotals.revenue)/1000).toFixed(1)+'k' : Math.max(0, goal - monthTotals.revenue).toFixed(0)} to go`}</span>
+                    {topStage && (
+                      <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5 min-w-0">
+                        <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Heaviest</p>
+                        <p className="text-xs font-black truncate" style={{ color: (topStage as any).color }}>{(topStage as any).label}</p>
+                        <p className="text-[10px] text-zinc-500 tabular">{(topStage as any).count} job{(topStage as any).count !== 1 ? 's' : ''}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })()}
+          </div>
 
-            {/* ── Worker Leaderboard — hours this week ── */}
-            {dashWorkers.filter(w => w.isActive !== false && w.role !== 'admin').length > 0 && (() => {
-              const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
-              const weekStartMs = weekStart.getTime();
-              type WorkerRow = { id: string; name: string; hrs: number; jobs: number; active: boolean };
-              const leaderboard: WorkerRow[] = dashWorkers
-                .filter(w => w.isActive !== false && w.role !== 'admin')
-                .map(w => {
-                  const weekLogs = allLogs.filter(l => l.userId === w.id && l.startTime >= weekStartMs && !l.isSample);
-                  const runningMs = activeLogs.filter(l => l.userId === w.id).reduce((a, l) => {
-                    const pausedMs2 = (l.totalPausedMs || 0) + (l.pausedAt ? Date.now() - l.pausedAt : 0);
-                    return a + Math.max(0, Date.now() - l.startTime - pausedMs2);
-                  }, 0);
-                  const loggedMins = weekLogs.reduce((a, l) => {
-                    if (l.durationSeconds != null && l.durationSeconds >= 0) return a + l.durationSeconds / 60;
-                    return a + (l.durationMinutes || 0);
-                  }, 0);
-                  const totalHrs = (loggedMins + runningMs / 60000) / 60;
-                  const jobSet = new Set(weekLogs.map(l => l.jobId));
-                  const isActive = activeLogs.some(l => l.userId === w.id);
-                  return { id: w.id, name: w.name, hrs: totalHrs, jobs: jobSet.size, active: isActive };
-                })
-                .sort((a, b) => b.hrs - a.hrs);
-              const maxHrs = leaderboard[0]?.hrs || 1;
-              if (maxHrs < 0.1) return null; // no data yet
-              return (
-                <div className="card-shine bg-zinc-900/50 border border-white/5 rounded-2xl p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Award className="w-4 h-4 text-amber-400" />
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Worker Leaderboard</p>
-                    <span className="text-[10px] text-zinc-600 ml-auto">this week</span>
-                  </div>
-                  <div className="space-y-2.5">
-                    {leaderboard.map((w, i) => {
-                      const barPct2 = maxHrs > 0 ? (w.hrs / maxHrs) * 100 : 0;
-                      const hrsDisplay = w.hrs < 0.1 ? '< 6m' : w.hrs >= 1 ? `${w.hrs.toFixed(1)}h` : `${Math.round(w.hrs * 60)}m`;
-                      return (
-                        <div key={w.id}>
-                          <div className="flex items-center justify-between mb-1 gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-[10px] font-black text-zinc-700 w-4 text-center shrink-0">#{i+1}</span>
-                              <div className={`relative w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${w.active ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-500'}`}>
-                                {w.name.charAt(0).toUpperCase()}
-                                {w.active && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 border border-zinc-900" />}
-                              </div>
-                              <span className={`text-sm font-bold truncate ${i === 0 ? 'text-white' : 'text-zinc-400'}`}>{w.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              {w.jobs > 0 && <span className="text-[10px] text-zinc-600">{w.jobs} job{w.jobs !== 1 ? 's' : ''}</span>}
-                              <span className={`text-sm font-black tabular ${i === 0 ? 'text-amber-400' : 'text-zinc-500'}`}>{hrsDisplay}</span>
-                            </div>
-                          </div>
-                          <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden ml-10">
-                            <div
-                              className="h-full rounded-full transition-all duration-700"
-                              style={{
-                                width: `${barPct2}%`,
-                                background: i === 0 ? 'linear-gradient(90deg, #f59e0b99, #f59e0b)' : '#3f3f46',
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
+          {/* ── MONEY THIS MONTH — one set of numbers. Closed jobs use their locked
+              profit snapshot, open ones the same live rule as the Jobs page
+              (utils/jobBudget). Replaces six panels (KPI cards, P&L, leaderboard,
+              budget tracker, donut, revenue-vs-cost) that each did their own math. ── */}
+          {(shopSettings.shopRate || 0) > 0 && (() => {
+            const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+            const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0, 0, 0, 0);
+            const completedJobs = jobs.filter(j => j.status === 'completed');
+            const monthJobs = completedJobs.filter(j => (j.completedAt || 0) >= monthStart.getTime());
+            const total = (list: Job[]) => list.reduce((acc, j) => {
+              const m = moneyOf(j);
+              return { revenue: acc.revenue + m.revenue, cost: acc.cost + m.totalCost, hrs: acc.hrs + m.laborHours, jobs: acc.jobs + 1 };
+            }, { revenue: 0, cost: 0, hrs: 0, jobs: 0 });
+            const month = total(monthJobs);
+            const week = total(completedJobs.filter(j => (j.completedAt || 0) >= weekStart.getTime()));
+            const monthProfit = month.revenue - month.cost;
+            const monthMargin = month.revenue > 0 ? (monthProfit / month.revenue) * 100 : null;
+            const unquoted = monthJobs.filter(j => !(j.quoteAmount && j.quoteAmount > 0)).length;
+            const revPerHr = month.hrs > 0 ? month.revenue / month.hrs : 0;
+            const costPerHr = month.hrs > 0 ? month.cost / month.hrs : 0;
 
-            {/* Live Job Budget Tracker — Est. vs Actual */}
-            {activeJobsWithCosts.length > 0 && (() => {
-              const overBudget = activeJobsWithCosts.filter(j => j.remaining < 0).length;
-              const atRisk = activeJobsWithCosts.filter(j => j.remaining >= 0 && j.usedPct > 70).length;
-              const onTrack = activeJobsWithCosts.length - overBudget - atRisk;
-              return (
-              <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-5 overflow-hidden">
-                <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
-                  <div>
-                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Live Job Budget</h3>
-                    <p className="text-[11px] text-zinc-600 mt-0.5">Est. vs actual · {activeJobsWithCosts.length} active job{activeJobsWithCosts.length !== 1 ? 's' : ''}</p>
+            const budgetRows = jobs.filter(j => openBudgets.has(j.id))
+              .map(j => ({ job: j, b: openBudgets.get(j.id)! }))
+              .sort((a, b) => b.b.usedPct - a.b.usedPct)
+              .slice(0, 5);
+
+            const custMap = new Map<string, { revenue: number; cost: number }>();
+            monthJobs.forEach(j => {
+              const m = moneyOf(j);
+              const c = j.customer || 'Unknown';
+              const cur = custMap.get(c) || { revenue: 0, cost: 0 };
+              cur.revenue += m.revenue; cur.cost += m.totalCost;
+              custMap.set(c, cur);
+            });
+            const topCustomers = [...custMap.entries()].filter(([, d]) => d.revenue > 0).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 5);
+            const maxBar = topCustomers.reduce((m, [, d]) => Math.max(m, d.revenue, d.cost), 0) || 1;
+
+            const goal = shopSettings.monthlyRevenueGoal || 0;
+            const cards = [
+              { label: 'Revenue', value: fmtMoneyK(month.revenue), sub: 'quoted value of finished jobs', cls: 'text-emerald-400' },
+              { label: 'Costs', value: fmtMoneyK(month.cost), sub: `${month.hrs.toFixed(0)}h labor + overhead, material, POs`, cls: 'text-orange-400' },
+              { label: 'Profit', value: month.revenue > 0 ? fmtMoneySigned(monthProfit) : '—', sub: monthMargin !== null ? `${monthMargin.toFixed(0)}% margin` : 'No quoted jobs yet', cls: month.revenue <= 0 ? 'text-zinc-600' : monthProfit >= 0 ? 'text-emerald-400' : 'text-red-400' },
+              { label: '$ per hour', value: month.hrs > 0 ? `$${revPerHr.toFixed(0)}` : '—', sub: month.hrs > 0 ? `costs $${costPerHr.toFixed(0)}/hr` : 'No hours yet', cls: month.hrs > 0 ? 'text-amber-400' : 'text-zinc-600' },
+            ];
+
+            return (
+              <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-white text-sm flex items-center gap-2"><Calculator className="w-4 h-4 text-emerald-400" aria-hidden="true" /> Money this month</h3>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      {month.jobs} job{month.jobs !== 1 ? 's' : ''} finished
+                      {week.jobs > 0 && <> · this week {fmtMoneyK(week.revenue)} in, {fmtMoneySigned(week.revenue - week.cost)} profit</>}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {onTrack > 0 && <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">{onTrack} on track</span>}
-                    {atRisk > 0 && <span className="text-[10px] font-bold text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-2 py-1 rounded-full">{atRisk} at risk</span>}
-                    {overBudget > 0 && <span className="text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-full">{overBudget} over</span>}
-                  </div>
+                  {unquoted > 0 && (
+                    <span className="text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded-lg font-bold" title="Finished this month with no quote — they count as $0 revenue">
+                      {unquoted} with no quote
+                    </span>
+                  )}
                 </div>
-                <div className="space-y-3">
-                  {activeJobsWithCosts.map(j => {
-                    const barColor = j.usedPct > 100 ? '#ef4444' : j.usedPct > 90 ? '#f59e0b' : j.usedPct > 70 ? '#eab308' : '#10b981';
-                    const statusText = j.remaining < 0 ? 'OVER' : j.usedPct > 90 ? 'WARN' : j.usedPct > 70 ? 'RISK' : 'OK';
-                    const statusTint = j.remaining < 0 ? 'bg-red-500/10 text-red-400 border-red-500/20' : j.usedPct > 90 ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : j.usedPct > 70 ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                <div className="p-4 space-y-5">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {cards.map(c => (
+                      <div key={c.label} className="bg-zinc-950/40 border border-white/5 rounded-xl p-3 min-w-0">
+                        <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider truncate">{c.label}</p>
+                        <p className={`text-lg sm:text-2xl font-black tabular truncate ${c.cls}`}>{c.value}</p>
+                        <p className="text-[10px] text-zinc-600 truncate">{c.sub}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {goal > 0 && (() => {
+                    const pct = Math.min(100, (month.revenue / goal) * 100);
+                    const daysInMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+                    const day = new Date().getDate();
+                    const pace = (month.revenue / day) * daysInMonth;
+                    const color = pace >= goal ? '#10b981' : pace >= goal * 0.9 ? '#f59e0b' : '#ef4444';
                     return (
-                      <div key={j.id} className="group">
-                        <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className={`text-[9px] font-black uppercase tracking-widest border px-1.5 py-0.5 rounded ${statusTint} tabular shrink-0`}>{statusText}</span>
-                            <span className="text-sm font-bold text-white truncate">{j.poNumber}</span>
-                            <span className="text-[11px] text-zinc-500 font-mono truncate hidden sm:inline">{j.partNumber}</span>
-                          </div>
-                          <div className="flex items-center gap-2 sm:gap-3 text-[11px] font-mono tabular shrink-0">
-                            <span className="text-zinc-500">Spent <span className="text-orange-400 font-bold">{fmtMoneyK(j.cost)}</span></span>
-                            <span className="text-zinc-700">/</span>
-                            <span className="text-zinc-500">Budget <span className="text-zinc-300 font-bold">{fmtMoneyK(j.quoteAmount || 0)}</span></span>
-                            <span className={`font-black px-1.5 py-0.5 rounded text-[10px] ${j.remaining >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                              {fmtMoneySigned(j.remaining)}
-                            </span>
-                          </div>
+                      <div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] mb-1.5 flex-wrap">
+                          <span className="font-bold text-zinc-400">Monthly goal {fmtMoneyK(goal)} · {pct.toFixed(0)}%</span>
+                          <span className="text-zinc-500 tabular">on pace for <span className="font-black" style={{ color }}>{fmtMoneyK(pace)}</span> · {daysInMonth - day}d left</span>
                         </div>
-                        <div className="relative h-2 bg-zinc-800/60 rounded-full overflow-hidden">
-                          {/* 100% marker */}
-                          <div aria-hidden="true" className="absolute inset-y-0 w-[1px] bg-white/10" style={{ left: '100%' }} />
-                          <div
-                            className="h-full rounded-full transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{
-                              width: `${Math.min(100, j.usedPct)}%`,
-                              background: `linear-gradient(90deg, ${barColor}AA, ${barColor})`,
-                              boxShadow: `0 0 8px ${barColor}80`,
-                            }}
-                          />
-                          {/* Over-budget overflow indicator */}
-                          {j.usedPct > 100 && (
-                            <div aria-hidden="true" className="absolute inset-y-0 right-0 w-[4px] bg-red-500 rounded-r-full animate-pulse" style={{ boxShadow: '0 0 10px #ef4444' }} />
+                        <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: color }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {budgetRows.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Open jobs — how much of the quote is used</p>
+                      <div className="space-y-2.5">
+                        {budgetRows.map(({ job: j, b }) => {
+                          const color = b.overBudget ? '#ef4444' : b.atRisk ? '#eab308' : '#10b981';
+                          return (
+                            <div key={j.id}>
+                              <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
+                                <span className="min-w-0 truncate">
+                                  <span className="font-bold text-white text-sm">{j.poNumber}</span>
+                                  {j.partNumber && <span className="text-zinc-500 font-mono ml-2 hidden sm:inline">{j.partNumber}</span>}
+                                </span>
+                                <span className="shrink-0 font-mono tabular text-zinc-500">
+                                  {fmtMoneyK(b.cost)} of {fmtMoneyK(b.quote)} · <span className="font-black" style={{ color }}>{b.overBudget ? `${fmtMoneyK(-b.remaining)} over` : `${b.usedPct.toFixed(0)}%`}</span>
+                                </span>
+                              </div>
+                              <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(100, b.usedPct)}%`, background: color }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {topCustomers.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">By customer — this month</p>
+                        <p className="text-[10px] text-zinc-600 flex items-center gap-2">
+                          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500/70" /> revenue</span>
+                          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400/80" /> cost</span>
+                        </p>
+                      </div>
+                      <div className="space-y-2.5">
+                        {topCustomers.map(([cust, d]) => {
+                          const profit = d.revenue - d.cost;
+                          return (
+                            <div key={cust}>
+                              <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
+                                <span className="text-xs font-bold text-zinc-200 truncate">{cust}</span>
+                                <span className="shrink-0 font-mono tabular text-zinc-500">
+                                  {fmtMoneyK(d.revenue)} in · <span className={`font-black ${profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtMoneySigned(profit)}</span>
+                                </span>
+                              </div>
+                              <div className="relative h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/70" style={{ width: `${(d.revenue / maxBar) * 100}%` }} />
+                                <div className="absolute inset-y-0 left-0 rounded-full bg-orange-400/80" style={{ width: `${(d.cost / maxBar) * 100}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── WORKER PERFORMANCE — who's producing, efficiency index, on-time rate ── */}
+          {(() => {
+            if (dashWorkers.length === 0 || allLogs.length === 0) return null;
+            const thirtyDaysAgo = Date.now() - 30 * 86400000;
+            const rate = shopSettings.shopRate || 0;
+
+            interface WStats { id: string; name: string; jobsDone: number; totalMins: number; onTime: number; late: number; activeMinsToday: number; workerRate: number; }
+
+            const statMap = new Map<string, WStats>();
+            for (const w of dashWorkers) {
+              if ((w as any).role === 'admin') continue;
+              const wLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= thirtyDaysAgo);
+              if (wLogs.length === 0) continue;
+              const totalMins = wLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
+              const jobIds = new Set(wLogs.map(l => l.jobId));
+              const otW = onTimeRate(jobs.filter(j => j.status === 'completed' && jobIds.has(j.id)));
+              const onTime = otW.onTime;
+              const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+              const todayLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= todayStart.getTime());
+              const activeMinsToday = todayLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
+              statMap.set(w.id, { id: w.id, name: w.name, jobsDone: jobIds.size, totalMins, onTime, late: otW.judged - onTime, activeMinsToday, workerRate: (w as any).hourlyRate || rate });
+            }
+            const workers30 = [...statMap.values()].sort((a, b) => b.totalMins - a.totalMins);
+            if (workers30.length === 0) return null;
+            const maxMins = workers30[0].totalMins || 1;
+
+            return (
+              <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
+                <div className="flex items-center justify-between mb-4 gap-3">
+                  <div>
+                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Award className="w-3.5 h-3.5 text-amber-400" /> Worker Performance</h3>
+                    <p className="text-[11px] text-zinc-600 mt-0.5">Rolling 30 days · hours logged per operator</p>
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  {workers30.map((w, i) => {
+                    const hrs = w.totalMins / 60;
+                    const barPct = (w.totalMins / maxMins) * 100;
+                    const onTimePctW = (w.onTime + w.late) > 0 ? Math.round((w.onTime / (w.onTime + w.late)) * 100) : null;
+                    const todayHrs = w.activeMinsToday / 60;
+                    return (
+                      <div key={w.id} className="flex items-center gap-3">
+                        <span className="text-[10px] font-black w-5 text-center shrink-0 text-zinc-600">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`}</span>
+                        <span className="text-sm font-bold text-white w-24 sm:w-28 truncate shrink-0">{w.name.split(' ')[0]}</span>
+                        <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden min-w-0">
+                          <div className={`h-full rounded-full transition-all duration-700 ${i === 0 ? 'bg-amber-400' : 'bg-blue-500/70'}`} style={{ width: `${barPct}%` }} />
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 text-[11px]">
+                          <span className="font-black text-white tabular">{hrs.toFixed(1)}h</span>
+                          {onTimePctW !== null && (
+                            <span className={`font-bold px-1.5 py-0.5 rounded border text-[10px] ${onTimePctW >= 90 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : onTimePctW >= 70 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20'}`}>{onTimePctW}% OT</span>
                           )}
-                        </div>
-                        <div className="flex items-center justify-between text-[9px] font-mono tabular text-zinc-600 mt-0.5 px-0.5">
-                          <span>{j.usedPct.toFixed(0)}% used</span>
-                          <span>{(100 - Math.min(100, j.usedPct)).toFixed(0)}% remaining</span>
+                          {todayHrs > 0 && <span className="text-emerald-400 font-bold text-[10px] hidden sm:inline">{todayHrs.toFixed(1)}h today</span>}
                         </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
-              );
-            })()}
+            );
+          })()}
 
-            {/* Top Customers — Redesigned Premium Charts */}
-            {topCustomers.length > 0 && (() => {
-              // Premium palette — cohesive, WCAG-safe saturation
-              const CUST_COLORS = ['#3b82f6', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#f43f5e'];
-              const custChartData = topCustomers.map(([cust, data], i) => ({
-                name: fmtShortName(cust),
-                fullName: cust,
-                revenue: data.revenue,
-                cost: Math.round(data.cost),
-                profit: Math.round(data.revenue - data.cost),
-                margin: data.revenue > 0 ? parseFloat(((data.revenue - data.cost) / data.revenue * 100).toFixed(0)) : 0,
-                color: CUST_COLORS[i % CUST_COLORS.length],
-              }));
-              const totalCustRev = custChartData.reduce((a, d) => a + d.revenue, 0);
-              const totalCustCost = custChartData.reduce((a, d) => a + d.cost, 0);
-              const totalCustProfit = totalCustRev - totalCustCost;
-              const maxBarVal = custChartData.reduce((m, x) => Math.max(m, x.revenue, x.cost), 0) || 1;
-              const topCust = custChartData[0];
-
-              return (
-                <>
-                {/* ────────── Donut: Top Customers ────────── */}
-                {(() => {
-                  const activeCust = hoveredCustIdx !== null ? custChartData[hoveredCustIdx] : topCust;
-                  const activeIsLeader = hoveredCustIdx === null;
-                  const activePct = totalCustRev > 0 && activeCust ? ((activeCust.revenue / totalCustRev) * 100).toFixed(0) : '0';
-                  return (
-                <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden">
-                  <div className="flex items-start justify-between mb-4 gap-3">
-                    <div>
-                      <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Revenue Mix</h3>
-                      <p className="text-[11px] text-zinc-600 mt-0.5">Top {custChartData.length} customers · this month</p>
-                    </div>
-                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full whitespace-nowrap">
-                      {fmtMoneyK(totalCustRev)} total
-                    </span>
+          {/* ── QUOTE RESULTS — did the quotes cover the real cost? Same cost rule and
+              margin grades as the job profit cards (great/good ≥ 15%, tight ≥ 0%).
+              It used to compare hours × shop rate to the quote, so a healthy 30%
+              margin read as "overquoted — leaving money on the table". ── */}
+          {(() => {
+            if ((shopSettings.shopRate || 0) === 0) return null;
+            const done = jobs.filter(j =>
+              j.status === 'completed' && (j.quoteAmount || 0) > 0 && j.completedAt && j.completedAt > Date.now() - 90 * 86400000
+            );
+            if (done.length < 3) return null;
+            const margins = done.map(j => { const m = moneyOf(j); return m.revenue > 0 ? (m.profit / m.revenue) * 100 : 0; });
+            const avg = margins.reduce((a, x) => a + x, 0) / margins.length;
+            const healthy = margins.filter(x => x >= 15).length;
+            const thin = margins.filter(x => x >= 0 && x < 15).length;
+            const lost = margins.filter(x => x < 0).length;
+            const color = avg >= 15 ? 'text-emerald-400' : avg >= 0 ? 'text-amber-400' : 'text-red-400';
+            const label = avg >= 15 ? 'Quotes are covering costs' : avg >= 0 ? 'Margins are thin' : 'Jobs are losing money';
+            return (
+              <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
+                <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp className="w-3.5 h-3.5 text-amber-400" /> Quote Results</h3>
+                    <p className="text-[11px] text-zinc-600 mt-0.5">{done.length} finished jobs with a quote · last 90 days</p>
                   </div>
-
-                  {/* Donut chart */}
-                  <div className="relative" onMouseLeave={() => setHoveredCustIdx(null)}>
-                    <React.Suspense fallback={<div style={{ height: isMobile ? 220 : 260 }} />}>
-                      <RevenueDonut data={custChartData} isMobile={isMobile} hoveredIdx={hoveredCustIdx} onHover={setHoveredCustIdx} />
-                    </React.Suspense>
-
-                    {/* Center label — dynamic with hover */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-4">
-                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em]">
-                        {activeIsLeader ? 'Leader' : 'Customer'}
-                      </p>
-                      <p className="text-[11px] font-bold text-zinc-300 truncate max-w-[150px] text-center mt-0.5" style={{ color: activeCust?.color }}>
-                        {activeCust?.fullName}
-                      </p>
-                      <p className="text-xl sm:text-2xl font-black text-white tabular mt-1 leading-none" style={{ textShadow: `0 0 24px ${activeCust?.color || '#3b82f6'}40` }}>
-                        {fmtMoneyK(activeCust?.revenue || 0)}
-                      </p>
-                      <p className="text-[10px] font-mono text-zinc-500 tabular mt-1">{activePct}% share</p>
-                    </div>
-                  </div>
-
-                  {/* Ranked legend */}
-                  <div className="mt-5 space-y-2" onMouseLeave={() => setHoveredCustIdx(null)}>
-                    {custChartData.map((d, i) => {
-                      const pct = totalCustRev > 0 ? (d.revenue / totalCustRev) * 100 : 0;
-                      const isActive = hoveredCustIdx === i;
-                      return (
-                        <button
-                          key={d.name}
-                          type="button"
-                          onMouseEnter={() => setHoveredCustIdx(i)}
-                          onFocus={() => setHoveredCustIdx(i)}
-                          onBlur={() => setHoveredCustIdx(null)}
-                          aria-label={`${d.fullName}: $${d.revenue.toLocaleString()} revenue, ${pct.toFixed(0)}% share`}
-                          className={`w-full flex items-center gap-2 sm:gap-3 px-2 py-1.5 rounded-lg transition-colors ${isActive ? 'bg-white/5' : 'hover:bg-white/[0.03]'}`}
-                        >
-                          <span className="w-4 text-center text-[10px] font-black text-zinc-600 tabular shrink-0">{i+1}</span>
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color, boxShadow: isActive ? `0 0 10px ${d.color}` : `0 0 4px ${d.color}80` }} />
-                          <span className={`flex-1 text-xs font-semibold truncate text-left transition-colors ${isActive ? 'text-white' : 'text-zinc-300'}`}>{d.fullName}</span>
-                          <div className="relative w-10 sm:w-20 h-1.5 rounded-full bg-zinc-800 overflow-hidden shrink-0">
-                            <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]" style={{ width: `${pct}%`, background: d.color, boxShadow: `0 0 6px ${d.color}80` }} />
-                          </div>
-                          <span className="text-[11px] font-mono font-bold text-zinc-200 tabular text-right shrink-0 w-[52px]">{fmtMoneyK(d.revenue)}</span>
-                          <span className="text-[10px] font-mono text-zinc-500 tabular text-right shrink-0 w-8">{pct.toFixed(0)}%</span>
-                        </button>
-                      );
-                    })}
+                  <div className="text-right">
+                    <p className={`text-xl font-black tabular ${color}`}>{avg.toFixed(0)}% <span className="text-[11px] font-bold">avg margin</span></p>
+                    <p className={`text-[10px] font-bold ${color}`}>{label}</p>
                   </div>
                 </div>
-                  );
-                })()}
-
-                {/* ────────── Horizontal Bar: Revenue vs Cost ────────── */}
-                <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-3xl p-4 sm:p-6 overflow-hidden">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Revenue vs Cost</h3>
-                      <p className="text-[11px] text-zinc-600 mt-0.5">Profit per customer</p>
-                    </div>
-                    <span className={`text-[10px] font-bold border px-2 py-1 rounded-full ${totalCustProfit >= 0 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20'}`}>
-                      {fmtMoneySigned(totalCustProfit)} net
-                    </span>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-black text-emerald-400">{healthy}</p>
+                    <p className="text-[10px] font-bold text-emerald-400/70 uppercase tracking-wide mt-0.5">15%+ margin</p>
                   </div>
-
-                  <div className="space-y-4">
-                    {custChartData.map((d, i) => {
-                      const revPct = (d.revenue / maxBarVal) * 100;
-                      const costPct = (d.cost / maxBarVal) * 100;
-                      const profitable = d.profit >= 0;
-                      return (
-                        <div key={d.name} className="group">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: d.color, boxShadow: `0 0 6px ${d.color}80` }} />
-                              <span className="text-xs font-bold text-zinc-200 truncate">{d.fullName}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] font-mono tabular shrink-0">
-                              <span className={`font-black ${profitable ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {fmtMoneySigned(d.profit)}
-                              </span>
-                              <span className={`text-[9px] px-1.5 py-0.5 rounded ${profitable ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                                {d.margin}%
-                              </span>
-                            </div>
-                          </div>
-                          {/* Revenue bar */}
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest w-10">REV</span>
-                            <div className="relative flex-1 h-2.5 rounded-full bg-zinc-800/60 overflow-hidden">
-                              <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                                style={{ width: `${revPct}%`, background: `linear-gradient(90deg, ${d.color}, ${d.color}DD)`, boxShadow: `0 0 10px ${d.color}60` }} />
-                            </div>
-                            <span className="text-[10px] font-mono font-bold text-zinc-200 tabular w-14 text-right">{fmtMoneyK(d.revenue)}</span>
-                          </div>
-                          {/* Cost bar */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest w-10">COST</span>
-                            <div className="relative flex-1 h-2.5 rounded-full bg-zinc-800/60 overflow-hidden">
-                              <div className="absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                                style={{ width: `${costPct}%`, background: 'linear-gradient(90deg, #f59e0b, #f59e0bBB)', boxShadow: '0 0 8px rgba(245,158,11,0.4)' }} />
-                            </div>
-                            <span className="text-[10px] font-mono font-bold text-zinc-400 tabular w-14 text-right">{fmtMoneyK(d.cost)}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-black text-amber-400">{thin}</p>
+                    <p className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wide mt-0.5">Thin (0–15%)</p>
                   </div>
-
-                  {/* Footer summary */}
-                  <div className="mt-5 pt-4 border-t border-white/5 grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Revenue</p>
-                      <p className="text-sm font-black text-white tabular mt-0.5">{fmtMoneyK(totalCustRev)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Cost</p>
-                      <p className="text-sm font-black text-amber-400 tabular mt-0.5">{fmtMoneyK(totalCustCost)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Profit</p>
-                      <p className={`text-sm font-black tabular mt-0.5 ${totalCustProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {fmtMoneySigned(totalCustProfit)}
-                      </p>
-                    </div>
+                  <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-black text-red-400">{lost}</p>
+                    <p className="text-[10px] font-bold text-red-400/70 uppercase tracking-wide mt-0.5">Lost money</p>
                   </div>
                 </div>
-                </>
-              );
-            })()}
-          </div>
-        );
-      })()}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-white/5 flex items-center justify-between">
-            <h3 className="font-bold text-white flex items-center gap-2"><Activity className="w-4 h-4 text-emerald-500" /> Live Operations</h3>
-            {activeLogs.length > 0 && (
-              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> {activeLogs.length} ACTIVE
-              </span>
-            )}
-          </div>
-          <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[420px]">
-            {activeLogs.length === 0 && (
-              <div className="p-12 text-center">
-                <div className="w-14 h-14 mx-auto rounded-2xl bg-zinc-800/60 flex items-center justify-center mb-3">
-                  <Activity className="w-6 h-6 text-zinc-600" />
-                </div>
-                <p className="text-zinc-400 font-semibold">Floor is quiet</p>
-                <p className="text-zinc-600 text-xs mt-1">No active timers right now.</p>
-              </div>
-            )}
-            {activeLogs.map(l => {
-              const liveJob = jobs.find(j => j.id === l.jobId);
-              return (
-              <div key={l.id} className="p-3 sm:p-4 hover:bg-white/5 transition-colors group">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Avatar name={l.userName} size="md" ring dot={l.pausedAt ? 'paused' : 'live'} />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-white text-sm truncate">{l.userName}</p>
-                    <p className="text-xs text-amber-400 font-semibold truncate">{l.operation}</p>
-                    {liveJob && (
-                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                        <span className="text-[10px] font-black text-white/60 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono">PO {liveJob.poNumber}</span>
-                        {liveJob.partNumber && <span className="text-[10px] text-zinc-500 truncate max-w-[120px]">{liveJob.partNumber}</span>}
-                        {liveJob.customer && <span className="text-[10px] font-bold text-zinc-400 truncate max-w-[100px]">{liveJob.customer}</span>}
-                        <span className="text-[10px] text-zinc-600">{liveJob.quantity} pc</span>
-                      </div>
-                    )}
+                {lost > 0 && (
+                  <div className="mt-3 flex items-start gap-2 bg-red-500/8 border border-red-500/20 rounded-xl px-3 py-2.5">
+                    <TrendingDown className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-red-300/80">{lost} job{lost > 1 ? 's' : ''} cost more than quoted. Consider raising the price on those parts or tracking setup time separately.</p>
                   </div>
-                  <button
-                    aria-label={`Force stop ${l.userName}'s timer`}
-                    onClick={() => confirmAction({ title: 'Force Stop', message: 'Stop this timer?', onConfirm: () => DB.stopTimeLog(l.id, undefined, undefined, undefined, 'admin:force-stop') })}
-                    className="bg-red-500/10 text-red-500 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors opacity-60 group-hover:opacity-100 shrink-0"
-                    title="Force stop"
-                  >
-                    <Power className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="mt-2 text-white text-2xl sm:text-3xl font-black font-mono tabular-nums text-center sm:text-right tracking-tight">
-                  <LiveTimer startTime={l.startTime} pausedAt={l.pausedAt} totalPausedMs={l.totalPausedMs} />
-                </div>
-              </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="bg-zinc-900/50 border border-white/5 rounded-3xl overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-white/5 flex justify-between items-center">
-            <h3 className="font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-amber-500" /> Recent Completed</h3>
-            <button onClick={() => setView('admin-logs')} className="text-xs font-semibold text-amber-400 hover:text-white transition-colors flex items-center gap-1">View All <ChevronRight className="w-3 h-3" /></button>
-          </div>
-          <div className="divide-y divide-white/5 flex-1 overflow-y-auto max-h-[420px]">
-            {logs.length === 0 && (
-              <div className="p-12 text-center">
-                <div className="w-14 h-14 mx-auto rounded-2xl bg-zinc-800/60 flex items-center justify-center mb-3">
-                  <History className="w-6 h-6 text-zinc-600" />
-                </div>
-                <p className="text-zinc-400 font-semibold">No recent history</p>
-                <p className="text-zinc-600 text-xs mt-1">Completed operations show up here.</p>
-              </div>
-            )}
-            {logs.map(l => (
-              <div key={l.id} className="p-4 flex items-start gap-3 hover:bg-white/5 transition-colors">
-                <Avatar name={l.userName} size="sm" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white"><span className="font-bold">{l.userName}</span> <span className="text-zinc-600">—</span> <span className="text-zinc-300">{l.operation}</span></p>
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    <span className="text-zinc-400 font-mono text-[11px] font-bold">{l.jobIdsDisplay || l.jobId}</span>
-                    {l.partNumber && <span className="text-[10px] text-zinc-500 bg-zinc-800 border border-white/5 px-1.5 py-0.5 rounded">{l.partNumber}</span>}
-                    <span className="text-[10px] text-zinc-600">{new Date(l.endTime!).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
-                  </div>
-                  {l.notes && (
-                    <div className="mt-1.5 bg-amber-500/5 border border-amber-500/20 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
-                      <span className="text-amber-500 text-[10px]">📝</span>
-                      <span className="text-amber-300/90 text-xs leading-tight">{l.notes}</span>
-                    </div>
-                  )}
-                </div>
-                {(l.durationSeconds != null ? l.durationSeconds >= 0 : l.durationMinutes != null) && (
-                  <div className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded shrink-0 font-bold">{formatDuration(l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0))}</div>
                 )}
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
+            );
+          })()}
 
-      {/* ── WORKER PERFORMANCE — who's producing, efficiency index, on-time rate ── */}
-      {(() => {
-        if (dashWorkers.length === 0 || allLogs.length === 0) return null;
-        const thirtyDaysAgo = Date.now() - 30 * 86400000;
-        const rate = shopSettings.shopRate || 0;
-
-        interface WStats { id: string; name: string; jobsDone: number; totalMins: number; onTime: number; late: number; activeMinsToday: number; workerRate: number; }
-
-        const statMap = new Map<string, WStats>();
-        for (const w of dashWorkers) {
-          if ((w as any).role === 'admin') continue;
-          const wLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= thirtyDaysAgo);
-          if (wLogs.length === 0) continue;
-          const totalMins = wLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-          const jobIds = new Set(wLogs.map(l => l.jobId));
-          const otW = onTimeRate(jobs.filter(j => j.status === 'completed' && jobIds.has(j.id)));
-          const onTime = otW.onTime;
-          const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-          const todayLogs = allLogs.filter(l => l.userId === w.id && l.endTime && l.startTime >= todayStart.getTime());
-          const activeMinsToday = todayLogs.reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-          statMap.set(w.id, { id: w.id, name: w.name, jobsDone: jobIds.size, totalMins, onTime, late: otW.judged - onTime, activeMinsToday, workerRate: (w as any).hourlyRate || rate });
-        }
-        const workers30 = [...statMap.values()].sort((a, b) => b.totalMins - a.totalMins);
-        if (workers30.length === 0) return null;
-        const maxMins = workers30[0].totalMins || 1;
-
-        return (
-          <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-4 gap-3">
-              <div>
-                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Award className="w-3.5 h-3.5 text-amber-400" /> Worker Performance</h3>
-                <p className="text-[11px] text-zinc-600 mt-0.5">Rolling 30 days · hours logged per operator</p>
-              </div>
-            </div>
-            <div className="space-y-2.5">
-              {workers30.map((w, i) => {
-                const hrs = w.totalMins / 60;
-                const barPct = (w.totalMins / maxMins) * 100;
-                const onTimePctW = (w.onTime + w.late) > 0 ? Math.round((w.onTime / (w.onTime + w.late)) * 100) : null;
-                const todayHrs = w.activeMinsToday / 60;
-                return (
-                  <div key={w.id} className="flex items-center gap-3">
-                    <span className="text-[10px] font-black w-5 text-center shrink-0 text-zinc-600">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`}</span>
-                    <span className="text-sm font-bold text-white w-24 sm:w-28 truncate shrink-0">{w.name.split(' ')[0]}</span>
-                    <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden min-w-0">
-                      <div className={`h-full rounded-full transition-all duration-700 ${i === 0 ? 'bg-amber-400' : 'bg-blue-500/70'}`} style={{ width: `${barPct}%` }} />
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0 text-[11px]">
-                      <span className="font-black text-white tabular">{hrs.toFixed(1)}h</span>
-                      {onTimePctW !== null && (
-                        <span className={`font-bold px-1.5 py-0.5 rounded border text-[10px] ${onTimePctW >= 90 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : onTimePctW >= 70 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20'}`}>{onTimePctW}% OT</span>
-                      )}
-                      {todayHrs > 0 && <span className="text-emerald-400 font-bold text-[10px] hidden sm:inline">{todayHrs.toFixed(1)}h today</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ── QUOTE ACCURACY — are your quotes hitting actual cost? ── */}
-      {(() => {
-        if ((shopSettings.shopRate || 0) === 0) return null;
-        const rate = shopSettings.shopRate!;
-        const completedWithQuote = jobs.filter(j =>
-          j.status === 'completed' && (j.quoteAmount || 0) > 0 && j.completedAt && j.completedAt > Date.now() - 90 * 86400000
-        );
-        if (completedWithQuote.length < 3) return null;
-        const accuracy = completedWithQuote.map(j => {
-          const mins = allLogs.filter(l => l.jobId === j.id && l.endTime).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-          const actualCost = (mins / 60) * rate;
-          return ((actualCost - j.quoteAmount!) / j.quoteAmount!) * 100;
-        });
-        const avgDrift = accuracy.length > 0 ? accuracy.reduce((a, x) => a + x, 0) / accuracy.length : 0;
-        const overQuoted = accuracy.filter(x => x < -10).length;
-        const underQuoted = accuracy.filter(x => x > 10).length;
-        const accurate = accuracy.length - overQuoted - underQuoted;
-        const driftColor = Math.abs(avgDrift) <= 10 ? 'text-emerald-400' : avgDrift > 10 ? 'text-red-400' : 'text-amber-400';
-        const driftLabel = Math.abs(avgDrift) <= 10 ? 'Quotes are accurate' : avgDrift > 10 ? 'Jobs costing more than quoted' : 'Leaving money on the table';
-        return (
-          <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-              <div>
-                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp className="w-3.5 h-3.5 text-amber-400" /> Quote Accuracy</h3>
-                <p className="text-[11px] text-zinc-600 mt-0.5">{completedWithQuote.length} jobs with quotes · last 90 days</p>
-              </div>
-              <div className="text-right">
-                <p className={`text-xl font-black tabular ${driftColor}`}>{avgDrift > 0 ? '+' : ''}{avgDrift.toFixed(1)}%</p>
-                <p className={`text-[10px] font-bold ${driftColor}`}>{driftLabel}</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-3 text-center">
-                <p className="text-2xl font-black text-emerald-400">{accurate}</p>
-                <p className="text-[10px] font-bold text-emerald-400/70 uppercase tracking-wide mt-0.5">Within 10%</p>
-              </div>
-              <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-3 text-center">
-                <p className="text-2xl font-black text-amber-400">{overQuoted}</p>
-                <p className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wide mt-0.5">Overquoted</p>
-              </div>
-              <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-3 text-center">
-                <p className="text-2xl font-black text-red-400">{underQuoted}</p>
-                <p className="text-[10px] font-bold text-red-400/70 uppercase tracking-wide mt-0.5">Underquoted</p>
-              </div>
-            </div>
-            {underQuoted > 0 && (
-              <div className="mt-3 flex items-start gap-2 bg-red-500/8 border border-red-500/20 rounded-xl px-3 py-2.5">
-                <TrendingDown className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-red-300/80">{underQuoted} job{underQuoted > 1 ? 's' : ''} cost more than quoted. Consider raising rates or tracking setup time separately.</p>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* ── RECENT ACTIVITY FEED — cross-module chronological event log ── */}
-      {recentActivity.length > 0 && (
-        <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
-          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <div>
-              <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                <Activity className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Recent Activity
-              </h3>
-              <p className="text-[11px] text-zinc-600 mt-0.5">Last 72 h across jobs, quotes, POs &amp; quality</p>
-            </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-zinc-500">
-              {recentActivity.length} event{recentActivity.length !== 1 ? 's' : ''}
-            </span>
-          </div>
-          <div className="divide-y divide-white/[0.04]">
-            {recentActivity.map(evt => {
-              const diff = Date.now() - evt.ts;
-              const rel = diff < 60000 ? 'just now'
-                : diff < 3600000 ? `${Math.floor(diff / 60000)}m ago`
-                : diff < 86400000 ? `${Math.floor(diff / 3600000)}h ago`
-                : diff < 172800000 ? 'yesterday'
-                : new Date(evt.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-              return (
-                <div key={evt.id} className="flex items-center gap-3 py-2 px-1 hover:bg-white/[0.025] rounded-lg transition-colors">
-                  <div className={`w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 ${evt.iconCls}`}>
-                    {evt.iconEl}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[12px] font-semibold text-white/90 leading-tight truncate">{evt.text}</p>
-                    {evt.sub && <p className="text-[10px] text-zinc-500 truncate leading-tight mt-0.5">{evt.sub}</p>}
-                  </div>
-                  <div className="text-right shrink-0 ml-2">
-                    {evt.value && <p className={`text-[11px] font-black leading-tight ${evt.valueCls || 'text-zinc-400'}`}>{evt.value}</p>}
-                    <p className="text-[10px] text-zinc-600 leading-tight">{rel}</p>
-                  </div>
+          {/* ── RECENT ACTIVITY FEED — cross-module chronological event log ── */}
+          {recentActivity.length > 0 && (
+            <div className="card-shine hover-lift-glow bg-gradient-to-br from-zinc-900/60 to-zinc-900/30 border border-white/5 rounded-2xl p-4 sm:p-5">
+              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                    <Activity className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Recent Activity
+                  </h3>
+                  <p className="text-[11px] text-zinc-600 mt-0.5">Last 72 h across jobs, quotes, POs &amp; quality</p>
                 </div>
-              );
-            })}
-          </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-zinc-500">
+                  {recentActivity.length} event{recentActivity.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="divide-y divide-white/[0.04]">
+                {recentActivity.map(evt => {
+                  const diff = Date.now() - evt.ts;
+                  const rel = diff < 60000 ? 'just now'
+                    : diff < 3600000 ? `${Math.floor(diff / 60000)}m ago`
+                    : diff < 86400000 ? `${Math.floor(diff / 3600000)}h ago`
+                    : diff < 172800000 ? 'yesterday'
+                    : new Date(evt.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  return (
+                    <div key={evt.id} className="flex items-center gap-3 py-2 px-1 hover:bg-white/[0.025] rounded-lg transition-colors">
+                      <div className={`w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 ${evt.iconCls}`}>
+                        {evt.iconEl}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-semibold text-white/90 leading-tight truncate">{evt.text}</p>
+                        {evt.sub && <p className="text-[10px] text-zinc-500 truncate leading-tight mt-0.5">{evt.sub}</p>}
+                      </div>
+                      <div className="text-right shrink-0 ml-2">
+                        {evt.value && <p className={`text-[11px] font-black leading-tight ${evt.valueCls || 'text-zinc-400'}`}>{evt.value}</p>}
+                        <p className="text-[10px] text-zinc-600 leading-tight">{rel}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Nothing open → the panel lives here, where new actions get added */}
+          {!hasOpenActions && (
+            <ShopActionsPanel actions={dashActions} users={dashWorkers} currentUserName={user?.name} addToast={addToast} />
+          )}
         </div>
       )}
 
@@ -4611,6 +4178,8 @@ const AdminDashboard = ({ user, confirmAction, setView, addToast }: any) => {
 // --- PRIORITY BADGE ---
 const PriorityBadge = ({ priority }: { priority?: string }) => {
   const p = priority || 'normal';
+  // Most jobs are normal — a grey NORMAL pill on every row was just noise.
+  if (p === 'normal') return <span className="text-zinc-700 text-xs" aria-label="Normal priority">—</span>;
   const styles: Record<string, string> = {
     low: 'text-zinc-600 bg-zinc-800/50 border-white/5',
     normal: 'text-zinc-500 bg-zinc-800/30 border-white/5',
@@ -5329,18 +4898,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   }, [jobEtaMap, workers, activeLogs]);
 
   // Budget map: per-job { usedPct, overBudget, atRisk }
+  // Same rule as the dashboard (utils/jobBudget) — open jobs only; a finished
+  // job's result is its profit card, not a budget warning.
   const jobBudgetMap = useMemo(() => {
-    const rate = shopSettings.shopRate || 0;
-    const m = new Map<string, { usedPct: number; overBudget: boolean; atRisk: boolean; cost: number }>();
-    if (!rate) return m;
-    jobs.filter(j => j.quoteAmount && j.quoteAmount > 0).forEach(j => {
-      const totalMins = allLogs.filter(l => l.jobId === j.id).reduce((a, l) => a + (l.durationSeconds != null && l.durationSeconds >= 0 ? l.durationSeconds / 60 : (l.durationMinutes || 0)), 0);
-      const cost = (totalMins / 60) * rate;
-      const usedPct = Math.min(999, (cost / j.quoteAmount!) * 100);
-      m.set(j.id, { usedPct, overBudget: cost > j.quoteAmount!, atRisk: usedPct >= 70 && cost <= j.quoteAmount!, cost });
-    });
-    return m;
-  }, [jobs, allLogs, shopSettings.shopRate]);
+    if (!(shopSettings.shopRate || 0)) return new Map<string, JobBudget>();
+    return jobBudgets(jobs.filter(j => !isJobClosed(j)), groupLogsByJob(allLogs), allUsers, shopSettings, allPOs);
+  }, [jobs, allLogs, allUsers, shopSettings, allPOs]);
 
   // Smart job memory: same customer + part number → full history
   const priceSuggestion = useMemo(() => {
@@ -6266,7 +5829,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               <th className="p-2 sm:p-4">PO / Job</th>
               <th className="p-3 sm:p-4 hidden md:table-cell">Part Details</th>
               <th className="p-3 sm:p-4 hidden sm:table-cell">Qty</th>
-              <th className="p-3 sm:p-4 hidden lg:table-cell">Priority</th>
               <th className="p-3 sm:p-4 hidden md:table-cell">Status</th>
               <th className="p-2 sm:p-4">Due</th>
               <th className="p-1.5 sm:p-4 text-right">Actions</th>
@@ -6337,18 +5899,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </td>
                   <td className="p-2 sm:p-4">
                     <div className="flex items-start gap-2.5">
-                      {/* Part Photo thumbnail — always visible (mobile + desktop).
+                      {/* Part Photo thumbnail — phones/tablets only; from md up the
+                          Part Details column has it (two camera slots per row before).
                           Tap to enlarge. Camera icon placeholder → tap to add. */}
                       {j.partImage ? (
                         <img
                           src={j.partImage}
                           alt={`${j.partNumber} reference`}
-                          className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg object-cover border border-white/10 hover:border-cyan-500/60 transition-all flex-shrink-0 cursor-pointer"
+                          className="md:hidden w-12 h-12 sm:w-14 sm:h-14 rounded-lg object-cover border border-white/10 hover:border-cyan-500/60 transition-all flex-shrink-0 cursor-pointer"
                           onClick={(e) => { e.stopPropagation(); setLightboxImg(j.partImage!); }}
                         />
                       ) : (
+                        // Empty "add photo" slot hidden on phones — it cost the Due column its
+                        // room; the job editor has the photo button.
                         <label
-                          className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg border border-dashed border-white/10 flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all flex-shrink-0 group/cam"
+                          className="hidden sm:flex md:hidden w-12 h-12 sm:w-14 sm:h-14 rounded-lg border border-dashed border-white/10 items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all flex-shrink-0 group/cam"
                           title="Add part photo"
                           onClick={e => e.stopPropagation()}
                         >
@@ -6375,13 +5940,19 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       <div className="flex flex-col gap-0.5 min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                         <span className="text-white font-black text-sm sm:text-xl">{j.poNumber}</span>
-                        {j.status !== 'completed' && <RiskPill risk={computeJobRisk(j, adminRiskIndex)} />}
-                        {isOverdue && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">OVERDUE</span>}
-                        {isDueSoon && !isOverdue && <span className="text-[10px] font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">DUE SOON</span>}
+                        {/* Badges only for things that need a look. Overdue / due soon
+                            already show in red/orange in the Due column, green risk tier
+                            and "watch" pace were on nearly every row, and budget "at risk"
+                            is the ⏱ chip's colour below. */}
+                        {/* Priority only when it's raised (the old Priority column was "normal" on almost every row) */}
+                        {j.status !== 'completed' && (j.priority === 'high' || j.priority === 'urgent') && <PriorityBadge priority={j.priority} />}
+                        {j.status !== 'completed' && (() => {
+                          const risk = computeJobRisk(j, adminRiskIndex);
+                          return risk.tier !== 'green' ? <RiskPill risk={risk} /> : null;
+                        })()}
                         {deliveredOnTime && <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">ON TIME</span>}
                         {deliveredLate && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">LATE</span>}
-                        {budget?.overBudget && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>OVER BUDGET</span>}
-                        {budget?.atRisk && !budget.overBudget && <span className="text-[10px] font-black text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of quote used`}>AT RISK</span>}
+                        {budget?.overBudget && <span className="text-[10px] font-black text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded" title={`${budget.usedPct.toFixed(0)}% of the quote used so far`}>OVER BUDGET</span>}
                         {isStale && j.status !== 'completed' && <span className="text-[10px] font-black text-zinc-500 bg-zinc-800/60 border border-zinc-700/60 px-1.5 py-0.5 rounded" title="No activity in 48+ hours">STALE</span>}
                         {/* RUSH badge — job was created with very little lead time (<= 5 days before due) */}
                         {j.status !== 'completed' && j.dueDate && j.createdAt && (() => {
@@ -6390,25 +5961,23 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           const leadDays = (dueDateMs - j.createdAt) / 86400000;
                           if (leadDays > 5) return null;
                           return (
-                            <span className="text-[10px] font-black text-red-300 bg-red-600/20 border border-red-500/40 px-1.5 py-0.5 rounded animate-pulse" title={`Only ${leadDays < 1 ? '<1 day' : Math.ceil(leadDays) + ' days'} lead time`}>
+                            <span className="text-[10px] font-black text-red-300 bg-red-600/20 border border-red-500/40 px-1.5 py-0.5 rounded" title={`Only ${leadDays < 1 ? '<1 day' : Math.ceil(leadDays) + ' days'} lead time`}>
                               RUSH
                             </span>
                           );
                         })()}
-                        {/* ETA risk badge — only for open jobs where the engine has a meaningful signal */}
+                        {/* ETA pace badge — only when the engine says it won't make it at this pace */}
                         {(() => {
-                          if (j.status === 'completed') return null;
+                          if (j.status === 'completed' || isOverdue) return null;
                           const eta = jobEtaMap.get(j.id);
-                          if (!eta) return null;
-                          // 'critical' already surfaced by OVERDUE badge; 'on-track'/'no-data' are noise
-                          if (eta.riskLevel !== 'at-risk' && eta.riskLevel !== 'watch') return null;
+                          if (!eta || eta.riskLevel !== 'at-risk') return null;
                           const c = RISK_COLORS[eta.riskLevel];
                           return (
                             <span
                               className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${c.bg} ${c.border} ${c.text}`}
                               title={`ETA: ${eta.riskReason}`}
                             >
-                              {eta.riskLevel === 'at-risk' ? 'PACE RISK' : 'WATCH'}
+                              PACE RISK
                             </span>
                           );
                         })()}
@@ -6419,36 +5988,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             {l.userName.split(' ')[0]}
                           </span>
                         ))}
-                        {/* Live elapsed time + running cost — shown whenever ≥1 worker is clocked in */}
-                        {isLive && (() => {
-                          const h = Math.floor(liveTotalMins / 60);
-                          const m = Math.floor(liveTotalMins % 60);
-                          const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
-                          // Wall-clock finish prediction: remaining estimate ÷ workers on it.
-                          // Paused workers don't burn the clock, so count running ones only.
-                          let finishStr = '';
-                          if ((j.expectedHours || 0) > 0) {
-                            const remainHrs = j.expectedHours! - liveTotalHrs;
-                            if (remainHrs > 0) {
-                              const runningCount = Math.max(1, jobActiveLogs.filter(l => !l.pausedAt).length);
-                              const finishAt = new Date(nowMs + (remainHrs / runningCount) * 3_600_000);
-                              const sameDay = finishAt.getDate() === new Date(nowMs).getDate();
-                              const t = finishAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                              finishStr = sameDay ? ` → ~${t}` : ` → ${finishAt.toLocaleDateString([], { month: 'numeric', day: 'numeric' })} ${t}`;
-                            }
-                          }
-                          return (
-                            <span
-                              className="flex items-center gap-1 text-[10px] font-bold text-orange-300 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded-full"
-                              title={`Live: ${timeStr} elapsed · $${liveTotalCost.toFixed(2)} running cost${finishStr ? ` · estimated finish${finishStr.replace(' → ', ': ')}` : ''}`}
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse shrink-0" />
-                              {timeStr}{liveTotalCost > 0 ? ` · $${liveTotalCost.toFixed(0)}` : ''}{finishStr}
-                            </span>
-                          );
-                        })()}
                       </div>
-                      <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job ID: {j.jobIdsDisplay}</span>
+                      {/* Job ID only when it says something the PO doesn't */}
+                      {j.jobIdsDisplay && j.jobIdsDisplay !== j.poNumber && (
+                        <span className="text-zinc-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[160px] sm:max-w-none">Job {j.jobIdsDisplay}</span>
+                      )}
                       {/* Below sm (< 640px): Qty + Customer + Part Details columns are
                           all hidden, so surface all three inline in the PO cell. Without
                           this, mobile users can't see quantity without opening details. */}
@@ -6489,13 +6033,24 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             const state = !hasBudget ? 'plain' : ratio > 1.1 ? 'over' : ratio > 0.9 ? 'near' : 'under';
                             const cls = state === 'over' ? 'text-red-400 bg-red-500/10 border-red-500/20' : state === 'near' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : state === 'under' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20';
                             const isOpen = timeBreakdownJobId === j.id;
+                            // While someone's on it: wall-clock finish = remaining estimate ÷
+                            // people running it (paused ones don't burn the clock).
+                            let finishStr = '';
+                            if (isLive && hasBudget && j.expectedHours! - liveTotalHrs > 0) {
+                              const runningCount = Math.max(1, jobActiveLogs.filter(l => !l.pausedAt).length);
+                              const finishAt = new Date(nowMs + ((j.expectedHours! - liveTotalHrs) / runningCount) * 3_600_000);
+                              const t = finishAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                              finishStr = finishAt.toDateString() === new Date(nowMs).toDateString()
+                                ? ` · done ~${t}`
+                                : ` · done ${finishAt.toLocaleDateString([], { month: 'numeric', day: 'numeric' })}`;
+                            }
                             return (
                               <button
                                 onClick={e => { e.stopPropagation(); setTimeBreakdownJobId(isOpen ? null : j.id); }}
                                 className={`text-[9px] font-bold border px-1.5 py-0.5 rounded tabular cursor-pointer hover:brightness-125 transition-all ${cls}`}
-                                title={`${hasBudget ? `Budget: ${j.expectedHours}h · ` : ''}${isLive ? 'Live' : 'Actual'}: ${liveTotalHrs.toFixed(1)}h — click for breakdown`}
+                                title={`${hasBudget ? `Budget: ${j.expectedHours}h · ` : ''}${isLive ? 'Live' : 'Actual'}: ${liveTotalHrs.toFixed(1)}h${isLive && liveTotalCost > 0 ? ` · $${liveTotalCost.toFixed(0)} labor so far` : ''} — click for breakdown`}
                               >
-                                ⏱ {liveTotalHrs.toFixed(1)}{hasBudget ? `/${j.expectedHours}h` : 'h'}{isLive ? ' 🔴' : ''} {isOpen ? '▴' : '▾'}
+                                ⏱ {liveTotalHrs.toFixed(1)}{hasBudget ? `/${j.expectedHours}h` : 'h'}{finishStr} {isOpen ? '▴' : '▾'}
                               </button>
                             );
                           })()}
@@ -6646,7 +6201,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     </div>
                   </td>
                   <td className="p-3 sm:p-4 font-mono text-zinc-300 hidden sm:table-cell">{j.quantity}</td>
-                  <td className="p-3 sm:p-4 hidden lg:table-cell"><PriorityBadge priority={j.priority} /></td>
                   <td className="p-3 sm:p-4 hidden md:table-cell"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
                   <td className={`p-2 sm:p-4 sm:whitespace-nowrap text-[11px] sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
                     <div className="font-mono font-bold">{fmt(j.dueDate)}</div>
@@ -6715,42 +6269,55 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           </>
                         );
                       })()}
-                      {j.dueDate && (
-                        <button
-                          aria-label={calAdded.includes(j.id) ? `Already added to Google Calendar — ${j.poNumber || ''}` : `Add ${j.poNumber || 'job'} to Google Calendar`}
-                          onClick={() => {
-                          const url = getCalendarUrl(j);
-                          if (url) {
-                            const updated = [...calAdded]; if (!updated.includes(j.id)) { updated.push(j.id); setCalAdded(updated); localStorage.setItem('cal_added_jobs', JSON.stringify(updated)); }
-                            window.location.href = url;
-                          }
-                        }} className={`hidden sm:flex p-2 rounded-lg transition-colors ${calAdded.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-700/50 text-zinc-500 hover:text-zinc-300'}`} title={calAdded.includes(j.id) ? 'Already in Google Calendar' : 'Add to Google Calendar'}>
-                          {calAdded.includes(j.id) ? <CheckCircle className="w-4 h-4" aria-hidden="true" /> : <Calendar className="w-4 h-4" aria-hidden="true" />}
-                        </button>
-                      )}
-                      {j.customer && (
-                        <button onClick={() => {
-                          const url = buildPortalUrl(j.customer!, shopSettings);
-                          navigator.clipboard.writeText(url).then(() => addToast('success', 'Portal link copied!')).catch(() => prompt('Copy this link:', url));
-                        }} aria-label="Copy customer portal link" className="hidden sm:flex p-2 hover:bg-purple-500/10 rounded-lg text-purple-400 hover:text-purple-300 transition-colors" title="Copy Customer Portal Link"><Share2 className="w-4 h-4" aria-hidden="true" /></button>
-                      )}
-                      <button
-                        aria-label={printed.includes(j.id) ? `Reprint traveler for ${j.poNumber || ''}` : `Print traveler for ${j.poNumber || ''}`}
-                        onClick={() => setPrintable(enrichJobForPrint(j, jobs, allLogs, shopSettings.rateBuffer ?? 1.15))} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
-                      <button aria-label={`Report rework for ${j.poNumber || ''}`} onClick={(e) => { e.stopPropagation(); setReworkModal({ jobId: j.id, poNumber: j.poNumber, partNumber: j.partNumber, customer: j.customer, reason: 'finish', quantity: 1, status: 'open' }); }} className="p-2 hover:bg-amber-500/10 rounded-lg text-amber-400/70 hover:text-amber-400 transition-colors relative" title="Report rework">
-                        <AlertTriangle className="w-4 h-4" aria-hidden="true" />
-                        {reworkByJob.get(j.id) && (reworkByJob.get(j.id)!.open > 0) && (
-                          <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-zinc-950">{reworkByJob.get(j.id)!.open}</span>
-                        )}
-                      </button>
-                      <button aria-label={`Edit job ${j.poNumber || ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }} className="p-2 hover:bg-zinc-800 rounded-lg text-amber-400 hover:text-white" title="Edit"><Edit2 className="w-4 h-4" aria-hidden="true" /></button>
-                      <button aria-label={`Delete job ${j.poNumber || ''}`} onClick={() => confirm({ title: "Delete Job", message: `Permanently delete PO ${j.poNumber || j.jobIdsDisplay || ''}?${keptHoursNote([j.id])}`, onConfirm: () => DB.deleteJob(j.id) })} className="hidden sm:flex p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-500" title="Delete"><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+                      {/* Everyday actions stay as buttons; the rest live in the ⋯ menu
+                          (nine icons per row pushed this column off the screen). */}
+                      {(() => {
+                        const printJob = () => setPrintable(enrichJobForPrint(j, jobs, allLogs, shopSettings.rateBuffer ?? 1.15));
+                        const openRework = () => setReworkModal({ jobId: j.id, poNumber: j.poNumber, partNumber: j.partNumber, customer: j.customer, reason: 'finish', quantity: 1, status: 'open' });
+                        const openReworkCount = reworkByJob.get(j.id)?.open || 0;
+                        return (
+                          <>
+                            <button
+                              aria-label={printed.includes(j.id) ? `Reprint traveler for ${j.poNumber || ''}` : `Print traveler for ${j.poNumber || ''}`}
+                              onClick={printJob} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
+                            {/* Open rework stays visible — it's a signal, not just an action */}
+                            {openReworkCount > 0 && (
+                              <button aria-label={`Report rework for ${j.poNumber || ''} — ${openReworkCount} open`} onClick={openRework} className="p-2 hover:bg-amber-500/10 rounded-lg text-amber-400 transition-colors relative" title={`${openReworkCount} open rework — report another`}>
+                                <AlertTriangle className="w-4 h-4" aria-hidden="true" />
+                                <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-zinc-950">{openReworkCount}</span>
+                              </button>
+                            )}
+                            <RowMenu label={`More actions for ${j.poNumber || 'job'}`} items={[
+                              { label: 'Edit job', icon: <Edit2 className="w-4 h-4" />, onSelect: () => { setEditingJob(j); setShowModal(true); } },
+                              { label: printed.includes(j.id) ? 'Reprint traveler' : 'Print traveler', icon: <Printer className="w-4 h-4" />, onSelect: printJob, hidden: window.innerWidth >= 640 },
+                              { label: 'Report rework', icon: <AlertTriangle className="w-4 h-4" />, onSelect: openRework },
+                              {
+                                label: calAdded.includes(j.id) ? 'In Google Calendar ✓' : 'Add to Google Calendar', icon: <Calendar className="w-4 h-4" />, hidden: !j.dueDate,
+                                onSelect: () => {
+                                  const url = getCalendarUrl(j);
+                                  if (!url) return;
+                                  const updated = [...calAdded]; if (!updated.includes(j.id)) { updated.push(j.id); setCalAdded(updated); localStorage.setItem('cal_added_jobs', JSON.stringify(updated)); }
+                                  window.location.href = url;
+                                },
+                              },
+                              {
+                                label: 'Copy customer portal link', icon: <Share2 className="w-4 h-4" />, hidden: !j.customer,
+                                onSelect: () => {
+                                  const url = buildPortalUrl(j.customer!, shopSettings);
+                                  navigator.clipboard.writeText(url).then(() => addToast('success', 'Portal link copied!')).catch(() => prompt('Copy this link:', url));
+                                },
+                              },
+                              { label: 'Delete job', icon: <Trash2 className="w-4 h-4" />, danger: true, onSelect: () => confirm({ title: "Delete Job", message: `Permanently delete PO ${j.poNumber || j.jobIdsDisplay || ''}?${keptHoursNote([j.id])}`, onConfirm: () => DB.deleteJob(j.id) }) },
+                            ]} />
+                          </>
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>
               );
             })}
-            {filteredJobs.length === 0 && <tr><td colSpan={8} className="p-12 text-center text-zinc-500">No jobs found matching filters.</td></tr>}
+            {filteredJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-zinc-500">No jobs found matching filters.</td></tr>}
           </tbody>
         </table>
       </div>

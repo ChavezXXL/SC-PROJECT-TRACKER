@@ -12,7 +12,8 @@
 export function fmtK(n: number): string {
   const abs = Math.abs(n);
   if (abs >= 1000) return `${n < 0 ? '-' : ''}${(abs / 1000).toFixed(1)}k`;
-  return n.toLocaleString();
+  // Whole dollars — computed costs printed as "$887.017". `|| 0` drops "-0".
+  return (Math.round(n) || 0).toLocaleString();
 }
 
 /** Same as fmtK but prefixed with "$". For positive values only — use fmtMoneySigned for +/-. */
