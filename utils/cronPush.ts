@@ -6,6 +6,7 @@
 
 import webpush from 'web-push';
 import type { FirestoreRest, FsDoc } from './firestoreRest';
+import { safeSubscription, PUSH_TIMEOUT_MS } from '../netlify/functions/_shared/pushSafety';
 
 export type PushResult = 'sent' | 'failed' | 'removed';
 /** Send one Web Push to one push_subscriptions doc. */
@@ -33,12 +34,15 @@ export function createWebPushSender(opts: {
     return { push: null, error: `VAPID keys rejected — no pushes: ${e?.message || e}` };
   }
   const push: PushSender = async (subDoc, payload, ttlSec) => {
-    const subscription = subDoc.subscription;
-    if (!subscription?.endpoint) return 'failed';
+    // Only real push services, re-built from the checked fields — anyone can
+    // save a "subscription" pointing anywhere (open rules), and web-push would
+    // POST to it. Each request is capped so a silent host can't stall the run.
+    const subscription = safeSubscription(subDoc.subscription);
+    if (!subscription) return 'failed';
     const MAX_RETRIES = 2; // backoff: 1s then 2s
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        await webpush.sendNotification(subscription, payload, { TTL: ttlSec });
+        await webpush.sendNotification(subscription, payload, { TTL: ttlSec, timeout: PUSH_TIMEOUT_MS });
         return 'sent';
       } catch (e: any) {
         const code = e?.statusCode || 0;

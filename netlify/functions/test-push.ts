@@ -7,6 +7,7 @@
 
 import type { Handler } from '@netlify/functions';
 import webpush from 'web-push';
+import { safeSubscription, PUSH_TIMEOUT_MS } from './_shared/pushSafety';
 
 const JSON_H = { 'Content-Type': 'application/json' };
 
@@ -103,10 +104,11 @@ export const handler: Handler = async (event) => {
   let sent = 0, failed = 0, removed = 0;
 
   for (const subDoc of subDocs) {
-    const subscription = subDoc.subscription;
-    if (!subscription?.endpoint) { failed++; continue; }
+    // Only real push services, re-built from the checked fields; capped time.
+    const subscription = safeSubscription(subDoc.subscription);
+    if (!subscription) { failed++; continue; }
     try {
-      await webpush.sendNotification(subscription, payload, { TTL: 60 * 60 });
+      await webpush.sendNotification(subscription, payload, { TTL: 60 * 60, timeout: PUSH_TIMEOUT_MS });
       sent++;
       info(`Sent to userId=${subDoc.userId || 'unknown'} (sub ${subDoc.id?.slice(0, 12)}...)`);
     } catch (e: any) {
