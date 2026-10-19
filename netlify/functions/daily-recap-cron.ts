@@ -1,12 +1,24 @@
 // netlify/functions/daily-recap-cron.ts
 // ═════════════════════════════════════════════════════════════════════
-// Netlify scheduled function — fires every hour and sends the daily
-// shop recap email when the current local time matches the shop's
-// configured send time (settings.recapTime).
+// Netlify scheduled function — runs every 10 minutes and sends the daily shop
+// recap email on the first run at or after the shop's configured send time
+// (settings.recapTime, HH:MM in settings.recapTimezone). Once per shop day:
+// settings.recapLastSentDate is stamped after a successful send. A recap set
+// for 17:45 goes out between 17:45 and 17:55 — never at 17:00 while the
+// floor is still on the clock.
+//
+// Timers still running at send time count toward today's hours (worked time
+// so far, pauses taken out).
+//
+// READS: only what the recap shows — logs that ended in the last 7 days, the
+// open timers, and the full history of the jobs in today's Job Insights (and
+// earlier runs of those parts). Never the whole log history.
+//
+// A failed send isn't stamped: the error goes to settings.recapLastError and
+// later runs retry (10 / 20 / 40 min apart, at most 4 tries a day — each try
+// re-reads the day's data, so a permanent failure can't burn the read quota).
 //
 // Uses Firestore REST API (no Admin SDK / service account needed).
-// Reads data via VITE_FIREBASE_API_KEY which is already in Netlify env.
-//
 // Required Netlify env vars (already set):
 //   VITE_FIREBASE_API_KEY  — Firebase web API key
 //   VITE_FIREBASE_PROJECT_ID — Firebase project ID
@@ -17,189 +29,190 @@
 import type { Config } from '@netlify/functions';
 import type { Job, TimeLog, User, SystemSettings } from '../../types';
 import { buildRecapData, buildRecapHtml, buildRecapText } from '../../utils/sendDailyRecap';
+import { createFirestoreRest, type FirestoreRest, type FsDoc } from '../../utils/firestoreRest';
+import {
+  USER_FIELDS, recapDue, recapRetryAllowed, recapInsightJobIds, runningLogsAsOf, shopDayStartMs,
+  RECAP_MAX_ATTEMPTS, type RecapRetryState,
+} from '../../utils/cronHelpers';
+import { createResendSender, DEFAULT_EMAIL_FROM, type EmailSender } from '../../utils/cronEmail';
 
 export const config: Config = {
-  schedule: '0 * * * *',
+  schedule: '*/10 * * * *',
 };
 
-// ── Firestore REST helpers ─────────────────────────────────────────────
+const TAG = '[daily-recap-cron]';
+/** Firestore 'in' filters take a limited number of values — stay well under it. */
+const IN_CHUNK = 10;
 
-function fsVal(v: any): any {
-  if (v == null) return null;
-  if ('stringValue'    in v) return v.stringValue;
-  if ('integerValue'   in v) return Number(v.integerValue);
-  if ('doubleValue'    in v) return v.doubleValue;
-  if ('booleanValue'   in v) return v.booleanValue;
-  if ('nullValue'      in v) return null;
-  if ('timestampValue' in v) return new Date(v.timestampValue).getTime();
-  if ('arrayValue'     in v) return (v.arrayValue.values || []).map(fsVal);
-  if ('mapValue'       in v) {
-    const obj: any = {};
-    for (const [k, vv] of Object.entries(v.mapValue.fields || {})) obj[k] = fsVal(vv);
-    return obj;
-  }
-  return undefined;
+export interface RecapCronDeps {
+  fs: FirestoreRest;
+  /** null = RESEND_API_KEY not set. */
+  sendEmail: EmailSender | null;
+  /** Fixed clock for tests. */
+  now?: number;
 }
 
-function fsDoc(raw: any): any {
-  const parts = (raw.name || '').split('/');
-  const out: any = { id: parts[parts.length - 1] };
-  for (const [k, v] of Object.entries(raw.fields || {})) out[k] = fsVal(v as any);
-  return out;
-}
+export type RecapOutcome = 'sent' | 'not-due' | 'off' | 'failed';
 
-async function fetchCollection(col: string, apiKey: string, projectId: string): Promise<any[]> {
-  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}`;
-  const docs: any[] = [];
-  let pageToken: string | undefined;
-  do {
-    const url = `${base}?key=${apiKey}&pageSize=300${pageToken ? `&pageToken=${pageToken}` : ''}`;
-    const res = await fetch(url);
-    const data: any = await res.json();
-    if (!res.ok) { console.error(`[cron] Firestore fetch ${col} error:`, data?.error?.message); break; }
-    (data.documents || []).forEach((d: any) => docs.push(fsDoc(d)));
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-  return docs;
-}
+type Settings = SystemSettings & Record<string, any>;
 
-async function fetchDoc(col: string, id: string, apiKey: string, projectId: string): Promise<any | null> {
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}/${id}?key=${apiKey}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return fsDoc(await res.json());
-}
+/** One run. Exported for tests — the scheduled handler is the default export. */
+export async function runDailyRecapCron(deps: RecapCronDeps): Promise<RecapOutcome> {
+  const { fs } = deps;
+  const now = deps.now ?? Date.now();
 
-/** Patch a single string field on an existing Firestore document. */
-async function patchStringField(col: string, id: string, field: string, value: string, apiKey: string, projectId: string): Promise<void> {
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}/${id}?updateMask.fieldPaths=${field}&key=${apiKey}`;
-  await fetch(url, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fields: { [field]: { stringValue: value } } }),
-  });
-}
-
-// ── Timezone helpers ─────────────────────────────────────────────────
-
-function getTodayBoundsForTz(tz: string): { start: number; end: number } {
-  const now = new Date();
-  const dtf = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  const parts = dtf.formatToParts(now);
-  const get = (t: string) => parseInt(parts.find(p => p.type === t)?.value ?? '0', 10);
-  const msFromMidnight = (get('hour') * 3600 + get('minute') * 60 + get('second')) * 1000 + now.getMilliseconds();
-  const start = now.getTime() - msFromMidnight;
-  return { start, end: start + 86_400_000 - 1 };
-}
-
-function currentHourInTz(tz: string): number {
-  const dtf = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false });
-  const h = parseInt(dtf.format(new Date()), 10);
-  // Intl can return 24 for midnight in some runtimes — normalise to 0
-  return h === 24 ? 0 : h;
-}
-
-// ── Main handler ─────────────────────────────────────────────────────
-
-export default async function handler() {
-  console.log('[daily-recap-cron] tick', new Date().toISOString());
-
-  const apiKey    = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
-  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
-
-  if (!apiKey) {
-    console.error('[daily-recap-cron] VITE_FIREBASE_API_KEY not set');
-    return;
-  }
-
-  // 1. Read settings
-  const settings = await fetchDoc('settings', 'system', apiKey, projectId) as SystemSettings | null;
-  if (!settings) { console.log('[daily-recap-cron] No settings doc — skipping'); return; }
+  // 1. Read settings (the only read on most runs)
+  const settings = await fs.get('settings', 'system') as unknown as Settings | null;
+  if (!settings) { console.log(`${TAG} No settings doc — skipping`); return 'off'; }
 
   // 2. Guards
-  if (!settings.recapEmailEnabled)  { console.log('[daily-recap-cron] recapEmailEnabled=false'); return; }
-  if (!settings.recapEmail?.trim()) { console.log('[daily-recap-cron] No recapEmail set'); return; }
-  if (!settings.recapTime)          { console.log('[daily-recap-cron] No recapTime set'); return; }
+  if (!settings.recapEmailEnabled)  { console.log(`${TAG} recapEmailEnabled=false`); return 'off'; }
+  if (!settings.recapEmail?.trim()) { console.log(`${TAG} No recapEmail set`); return 'off'; }
+  if (!settings.recapTime)          { console.log(`${TAG} No recapTime set`); return 'off'; }
 
-  // 3. Time check + sent-today guard (prevents double-send on Netlify retry)
-  const tz = (settings as any).recapTimezone || 'America/Los_Angeles';
-  const nowHour = currentHourInTz(tz);
-  const configHour = parseInt(settings.recapTime.split(':')[0], 10);
+  // 3. Time check + once-a-day guard: first run at or after HH:MM, shop time.
+  const tz = settings.recapTimezone || 'America/Los_Angeles';
+  const due = recapDue({ nowMs: now, tz, recapTime: settings.recapTime, lastSentDate: settings.recapLastSentDate });
+  if (!due.due) {
+    console.log(`${TAG} ${due.reason === 'already-sent' ? `Already sent today (${due.today})` : due.reason === 'bad-time' ? `Bad recapTime "${settings.recapTime}"` : `Not time yet (${settings.recapTime} ${tz})`} — skipping`);
+    return 'not-due';
+  }
+  const today = due.today;
 
-  if (nowHour !== configHour) {
-    console.log(`[daily-recap-cron] Not time yet (now=${nowHour}h, configured=${configHour}h ${tz})`);
-    return;
+  // A failed send retries on later runs, with backoff, a few times a day.
+  if (!recapRetryAllowed(settings.recapRetry as RecapRetryState | undefined, today, now)) {
+    console.log(`${TAG} Last send failed — waiting before the next try (${settings.recapLastError || 'no detail'})`);
+    return 'not-due';
+  }
+  // No sender → don't read a single log; just make the problem visible.
+  if (!deps.sendEmail) {
+    await recordFailure(fs, settings, today, now, 'RESEND_API_KEY not set in Netlify', false);
+    return 'failed';
   }
 
-  // Guard: only send once per calendar day (idempotent against retries / jitter)
-  const todayDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); // YYYY-MM-DD
-  if ((settings as any).recapLastSentDate === todayDateStr) {
-    console.log(`[daily-recap-cron] Already sent today (${todayDateStr}) — skipping`);
-    return;
-  }
+  console.log(`${TAG} Recap due (${settings.recapTime} ${tz}) — fetching data…`);
 
-  console.log(`[daily-recap-cron] Recap time matched (${settings.recapTime} ${tz}) — fetching data…`);
-
-  // 4. Fetch all data in parallel
-  const [allJobs, logs, users, reworkDocs] = await Promise.all([
-    fetchCollection('jobs',   apiKey, projectId) as Promise<Job[]>,
-    fetchCollection('logs',   apiKey, projectId) as Promise<TimeLog[]>,
-    fetchCollection('users',  apiKey, projectId) as Promise<User[]>,
-    fetchCollection('rework', apiKey, projectId),
+  // 4. Fetch only what the recap uses
+  const todayStart = shopDayStartMs(now, tz);
+  const weekStart = todayStart - 6 * 86_400_000;   // buildRecapData's 7-day labor window
+  const [jobs, users, reworkDocs, weekLogs, openLogs] = await Promise.all([
+    fs.list('jobs'),
+    fs.list('users', { mask: USER_FIELDS }),
+    fs.list('rework', { mask: ['status'] }),
+    fs.where('logs', 'endTime', '>=', Math.round(weekStart)),
+    fs.where('logs', 'status', 'in', ['in_progress', 'paused']),
   ]);
+  if (!jobs || !users || !reworkDocs || !weekLogs || !openLogs) {
+    await recordFailure(fs, settings, today, now, `couldn't read the shop data (${fs.stats.lastError || 'unknown error'})`, true);
+    return 'failed';
+  }
+
+  // Timers still running count up to now (worked time so far, pauses out).
+  const running = runningLogsAsOf(openLogs.filter(l => !l.endTime), now, todayStart);
+
+  // Job Insights compare each job worked today against its whole history and
+  // earlier runs of the same part — read exactly those jobs' logs.
+  const todayJobIds = new Set<string>();
+  for (const l of [...weekLogs, ...running]) {
+    if (l.jobId && typeof l.endTime === 'number' && l.endTime >= todayStart) todayJobIds.add(String(l.jobId));
+  }
+  const historyLogs = await logsForJobs(fs, recapInsightJobIds(jobs as any, todayJobIds));
+  if (!historyLogs) {
+    await recordFailure(fs, settings, today, now, `couldn't read job history (${fs.stats.lastError || 'unknown error'})`, true);
+    return 'failed';
+  }
+  const byId = new Map<string, FsDoc>();
+  for (const l of [...historyLogs, ...weekLogs, ...running]) byId.set(l.id, l);   // running copies win
+  const logs = [...byId.values()];
 
   const openReworkCount = reworkDocs.filter(r => r.status !== 'resolved').length;
+  console.log(`${TAG} Loaded ${jobs.length} jobs, ${logs.length} logs (${running.length} running), ${users.length} users, ${openReworkCount} open rework — ${fs.stats.reads} reads`);
 
-  console.log(`[daily-recap-cron] Loaded ${allJobs.length} jobs, ${logs.length} logs, ${users.length} users, ${openReworkCount} open rework`);
-
-  // 5. Build recap with timezone-correct today bounds
-  const { start: todayStart } = getTodayBoundsForTz(tz);
+  // 5. Build the recap with timezone-correct day bounds
   const shopName = settings.companyName || 'FabTrack IO';
-  const ccEmails = (settings.recapEmailCC || '').split(',').map(e => e.trim()).filter(Boolean);
-
+  const ccEmails = (settings.recapEmailCC || '').split(',').map((e: string) => e.trim()).filter(Boolean);
   const data = buildRecapData({
     to: settings.recapEmail.trim(),
     ccEmails,
-    logs,
-    allJobs,
-    users,
+    logs: logs as unknown as TimeLog[],
+    allJobs: jobs as unknown as Job[],
+    users: users as unknown as User[],
     shopName,
     shopRate: settings.shopRate,
     openReworkCount,
     todayStart,
   });
+  // The email header prints `date` in the server's timezone (UTC on Netlify),
+  // where an evening recap is already tomorrow. Shop-day noon is the same
+  // calendar date in UTC for US shops.
+  data.date = todayStart + 12 * 3_600_000;
 
   const html = buildRecapHtml(data);
   const text = buildRecapText(data);
-
-  // Use noon (12h) instead of 1am so DST boundary shifts never flip the date
+  // Noon (not 1am) so DST boundary shifts never flip the date
   const dateStr = new Date(todayStart + 12 * 3_600_000).toLocaleDateString('en-US', {
     timeZone: tz, weekday: 'long', month: 'long', day: 'numeric',
   });
   const subject = `${shopName} — Daily Recap · ${dateStr}`;
 
-  // 6. Send via Resend
-  const resendKey = process.env.RESEND_API_KEY;
-  const from      = process.env.RESEND_FROM || 'FabTrack IO <noreply@scprecisiondeburring.com>';
-
-  if (!resendKey) { console.error('[daily-recap-cron] RESEND_API_KEY not set'); return; }
-
+  // 6. Send
   const to = [settings.recapEmail.trim(), ...ccEmails];
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to, subject, html, text }),
-    });
-    const result: any = await res.json();
-    if (!res.ok) {
-      console.error('[daily-recap-cron] Resend error:', result);
-    } else {
-      console.log(`[daily-recap-cron] ✓ Sent (id=${result.id}) to: ${to.join(', ')}`);
-      // Stamp today's date so retries/jitter won't send a second email
-      await patchStringField('settings', 'system', 'recapLastSentDate', todayDateStr, apiKey, projectId);
-    }
-  } catch (e: any) {
-    console.error('[daily-recap-cron] Resend fetch failed:', e.message);
+  const r = await deps.sendEmail({ to, subject, html, text });
+  if (!r.ok) {
+    await recordFailure(fs, settings, today, now, r.error || 'send failed', true);
+    return 'failed';
   }
+  console.log(`${TAG} ✓ Sent${r.id ? ` (id=${r.id})` : ''} to: ${to.join(', ')}`);
+  // Stamp today so later runs won't send a second email; clear any error.
+  const stamped = await fs.write('settings', 'system', { recapLastSentDate: today }, {
+    merge: true,
+    deleteFields: ['recapLastError', 'recapRetry'],
+  });
+  if (!stamped) console.error(`${TAG} sent, but couldn't stamp recapLastSentDate — a second copy may go out`);
+  return 'sent';
+}
+
+/** Every log of these jobs ('in' queries, a few ids at a time). null = a query failed. */
+async function logsForJobs(fs: FirestoreRest, jobIds: string[]): Promise<FsDoc[] | null> {
+  const out: FsDoc[] = [];
+  for (let i = 0; i < jobIds.length; i += IN_CHUNK) {
+    const rows = await fs.where('logs', 'jobId', 'in', jobIds.slice(i, i + IN_CHUNK));
+    if (!rows) return null;
+    out.push(...rows);
+  }
+  return out;
+}
+
+/**
+ * Record a failed send on settings/system (recapLastError) instead of stamping
+ * it sent, so a later run retries. `countAttempt` = this try read the day's
+ * data; those are capped (RECAP_MAX_ATTEMPTS) and spaced out.
+ */
+async function recordFailure(fs: FirestoreRest, settings: Settings, today: string, now: number, message: string, countAttempt: boolean) {
+  const prev = settings.recapRetry as RecapRetryState | undefined;
+  const failuresBefore = prev?.date === today ? (prev.failures || 0) : 0;
+  const failures = countAttempt ? failuresBefore + 1 : failuresBefore;
+  const giveUp = countAttempt && failures >= RECAP_MAX_ATTEMPTS;
+  const recapLastError = `${today}: ${message}`.slice(0, 280) + (giveUp ? ' — gave up for today' : '');
+  console.error(`${TAG} recap NOT sent — ${recapLastError}`);
+
+  const data: Record<string, unknown> = { recapLastError };
+  if (countAttempt) data.recapRetry = { date: today, failures, lastAttemptMs: now };
+  // Same error as last time and nothing new to count → don't rewrite settings
+  // (every write makes every open screen re-read the settings doc).
+  else if (settings.recapLastError === recapLastError) return;
+  await fs.write('settings', 'system', data, { merge: true });
+}
+
+// ── Scheduled entry point ─────────────────────────────────────────────
+
+export default async function handler() {
+  console.log(`${TAG} tick`, new Date().toISOString());
+  const apiKey    = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || 'AIzaSyChOewBMJeW3oAM4KYn6ergrGIV9bPHTC8';
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'sc-job-tracker';
+  const resendKey = process.env.RESEND_API_KEY;
+
+  const fs = createFirestoreRest({ apiKey, projectId, label: 'daily-recap-cron' });
+  const sendEmail = resendKey ? createResendSender(resendKey, process.env.RESEND_FROM || DEFAULT_EMAIL_FROM) : null;
+  await runDailyRecapCron({ fs, sendEmail });
 }
