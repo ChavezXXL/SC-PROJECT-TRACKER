@@ -5272,9 +5272,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     const now = Date.now();
     const lastLogMs = new Map<string, number>();
     allLogs.forEach(l => {
-      const ts = l.endTime || l.startTime; // active logs count as activity too
+      const ts = l.endTime || l.startTime;
       if (ts && ts > (lastLogMs.get(l.jobId) || 0)) lastLogMs.set(l.jobId, ts);
     });
+    // Someone on the clock right now is activity too — allLogs holds finished
+    // sessions only, so a job being worked showed STALE.
+    activeLogs.forEach(l => lastLogMs.set(l.jobId, now));
     const ids = new Set<string>();
     jobs.filter(j => j.status !== 'completed' && j.status !== 'hold').forEach(j => {
       const last = lastLogMs.get(j.id) || 0;
@@ -5282,7 +5285,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       if (age > STALE_MS && (now - last) > STALE_MS) ids.add(j.id);
     });
     return ids;
-  }, [jobs, allLogs]);
+  }, [jobs, allLogs, activeLogs]);
 
   // ── ETA / risk map — computed once for the whole jobs view ──────────
   // Maps jobId → JobETA so every job card can show a risk badge instantly.
