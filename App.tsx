@@ -5069,6 +5069,28 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // Closing the editor forgets the job it showed, so nothing later (Scan PO,
   // the next New Job) can land on top of it.
   const closeJobEditor = () => { setShowModal(false); setEditingJob({}); };
+  // Move the open job to another (not-complete) stage. On a FINISHED job that
+  // reopens it — clearing its ship date and locked profit — so ask first; one
+  // tap on the stage bar used to do it.
+  const moveToStage = (stage: JobStage) => {
+    const jobId = editingJob.id;
+    if (!jobId) return;
+    const go = async () => {
+      await DB.advanceJobStage(jobId, stage.id, user.id, user.name, false);
+      // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
+      setEditingJob(p => ({ ...p, currentStage: stage.id, status: stage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
+      addToast('success', `Moved to ${stage.label}`);
+    };
+    if (editingJob.status === 'completed') {
+      confirm({
+        title: 'Reopen this finished job?',
+        message: `Moving PO ${editingJob.poNumber || ''} back to ${stage.label} reopens it — its ship date and locked profit are cleared.`,
+        onConfirm: go,
+      });
+    } else {
+      go();
+    }
+  };
   // Deleting a job keeps the hours logged on it (DB.deleteJob) — say so.
   const keptHoursNote = (ids: string[]) => {
     const want = new Set(ids);
@@ -6793,10 +6815,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             const targetStage = stages.find(s => s.id === e.target.value);
                             if (!targetStage || targetStage.id === currentStage.id) return;
                             if (targetStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
-                            await DB.advanceJobStage(editingJob.id, targetStage.id, user.id, user.name, false);
-                            // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
-                            setEditingJob(p => ({ ...p, currentStage: targetStage.id, status: targetStage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
-                            addToast('success', `Moved to ${targetStage.label}`);
+                            moveToStage(targetStage);
                           }}
                           className="text-xs font-bold px-3 py-2 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors min-w-0 w-full"
                           aria-label="Change job stage"
@@ -6841,10 +6860,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <button key={stage.id} className="flex-1 flex flex-col items-center gap-1 cursor-pointer group" onClick={async () => {
                             if (stage.id === currentStage.id) return;
                             if (stage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
-                            await DB.advanceJobStage(editingJob.id, stage.id, user.id, user.name, false);
-                            // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
-                            setEditingJob(p => ({ ...p, currentStage: stage.id, status: stage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
-                            addToast('success', `Moved to ${stage.label}`);
+                            moveToStage(stage);
                           }}>
                             <div className={`h-3 w-full rounded-full transition-all group-hover:scale-y-125 ${isCurrent ? 'ring-2 ring-white/40 ring-offset-1 ring-offset-zinc-900' : ''}`}
                               style={{ background: isActive ? stage.color : '#27272a', opacity: isActive ? 1 : 0.3 }} />
