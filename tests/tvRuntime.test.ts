@@ -1,4 +1,5 @@
 import { hhmmToMinutes, inQuietHours, isTvQuiet, tvQuietUntil, resumeLabel, msUntilDailyRefresh, describeDevice, shopClock, describePrevSession, startTvSession, setTvExitReason, tvEvent, readPrevTvLog, deviceModel, isUnplannedExit, takeInputCounts, tvAppVersion, appRestartNote } from '../utils/tvRuntime';
+import { slideSeconds } from '../utils/tvSlides';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -207,6 +208,13 @@ ok('not a Fire TV → no model', deviceModel('Mozilla/5.0 (Windows NT 10.0; Win6
 ok('board inside the FabTrack TV app', tvAppVersion('Mozilla/5.0 (Linux; Android 9; AFTALMO) Chrome/130 Safari/537.36 FabTrackTV/1.0') === '1.0');
 ok('…and not in a plain browser', tvAppVersion('Mozilla/5.0 (Linux; Android 9; AFTALMO) Silk/130') === '');
 ok('app restart notes', appRestartNote('#app-restart=memory').includes('ran out of memory') && appRestartNote('#app-restart=hung').includes('stopped responding') && appRestartNote('') === '' && appRestartNote('#x') === '');
+
+// ── Slide lengths ─────────────────────────────────────────────────
+ok('calendar on Auto gets its 30 s reading time', slideSeconds({ id: 'c', type: 'calendar', enabled: true }, 15) === 30);
+ok('news on Auto gets 25 s', slideSeconds({ id: 'n', type: 'news', enabled: true }, 15) === 25);
+ok('a longer shop default still wins', slideSeconds({ id: 'c', type: 'calendar', enabled: true }, 40) === 40);
+ok('a length set on the slide always wins', slideSeconds({ id: 'c', type: 'calendar', enabled: true, duration: 10 }, 15) === 10);
+ok('other slides use the shop default', slideSeconds({ id: 'w', type: 'weather', enabled: true }, 15) === 15);
 
 console.log(`${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

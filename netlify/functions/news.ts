@@ -32,7 +32,7 @@ const FEEDS: { source: string; url: string }[] = [
 ];
 
 const UA = 'FabTrackIO-TV/1.0';
-const FRESH_MS = 20 * 60_000;
+const FRESH_MS = 15 * 60_000;
 const FEED_KEEP_MS = 6 * 3_600_000;   // a feed that's down keeps its last stories this long
 let cached: { at: number; items: Headline[] } | null = null;
 const lastGood = new Map<string, { at: number; items: Headline[] }>();
@@ -164,7 +164,8 @@ export const handler: Handler = async (event) => {
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': 'public, max-age=600',
-      'Netlify-CDN-Cache-Control': 'public, s-maxage=1200, stale-while-revalidate=3600',
+      // 15 min fresh, then served at most 15 min stale while a new list is built.
+      'Netlify-CDN-Cache-Control': 'public, s-maxage=900, stale-while-revalidate=900',
     },
     body: JSON.stringify({ updatedAt: cached.at, items: cached.items }),
   };

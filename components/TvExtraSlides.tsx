@@ -1,22 +1,42 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Job, TeamBirthday, ShopEvent } from '../types';
 import { dueNum, isJobClosed } from '../utils/dueDates';
 import { getHolidays, type HolidayRecord } from '../services/holidays';
 import { tvEvent } from '../utils/tvRuntime';
 import { TvEmoji } from './TvSign';
 
+/** Big TV type can leave room for fewer rows than a list has. After layout
+ *  this counts the rows (marked data-row) that fit whole inside the box and
+ *  shows only those — never a half-cut line at the bottom. Re-counts when
+ *  `key` (what the list shows) changes. */
+function useWholeRows<T extends HTMLElement>(key: string) {
+  const ref = useRef<T>(null);
+  const [fit, setFit] = useState<{ key: string; rows: number } | null>(null);
+  useLayoutEffect(() => {
+    const box = ref.current;
+    if (!box || (fit && fit.key === key)) return;
+    const limit = box.getBoundingClientRect().bottom - parseFloat(getComputedStyle(box).paddingBottom || '0') + 1;
+    const rows = [...box.querySelectorAll('[data-row]')];
+    const n = rows.filter(r => r.getBoundingClientRect().bottom <= limit).length;
+    if (n < rows.length) setFit({ key, rows: n });
+  });
+  const show = <R,>(rows: R[]): R[] => (fit && fit.key === key ? rows.slice(0, fit.rows) : rows);
+  return [ref, show] as const;
+}
+
 // ── Aerospace News ───────────────────────────────────────────────────
 // Stories from netlify/functions/news (a fixed list of public feeds), each
 // with its picture and opening lines. Kept for the life of the page and
-// refreshed every 20 minutes; each pass of the slide features the next
-// story — big, with its photo — and lists the two or three after it.
+// refreshed every 15 minutes. Each pass of the slide features the NEWEST
+// story this TV hasn't shown yet — big, with its photo — and lists the two
+// or three after it.
 
 interface NewsItem { title: string; source: string; at: number; summary?: string; image?: string }
 let newsCache: { fetchedAt: number; updatedAt: number; items: NewsItem[] } | null = null;
 let newsLoading: Promise<void> | null = null;
 
 function loadNews(): Promise<void> {
-  if (newsCache && Date.now() - newsCache.fetchedAt < 20 * 60_000) return Promise.resolve();
+  if (newsCache && Date.now() - newsCache.fetchedAt < 15 * 60_000) return Promise.resolve();
   if (newsLoading) return newsLoading;
   newsLoading = fetch('/.netlify/functions/news', { cache: 'no-store' })
     .then(r => (r.ok ? r.json() : null))
@@ -36,7 +56,35 @@ const agoLabel = (at: number, now: number) => {
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 };
 
-const leadIndex = (pass: number, n: number) => (n ? ((pass % n) + n) % n : 0);
+// Stories this TV has already featured. Walking the list one story per pass
+// took about an hour and a half to get through 24 stories, while the newest
+// ones arrived at the top and waited — the board looked like it never
+// updated. Now each pass features the newest story not shown yet; once
+// they've all been shown it starts over from the newest.
+const shownStories = new Set<string>();
+const storyKey = (i: NewsItem) => i.title;
+function nextLeadIndex(items: NewsItem[]): number {
+  if (!items.length) return 0;
+  const i = items.findIndex(it => !shownStories.has(storyKey(it)));
+  return i < 0 ? 0 : i;
+}
+// The story featured on a given pass — picked once per pass, so re-renders
+// (and fresher headlines arriving while it's on screen) don't swap it.
+let leadPass = -1;
+let leadKey = '';
+function leadFor(pass: number, items: NewsItem[]): number {
+  if (!items.length) return 0;
+  if (pass === leadPass) {
+    const kept = items.findIndex(it => storyKey(it) === leadKey);
+    if (kept >= 0) return kept;
+  }
+  if (items.every(it => shownStories.has(storyKey(it)))) shownStories.clear();
+  const i = nextLeadIndex(items);
+  leadPass = pass;
+  leadKey = storyKey(items[i]);
+  shownStories.add(leadKey);
+  return i;
+}
 
 // Download a picture ahead of time so it's ready the moment its slide comes
 // up. (Held here so the download isn't dropped half-way.)
@@ -49,10 +97,10 @@ function warm(src?: string) {
 }
 
 /** Get the stories (if stale) and the photo the slide's coming pass will feature — called one slide early. */
-export function prefetchNews(pass: number) {
+export function prefetchNews() {
   loadNews().then(() => {
     const items = newsCache?.items || [];
-    warm(items[leadIndex(pass, items.length)]?.image);
+    warm(items[nextLeadIndex(items)]?.image);
   });
 }
 
@@ -61,9 +109,9 @@ const SOURCE_ICON: Record<string, string> = { Payload: '🚀', 'Breaking Defense
 
 // Longer headlines get smaller type, so every one fits in about three lines.
 const leadTitleSize = (t: string) =>
-  t.length <= 50 ? 'clamp(1.75rem, min(3.7vw, 6.8vh), 3.5rem)'
-    : t.length <= 80 ? 'clamp(1.5rem, min(3.1vw, 5.8vh), 3rem)'
-      : 'clamp(1.3rem, min(2.6vw, 4.9vh), 2.5rem)';
+  t.length <= 50 ? 'clamp(1.9rem, min(4.1vw, 7.4vh), 3.9rem)'
+    : t.length <= 80 ? 'clamp(1.65rem, min(3.5vw, 6.4vh), 3.3rem)'
+      : 'clamp(1.45rem, min(3vw, 5.5vh), 2.8rem)';
 
 export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: number }) {
   const [data, setData] = useState(newsCache);
@@ -76,22 +124,25 @@ export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: num
   }, []);
   const items = data?.items || [];
   const n = items.length;
-  const idx = leadIndex(pass, n);
+  const idx = leadFor(pass, items);
   const lead = n ? items[idx] : null;
   // Three more stories on a full-HD screen, two on a 960×540 TV stick.
   const short = typeof window !== 'undefined' && window.innerHeight < 620;
   const more: NewsItem[] = [];
   for (let k = 1; k < n && more.length < (short ? 2 : 3); k++) more.push(items[(idx + k) % n]);
+  // A long headline + summary can leave room for one of these, or none.
+  const [alsoRef, fitAlso] = useWholeRows<HTMLDivElement>(lead ? storyKey(lead) : '');
+  const shownMore = fitAlso(more);
   const now = Date.now();
   const pic = lead?.image && lead.image !== brokenPic ? lead.image : '';
   return (
     <div className="h-full flex flex-col overflow-hidden px-[clamp(1rem,2.5vw,3rem)] py-[clamp(0.6rem,1.4vw,1.5rem)]">
       <div className="shrink-0 flex items-center justify-between gap-3 pb-[clamp(0.4rem,1.2vh,0.9rem)]">
-        <p className="flex items-center gap-2 font-black text-sky-400 uppercase tracking-[0.25em]" style={{ fontSize: 'clamp(0.8rem, min(1.25vw, 2.3vh), 1.15rem)' }}>
+        <p className="flex items-center gap-2 font-black text-sky-400 uppercase tracking-[0.25em]" style={{ fontSize: 'clamp(0.95rem, min(1.55vw, 2.9vh), 1.35rem)' }}>
           <TvEmoji e="✈️" size="1.3em" /> Aerospace News
         </p>
         {data && (
-          <p className="text-white/45 font-bold tabular" style={{ fontSize: 'clamp(0.7rem, min(1.05vw, 2vh), 1rem)' }}>
+          <p className="text-white/55 font-bold tabular" style={{ fontSize: 'clamp(0.85rem, min(1.35vw, 2.5vh), 1.2rem)' }}>
             {n > 1 ? `Story ${idx + 1} of ${n} · ` : ''}Updated {new Date(data.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
           </p>
         )}
@@ -117,22 +168,22 @@ export const TvNewsSlide = React.memo(function TvNewsSlide({ pass }: { pass: num
             )}
           </div>
           <div className="min-h-0 flex flex-col overflow-hidden">
-            <p className="shrink-0 flex items-center gap-2 font-bold" style={{ fontSize: 'clamp(0.75rem, min(1.2vw, 2.2vh), 1.1rem)' }}>
+            <p className="shrink-0 flex items-center gap-2 font-bold" style={{ fontSize: 'clamp(0.9rem, min(1.5vw, 2.8vh), 1.3rem)' }}>
               <span className="text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded-md px-2 py-0.5">{lead.source}</span>
-              <span className="text-white/45 tabular">{agoLabel(lead.at, now)}</span>
+              <span className="text-white/60 tabular">{agoLabel(lead.at, now)}</span>
             </p>
             <h2 className="shrink-0 mt-[clamp(0.3rem,1vh,0.75rem)] font-black text-white leading-[1.12] line-clamp-4" style={{ fontSize: leadTitleSize(lead.title) }}>{lead.title}</h2>
             {lead.summary && (
-              <p className="shrink-0 mt-[clamp(0.3rem,1.2vh,0.9rem)] text-white/70 font-medium leading-snug line-clamp-3" style={{ fontSize: 'clamp(0.95rem, min(1.7vw, 3.2vh), 1.6rem)' }}>{lead.summary}</p>
+              <p className="shrink-0 mt-[clamp(0.3rem,1.2vh,0.9rem)] text-white/80 font-semibold leading-snug line-clamp-3" style={{ fontSize: 'clamp(1.1rem, min(2.05vw, 3.8vh), 1.9rem)' }}>{lead.summary}</p>
             )}
-            {more.length > 0 && (
-              <div className="mt-auto pt-[clamp(0.4rem,1.2vh,1rem)] min-h-0 overflow-hidden">
-                <p className="font-black text-white/35 uppercase tracking-[0.25em] border-t border-white/10 pt-[clamp(0.3rem,1vh,0.7rem)]" style={{ fontSize: 'clamp(0.6rem, min(0.95vw, 1.8vh), 0.85rem)' }}>Also in the news</p>
-                {more.map((h, i) => (
-                  <div key={i} className="mt-[clamp(0.2rem,0.8vh,0.6rem)] flex items-baseline gap-2" style={{ fontSize: 'clamp(0.9rem, min(1.55vw, 2.9vh), 1.45rem)' }}>
+            {shownMore.length > 0 && (
+              <div ref={alsoRef} className="mt-auto pt-[clamp(0.4rem,1.2vh,1rem)] min-h-0 overflow-hidden">
+                <p className="font-black text-white/50 uppercase tracking-[0.25em] border-t border-white/10 pt-[clamp(0.3rem,1vh,0.7rem)]" style={{ fontSize: 'clamp(0.75rem, min(1.2vw, 2.3vh), 1rem)' }}>Also in the news</p>
+                {shownMore.map((h, i) => (
+                  <div key={i} data-row className="mt-[clamp(0.2rem,0.8vh,0.6rem)] flex items-baseline gap-2" style={{ fontSize: 'clamp(1rem, min(1.85vw, 3.4vh), 1.7rem)' }}>
                     <span className="text-sky-400 font-black shrink-0">›</span>
                     <p className={`flex-1 min-w-0 font-bold text-white/85 leading-snug ${short ? 'truncate' : 'line-clamp-2'}`}>{h.title}</p>
-                    <span className="shrink-0 text-white/35 font-semibold whitespace-nowrap" style={{ fontSize: '0.75em' }}>{h.source}</span>
+                    <span className="shrink-0 text-white/50 font-semibold whitespace-nowrap" style={{ fontSize: '0.75em' }}>{h.source}</span>
                   </div>
                 ))}
               </div>
@@ -165,14 +216,16 @@ const jobLabel = (j: Job) => (j.partNumber || j.jobIdsDisplay || j.poNumber || '
 const isUrgent = (j: Job) => j.priority === 'urgent' || j.priority === 'high';
 
 // Sizes follow the screen's width AND height (a 960×540 TV and a 4K panel alike).
+// Bumped for reading from across the shop: the smallest text was ~11 px on
+// the 960×540 TV.
 const fs = {
-  tiny: 'clamp(0.62rem, min(1.15vw, 2.3vh), 1rem)',
-  small: 'clamp(0.75rem, min(1.4vw, 2.7vh), 1.1rem)',
-  body: 'clamp(0.95rem, min(1.8vw, 3.5vh), 1.45rem)',
-  day: 'clamp(1rem, min(2.2vw, 4.2vh), 1.8rem)',
-  badge: 'clamp(0.75rem, min(1.45vw, 2.8vh), 1.2rem)',
-  cell: 'clamp(0.72rem, min(1.4vw, 2.7vh), 1.15rem)',
-  title: 'clamp(1.2rem, min(3.2vw, 6vh), 2.6rem)',
+  tiny: 'clamp(0.8rem, min(1.45vw, 2.8vh), 1.15rem)',
+  small: 'clamp(0.9rem, min(1.7vw, 3.2vh), 1.3rem)',
+  body: 'clamp(1.05rem, min(2.1vw, 4vh), 1.65rem)',
+  day: 'clamp(1.15rem, min(2.5vw, 4.6vh), 2rem)',
+  badge: 'clamp(0.9rem, min(1.7vw, 3.2vh), 1.35rem)',
+  cell: 'clamp(0.88rem, min(1.65vw, 3.1vh), 1.3rem)',
+  title: 'clamp(1.3rem, min(3.4vw, 6.3vh), 2.8rem)',
 };
 const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -258,6 +311,9 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [birthdays, holidayByDay, eventsByDay, todayN]);
 
+  const [dueRef, fitDue] = useWholeRows<HTMLUListElement>(dueNext.map(d => d.job.id).join('|'));
+  const [upRef, fitUp] = useWholeRows<HTMLDivElement>(upcoming.map(u => u.label).join('|'));
+
   const dayChip = (n: number) => n === todayN ? 'Today' : n === tomorrowN ? 'Tmrw'
     : (() => { const d = numDate(n); return d.getMonth() === month ? `${DOW[d.getDay()]} ${d.getDate()}` : `${MON[d.getMonth()]} ${d.getDate()}`; })();
 
@@ -306,7 +362,7 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
             return (
               <div key={i} className={`rounded-lg border overflow-hidden flex flex-col min-w-0 ${isToday ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/60' : shopDays.length ? 'border-teal-400/40 bg-teal-500/10' : names.length ? 'border-pink-500/40 bg-pink-500/10' : weekend ? 'border-white/5 bg-zinc-900/30' : 'border-white/5 bg-zinc-900/60'}`}
                 style={{ padding: 'clamp(0.15rem, 0.6vh, 0.4rem)', gap: '0.15rem' }}>
-                <span className={`font-black tabular leading-none whitespace-nowrap ${isToday ? 'text-amber-300' : past ? 'text-white/35' : 'text-white/90'}`} style={{ fontSize: fs.day }}>{i === 0 || day === 1 ? `${MON[d.getMonth()]} ${day}` : day}</span>
+                <span className={`font-black tabular leading-none whitespace-nowrap ${isToday ? 'text-amber-300' : past ? 'text-white/35' : 'text-white/90'}`} style={{ fontSize: fs.day }}>{i === 0 || day === 1 ? <><span style={{ fontSize: '0.6em' }}>{MON[d.getMonth()]}</span> {day}</> : day}</span>
                 {dayJobs.length > 0 && <span className={`self-start whitespace-nowrap rounded px-1 font-black tabular leading-tight ${badge}`} style={{ fontSize: fs.badge }}>{dayJobs.length} due</span>}
                 {shown.map((l, k) => (
                   <p key={k} className={`font-bold truncate leading-tight ${l.c} ${past && !late ? 'opacity-60' : ''}`} style={{ fontSize: fs.cell }}>
@@ -331,12 +387,12 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
           {dueNext.length === 0 ? (
             <p className="text-white/45 mt-1" style={{ fontSize: fs.small }}>Nothing else due — all caught up.</p>
           ) : (
-            <ul className="mt-1 min-h-0 overflow-hidden" style={{ display: 'grid', gap: 'clamp(0.15rem, 0.7vh, 0.4rem)' }}>
-              {dueNext.map(({ n, job }) => {
+            <ul ref={dueRef} className="mt-1 min-h-0 overflow-hidden" style={{ display: 'grid', gap: 'clamp(0.15rem, 0.7vh, 0.4rem)' }}>
+              {fitDue(dueNext).map(({ n, job }) => {
                 const chip = n === todayN ? 'bg-orange-500 text-black' : n <= ymd(new Date(year, month, now.getDate() + 3)) ? 'bg-amber-400 text-black' : 'bg-white/10 text-white/80';
                 const sub = [showCustomers ? job.customer : '', job.quantity ? `${job.quantity} pc` : ''].filter(Boolean).join(' · ');
                 return (
-                  <li key={job.id} className="flex items-center gap-2 min-w-0">
+                  <li key={job.id} data-row className="flex items-center gap-2 min-w-0">
                     <span className={`shrink-0 rounded-md px-1.5 font-black tabular text-center ${chip}`} style={{ fontSize: fs.small, minWidth: '3.6em' }}>{dayChip(n)}</span>
                     <span className="min-w-0">
                       <span className={`block font-black truncate leading-tight ${isUrgent(job) ? 'text-amber-200' : 'text-white'}`} style={{ fontSize: fs.body }}>{jobLabel(job)}</span>
@@ -348,18 +404,18 @@ export const TvCalendarSlide = React.memo(function TvCalendarSlide({ jobs, birth
             </ul>
           )}
         </div>
-        <div className="rounded-xl border border-white/10 bg-zinc-900/60 min-h-0 overflow-hidden" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.9rem)', flex: '1 1 40%' }}>
+        <div ref={upRef} className="rounded-xl border border-white/10 bg-zinc-900/60 min-h-0 overflow-hidden" style={{ padding: 'clamp(0.4rem, 1.4vh, 0.9rem)', flex: '1 1 40%' }}>
           <p className="font-black text-white/45 uppercase tracking-widest" style={{ fontSize: fs.tiny }}>Coming up</p>
           {upcoming.length === 0 ? (
             <p className="text-white/45 mt-1" style={{ fontSize: fs.small }}>No shop days, birthdays or holidays this month.</p>
           ) : (
             <ul className="mt-1" style={{ display: 'grid', gap: 'clamp(0.15rem, 0.7vh, 0.4rem)' }}>
-              {upcoming.map((u, i) => {
+              {fitUp(upcoming).map((u, i) => {
                 const isToday = ymd(u.at) === todayN;
                 const tone = u.kind === 'event' ? 'text-teal-200' : u.kind === 'bday' ? 'text-pink-200' : 'text-sky-300';
                 const mark = u.kind === 'event' ? '📌' : u.kind === 'bday' ? '🎂' : '★';
                 return (
-                  <li key={i} className="min-w-0 flex items-baseline justify-between gap-2">
+                  <li key={i} data-row className="min-w-0 flex items-baseline justify-between gap-2">
                     <span className={`font-black truncate ${tone}`} style={{ fontSize: fs.small }}>{mark} {u.label}</span>
                     <span className="shrink-0 text-white/45 font-bold" style={{ fontSize: fs.tiny }}>{isToday ? 'Today!' : `${DOW[u.at.getDay()]} ${MON[u.at.getMonth()]} ${u.at.getDate()}`}</span>
                   </li>

@@ -17,7 +17,7 @@ import type { SystemSettings, TvDevice, TvSlide, SlideMessage } from '../types';
 import * as DB from '../services/mockDb';
 import { useConfirm, type ConfirmOptions } from './useConfirm';
 import { Toggle } from './Toggle';
-import { TV_SLIDE_CATALOG, DEFAULT_TV_SLIDES, slideMeta, effectiveTvSlides } from '../utils/tvSlides';
+import { TV_SLIDE_CATALOG, DEFAULT_TV_SLIDES, slideMeta, effectiveTvSlides, slideSeconds } from '../utils/tvSlides';
 import { appBuild, tvHomeUrl, newTvToken, isTvQuiet, tvQuietUntil, resumeLabel } from '../utils/tvRuntime';
 
 type SetSettings = React.Dispatch<React.SetStateAction<SystemSettings>>;
@@ -884,7 +884,7 @@ function SlidesCard({ settings, setSettings, set, confirm, addToast, onPreview }
   const [adding, setAdding] = useState(false);
   const defaultSecs = settings.tvSlideDuration || 15;
   const showing = effectiveTvSlides(settings.tvSlides);
-  const loopSecs = showing.reduce((a, s) => a + (s.duration || defaultSecs), 0);
+  const loopSecs = showing.reduce((a, s) => a + slideSeconds(s, defaultSecs), 0);
   const allOff = !!custom && custom.every(s => !s.enabled);
 
   // The first change to the built-in lineup turns it into this shop's own copy
@@ -1028,7 +1028,7 @@ function SlidesCard({ settings, setSettings, set, confirm, addToast, onPreview }
                 <select aria-label={`${meta.label} length`} title="How long this slide shows" value={s.duration ? String(s.duration) : ''}
                   onChange={e => update(s.id, { duration: e.target.value ? Number(e.target.value) : undefined })}
                   className="shrink-0 bg-zinc-950 border border-white/10 rounded-lg px-1.5 py-1.5 text-xs text-white">
-                  <option value="">Auto</option>
+                  <option value="">{(meta.minSecs || 0) > defaultSecs ? `Auto (${meta.minSecs}s)` : 'Auto'}</option>
                   {DURATIONS.map(d => <option key={d} value={d}>{d}s</option>)}
                 </select>
                 <button type="button" aria-label={`Preview ${meta.label} on the board`} title="See this slide on the board" onClick={() => onPreview(s)}

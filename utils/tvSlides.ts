@@ -12,6 +12,9 @@ export interface TvSlideMeta {
   color: string;
   /** Shows the same content every time — a second copy just repeats it. */
   single: boolean;
+  /** On "Auto" length this slide shows at least this long — a month calendar
+   *  or a news story can't be read in the default 15 seconds. */
+  minSecs?: number;
 }
 
 /** Slides the office can add. 'stats' is legacy; 'birthday' is added by the TV itself on the day. */
@@ -28,8 +31,8 @@ export const TV_SLIDE_CATALOG: Record<CatalogSlideType, TvSlideMeta> = {
   'stats-week':  { label: 'Weekly Stats', desc: 'Hours, jobs and sessions with a daily bar graph', icon: '📊', color: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400', single: true },
   weather:       { label: 'Weather', desc: 'Current conditions + 5-day outlook', icon: '🌤️', color: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400', single: true },
   'flow-map':    { label: 'Shop Flow Map', desc: 'Jobs moving through each stage, with live workers', icon: '🗺️', color: 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400', single: true },
-  calendar:      { label: 'Calendar', desc: 'This month — which jobs are due each day, holidays, birthdays and shop days', icon: '📅', color: 'bg-sky-500/15 border-sky-500/30 text-sky-400', single: true },
-  news:          { label: 'Aerospace News', desc: 'Top aerospace stories with photos — updates by itself', icon: '📰', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400', single: true },
+  calendar:      { label: 'Calendar', desc: 'This month — which jobs are due each day, holidays, birthdays and shop days', icon: '📅', color: 'bg-sky-500/15 border-sky-500/30 text-sky-400', single: true, minSecs: 30 },
+  news:          { label: 'Aerospace News', desc: 'Top aerospace stories with photos — updates by itself', icon: '📰', color: 'bg-blue-500/15 border-blue-500/30 text-blue-400', single: true, minSecs: 25 },
   safety:        { label: 'Safety Message', desc: 'Big, bold safety reminders that rotate', icon: '⚠️', color: 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400', single: false },
   message:       { label: 'Announcement', desc: 'Your own messages — title, text and color', icon: '📢', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400', single: false },
 };
@@ -39,6 +42,12 @@ export function slideMeta(type: TvSlideType): TvSlideMeta {
   if (type === 'stats') return TV_SLIDE_CATALOG['stats-week'];
   if (type === 'birthday') return { label: 'Happy Birthday', desc: 'Shown on the day', icon: '🎂', color: 'bg-pink-500/15 border-pink-500/30 text-pink-400', single: true };
   return TV_SLIDE_CATALOG[type] || TV_SLIDE_CATALOG.message;
+}
+
+/** Seconds a slide shows: its own length if set, else the shop's default —
+ *  but never less than the slide needs to be read (minSecs). */
+export function slideSeconds(s: TvSlide, defaultSecs: number): number {
+  return s.duration || Math.max(defaultSecs, slideMeta(s.type).minSecs || 0);
 }
 
 /** The built-in lineup the TV shows when nothing is customized. Module-level

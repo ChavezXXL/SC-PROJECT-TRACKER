@@ -42,7 +42,7 @@ import {
   deviceModel, takeInputCounts, rememberTvCrash, isUnplannedExit, tvPopupSince, tvAppVersion, type TvCrash,
 } from './utils/tvRuntime';
 import { TvPairScreen, TvConnectionBadge, TvIdentifyOverlay, TvQuietScreen, TvExitConfirm, TvStopNotice } from './components/TvScreens';
-import { effectiveTvSlides, TV_SLIDE_CATALOG } from './utils/tvSlides';
+import { effectiveTvSlides, TV_SLIDE_CATALOG, slideSeconds } from './utils/tvSlides';
 import { TvPartPhoto } from './components/TvPartPhoto';
 import { TvNewsSlide, TvCalendarSlide, TvBirthdaySlide, prefetchNews } from './components/TvExtraSlides';
 import { tipForPass, SHOP_TIPS } from './utils/safetyTips';
@@ -2861,7 +2861,8 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode || tvPaused || configuredTvSlides.length <= 1) return;
     const thisSlide = configuredTvSlides[tvSlideIdx];
-    const baseDur = thisSlide?.duration ?? settings.tvSlideDuration ?? 15;
+    // Auto-length slides get at least their reading time (calendar, news).
+    const baseDur = thisSlide ? slideSeconds(thisSlide, settings.tvSlideDuration ?? 15) : (settings.tvSlideDuration ?? 15);
 
     let effectiveDur = baseDur;
     if (!thisSlide?.duration) {
@@ -2918,7 +2919,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   useEffect(() => {
     if (!tvMode || configuredTvSlides.length === 0) return;
     const next = configuredTvSlides[(tvSlideIdx + 1) % configuredTvSlides.length];
-    if (next?.type === 'news') prefetchNews(slideCycleCounts[next.id] || 0);
+    if (next?.type === 'news') prefetchNews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tvSlideIdx, tvMode, configuredTvSlides]);
 
