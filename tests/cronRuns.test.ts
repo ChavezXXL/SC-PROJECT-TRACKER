@@ -280,6 +280,27 @@ async function main() {
     ok('text weekdays: an empty shop sends nothing', sat.push.sent.length === 0);
   }
 
+  // 8a2. Idle nudges follow the alarms: they start at the clock-in alarm and
+  // stop 30 min before the EARLIEST finish (an optional early finish counts —
+  // people who left at 1:30 are home, not idle).
+  {
+    const sched = { autoClockOutTime: '15:00', shiftAlarms: [
+      { id: 'in', label: 'Shift starts — clock in', time: '05:00', enabled: true, clockIn: true, days: [1, 2, 3, 4, 5] },
+      { id: 'early', label: 'Early finish (optional) — stop your timer if leaving', time: '13:30', enabled: true, sendPush: true, days: [1, 2, 3, 4, 5] },
+      { id: 'out', label: 'Shift ends — clock out', time: '15:00', enabled: true, clockOut: true, days: [1, 2, 3, 4, 5] },
+    ] };
+    const f1 = createFakeFirestore();
+    seedShop(f1, sched);
+    addLog(f1, { user: 'w1', job: 'job-301', start: at(5), end: at(11) });
+    const r1 = await shiftRun(f1, at(12, 40));
+    ok('idle window: nudges before the early finish', r1.push.tagged('idle-gap-').length > 0);
+    const f2 = createFakeFirestore();
+    seedShop(f2, sched);
+    addLog(f2, { user: 'w1', job: 'job-301', start: at(5), end: at(11, 50) });
+    const r2 = await shiftRun(f2, at(13, 10));
+    ok('idle window: no nudges after it (people may have gone home)', r2.push.tagged('idle-gap-').length === 0);
+  }
+
   // 8b. Lunch backstop: a timer still paused for lunch (no screen resumed it)
   // is resumed by the cron once lunch is well over, counting just the lunch.
   {

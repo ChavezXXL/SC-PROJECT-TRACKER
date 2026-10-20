@@ -284,13 +284,22 @@ async function runSections(deps: ShiftCronDeps, now: number, run: RunStats): Pro
     clockInChecks.push({ alarm: a, shiftStart, dayStart: shopDayStartMs(shiftStart, tz) });
   }
 
-  // Idle-gap nudges only during work hours on a workday (Mon–Sat, 6:00 until
-  // 30 min before clock-out — no point telling someone to start a job right
-  // before they leave).
+  // Idle-gap nudges only during work hours on a workday (Mon–Sat). The hours
+  // follow the shop's alarms: from today's clock-in alarm (6:00 if none) until
+  // 30 min before the EARLIEST finish — an optional early finish counts, since
+  // someone who left then isn't idle (and no point telling anyone to start a
+  // job right before they leave).
   let idlePlan: IdlePlan | null = null;
   const dow = shopDayOfWeek(tz, now);
-  const workStart = shopLocalTimeMs(now, tz, 6, 0);
-  const end = parseHHMM(settings.autoClockOutTime) || { h: 17, m: 30 };
+  const todays = alarms.filter(a => a?.enabled && alarmActiveToday(a, tz, now));
+  const startAt = todays.filter(a => a.clockIn === true).map(a => parseHHMM(a.time)).filter(Boolean)
+    .sort((a, b) => (a!.h * 60 + a!.m) - (b!.h * 60 + b!.m))[0] || { h: 6, m: 0 };
+  const workStart = shopLocalTimeMs(now, tz, startAt.h, startAt.m);
+  const finishes = [
+    parseHHMM(settings.autoClockOutTime) || { h: 17, m: 30 },
+    ...todays.filter(a => a.clockOut || /finish|clock.?out|shift.?end/i.test(String(a.label || ''))).map(a => parseHHMM(a.time)),
+  ].filter(Boolean) as { h: number; m: number }[];
+  const end = finishes.sort((a, b) => (a.h * 60 + a.m) - (b.h * 60 + b.m))[0];
   const workEnd = shopLocalTimeMs(now, tz, end.h, end.m);
   if (dow >= 1 && dow <= 6 && now >= workStart && now <= workEnd - 30 * 60_000) {
     const idleMin = Math.max(20, Number(settings.idleGapMinutes) || 75);
