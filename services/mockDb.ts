@@ -29,6 +29,7 @@ import type { Job, TimeLog, User, SystemSettings, Sample, SampleWorkEntry, Quote
 import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
 import { setShopStages, isShippedStageId } from "../utils/dueDates";
+import { alarmOnDay } from "../utils/shiftRules";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -2214,7 +2215,7 @@ export async function sweepStaleLogs(): Promise<number> {
         if (cutoffMs <= log.startTime && c.h < 12) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
         // Day gate — on the day of that cutoff, not today: a Friday shift
         // still open on Saturday skipped its Mon–Fri cut-off and ran to 14 h.
-        if (c.days && c.days.length > 0 && !c.days.includes(shopDayOfWeek(tz, cutoffMs))) continue;
+        if (!alarmOnDay(c.days, shopDayOfWeek(tz, cutoffMs))) continue;
         if (log.startTime < cutoffMs && nowMs > cutoffMs) {
           if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
         }

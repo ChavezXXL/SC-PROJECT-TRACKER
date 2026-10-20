@@ -441,8 +441,8 @@ function playSynthesizedFallback(sound: ShiftAlarmSound) {
 // ── Public API ────────────────────────────────────────────────────────
 
 // Pure rules (also used by the server cron) live in utils/shiftRules.
-export { lunchWindow, getActiveAlarms } from '../utils/shiftRules';
-import { getActiveAlarms } from '../utils/shiftRules';
+export { lunchWindow, getActiveAlarms, alarmDays, alarmOnDay } from '../utils/shiftRules';
+import { getActiveAlarms, alarmDays, alarmOnDay } from '../utils/shiftRules';
 
 /**
  * Catch-up check — fires any alarm whose time was "now or within the last
@@ -463,7 +463,7 @@ function shouldFireNowOrRecently(alarm: ShiftAlarm, lookbackMs: number, tz: stri
   const nowMs = Date.now();
   // Day-of-week + target instant both in SHOP timezone, so the bell agrees with
   // the server push/clock-out regardless of the device's own timezone.
-  if (alarm.days && alarm.days.length > 0 && !alarm.days.includes(shopDayOfWeek(tz, nowMs))) return false;
+  if (!alarmOnDay(alarm.days, shopDayOfWeek(tz, nowMs))) return false;
   const target = shopLocalTimeMs(nowMs, tz, hm[0], hm[1]);
   const diffMs = nowMs - target;
   return diffMs >= 0 && diffMs < lookbackMs;
@@ -553,9 +553,9 @@ function nextOccurrence(alarm: ShiftAlarm, tz: string): number | null {
   let cand = shopLocalTimeMs(nowMs, tz, hm[0], hm[1]);
   if (cand <= nowMs) cand = shopLocalTimeMs(nowMs + 86400000, tz, hm[0], hm[1]);
   // Respect day-of-week filter (shop tz) by rolling forward up to 7 days
-  if (alarm.days && alarm.days.length > 0) {
+  if (alarmDays(alarm.days).length > 0) {
     for (let i = 0; i < 8; i++) {
-      if (alarm.days.includes(shopDayOfWeek(tz, cand))) break;
+      if (alarmOnDay(alarm.days, shopDayOfWeek(tz, cand))) break;
       cand = shopLocalTimeMs(cand + 86400000, tz, hm[0], hm[1]);
     }
   }

@@ -41,7 +41,7 @@ import type { Config } from '@netlify/functions';
 import type { ShiftAlarm, SystemSettings } from '../../types';
 import { shopLocalTimeMs, shopDayOfWeek } from '../../utils/timezone';
 import { finalizeDuration } from '../../utils/timeLogEdit';
-import { lunchWindow } from '../../utils/shiftRules';
+import { lunchWindow, alarmOnDay } from '../../utils/shiftRules';
 import { createFirestoreRest, type FirestoreRest, type FsDoc } from '../../utils/firestoreRest';
 import {
   USER_FIELDS, isActiveUser, isAdminUser, activeAdmins, activeWorkers, parseHHMM, shopDateStr, shopDayStartMs,
@@ -114,9 +114,8 @@ function isAfterGracePeriod(alarmTime: string, nowHHMM: string, graceMinutes: nu
 
 /** Days of week this alarm should fire (empty = every day), in shop time. */
 function alarmActiveToday(alarm: ShiftAlarm, tz: string, nowMs: number): boolean {
-  if (!alarm.days || alarm.days.length === 0) return true;
   const dow = shopDayOfWeek(tz, nowMs);
-  return alarm.days.includes(dow >= 0 ? dow : new Date(nowMs).getDay());
+  return alarmOnDay(alarm.days, dow >= 0 ? dow : new Date(nowMs).getDay());
 }
 
 /** Format elapsed ms as "Xh Ym" or "Ym" */
@@ -439,10 +438,8 @@ async function autoClockOut(
         const noonSameDay = shopLocalTimeMs(log.startTime, tz, 12, 0);
         cutoffMs = shopLocalTimeMs(noonSameDay + 86400000, tz, c.h, c.m);
       }
-      if (c.days && c.days.length > 0) {
-        const dow = shopDayOfWeek(tz, cutoffMs);
-        if (!c.days.includes(dow >= 0 ? dow : new Date(cutoffMs).getDay())) continue;
-      }
+      const cutoffDow = shopDayOfWeek(tz, cutoffMs);
+      if (!alarmOnDay(c.days, cutoffDow >= 0 ? cutoffDow : new Date(cutoffMs).getDay())) continue;
       if (log.startTime < cutoffMs && nowMs > cutoffMs) {
         if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
       }

@@ -6,6 +6,21 @@
 import type { ShiftAlarm, SystemSettings } from '../types';
 
 /**
+ * An alarm's weekdays as numbers (0 = Sunday … 6 = Saturday). The shop's
+ * saved alarms have them as TEXT ("1", "2"…) — written by an older screen —
+ * and every check compared them to a number, so no alarm with days set ever
+ * fired: no shift-end reminder push, no in-app bell, no day-gated cut-off.
+ * Empty = every day.
+ */
+export function alarmDays(days: unknown): number[] {
+  if (!Array.isArray(days)) return [];
+  return days.map(d => Number(d)).filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+}
+
+/** Does an alarm with these days apply on weekday `dow`? */
+export const alarmOnDay = (days: unknown, dow: number) => { const d = alarmDays(days); return d.length === 0 || d.includes(dow); };
+
+/**
  * The lunch break, as the alarms define it: the first enabled "Pause Timers"
  * alarm to the first enabled "Resume Timers" alarm after it. ONE source for
  * every screen — the shared floor/TV screens used a separate hidden

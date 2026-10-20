@@ -267,6 +267,19 @@ async function main() {
     ok('auto clock-out: untouched fields kept (partial update)', closed.operation === 'Deburr' && closed.userName === 'Worker 1');
   }
 
+  // 8a. The shop's saved alarms hold their days as TEXT ("1"…"5"). The
+  // shift-end reminder must still go out on a weekday (it never did).
+  {
+    const fake = createFakeFirestore();
+    seedShop(fake, { shiftAlarms: [
+      { id: 'end-txt', label: 'Shift ends — clock out', time: '15:30', enabled: true, clockOut: true, sendPush: true, days: ['5', '4', '3', '2', '1'] },
+    ] });
+    const r = await shiftRun(fake, at(15, 31));   // Tuesday
+    ok('text weekdays: the shift-end reminder is sent', r.push.tagged('shift-alarm-end-txt').length > 0);
+    const sat = await shiftRun(createFakeFirestore(), at(15, 31, TUE + 4 * DAY));
+    ok('text weekdays: an empty shop sends nothing', sat.push.sent.length === 0);
+  }
+
   // 8b. Lunch backstop: a timer still paused for lunch (no screen resumed it)
   // is resumed by the cron once lunch is well over, counting just the lunch.
   {

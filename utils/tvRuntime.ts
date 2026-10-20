@@ -121,7 +121,8 @@ function shopTimeOn(nowMs: number, dayOffset: number, h: number, m: number, tz?:
 export function isTvQuiet(q: TvQuiet | undefined, now: Date = new Date(), tz?: string): boolean {
   if (!q?.enabled) return false;
   const c = shopClock(now.getTime(), tz);
-  if (q.days?.includes(c.day)) return true;
+  // Days may be saved as text ("6") — compare as numbers.
+  if ((q.days || []).some(d => Number(d) === c.day)) return true;
   return inQuietHours(c.minutes, q.start, q.end);
 }
 

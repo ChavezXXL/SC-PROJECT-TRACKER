@@ -522,7 +522,7 @@ function ScheduleCard({ settings, set, now }: { settings: SystemSettings; set: P
   const enabled = !!q?.enabled;
   const start = q?.start || '18:00';
   const end = q?.end || '05:00';
-  const days = q?.days || [];
+  const days = (q?.days || []).map(Number);   // may be saved as text ("6")
   const quiet = { enabled, start, end, days };
   const setQuiet = (patch: Partial<typeof quiet>) => set({ tvQuietHours: { ...quiet, ...patch } });
   const nowDate = new Date(now);

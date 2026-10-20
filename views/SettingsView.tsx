@@ -38,7 +38,7 @@ import { parseDueDate } from '../utils/date';
 import { VAPID_KEY, vapidKeyToUint8 } from '../utils/vapid';
 import { customerKey } from '../utils/customers';
 import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from '../utils/goals';
-import { getActiveAlarms, playAlarmSound } from '../services/shiftAlarms';
+import { getActiveAlarms, playAlarmSound, alarmDays, alarmOnDay } from '../services/shiftAlarms';
 import { isDeveloper } from '../utils/devMode';
 import { planSessionQtyBackfill } from '../utils/jobMemory';
 import { sendTestEmail, getEmailJsConfig } from '../services/emailNotify';
@@ -327,7 +327,9 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
   };
 
   const toggleDay = (idx: number, day: number) => {
-    const current = alarms[idx].days || [];
+    // Saved alarms may hold their days as text ("1") — work in numbers, and
+    // saving writes numbers back.
+    const current = alarmDays(alarms[idx].days);
     const next = current.includes(day) ? current.filter(d => d !== day) : [...current, day];
     update(idx, { days: next });
   };
@@ -435,8 +437,8 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
             <div className="mt-2 pl-6 flex items-center gap-2 flex-wrap">
               <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Days</span>
               {DAY_CHIPS.map(d => {
-                const active = !alarm.days || alarm.days.length === 0 || alarm.days.includes(d.value);
-                const allDays = !alarm.days || alarm.days.length === 0;
+                const active = alarmOnDay(alarm.days, d.value);
+                const allDays = alarmDays(alarm.days).length === 0;
                 return (
                   <button
                     key={d.value}
