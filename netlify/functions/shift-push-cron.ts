@@ -40,6 +40,8 @@
 import type { Config } from '@netlify/functions';
 import type { ShiftAlarm, SystemSettings } from '../../types';
 import { shopLocalTimeMs, shopDayOfWeek } from '../../utils/timezone';
+import { finalizeDuration } from '../../utils/timeLogEdit';
+import { lunchWindow } from '../../utils/shiftRules';
 import { createFirestoreRest, type FirestoreRest, type FsDoc } from '../../utils/firestoreRest';
 import {
   USER_FIELDS, isActiveUser, isAdminUser, activeAdmins, activeWorkers, parseHHMM, shopDateStr, shopDayStartMs,
@@ -253,6 +255,11 @@ async function runSections(deps: ShiftCronDeps, now: number, run: RunStats): Pro
     } catch (e) {
       noteError(run, 'auto clock-out', e);
     }
+    try {
+      await resumeLunchPauses(fs, settings, now, openLogs);
+    } catch (e) {
+      noteError(run, 'lunch resume', e);
+    }
   }
 
   // ── Push gate ── everything below sends Web Push, which needs VAPID keys.
@@ -378,7 +385,7 @@ function createContext(o: {
 async function autoClockOut(
   fs: FirestoreRest, settings: SystemSettings & Record<string, any>, tz: string, nowMs: number, nowHHMM: string, openLogs: FsDoc[],
 ): Promise<Set<string>> {
-  const cutoffs: { h: number; m: number }[] = [];
+  const cutoffs: { h: number; m: number; days?: number[] }[] = [];
   if (settings.autoClockOutEnabled) {
     const mm = (settings.autoClockOutTime || '17:30').match(/^(\d{1,2}):(\d{2})$/);
     if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
@@ -391,9 +398,12 @@ async function autoClockOut(
   // switch is on. (The dedicated autoClockOutEnabled path above is independent.)
   if (settings.shiftAlarmsEnabled !== false) {
     for (const a of (settings.shiftAlarms || []) as any[]) {
-      if (!a?.clockOut || a.enabled === false || !alarmActiveToday(a, tz, nowMs)) continue;
+      // Days are checked against the day of each cutoff (below), not today:
+      // a Friday shift still open on Saturday skipped its Mon–Fri clock-out
+      // and ran to the 14 h net.
+      if (!a?.clockOut || a.enabled === false) continue;
       const mm = (a.time || '').match(/^(\d{1,2}):(\d{2})$/);
-      if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
+      if (mm) cutoffs.push({ h: +mm[1], m: +mm[2], days: a.days });
     }
   }
 
@@ -429,6 +439,10 @@ async function autoClockOut(
         const noonSameDay = shopLocalTimeMs(log.startTime, tz, 12, 0);
         cutoffMs = shopLocalTimeMs(noonSameDay + 86400000, tz, c.h, c.m);
       }
+      if (c.days && c.days.length > 0) {
+        const dow = shopDayOfWeek(tz, cutoffMs);
+        if (!c.days.includes(dow >= 0 ? dow : new Date(cutoffMs).getDay())) continue;
+      }
       if (log.startTime < cutoffMs && nowMs > cutoffMs) {
         if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
       }
@@ -443,11 +457,12 @@ async function autoClockOut(
     // Finalize an active pause (only if it began before the cutoff — a pause
     // started after the cutoff doesn't reduce pre-cutoff work). Then compute
     // working duration exactly like stopTimeLog so records are consistent.
-    let totalPausedMs = log.totalPausedMs || 0;
-    if (log.pausedAt && log.pausedAt < endTime) totalPausedMs += endTime - log.pausedAt;
-    const workingMs = Math.max(0, (endTime - log.startTime) - totalPausedMs);
-    const durationSeconds = Math.floor(workingMs / 1000);
-    const durationMinutes = Math.round(durationSeconds / 60);
+    // The app's own rule (utils/timeLogEdit) — whole-minute rounding here and
+    // 2-decimal minutes in the app made the same session read differently.
+    const { totalPausedMs, durationSeconds, durationMinutes, anomaly } = finalizeDuration(
+      { startTime: log.startTime, pausedAt: log.pausedAt && log.pausedAt < endTime ? log.pausedAt : null, totalPausedMs: log.totalPausedMs || 0 },
+      endTime,
+    );
 
     const ok = await fs.write('logs', log.id, {
       endTime,
@@ -460,11 +475,41 @@ async function autoClockOut(
       pauseReason: null,
       stopReason: reason,
       isAutoClosed: true,
+      ...(anomaly ? { durationAnomaly: true } : {}),
     }, { merge: true });
     if (ok) closed.add(log.id);
   }
   if (closed.size > 0) console.log(`${TAG} auto clock-out: ended ${closed.size} timer(s) — ${nowHHMM} ${tz}`);
   return closed;
+}
+
+/**
+ * Lunch backstop. Timers paused for lunch are resumed by whichever shop
+ * screen is open at lunch end; with none open (or a Wi-Fi blip then) they
+ * stayed paused all afternoon and the hours were lost. Once lunch is well
+ * over, resume any still paused for lunch, counting the pause as the lunch
+ * length — the same rule the screens use.
+ */
+async function resumeLunchPauses(fs: FirestoreRest, settings: SystemSettings, nowMs: number, openLogs: FsDoc[]): Promise<number> {
+  const lunch = lunchWindow(settings);
+  if (!lunch) return 0;
+  const GRACE_MS = 10 * 60_000;   // let the screens do it first
+  let resumed = 0;
+  for (const log of openLogs) {
+    if (log.status !== 'paused' || log.pauseReason !== 'auto-lunch' || typeof log.pausedAt !== 'number' || log.endTime) continue;
+    const lunchEndsAt = log.pausedAt + lunch.ms;
+    if (nowMs < lunchEndsAt + GRACE_MS) continue;
+    const ok = await fs.write('logs', log.id, {
+      pausedAt: null,
+      pauseReason: null,
+      totalPausedMs: (log.totalPausedMs || 0) + lunch.ms,
+      status: 'in_progress',
+      updatedAt: nowMs,
+    }, { merge: true });
+    if (ok) { resumed++; log.status = 'in_progress'; log.pausedAt = null; }
+  }
+  if (resumed) console.log(`${TAG} lunch backstop: resumed ${resumed} timer(s)`);
+  return resumed;
 }
 
 // ── Section A: shift alarm pushes — broadcast to every device ─────────

@@ -267,6 +267,28 @@ async function main() {
     ok('auto clock-out: untouched fields kept (partial update)', closed.operation === 'Deburr' && closed.userName === 'Worker 1');
   }
 
+  // 8b. Lunch backstop: a timer still paused for lunch (no screen resumed it)
+  // is resumed by the cron once lunch is well over, counting just the lunch.
+  {
+    const fake = createFakeFirestore();
+    seedShop(fake, { shiftAlarms: [
+      ...ALARMS.filter(a => a.id !== 'lunch'),
+      { id: 'l-start', label: 'Lunch Starts', time: '12:00', enabled: true, pauseTimers: true },
+      { id: 'l-end', label: 'Lunch Ends', time: '12:30', enabled: true, resumeTimers: true },
+    ] });
+    const lunchLog = addLog(fake, { user: 'w1', job: 'job-301', start: at(7), pausedAt: at(12) });
+    fake.set('logs', lunchLog, { ...fake.get('logs', lunchLog), pauseReason: 'auto-lunch' });
+    const ownPause = addLog(fake, { user: 'w2', job: 'job-302', start: at(7), pausedAt: at(12) });
+    fake.set('logs', ownPause, { ...fake.get('logs', ownPause), pauseReason: 'manual' });
+    await shiftRun(fake, at(12, 35));
+    ok('lunch backstop: waits for the screens first', fake.get('logs', lunchLog)!.status === 'paused');
+    await shiftRun(fake, at(12, 45));
+    const l = fake.get('logs', lunchLog)!;
+    ok('lunch backstop: resumed after lunch', l.status === 'in_progress' && l.pausedAt === null && l.pauseReason === null);
+    ok('lunch backstop: only the lunch length is unpaid', l.totalPausedMs === 30 * MIN);
+    ok("lunch backstop: a worker's own pause is left alone", fake.get('logs', ownPause)!.status === 'paused');
+  }
+
   // 9. A whole simulated Tuesday, every 5 minutes — the read budget.
   {
     const fake = createFakeFirestore();
