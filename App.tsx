@@ -59,6 +59,10 @@ const CustomerPosView = lazyView(() => import('./views/CustomerPosView').then(m 
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import { groupLogsByJob, jobBudgets, jobMoney, type JobBudget } from './utils/jobBudget';
 import { RowMenu } from './components/RowMenu';
+import { changedFields, hasChanges } from './utils/changedFields';
+import { shrinkImage, FILE_BUDGET_BYTES } from './utils/imageShrink';
+import { DateInput } from './components/DateInput';
+import { useOverlayLayer } from './components/overlayStack';
 import * as DB from './services/mockDb';
 import { LiveFloorMonitor, useAutoLunch } from './LiveFloorMonitor';
 const SamplesView = lazyView(() => import('./SamplesView').then(m => ({ default: m.SamplesView })));
@@ -137,7 +141,7 @@ import { FeatureGate } from './backend/FeatureGate';
 import { TrialBanner } from './components/TrialBanner';
 // Pure helpers — extracted to utils/ so each file has a single responsibility
 import { fmt, todayFmt, normDate, dateNum, toDateTimeLocal, formatDuration, getLogDurationMins, parseDueDate } from './utils/date';
-import { dueState, shippedOnTime, onTimeRate, compareByDue, dueLabel, toDateInput, isJobClosed } from './utils/dueDates';
+import { dueState, shippedOnTime, onTimeRate, compareByDue, dueLabel, toDateInput, isJobClosed, isShippedStageId } from './utils/dueDates';
 import { makeClientSlug, buildPortalUrl } from './utils/url';
 import { getPartHistory, suggestExpectedHours } from './utils/partHistory';
 import { getSampleEstimateForPart, suggestHoursFromSample, getAggregatedSampleEstimate, suggestHoursFromAggregated } from './utils/sampleEstimate';
@@ -162,7 +166,7 @@ import { JobTimeline } from './components/JobTimeline';
 import { isDeveloper } from './utils/devMode';
 import { watchLongRunningTimers, watchClockInReminder, watchEndOfShiftReminder, showTimerStarted, cancelTimerNotification, watchLiveTimerBadge } from './services/reminders';
 // mediaSession intentionally removed — hijacks music player controls in shop environments
-import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms } from './services/shiftAlarms';
+import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, scheduleUpcomingAlarms, lunchWindow } from './services/shiftAlarms';
 import { VAPID_KEY, vapidKeyToUint8 } from './utils/vapid';
 
 /** iOS-style toggle switch — shared across App.tsx components. */
@@ -1857,25 +1861,29 @@ const EmployeeDashboard = ({ user, addToast, onLogout, notifBell }: { user: User
             } as any);
           } catch {}
         }
+        // Read from ref so we always have the current log without re-mounting.
+        const currentLog = activeLogRef.current;
+        // Lunch-end resume — the counterpart to pauseTimers, so afternoon hours
+        // don't silently freeze. Never resume a worker's OWN manual pause.
+        // Runs on catch-up too (resuming takes nothing away): a phone locked
+        // at lunch end used to leave the whole afternoon paused. The pause
+        // counts as the lunch length at most, and the server's copy decides.
+        if (alarm.resumeTimers && currentLog && currentLog.pausedAt && currentLog.pauseReason !== 'manual') {
+          const lunch = lunchWindow(shopSettingsAlarmRef.current);
+          try { await DB.resumeTimeLog(currentLog.id, { system: true, at: lunch ? currentLog.pausedAt + lunch.ms : undefined }); } catch {}
+        }
         // Destructive side-effects ONLY in real-time fires (isCatchup = false).
         // This prevents workers being clocked out when:
         //   • The tab is refreshed mid-shift
         //   • Settings are saved (new Firestore snapshot)
         //   • The phone/iPad wakes up from sleep
         if (isCatchup) return;
-        // Read from ref so we always have the current log without re-mounting.
-        const currentLog = activeLogRef.current;
         if (alarm.pauseTimers && currentLog && !currentLog.pausedAt) {
           // Lunch alarms must write the SAME pauseReason as useAutoLunch so
           // resumeAllPaused('auto-lunch') can resume them — otherwise a lunch
           // paused via alarm freezes the worker's afternoon hours.
           const isLunch = alarm.id === 'legacy-lunch-start' || /lunch/i.test(alarm.label || '');
-          try { await DB.pauseTimeLog(currentLog.id, isLunch ? 'auto-lunch' : `Auto-pause: ${alarm.label}`); } catch {}
-        }
-        // Lunch-end resume — the counterpart to pauseTimers, so afternoon hours
-        // don't silently freeze. Never resume a worker's OWN manual pause.
-        if (alarm.resumeTimers && currentLog && currentLog.pausedAt && currentLog.pauseReason !== 'manual') {
-          try { await DB.resumeTimeLog(currentLog.id); } catch {}
+          try { await DB.pauseTimeLog(currentLog.id, isLunch ? 'auto-lunch' : `Auto-pause: ${alarm.label}`, { system: true }); } catch {}
         }
         if (alarm.clockOut && currentLog) {
           try { await DB.stopTimeLog(currentLog.id, undefined, undefined, undefined, 'alarm:shift-end'); } catch {}
@@ -2338,17 +2346,11 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => { if (isOpen) { setBusy(false); setError(''); } }, [isOpen]);
-  useEffect(() => {
-    if (!isOpen) return;
-    // Escape cancels. Enter is left to whichever button has focus (Confirm,
-    // to start with): a window-wide Enter ran the action twice, and ran it
-    // even when Cancel had focus.
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [isOpen, onCancel]);
+  // Escape cancels — only while this is the topmost dialog (shared overlay
+  // stack: one Esc used to close this AND the editor under it). Enter is left
+  // to whichever button has focus (Confirm, to start with): a window-wide
+  // Enter ran the action twice, and ran it even when Cancel had focus.
+  useOverlayLayer(!!isOpen, () => onCancel());
 
   // Runs once, waits for the result, and stays open on failure — it used to
   // close straight away, so a failed delete looked like it had worked. A slow
@@ -2372,7 +2374,7 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel }: any)
   if (!isOpen) return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[400] overflow-y-auto bg-zinc-950 animate-fade-in"
+      className="fixed inset-0 z-[1200] overflow-y-auto bg-zinc-950 animate-fade-in"
       role="dialog"
       aria-modal="true"
       onClick={onCancel}
@@ -4373,24 +4375,29 @@ const JobChecklistSection = ({ job, ticks, operations = [], onUpdate, onTick }: 
 // ══════════════════════════════════════════════════════════════════
 // JOB ATTACHMENTS SECTION — drawings, PDFs, cert docs (Jobs R1 #2)
 // ══════════════════════════════════════════════════════════════════
-const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; onUpdate: (atts: JobAttachment[]) => void; user: User | null; addToast: any }) => {
+const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; onUpdate: (atts: JobAttachment[] | ((prev: JobAttachment[]) => JobAttachment[])) => void; user: User | null; addToast: any }) => {
   const attachments = job.attachments || [];
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  const MAX_BYTES = 2 * 1024 * 1024; // 2 MB inline cap — larger files should go to Firebase Storage later
+  // Files live inside the job record (no cloud storage on the free plan) and
+  // a record can't pass ~1 MB — photo, notes and all. A 2 MB-per-file cap let
+  // a drawing "attach", then the job save failed. Photos are shrunk; other
+  // files must be small.
+  const MAX_FILE_BYTES = Math.floor(FILE_BUDGET_BYTES * 3 / 4);   // base64 grows 4/3
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
     const newAtts: JobAttachment[] = [];
     for (const file of Array.from(files)) {
-      if (file.size > MAX_BYTES) {
-        addToast('error', `"${file.name}" is over 2MB — compress or use smaller file`);
+      const isImage = file.type.startsWith('image/');
+      if (!isImage && file.size > MAX_FILE_BYTES) {
+        addToast('error', `"${file.name}" is too big to attach (max ${Math.round(MAX_FILE_BYTES / 1000)} KB) — save a smaller copy or a photo of it`);
         continue;
       }
       try {
-        const dataUrl: string = await new Promise((resolve, reject) => {
+        const dataUrl: string = isImage ? await shrinkImage(file, 250_000) : await new Promise((resolve, reject) => {
           const r = new FileReader();
           r.onload = () => resolve(r.result as string);
           r.onerror = reject;
@@ -4405,33 +4412,38 @@ const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; on
         newAtts.push({
           id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: file.name,
-          type: file.type,
-          size: file.size,
+          type: isImage ? 'image/jpeg' : file.type,
+          size: isImage ? Math.round(dataUrl.length * 3 / 4) : file.size,
           dataUrl,
           uploadedAt: Date.now(),
           uploadedBy: user?.id || 'unknown',
           uploadedByName: user?.name,
           category,
         });
-      } catch (e) {
-        addToast('error', `Failed to read ${file.name}`);
+      } catch (e: any) {
+        addToast('error', `Couldn't add ${file.name}${e?.message ? ` — ${e.message}` : ''}`);
       }
     }
     if (newAtts.length > 0) {
-      // Firestore hard-caps docs at 1MB — attachments live inline as base64
-      // dataUrls, so guard the TOTAL size or the next job save silently fails.
+      // The whole job has to fit: the part photo, notes and everything else
+      // count too (only the attachments were counted before).
+      const rest = JSON.stringify({ ...job, attachments: [] }).length;
       const merged = [...attachments, ...newAtts];
       const totalBytes = merged.reduce((sum, att) => sum + (att.dataUrl?.length || 0), 0);
-      const MAX_TOTAL_BYTES = 900_000; // ~900KB leaves headroom for the rest of the job doc
-      if (totalBytes > MAX_TOTAL_BYTES) {
-        addToast('error', `Attachments total ${(totalBytes / 1024 / 1024).toFixed(1)}MB — max ~0.9MB per job. Remove or compress files first.`);
+      const room = 980_000 - rest;
+      if (totalBytes > room) {
+        addToast('error', `Not enough room on this job for that (${Math.round(totalBytes / 1000)} KB of files, ${Math.max(0, Math.round(room / 1000))} KB free) — remove an attachment or use a smaller file.`);
         setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
-      onUpdate(merged);
+      // Added to whatever the list holds NOW — one removed while files were
+      // being read used to come back.
+      onUpdate(prev => [...prev, ...newAtts]);
       addToast('success', `Added ${newAtts.length} attachment${newAtts.length > 1 ? 's' : ''}`);
     }
     setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';   // picking the same file again works
   };
 
   const remove = (id: string) => onUpdate(attachments.filter(a => a.id !== id));
@@ -4481,7 +4493,7 @@ const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; on
         >
           <span className="text-3xl">📎</span>
           <span className="font-bold text-sm">{uploading ? 'Uploading…' : 'Upload Attachments'}</span>
-          <span className="text-[10px] text-zinc-600">Drawings · PDFs · Cert docs · Inspection reports · 2 MB max each</span>
+          <span className="text-[10px] text-zinc-600">Drawings · PDFs · Cert docs · Inspection reports · photos are shrunk, other files up to ~450 KB</span>
         </button>
       ) : (
         <>
@@ -4524,13 +4536,7 @@ const JobAttachmentsSection = ({ job, onUpdate, user, addToast }: { job: Job; on
 // Portaled + Esc-to-close + tap-anywhere-to-close. Image scales down on any
 // viewport (uses dvh so iOS Safari URL bar doesn't crop the image).
 const PartImageLightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [onClose]);
+  useOverlayLayer(true, onClose);   // Esc closes only this, not the editor under it
   return createPortal(
     <div
       className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-fade-in p-4"
@@ -4621,6 +4627,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const openedJobRef = useRef<Partial<Job>>({});
   const savingJobRef = useRef(false);
   const [savingJob, setSavingJob] = useState(false);
+  const editingJobIdRef = useRef<string>('');
   // The hours estimate this editor filled in (null = none, or the person typed
   // their own). While the field still holds it, it follows the quantity — it
   // used to freeze at whatever quantity was typed first.
@@ -4631,6 +4638,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       attachmentsDirtyRef.current = false;
       openedJobRef.current = editingJob;
       autoHoursRef.current = null;
+      editingJobIdRef.current = editingJob.id || '';
+    } else {
+      editingJobIdRef.current = '__closed__';
     }
     // Snapshot only when the editor opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4638,18 +4648,43 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   // Closing the editor forgets the job it showed, so nothing later (Scan PO,
   // the next New Job) can land on top of it.
   const closeJobEditor = () => { setShowModal(false); setEditingJob({}); };
+  // X / Cancel: never while a save is running (it would land on the next
+  // job opened), and ask before throwing away unsaved edits.
+  const requestCloseJobEditor = () => {
+    if (savingJobRef.current) return;
+    const dirty = hasChanges(openedJobRef.current, editingJob, { ignore: ['status', 'currentStage', 'stageHistory', 'checklistTicks', 'jobNotes', 'completedAt', 'shippedAt', 'profitSnapshot', 'photoInherited', 'photoFromPo'] })
+      || photoDirtyRef.current || checklistDirtyRef.current || attachmentsDirtyRef.current;
+    if (!dirty) { closeJobEditor(); return; }
+    confirm({ title: 'Discard changes?', message: 'This job has changes that are not saved. Close without saving them?', onConfirm: async () => closeJobEditor() });
+  };
   // Move the open job to another (not-complete) stage. On a FINISHED job that
   // reopens it — clearing its ship date and locked profit — so ask first; one
   // tap on the stage bar used to do it.
+  // The editor's copy follows the same rule the database applies to an open
+  // stage: it's open again (no completion, ship date or locked profit). It
+  // used to keep "completed", so Shipped On stayed editable on a reopened job
+  // and Complete stayed hidden.
+  const stageBusyRef = useRef(false);
+  const moveEditorJob = async (stage: JobStage, verb: string) => {
+    const jobId = editingJob.id;
+    if (!jobId || stageBusyRef.current) return;   // a double-click added two history entries
+    stageBusyRef.current = true;
+    try {
+      await DB.advanceJobStage(jobId, stage.id, user.id, user.name, false);
+      // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
+      setEditingJob(p => ({
+        ...p, currentStage: stage.id, status: stage.id === 'pending' ? 'pending' : 'in-progress',
+        completedAt: undefined, profitSnapshot: undefined, shippedAt: isShippedStageId(stage.id) ? Date.now() : undefined,
+      }));
+      addToast('success', `${verb} ${stage.label}`);
+    } catch {
+      addToast('error', `Couldn't move it to ${stage.label} — check the internet and try again.`);
+    } finally { stageBusyRef.current = false; }
+  };
   const moveToStage = (stage: JobStage) => {
     const jobId = editingJob.id;
     if (!jobId) return;
-    const go = async () => {
-      await DB.advanceJobStage(jobId, stage.id, user.id, user.name, false);
-      // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
-      setEditingJob(p => ({ ...p, currentStage: stage.id, status: stage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
-      addToast('success', `Moved to ${stage.label}`);
-    };
+    const go = () => moveEditorJob(stage, 'Moved to');
     if (editingJob.status === 'completed') {
       confirm({
         title: 'Reopen this finished job?',
@@ -4763,9 +4798,20 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     return m;
   }, [reworkEntries]);
 
-  const handleAdminStartJob = async (operation: string) => {
+  const handleAdminStartJob = async (operation: string, confirmed = false) => {
     if (!startJobModal) return;
     const targetWorker = selectedWorker || user;
+    // Starting stops whatever they're timing now — ask first (it used to end
+    // the worker's running timer without a word).
+    const busy = !confirmed && activeLogs.find(l => l.userId === targetWorker.id && l.jobId !== startJobModal.id);
+    if (busy) {
+      confirm({
+        title: `${targetWorker.name.split(' ')[0]} is on another job`,
+        message: `${targetWorker.name} is timing ${busy.operation || 'work'} on ${busy.jobIdsDisplay || busy.partNumber || 'another job'}. Starting this stops that timer. Switch them?`,
+        onConfirm: async () => { await handleAdminStartJob(operation, true); },
+      });
+      return;
+    }
     if (_startInFlight.has(targetWorker.id)) return;   // drop double-tap
     _startInFlight.add(targetWorker.id);
     try {
@@ -4961,7 +5007,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     //    priceSuggestion when no rate samples exist. Runs as soon as part
     //    number + quantity are typed — customer not required.
     const hoursAreAuto = autoHoursRef.current !== null && editingJob.expectedHours === autoHoursRef.current;
-    if ((!editingJob.expectedHours || hoursAreAuto) && editingJob.partNumber && (editingJob.quantity || 0) > 0) {
+    // Not on finished jobs — opening one to fix a date shouldn't change its budget.
+    if (editingJob.status !== 'completed' && (!editingJob.expectedHours || hoursAreAuto) && editingJob.partNumber && (editingJob.quantity || 0) > 0) {
       const rateEst = getRateBreakdownForJob(editingJob, allLogs, shopSettings.rateBuffer ?? 1.15);
       if (rateEst && rateEst.hasData && rateEst.totalHours > 0) {
         patch.expectedHours = parseFloat(rateEst.totalHours.toFixed(1));
@@ -5008,8 +5055,10 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       if (filled.length > 0) addToast('info', `🧠 Filled from memory: ${filled.join(' · ')}. Save to keep.`);
       return;
     }
-    // 2. Price per part — last paid rate
-    if (priceSuggestion.pricePerPart && !editingJob.pricePerPart && !editingJob.quoteAmount) {
+    // 2. Price per part — last paid rate. New jobs only: on an existing (often
+    // finished) job a guessed price got saved with any unrelated edit and
+    // re-locked its profit on that guess.
+    if (!editingJob.id && priceSuggestion.pricePerPart && !editingJob.pricePerPart && !editingJob.quoteAmount) {
       patch.pricePerPart = priceSuggestion.pricePerPart;
       const qty = editingJob.quantity || priceSuggestion.quantity || 0;
       if (qty > 0) patch.quoteAmount = parseFloat((priceSuggestion.pricePerPart * qty).toFixed(2));
@@ -5040,14 +5089,32 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     return { customer: cust, stages: customStages };
   }, [editingJob.customer, shopSettings]);
 
+  // Quick photo from a job row. Photo fields only — the upload takes seconds,
+  // and saving the whole job could revert edits made meanwhile. Shrunk to fit
+  // the job record; errors are shown (a HEIC or unreadable file used to fail
+  // without a word).
+  const addRowPhoto = async (jobId: string, input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    input.value = '';   // picking the same file again still works
+    if (!file) return;
+    try {
+      let partImage = await shrinkImage(await compressImage(file, 800, 0.6), 200_000);
+      // Upload to Storage when available (base64 fallback) — keeps job docs tiny
+      try { const b = dataUrlToBlobApp(partImage); if (b) partImage = await DB.uploadJobPartImage(b, jobId); } catch {}
+      await DB.setJobPhoto(jobId, partImage);
+      addToast('success', 'Photo added');
+    } catch (e: any) {
+      addToast('error', `Could not save photo${e?.message ? ` — ${e.message}` : ''}`);
+    }
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) { addToast('error', 'Please select an image file'); return; }
     try {
-      let partImage = await compressImage(file, 800, 0.6);
-      // Check size — Firestore doc limit ~1MB, image should be well under
-      if (partImage.length > 500_000) partImage = await compressImage(file, 500, 0.4);
+      // Must fit inside the job record next to its attachments and notes.
+      const partImage = await shrinkImage(await compressImage(file, 800, 0.6), 200_000);
       // This job's OWN photo now. Clearing the borrowed-photo tag is the whole
       // fix for "I replaced the photo and the old one came back": with the tag
       // still set, saveJob() treated the new photo as borrowed and dropped it.
@@ -5067,121 +5134,94 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
     if ((editingJob.expectedHours ?? 0) < 0) return addToast('error', 'Expected hours must be 0 or positive');
     savingJobRef.current = true;
     setSavingJob(true);
-    try { await saveEditedJob(); } finally { savingJobRef.current = false; setSavingJob(false); }
+    try { return await saveEditedJob(); } finally { savingJobRef.current = false; setSavingJob(false); }
   };
+
+  // Complete from inside the editor: save its edits first. Completing used to
+  // lock the profit on the editor's unsaved quote/quantity (and write its
+  // unsaved material cost) even if you then pressed Cancel.
+  const completeFromEditor = async () => {
+    const opened = openedJobRef.current as Partial<Job>;
+    const current = editingJob as Job;
+    const pending = hasChanges(opened, current, { ignore: ['status', 'currentStage', 'stageHistory', 'checklistTicks', 'jobNotes', 'photoInherited', 'photoFromPo'] })
+      || photoDirtyRef.current || checklistDirtyRef.current || attachmentsDirtyRef.current;
+    if (pending && !(await handleSave())) return;
+    const live = jobs.find(j => j.id === current.id);
+    await handleCompleteWithSnapshot({ ...(live || {}), ...current } as Job);
+  };
+
+  // The fields this editor's form controls. For an existing job only the ones
+  // actually edited are written: saving the whole copy taken when the editor
+  // opened undid due dates, priorities, quantities… changed on another device
+  // while it was open.
+  const JOB_FORM_FIELDS = ['jobIdsDisplay', 'poNumber', 'partNumber', 'quantity', 'customer', 'priority', 'dueDate', 'info',
+    'dateReceived', 'quoteAmount', 'specialInstructions', 'pricePerPart', 'expectedHours', 'materialCost',
+    'shippingMethod', 'trackingNumber', 'shippingNotes', 'portalNote'] as const;
 
   const saveEditedJob = async () => {
     const today = new Date();
     // Format as MM/DD/YYYY — the app's canonical date format.
     // The old ISO-string approach produced YYYY-MM-DD which broke every dateNum() comparison.
     const localDate = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
-    const job: Job = {
-      // Spread all existing fields FIRST so completedAt, jobNotes, checklist,
-      // attachments, expectedHours, linkedQuoteId etc. survive a save in
-      // localStorage mode (which does a full replace, not a merge like Firestore).
-      ...(editingJob as Job),
-      // Explicit fields below override the spread — these are the form-controlled values.
+    const isNew = !editingJob.id;
+    // Captured now — the refs reset if the editor is reopened while saving.
+    const photoChanged = photoDirtyRef.current;
+    const checklistChanged = checklistDirtyRef.current;
+    const attachmentsChanged = attachmentsDirtyRef.current;
+    const shipChanged = shipDirtyRef.current;
+    // Normalise a copy of the form the same way for the edited copy and the
+    // copy the editor opened with, so only real edits count as changes.
+    const formJob = (src: Partial<Job>, current: boolean): Job => ({
+      ...(src as Job),
       id: editingJob.id || Date.now().toString(),
-      jobIdsDisplay: editingJob.jobIdsDisplay || editingJob.poNumber || 'J-' + Date.now().toString().slice(-4),
-      poNumber: editingJob.poNumber,
-      partNumber: editingJob.partNumber,
-      quantity: editingJob.quantity || 0,
-      customer: editingJob.customer || '',
-      priority: editingJob.priority || 'normal',
-      dueDate: normDate(editingJob.dueDate) || '',
-      info: editingJob.info || '',
-      status: editingJob.status || 'pending',   // first clock-in moves it to In Progress
-      dateReceived: normDate(editingJob.dateReceived) || localDate,
-      createdAt: editingJob.createdAt || Date.now(),
-      quoteAmount: editingJob.quoteAmount || undefined,
-      specialInstructions: editingJob.specialInstructions || '',
-      partImage: editingJob.partImage || undefined,
-      // Shipping
-      shippingMethod: editingJob.shippingMethod || undefined,
-      trackingNumber: editingJob.trackingNumber || undefined,
-      shippingNotes: editingJob.shippingNotes || undefined,
-      shippedAt: editingJob.shippedAt || undefined,
-      // Pricing
-      pricePerPart: editingJob.pricePerPart || undefined,
+      jobIdsDisplay: src.jobIdsDisplay || src.poNumber || 'J-' + Date.now().toString().slice(-4),
+      poNumber: src.poNumber || '',
+      partNumber: src.partNumber || '',
+      quantity: src.quantity || 0,
+      customer: src.customer || '',
+      priority: src.priority || 'normal',
+      dueDate: normDate(src.dueDate) || '',
+      info: src.info || '',
+      status: src.status || 'pending',   // first clock-in moves it to In Progress
+      // New jobs default to today; an existing job's emptied date stays empty
+      // (it used to quietly become today).
+      dateReceived: normDate(src.dateReceived) || (isNew ? localDate : ''),
+      createdAt: src.createdAt || Date.now(),
+      quoteAmount: src.quoteAmount || undefined,
+      specialInstructions: src.specialInstructions || '',
+      partImage: src.partImage || undefined,
+      shippingMethod: src.shippingMethod || undefined,
+      trackingNumber: src.trackingNumber || undefined,
+      shippingNotes: src.shippingNotes || undefined,
+      shippedAt: src.shippedAt || undefined,
+      pricePerPart: src.pricePerPart || undefined,
       // Time budget — must persist so traveler prints it and over-budget alerts work
-      expectedHours: editingJob.expectedHours || undefined,
+      expectedHours: src.expectedHours || undefined,
       // Material / consumable cost (entered during job lifecycle or at close-out)
-      materialCost: editingJob.materialCost || undefined,
+      materialCost: src.materialCost || undefined,
       // Portal note — kept when it has text or an expected date. Its time is
       // re-stamped only when the note itself changed: stamping it on every
       // save made a two-week-old note show as "New update · just now".
-      portalNote: (editingJob.portalNote?.text?.trim() || editingJob.portalNote?.expectedDate)
+      portalNote: (src.portalNote?.text?.trim() || src.portalNote?.expectedDate)
         ? (() => {
-            const note = editingJob.portalNote!;
+            const note = src.portalNote!;
             const was = (openedJobRef.current as Partial<Job>).portalNote;
             const changed = !was || (was.text || '') !== (note.text || '') || (was.expectedDate || '') !== (note.expectedDate || '');
-            return changed ? { ...note, text: note.text || '', updatedAt: Date.now(), updatedBy: user?.name } : was;
+            return current && changed ? { ...note, text: note.text || '', updatedAt: Date.now(), updatedBy: user?.name } : (was || note);
           })()
         : undefined,
-    };
-    // Stage fields are owned EXCLUSIVELY by DB.advanceJobStage (which uses
-    // arrayUnion). Never write them from the modal save — the editingJob
-    // snapshot is stale, so writing it would revert a stage advanced (by a
-    // worker clock-in / board drag) while the modal was open and erase history.
-    delete (job as any).currentStage;
-    delete (job as any).stageHistory;
-    // Same for the job's lifecycle: status/completion are written the moment
-    // they change (stage buttons → advanceJobStage / complete flow). Writing
-    // the modal's copy again meant a job completed on another device while
-    // this editor was open got flipped back to in-progress on Save.
-    if (editingJob.id) {
-      delete (job as any).status;
-      delete (job as any).completedAt;
-      delete (job as any).profitSnapshot;
-      delete (job as any).shippedAt;
-      // Due-date history, compared against the LIVE job (not the modal's copy):
-      // a moved date keeps the original promise and logs the change.
-      const live = jobs.find(x => x.id === editingJob.id);
-      const before = normDate(live?.dueDate || '');
-      if (live && before && job.dueDate && before !== job.dueDate) {
-        job.originalDueDate = live.originalDueDate || before;
-        job.dueDateHistory = [...(live.dueDateHistory || []), { from: before, to: job.dueDate, at: Date.now(), by: user?.name }];
-      } else {
-        delete (job as any).originalDueDate;
-        delete (job as any).dueDateHistory;
-      }
-    }
-    // Checklist: only persist when edited in this modal session, so a stale
-    // snapshot can't wipe check-offs made from the floor card meanwhile.
-    if (!checklistDirtyRef.current) delete (job as any).checklist;
-    // Ticks are written one step at a time (DB.setChecklistTick), never from
-    // the editor's copy.
-    delete (job as any).checklistTicks;
-    if (editingJob.id) {
-      // Notes are only ever ADDED (DB.addJobNote, arrayUnion). Writing the
-      // editor's copy erased any note a worker added while it was open.
-      delete (job as any).jobNotes;
-      if (!attachmentsDirtyRef.current) delete (job as any).attachments;
-    }
-    // Fields emptied in THIS session are deleted — a merge save skips
-    // undefined, so an emptied price, budget or tracking number came back.
-    // Compared with the job as the editor opened it, so a value set elsewhere
-    // meanwhile (e.g. material cost at close-out) is left alone.
-    const opened = openedJobRef.current as Record<string, unknown>;
-    const hadValue = (v: unknown) => v !== undefined && v !== null && v !== '' && v !== 0;
-    const clear = editingJob.id
-      ? (['quoteAmount', 'pricePerPart', 'expectedHours', 'materialCost', 'shippingMethod', 'trackingNumber', 'shippingNotes', 'portalNote'] as const)
-          .filter(f => (job as any)[f] === undefined && hadValue(opened[f]))
-      : [];
-    // Part photo: written ONLY when changed in this modal session. Writing the
-    // modal's copy unconditionally put a stale photo back over a newer one
-    // saved elsewhere while the editor was open.
-    const photoChanged = photoDirtyRef.current;
-    const clearPhoto = photoChanged && !editingJob.partImage && !!editingJob.id;
+    });
+    const job = formJob(editingJob, true);
     delete (job as any).photoInherited;
     delete (job as any).photoFromPo;
-    if (!photoChanged) {
-      delete (job as any).partImage;
-      delete (job as any).partImageAt;
-    } else if (job.partImage) {
+
+    // Part photo: Storage URL when Storage is available (keeps job docs
+    // tiny); otherwise the base64 stays on the job and the background move
+    // upgrades it later.
+    // A new job keeps whatever photo it has (reopening the editor after Scan PO
+    // reset the "changed" flags and dropped it).
+    if ((photoChanged || isNew) && job.partImage) {
       job.partImageAt = Date.now();
-      // Storage URL when Storage is available (keeps job docs tiny); otherwise
-      // the base64 stays on the job and the background move upgrades it later.
       if (job.partImage.startsWith('data:')) {
         try {
           const blob = dataUrlToBlobApp(job.partImage);
@@ -5189,11 +5229,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
         } catch { /* keep base64 */ }
       }
     }
+    const clearPhoto = photoChanged && !editingJob.partImage && !isNew;
+
     // A finished job's locked profit follows a quote or material cost entered
     // after close-out (the dashboard asks for exactly that). It used to keep
     // the close-out numbers forever — "Loss −100%" for a job closed before its
     // quote went in, in every report.
-    const liveJob = editingJob.id ? jobs.find(x => x.id === editingJob.id) : undefined;
+    const opened = openedJobRef.current as Record<string, unknown>;
+    const liveJob = !isNew ? jobs.find(x => x.id === editingJob.id) : undefined;
     const money = (v: unknown) => Number(v) || 0;
     let relocked: Job['profitSnapshot'] | undefined;
     if (liveJob?.status === 'completed' && liveJob.profitSnapshot
@@ -5202,16 +5245,45 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       try { jobLogs = await DB.getLogsForJob(liveJob.id); } catch { /* fall back to the loaded set */ }
       relocked = buildProfitSnapshot(calcJobProfit({ ...liveJob, quoteAmount: job.quoteAmount, materialCost: job.materialCost } as Job, jobLogs, allUsers, shopSettings, allPOs));
     }
+
     try {
-      const isNew = !editingJob.id;
-      const result = await DB.saveJob(job, { clear: [...clear] });
-      if (relocked) await DB.updateJobFields(job.id, { profitSnapshot: relocked });
-      // A plain (merge) save can't delete a field — undefined is skipped — so
-      // a removed photo used to reappear. Delete it explicitly.
-      if (clearPhoto) await DB.setJobPhoto(job.id, null);
-      if (shipDirtyRef.current && editingJob.id && editingJob.shippedAt) await DB.setJobShippedAt(job.id, editingJob.shippedAt);
-      setShowModal(false);
-      setEditingJob({});
+      let result: 'saved' | 'queued';
+      if (isNew) {
+        // A new job: the whole record. Stage, notes and ticks start empty.
+        delete (job as any).currentStage;
+        delete (job as any).stageHistory;
+        delete (job as any).checklistTicks;
+        // Steps and photo stay on a new job even if the editor was reopened
+        // (Scan PO) — there is nothing older for them to overwrite.
+        if (!job.partImage) { delete (job as any).partImage; delete (job as any).partImageAt; }
+        result = await DB.saveJob(job);
+      } else {
+        // An existing job: only what was edited here. Status, stage, notes,
+        // ticks and completion are written by their own actions, never from
+        // this copy.
+        const pick = (o: Job) => Object.fromEntries(JOB_FORM_FIELDS.map(k => [k, (o as any)[k]])) as Partial<Job>;
+        const changes: Partial<Job> = changedFields(pick(formJob(openedJobRef.current, false)), pick(job));
+        // Due-date history, compared against the LIVE job: a moved date keeps
+        // the original promise and logs the change.
+        if ('dueDate' in changes) {
+          const before = normDate(liveJob?.dueDate || '');
+          if (before && job.dueDate && before !== job.dueDate) {
+            changes.originalDueDate = liveJob?.originalDueDate || before;
+            changes.dueDateHistory = [...(liveJob?.dueDateHistory || []), { from: before, to: job.dueDate, at: Date.now(), by: user?.name }];
+          }
+        }
+        if (checklistChanged) changes.checklist = job.checklist;
+        if (attachmentsChanged) changes.attachments = job.attachments;
+        if (photoChanged && job.partImage) { changes.partImage = job.partImage; changes.partImageAt = job.partImageAt; }
+        if (relocked) changes.profitSnapshot = relocked;
+        result = Object.keys(changes).length ? await DB.updateJobFields(job.id, changes) : 'saved';
+        // Removing a photo deletes both photo fields.
+        if (clearPhoto) await DB.setJobPhoto(job.id, null);
+        if (shipChanged && editingJob.shippedAt) await DB.setJobShippedAt(job.id, editingJob.shippedAt);
+      }
+      // Only close the editor that was saved — a save finishing after Cancel
+      // used to close (and wipe) the next job's editor.
+      if (editingJobIdRef.current === (editingJob.id || '')) { setShowModal(false); setEditingJob({}); }
       if (result === 'queued') {
         addToast('info', `${isNew ? 'Job created' : 'Saved'} on this device — it syncs when the internet is back.`);
       } else if (isNew) {
@@ -5219,8 +5291,14 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       } else {
         addToast('success', 'Job saved');
       }
+      return true;
     }
-    catch (e) { addToast('error', "Couldn't save — check the internet and try again. Your changes are still here."); }
+    catch (e: any) {
+      addToast('error', e instanceof DB.TooBigError || /deleted on another device/.test(e?.message || '')
+        ? `${e.message}. Your changes are still here.`
+        : "Couldn't save — check the internet and try again. Your changes are still here.");
+      return false;
+    }
   };
 
   // ── Complete a job — locks a profit snapshot immediately, no prompt needed.
@@ -5748,6 +5826,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   ? await resolveShipAt(choice, () => DB.lastWorkEndForJob(id), jobs.find(x => x.id === id)?.shippedAt)
                   : undefined;
                 await DB.advanceJobStage(id, next.id, user.id, user.name, next.isComplete, shippedAt);
+                // Lock the profit like every other way of finishing a job —
+                // bulk-finished jobs never got a locked margin.
+                if (next.isComplete) {
+                  const j = jobs.find(x => x.id === id);
+                  if (j) {
+                    let jl = allLogs.filter(l => l.jobId === id);
+                    try { jl = await DB.getLogsForJob(id); } catch { /* loaded set */ }
+                    await DB.completeJobWithSnapshot(id, j.materialCost ?? 0, buildProfitSnapshot(calcJobProfit(j, jl, allUsers, shopSettings, allPOs)), shippedAt);
+                  }
+                }
               }));
               const failedIds = plan.filter((_, i) => results[i].status === 'rejected').map(x => x.id);
               if (failedIds.length) {
@@ -5923,17 +6011,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             accept="image/*"
                             capture="environment"
                             className="hidden"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0]; if (!file) return;
-                              const compressed = await compressImage(file, 800, 0.6);
-                              // Upload to Storage (base64 fallback) — keeps job docs tiny
-                              let partImage = compressed;
-                              try { const b = dataUrlToBlobApp(compressed); if (b) partImage = await DB.uploadJobPartImage(b, j.id); } catch {}
-                              // Photo fields only — the upload takes seconds, and saving the
-                              // whole job snapshot could revert edits made meanwhile.
-                              try { await DB.setJobPhoto(j.id, partImage); addToast('success', 'Photo added'); }
-                              catch { addToast('error', 'Could not save photo'); }
-                            }}
+                            onChange={e => addRowPhoto(j.id, e.currentTarget)}
                           />
                         </label>
                       )}
@@ -6182,16 +6260,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       ) : (
                         <label className="w-10 h-10 rounded-lg border border-dashed border-white/10 flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all flex-shrink-0 group" title="Add part photo" onClick={e => e.stopPropagation()}>
                           <Camera className="w-4 h-4 text-zinc-600 group-hover:text-cyan-400" />
-                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
-                            const file = e.target.files?.[0]; if (!file) return;
-                            const compressed = await compressImage(file, 800, 0.6);
-                            // Upload to Storage (base64 fallback) — keeps job docs tiny
-                            let partImage = compressed;
-                            try { const b = dataUrlToBlobApp(compressed); if (b) partImage = await DB.uploadJobPartImage(b, j.id); } catch {}
-                            // Photo fields only — see the mobile camera above.
-                            try { await DB.setJobPhoto(j.id, partImage); addToast('success', 'Photo added'); }
-                            catch { addToast('error', 'Could not save photo'); }
-                          }} />
+                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => addRowPhoto(j.id, e.currentTarget)} />
                         </label>
                       )}
                       <div>
@@ -6356,7 +6425,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     <Scan className="w-3.5 h-3.5" /> Scan PO
                   </button>
                 )}
-                <button type="button" aria-label="Close" onClick={closeJobEditor}><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+                <button type="button" aria-label="Close" onClick={requestCloseJobEditor} disabled={savingJob} className="disabled:opacity-40"><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
               </div>
             </div>
             <div ref={modalBodyRef} className="p-4 sm:p-8 overflow-y-auto space-y-5 sm:space-y-8">
@@ -6381,7 +6450,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           onChange={async (e) => {
                             const targetStage = stages.find(s => s.id === e.target.value);
                             if (!targetStage || targetStage.id === currentStage.id) return;
-                            if (targetStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
+                            if (targetStage.isComplete) { await completeFromEditor(); return; }
                             moveToStage(targetStage);
                           }}
                           className="text-xs font-bold px-3 py-2 rounded-lg bg-zinc-800 border border-white/10 text-zinc-300 outline-none cursor-pointer hover:border-white/20 transition-colors min-w-0 w-full"
@@ -6393,11 +6462,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <button
                             type="button"
                             onClick={async () => {
-                              if (nextStage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
-                              await DB.advanceJobStage(editingJob.id, nextStage.id, user.id, user.name, false);
-                              // stageHistory is owned by DB.advanceJobStage (arrayUnion) — never append locally
-                              setEditingJob(p => ({ ...p, currentStage: nextStage.id, status: nextStage.id === 'in-progress' ? 'in-progress' : (p as Job).status }));
-                              addToast('success', `Advanced to ${nextStage.label}`);
+                              if (nextStage.isComplete) { await completeFromEditor(); return; }
+                              await moveEditorJob(nextStage, 'Advanced to');
                             }}
                             className="text-xs font-bold px-3 py-2 rounded-lg transition-colors hover:brightness-110 flex items-center justify-center gap-1.5 whitespace-nowrap"
                             style={{ background: `${nextStage.color}20`, color: nextStage.color }}
@@ -6410,7 +6476,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         {!isJobComplete && completedStage && (
                           <button
                             type="button"
-                            onClick={() => handleCompleteWithSnapshot(editingJob as Job)}
+                            onClick={() => completeFromEditor()}
                             className="text-xs font-bold px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap"
                           >
                             <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> Complete
@@ -6426,7 +6492,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         return (
                           <button key={stage.id} className="flex-1 flex flex-col items-center gap-1 cursor-pointer group" onClick={async () => {
                             if (stage.id === currentStage.id) return;
-                            if (stage.isComplete) { await handleCompleteWithSnapshot(editingJob as Job); return; }
+                            if (stage.isComplete) { await completeFromEditor(); return; }
                             moveToStage(stage);
                           }}>
                             <div className={`h-3 w-full rounded-full transition-all group-hover:scale-y-125 ${isCurrent ? 'ring-2 ring-white/40 ring-offset-1 ring-offset-zinc-900' : ''}`}
@@ -6673,12 +6739,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     if (ppp > 0 && qty > 0) updates.quoteAmount = parseFloat((ppp * qty).toFixed(2));
                     setEditingJob({ ...editingJob, ...updates });
                   }} placeholder="0" /></div>
-                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={editingJob.dateReceived ? (editingJob.dateReceived.includes('/') ? `${editingJob.dateReceived.split('/')[2]}-${editingJob.dateReceived.split('/')[0].padStart(2,'0')}-${editingJob.dateReceived.split('/')[1].padStart(2,'0')}` : editingJob.dateReceived) : ''} onChange={e => setEditingJob({ ...editingJob, dateReceived: e.target.value })} /></div>
+                  <div><label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Date Received</label><DateInput className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50" value={toDateInput(editingJob.dateReceived)} onChange={v => setEditingJob(prev => ({ ...prev, dateReceived: v }))} /></div>
                   <div>
                     <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Due Date</label>
-                    <input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    {/* DateInput: typing the year no longer blanks the field or saves "0002-…" */}
+                    <DateInput className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50"
                       value={toDateInput(editingJob.dueDate)}
-                      onChange={e => setEditingJob({ ...editingJob, dueDate: e.target.value })} />
+                      onChange={v => setEditingJob(prev => ({ ...prev, dueDate: v }))} />
                     {/* The first promise is kept when a date moves — reschedules no
                         longer erase what the customer was originally told. */}
                     {editingJob.originalDueDate && normDate(editingJob.originalDueDate) !== normDate(editingJob.dueDate) && (
@@ -6694,11 +6761,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   {editingJob.id && editingJob.status === 'completed' && (
                     <div>
                       <label className="text-xs font-bold text-zinc-400 uppercase ml-1 mb-2 block">Shipped On</label>
-                      <input type="date" className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      <DateInput className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white outline-none focus:ring-2 focus:ring-emerald-500/50"
                         value={(() => { const t = editingJob.shippedAt || editingJob.completedAt; if (!t) return ''; const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()}
                         max={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()}
-                        onChange={e => {
-                          const m = e.target.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                        onChange={v => {
+                          const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
                           if (!m) return;
                           shipDirtyRef.current = true;
                           setEditingJob(prev => ({ ...prev, shippedAt: new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() }));
@@ -7051,7 +7118,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               {/* ── Attachments / Blueprints — always visible, saved with job ── */}
               <JobAttachmentsSection
                 job={editingJob as Job}
-                onUpdate={(atts) => { attachmentsDirtyRef.current = true; setEditingJob(prev => ({ ...prev, attachments: atts })); }}
+                onUpdate={(atts) => { attachmentsDirtyRef.current = true; setEditingJob(prev => ({ ...prev, attachments: typeof atts === 'function' ? atts(prev.attachments || []) : atts })); }}
                 user={user}
                 addToast={addToast}
               />
@@ -7150,7 +7217,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               })()}
             </div>
             <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3 sticky bottom-0 z-10">
-              <button onClick={closeJobEditor} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
+              <button onClick={requestCloseJobEditor} disabled={savingJob} className="px-6 py-3 text-zinc-400 hover:text-white font-medium transition-colors disabled:opacity-40">Cancel</button>
               <button onClick={handleSave} disabled={savingJob} aria-busy={savingJob} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-60 disabled:cursor-wait text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-900/20 flex items-center gap-2 transition-all">
                 {savingJob ? 'Saving…' : editingJob.id ? <><Save className="w-4 h-4" /> Save Changes</> : <>Create Job <ArrowRight className="w-4 h-4" /></>}
               </button>
@@ -7365,7 +7432,19 @@ const AdminEmployees = ({ addToast, confirm, currentUser }: { addToast: any, con
     return `EMP-${String(next).padStart(3, '0')}`;
   };
 
+  // One save at a time: a second click while the first was still saving made
+  // a second member with the same username, PIN and employee number.
+  const savingUserRef = useRef(false);
+  const [savingUser, setSavingUser] = useState(false);
+  // The new member's id is made once per form, so a retry overwrites, never duplicates.
+  const newUserIdRef = useRef<string>('');
   const handleSave = async () => {
+    if (savingUserRef.current) return;
+    savingUserRef.current = true;
+    setSavingUser(true);
+    try { await saveMember(); } finally { savingUserRef.current = false; setSavingUser(false); }
+  };
+  const saveMember = async () => {
     const original = editingUser.id ? users.find(u => u.id === editingUser.id) : undefined;
     const typedPin = (editingUser.pin || '').trim();
     const pin = typedPin || original?.pin || '';   // blank when editing = keep the PIN
@@ -7394,8 +7473,9 @@ const AdminEmployees = ({ addToast, confirm, currentUser }: { addToast: any, con
     if (original?.role === 'admin' && original.isActive !== false && (role !== 'admin' || !isActive) && activeAdmins.length <= 1) {
       addToast('error', "That's the last admin — make someone else an admin first."); return;
     }
+    if (!editingUser.id && !newUserIdRef.current) newUserIdRef.current = crypto.randomUUID();
     const newUser: User = {
-      id: editingUser.id || crypto.randomUUID(),
+      id: editingUser.id || newUserIdRef.current,
       employeeId: editingUser.employeeId || nextEmployeeId(),
       name: editingUser.name,
       username: editingUser.username,
@@ -7412,6 +7492,7 @@ const AdminEmployees = ({ addToast, confirm, currentUser }: { addToast: any, con
       addToast('error', 'Save failed: ' + (e?.message || 'Unknown error'));
       return;
     }
+    newUserIdRef.current = '';
     closeModal();
     if (result === 'queued') addToast('info', `${newUser.name} saved on this device — it syncs when the internet is back.`);
     else addToast('success', `${editingUser.id ? 'Updated' : 'Welcome'} ${newUser.name} (${newUser.employeeId})`);
@@ -7796,10 +7877,11 @@ const AdminEmployees = ({ addToast, confirm, currentUser }: { addToast: any, con
                 <button
                   type="button"
                   onClick={handleSave}
-                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-amber-900/30 flex items-center gap-2 transition-all"
+                  disabled={savingUser}
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-amber-900/30 flex items-center gap-2 transition-all disabled:opacity-60"
                 >
                   <Save className="w-4 h-4" aria-hidden="true" />
-                  {isEditing ? 'Save Changes' : 'Invite Member'}
+                  {savingUser ? 'Saving…' : isEditing ? 'Save Changes' : 'Invite Member'}
                 </button>
               ) : (
                 <button
@@ -8147,8 +8229,20 @@ export default function App() {
   }, [user]);
 
   const addToast = useCallback((type: any, message: any) => {
-    setToasts(p => [...p, { id: Date.now().toString(), type, message }]);
+    setToasts(p => [...p, { id: Date.now().toString() + Math.random().toString(36).slice(2, 5), type, message }]);
   }, []);
+
+  // A change saved on this device (offline) that the server later refused —
+  // too big, or its record deleted elsewhere. Firestore quietly rolls it back,
+  // so say so instead of letting the edit just disappear.
+  useEffect(() => {
+    const onFail = (e: Event) => {
+      const reason = (e as CustomEvent).detail?.reason || 'the server rejected it';
+      addToast('error', `A change made while offline didn't save — ${reason}. Please check it and enter it again.`);
+    };
+    window.addEventListener(DB.SYNC_FAILED_EVENT, onFail);
+    return () => window.removeEventListener(DB.SYNC_FAILED_EVENT, onFail);
+  }, [addToast]);
 
   // Logout (PIN sign-out on the same shop). The shared listeners are NOT torn
   // down: everyone in the shop sees the same jobs and logs, and they close by
@@ -8208,7 +8302,7 @@ export default function App() {
       <>
         <PrintStyles />
         <LoginView onLogin={u => setUser(toSession(u))} addToast={addToast} />
-        <div className="fixed bottom-4 left-4 right-4 sm:left-auto z-[500] pointer-events-none">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto z-[1300] pointer-events-none">
           <div className="pointer-events-none flex flex-col items-stretch sm:items-end gap-2">
             {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}
           </div>
@@ -8497,6 +8591,10 @@ export default function App() {
           {view === 'admin-customers' && user && <CustomersView addToast={addToast} />}
           {view === 'admin-pricing' && user && <PricingView addToast={addToast} />}
           {view === 'admin-quotes' && user && <QuotesView addToast={addToast} user={{ id: user.id, name: user.name }} onJobCreate={async (data) => {
+            // A job already made from this quote (on any device) is reused, never
+            // duplicated — e.g. when linking it back to the quote failed last time.
+            const existing = data.linkedQuoteId ? allJobs.find(j => j.linkedQuoteId === data.linkedQuoteId) : undefined;
+            if (existing) return existing.id;
             const jobId = `JOB-${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             await DB.saveJob({
               id: jobId,
@@ -8505,8 +8603,10 @@ export default function App() {
               partNumber: data.partNumber,
               customer: data.customer,
               quantity: data.quantity,
-              dateReceived: new Date().toLocaleDateString('en-US'),
-              dueDate: data.dueDate,
+              // The app's one date format (MM/DD/YYYY) — these were stored as
+              // "10/5/2026" and as typed, which date sorting can misread.
+              dateReceived: todayFmt(),
+              dueDate: normDate(data.dueDate) || '',
               info: data.info,
               status: 'pending',
               createdAt: Date.now(),
@@ -8529,7 +8629,7 @@ export default function App() {
          and free vs. paying Gemini per scan. */}
             {/* Above every dialog (editor z-200, confirms z-400) — a toast about
                 a failed save used to sit hidden behind the editor it was about. */}
-            <div className="fixed bottom-4 left-4 right-4 sm:bottom-6 sm:left-auto sm:right-6 z-[500] pointer-events-none">
+            <div className="fixed bottom-4 left-4 right-4 sm:bottom-6 sm:left-auto sm:right-6 z-[1300] pointer-events-none">
         <div className="pointer-events-none flex flex-col items-stretch sm:items-end gap-2">
           {toasts.map(t => <Toast key={t.id} toast={t} onClose={removeToast} />)}
         </div>

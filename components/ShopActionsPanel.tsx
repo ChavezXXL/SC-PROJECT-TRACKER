@@ -4,7 +4,7 @@
  * person, give it a date, check it off. Brain insights can be promoted into
  * actions from the ShopBrainPanel ("→ Make task"). Ideas become work.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   ClipboardCheck, Plus, ChevronDown, ChevronUp, Trash2, Calendar, User as UserIcon, Check,
 } from 'lucide-react';
@@ -25,6 +25,8 @@ const fromDateInput = (s: string): string => {
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
 };
+const newId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+const queuedNote = (r: unknown) => (r === 'queued' ? ' — saved on this device, will sync' : '');
 
 export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: {
   actions: ShopAction[]; users: User[]; currentUserName?: string; addToast: (t: string, m: string) => void;
@@ -38,6 +40,11 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
   const [due, setDue] = useState('');
   const [showDone, setShowDone] = useState(false);
   const { confirm, ConfirmHost } = useConfirm();
+  // One id per opened Add form: offline the save resolves late, and a
+  // re-tap used to make a second copy under a fresh random id.
+  const addIdRef = useRef(newId());
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const tYmd = todayYmd();
   const { open, done } = useMemo(() => {
@@ -56,12 +63,16 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
     return next;
   });
 
+  const openAdd = () => { addIdRef.current = newId(); setAdding(true); };
+
   const add = async () => {
     const t = title.trim();
-    if (!t) return;
+    if (!t || savingRef.current) return;   // synchronous guard: Enter + tap, double-tap
+    savingRef.current = true;
+    setSaving(true);
     try {
-      await DB.saveShopAction({
-        id: crypto.randomUUID(),
+      const r = await DB.saveShopAction({
+        id: addIdRef.current,
         title: t,
         ownerName: owner || undefined,
         dueDate: due ? fromDateInput(due) : undefined,
@@ -71,19 +82,27 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
         source: 'manual',
       });
       setTitle(''); setOwner(''); setDue(''); setAdding(false);
-      addToast('success', 'Action added');
-    } catch { addToast('error', 'Could not save action'); }
+      addIdRef.current = newId();   // the next action is a new one
+      addToast('success', `Action added${queuedNote(r)}`);
+    } catch (e: any) { addToast('error', `Could not save action${e?.message ? ` — ${e.message}` : ''}`); }
+    finally { savingRef.current = false; setSaving(false); }
   };
 
   const setDone = async (a: ShopAction, val: boolean) => {
-    try { await DB.saveShopAction({ ...a, done: val, doneAt: val ? Date.now() : undefined }); }
-    catch { addToast('error', 'Update failed'); }
+    // Only the done fields; unchecking sends doneAt: undefined, which deletes it.
+    try {
+      const r = await DB.saveShopAction({ id: a.id, done: val, doneAt: val ? Date.now() : undefined });
+      if (r === 'queued') addToast('success', 'Saved on this device — will sync');
+    } catch (e: any) { addToast('error', `Update failed${e?.message ? ` — ${e.message}` : ''}`); }
   };
   const remove = async (a: ShopAction) => {
     // The delete button sits right beside the row — on a tablet one stray tap
     // deleted an action with no way back.
     if (!(await confirm({ title: 'Delete this action?', message: a.title, confirmLabel: 'Delete' }))) return;
-    try { await DB.deleteShopAction(a.id); } catch { addToast('error', 'Delete failed'); }
+    try {
+      const note = queuedNote(await DB.deleteShopAction(a.id));
+      if (note) addToast('success', `Deleted${note}`);
+    } catch (e: any) { addToast('error', `Delete failed${e?.message ? ` — ${e.message}` : ''}`); }
   };
 
   const Row = ({ a }: { a: ShopAction }) => {
@@ -154,11 +173,11 @@ export const ShopActionsPanel = ({ actions, users, currentUserName, addToast }: 
                 <input type="date" value={due} onChange={e => setDue(e.target.value)} aria-label="Due date" className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-zinc-300 [color-scheme:dark]" />
                 <div className="flex-1" />
                 <button onClick={() => setAdding(false)} className="text-xs font-bold text-zinc-500 hover:text-white px-2">Cancel</button>
-                <button onClick={add} disabled={!title.trim()} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Add</button>
+                <button onClick={add} disabled={!title.trim() || saving} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg">{saving ? 'Saving…' : 'Add'}</button>
               </div>
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-zinc-500 hover:text-violet-300 border border-dashed border-white/10 hover:border-violet-500/30 rounded-xl py-2.5 transition-colors">
+            <button onClick={openAdd} className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-zinc-500 hover:text-violet-300 border border-dashed border-white/10 hover:border-violet-500/30 rounded-xl py-2.5 transition-colors">
               <Plus className="w-3.5 h-3.5" /> Add action
             </button>
           )}

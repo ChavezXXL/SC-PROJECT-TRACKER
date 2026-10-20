@@ -31,14 +31,16 @@ export const RowMenu = ({ items, label = 'More actions' }: { items: RowMenuItem[
       if (menuRef.current?.contains(t) || btnRef.current?.contains(t)) return;
       close();
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    // Capture phase + stopPropagation: Esc closes just this menu, not the
+    // editor/dialog the row sits in (the shared overlay stack listens later).
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); } };
     document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
     return () => {
       document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
     };

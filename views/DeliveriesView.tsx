@@ -21,14 +21,93 @@ import {
 } from 'lucide-react';
 import type { Delivery, DeliveryStop, StopType, Job, User, SystemSettings, CustomerContact, Vendor } from '../types';
 import * as DB from '../services/mockDb';
-import { createGpsSession, startTracking, stopTracking, sessionMiles, sessionMinutes, type GpsSession } from '../services/gpsTracker';
+import {
+  createGpsSession, startTracking, stopTracking, sessionMinutes, trackForSave, trackingSession,
+  saveStoredSession, loadStoredSession, clearStoredSession, type GpsSession,
+} from '../services/gpsTracker';
 import { directionsUrl, formatMiles } from '../utils/geo';
 import { fmt, todayFmt } from '../utils/date';
 import { shrinkImage } from '../utils/imageShrink';
+import { changedFields, hasChanges, sameValue } from '../utils/changedFields';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/useConfirm';
 
 const IRS_MILEAGE_RATE_CENTS_2025 = 70; // $0.70/mi — update annually
+
+/** How often a live run's miles + track are written to the run (this phone keeps a copy in between). */
+const GPS_FLUSH_MS = 5 * 60_000;
+
+// Proof photos are embedded in the run's ONE record (no cloud storage on the
+// free plan), which can't pass ~1 MB — so photos share that room instead of
+// each getting the 450 KB single-photo budget (the 3rd one failed).
+const RUN_DOC_ROOM = 1_000_000 - 45_000;   // minus room for the GPS track (≤ 500 points) + field names
+const MAX_STOP_PHOTO = 150_000;
+const MIN_STOP_PHOTO = 25_000;             // below this a phone photo isn't readable any more
+
+const syncNote = (r: unknown) => (r === 'queued' ? ' — saved on this phone, will sync' : '');
+const errText = (e: any) => e?.message || 'check the connection and try again';
+const isTooBig = (e: any) => /too big/i.test(String(e?.message || ''));
+const roundMiles = (m: number) => Math.round(m * 100) / 100;
+
+/** Room for one more proof photo on this run: what's left ÷ stops still without a photo. */
+export function runPhotoBudget(run: Delivery, stopId: string): number {
+  const rest = JSON.stringify({
+    ...run, track: undefined,
+    stops: run.stops.map(s => (s.id === stopId ? { ...s, photoUrl: undefined } : s)),
+  }).length;
+  const waiting = run.stops.filter(s => s.id === stopId || !s.photoUrl).length;
+  return Math.max(0, Math.min(MAX_STOP_PHOTO, Math.floor((RUN_DOC_ROOM - rest) / Math.max(1, waiting))));
+}
+
+/** Apply a driver's tap to one stop. A time already recorded wins — a late GPS
+ *  answer or a double tap mustn't move when the driver arrived / finished. */
+export function applyStopPatch(stop: DeliveryStop, patch: Partial<DeliveryStop>): DeliveryStop {
+  const next: any = { ...stop, ...patch };
+  if (stop.arrivedAt && patch.arrivedAt) next.arrivedAt = stop.arrivedAt;
+  if (stop.completedAt && patch.completedAt) next.completedAt = stop.completedAt;
+  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+  return next;
+}
+
+/** Recorded on the driver's phone during the run — the editor never owns these. */
+const DRIVER_FIELDS = new Set(['arrivedAt', 'completedAt', 'photoUrl', 'signedBy', 'isException', 'exceptionReason', 'arrivalLat', 'arrivalLon']);
+
+/**
+ * Merge the delivery editor's stops into the LIVE stops. The editor seeds its
+ * stops once; saving that copy back wiped arrivals, Done, photos, signatures
+ * and exceptions the driver recorded while it was open.
+ *  • order, added and removed stops come from the editor;
+ *  • per stop, a field the user changed in the editor wins, anything else
+ *    (and every driver-recorded field) comes from the live copy;
+ *  • a stop added on another device while the editor was open is kept.
+ */
+export function mergeEditedStops(live: DeliveryStop[], opened: DeliveryStop[], edited: DeliveryStop[]): DeliveryStop[] {
+  const liveById = new Map(live.map(s => [s.id, s]));
+  const openedById = new Map(opened.map(s => [s.id, s]));
+  const editedIds = new Set(edited.map(s => s.id));
+  const out: DeliveryStop[] = [];
+  for (const e of edited) {
+    const l = liveById.get(e.id);
+    const o = openedById.get(e.id);
+    if (!l) {
+      // Removed on another device after the editor opened — keep it only if the user worked on it here.
+      if (!o || hasChanges(o, e)) out.push(e);
+      continue;
+    }
+    const m: any = { ...l };
+    const keys = new Set([...Object.keys(e), ...Object.keys(o || {})]);
+    for (const k of keys) {
+      if (DRIVER_FIELDS.has(k)) continue;
+      const ev = (e as any)[k];
+      if (!o || !sameValue((o as any)[k], ev)) {
+        if (ev === undefined) delete m[k]; else m[k] = ev;
+      }
+    }
+    out.push(m);
+  }
+  for (const l of live) if (!editedIds.has(l.id) && !openedById.has(l.id)) out.push(l);
+  return out;
+}
 
 // ── Stop type config ──────────────────────────────────────────────────────
 interface StopTypeDef {
@@ -148,11 +227,20 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DB.getSettings());
   const [creating, setCreating] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // The copy the editor opened with (not an id) — a run deleted elsewhere
+  // mustn't make an open editor vanish with the user's typing in it.
+  const [editing, setEditing] = useState<Delivery | null>(null);
   const { confirm: confirmDialog, ConfirmHost } = useConfirm();
+  const [loaded, setLoaded] = useState(false);
+  // Latest list for work that finishes after a re-render (GPS callbacks,
+  // chained stop saves, editor merges) — building from a render's copy
+  // dropped changes saved in between.
+  const deliveriesRef = useRef<Delivery[]>([]);
+  const toastRef = useRef(addToast);
+  toastRef.current = addToast;
 
   useEffect(() => {
-    const u1 = DB.subscribeDeliveries(setDeliveries);
+    const u1 = DB.subscribeDeliveries(list => { deliveriesRef.current = list; setDeliveries(list); setLoaded(true); });
     const u2 = DB.subscribeJobs(setJobs);
     const u3 = DB.subscribeUsers(setUsers);
     const u4 = DB.subscribeSettings(setSettings);
@@ -160,69 +248,286 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
     return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
-  const gpsRef = useRef<{ id: string; session: GpsSession } | null>(null);
-  const [liveMiles, setLiveMiles] = useState(0);
+  // ── GPS ──
+  // The session lives in gpsTracker (it keeps counting on other screens) and
+  // in this phone's storage (survives a reload / iOS killing the tab). This
+  // screen re-attaches to it, and writes the miles to the run every few minutes.
+  const gpsRef = useRef<GpsSession | null>(null);
+  const [gpsRunId, setGpsRunId] = useState<string | null>(null);   // run this phone is tracking (for rendering)
+  const [liveMiles, setLiveMiles] = useState(() => trackingSession()?.miles || 0);
+  const gpsErrAt = useRef<Record<string, number>>({});
+  const flushingRef = useRef(false);
+  const flushErrShown = useRef(new Set<string>());
+  // Runs with a start/finish/cancel/delete in flight — one at a time per run
+  // (a double tap started two GPS sessions / saved twice).
+  const busyRef = useRef(new Set<string>());
+  const [busyIds, setBusyIds] = useState<string[]>([]);
 
   const active = useMemo(() => deliveries.find(d => d.status === 'in-progress'), [deliveries]);
 
-  useEffect(() => {
-    return () => {
-      if (gpsRef.current) stopTracking(gpsRef.current.session);
-    };
+  /** Write the miles so far (+ track) to the run. Not forced: only every GPS_FLUSH_MS. */
+  const flushGps = useCallback(async (force = false) => {
+    const s = gpsRef.current;
+    if (!s || flushingRef.current || busyRef.current.has(s.runId)) return;   // Finish/Cancel writes the final figures
+    if (Math.abs(s.miles - s.savedMiles) < 0.01) return;
+    if (!force && Date.now() - s.lastFlushed < GPS_FLUSH_MS) return;
+    // Only onto a run that's still live — a partial save to a deleted run
+    // would create a broken stub, and Finish already wrote the final miles.
+    const run = deliveriesRef.current.find(d => d.id === s.runId);
+    if (!run || run.status !== 'in-progress') return;
+    flushingRef.current = true;
+    s.lastFlushed = Date.now();
+    const miles = roundMiles(s.miles);
+    try {
+      try {
+        await DB.saveDelivery({ id: s.runId, milesDriven: miles, track: trackForSave(s) });
+      } catch (e) {
+        if (!isTooBig(e)) throw e;
+        await DB.saveDelivery({ id: s.runId, milesDriven: miles });   // record full of photos — the miles matter most
+      }
+      s.savedMiles = miles;
+      saveStoredSession(s);
+    } catch (e) {
+      // Kept on this phone either way; say it once per run, not every 5 minutes.
+      if (!flushErrShown.current.has(s.runId)) {
+        flushErrShown.current.add(s.runId);
+        toastRef.current('error', `Couldn't save the miles so far (${errText(e)}) — they're kept on this phone and saved when you finish`);
+      }
+    } finally {
+      flushingRef.current = false;
+    }
   }, []);
 
-  const beginRun = async (d: Delivery) => {
+  const attachGps = useCallback((s: GpsSession) => {
+    gpsRef.current = s;
+    setGpsRunId(s.runId);
+    setLiveMiles(s.miles);
+    startTracking(
+      s,
+      () => { setLiveMiles(s.miles); void flushGps(); },
+      (msg) => {
+        // watchPosition repeats its error (e.g. every 30 s in a dead zone) — one toast a minute is plenty.
+        const now = Date.now();
+        if (now - (gpsErrAt.current[msg] || 0) < 60_000) return;
+        gpsErrAt.current[msg] = now;
+        toastRef.current('error', `GPS: ${msg}`);
+      },
+    );
+  }, [flushGps]);
+
+  const dropGps = (runId: string) => {
+    const s = gpsRef.current?.runId === runId ? gpsRef.current : trackingSession()?.runId === runId ? trackingSession() : null;
+    if (s) stopTracking(s);
+    clearStoredSession(runId);
+    if (gpsRef.current?.runId === runId) gpsRef.current = null;
+    setGpsRunId(null);
+    setLiveMiles(0);
+  };
+
+  // Re-attach to (or resume) this phone's session for the live run; stop
+  // following a run that was finished or cancelled on another device.
+  useEffect(() => {
+    if (!loaded) return;
+    const s = gpsRef.current || trackingSession() || loadStoredSession();
+    // A Finish/Cancel from this phone is in flight: the list already shows it
+    // (unconfirmed), and that action keeps or drops the session itself.
+    if (!s || busyRef.current.has(s.runId)) return;
+    const run = deliveries.find(d => d.id === s.runId);
+    // Not in the list (yet / a cached copy) — leave it alone rather than lose miles.
+    if (!run) return;
+    if (run.status === 'delivered' || run.status === 'cancelled') { dropGps(s.runId); return; }
+    if (run.status !== 'in-progress' || gpsRef.current === s) return;
+    const resumed = s.watchId == null && trackingSession() !== s;
+    attachGps(s);
+    if (resumed) toastRef.current('info', `GPS tracking resumed for ${run.runNumber} — ${formatMiles(s.miles)} so far`);
+    void flushGps(true);
+  }, [loaded, deliveries, attachGps, flushGps]);
+
+  useEffect(() => {
+    // Catch the miles of a parked tail, and save before iOS may kill a hidden tab.
+    const t = setInterval(() => { void flushGps(); }, 60_000);
+    const onHide = () => { if (document.visibilityState === 'hidden') void flushGps(true); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onHide);
+      // Leaving the screen: tracking carries on (gpsTracker), but nothing here
+      // can show it — detach, and save the miles so far.
+      const s = gpsRef.current;
+      if (s) {
+        s.onPoint = undefined; s.onError = undefined;
+        saveStoredSession(s);
+        void flushGps(true);
+        gpsRef.current = null;   // a remount re-attaches
+      }
+    };
+  }, [flushGps]);
+
+  // ── Run actions ──
+  const withBusy = async (id: string, fn: () => Promise<void>) => {
+    if (busyRef.current.has(id)) return;
+    busyRef.current.add(id); setBusyIds([...busyRef.current]);
+    try { await fn(); }
+    finally { busyRef.current.delete(id); setBusyIds([...busyRef.current]); }
+  };
+
+  const beginRun = (d: Delivery) => withBusy(d.id, async () => {
     // One active run at a time — starting a second would orphan the first run's
-    // GPS session (gpsRef gets overwritten) so its miles are never saved.
-    if (deliveries.some(x => x.status === 'in-progress' && x.id !== d.id)) {
+    // GPS session so its miles are never saved.
+    if (deliveriesRef.current.some(x => x.status === 'in-progress' && x.id !== d.id)) {
       addToast('error', 'Finish or cancel the active run first');
       return;
     }
-    const session = createGpsSession();
-    gpsRef.current = { id: d.id, session };
-    startTracking(
-      session,
-      () => setLiveMiles(sessionMiles(session)),
-      (msg) => addToast('error', `GPS: ${msg}`),
-    );
-    const updated: Delivery = { ...d, status: 'in-progress', startedAt: Date.now(), mileageRateCents: IRS_MILEAGE_RATE_CENTS_2025 };
-    await DB.saveDelivery(updated);
-    addToast('success', `🚚 Run ${d.runNumber} started — GPS tracking`);
-  };
-
-  const finishRun = async (d: Delivery) => {
-    const ref = gpsRef.current;
-    let miles = d.milesDriven || 0;
-    let minutes = d.durationMinutes || 0;
-    let track = d.track || [];
-    if (ref && ref.id === d.id) {
-      stopTracking(ref.session);
-      miles = sessionMiles(ref.session);
-      minutes = sessionMinutes(ref.session);
-      track = ref.session.points.map(p => ({ lat: p.lat, lon: p.lon, t: p.t || 0, acc: p.acc }));
-      gpsRef.current = null;
-    } else if (d.startedAt) {
-      minutes = Math.round((Date.now() - d.startedAt) / 60_000);
+    let r: 'saved' | 'queued';
+    try {
+      r = await DB.saveDelivery({ id: d.id, status: 'in-progress', startedAt: Date.now(), mileageRateCents: IRS_MILEAGE_RATE_CENTS_2025 });
+    } catch (e) {
+      addToast('error', `Couldn't start ${d.runNumber} — ${errText(e)}`);
+      return;
     }
-    const updated: Delivery = { ...d, status: 'delivered', endedAt: Date.now(), milesDriven: miles, durationMinutes: minutes, track };
-    await DB.saveDelivery(updated);
-    setLiveMiles(0);
-    addToast('success', `✅ Run ${d.runNumber} complete · ${formatMiles(miles)}`);
+    // GPS only once the run has really started — a failed start used to leave
+    // it tracking with no run on screen.
+    const session = createGpsSession(d.id, d.milesDriven || 0);
+    saveStoredSession(session);
+    attachGps(session);
+    addToast('success', `🚚 Run ${d.runNumber} started — GPS tracking${syncNote(r)}`);
+  });
+
+  const finishRun = (d: Delivery) => withBusy(d.id, async () => {
+    const live = deliveriesRef.current.find(x => x.id === d.id) || d;
+    // Keep the session until the save lands — dropping it first meant a failed
+    // save + a second tap on Finish saved 0 miles.
+    const s = gpsRef.current?.runId === d.id ? gpsRef.current : null;
+    const endedAt = Date.now();
+    const wallMinutes = live.startedAt ? Math.round((endedAt - live.startedAt) / 60_000) : 0;
+    const fields: Partial<Delivery> & { id: string } = { id: d.id, status: 'delivered', endedAt };
+    if (s) {
+      fields.milesDriven = roundMiles(s.miles);
+      fields.durationMinutes = sessionMinutes(s) || wallMinutes;
+      fields.track = trackForSave(s);
+    } else {
+      // No GPS on this phone — keep the miles already saved/typed on the run.
+      fields.durationMinutes = wallMinutes || live.durationMinutes;
+    }
+    let r: 'saved' | 'queued';
+    let trackDropped = false;
+    try {
+      try { r = await DB.saveDelivery(fields); }
+      catch (e) {
+        if (!isTooBig(e) || !s) throw e;
+        // The record is full of proof photos — save the run without the breadcrumbs rather than not at all.
+        r = await DB.saveDelivery({ ...fields, track: undefined });
+        trackDropped = true;
+      }
+    } catch (e) {
+      addToast('error', `Couldn't finish ${d.runNumber} — ${errText(e)}${s ? '. GPS is still counting; try again.' : ''}`);
+      return;
+    }
+    if (s) dropGps(d.id);
+    const miles = fields.milesDriven ?? live.milesDriven ?? 0;
+    addToast('success', `✅ Run ${d.runNumber} complete · ${formatMiles(miles)}${trackDropped ? ' (no room left for the GPS track)' : ''}${syncNote(r)}`);
+  });
+
+  /** Miles typed in on the tracking phone — GPS keeps adding from the new figure. */
+  const setMilesByHand = async (d: Delivery, miles: number) => {
+    const s = gpsRef.current?.runId === d.id ? gpsRef.current : null;
+    if (!s) return;
+    s.miles = miles;
+    saveStoredSession(s);
+    setLiveMiles(miles);
+    addToast('success', `Miles set to ${formatMiles(miles)} — GPS keeps adding from here`);
+    await flushGps(true);
   };
 
   const cancelRun = async (d: Delivery) => {
     const ok = await confirmDialog({ title: 'Cancel this delivery?', message: 'GPS track will be discarded. Run marked cancelled.', tone: 'warning', confirmLabel: 'Cancel run', cancelLabel: 'Keep running' });
     if (!ok) return;
-    if (gpsRef.current?.id === d.id) { stopTracking(gpsRef.current.session); gpsRef.current = null; }
-    await DB.saveDelivery({ ...d, status: 'cancelled', endedAt: Date.now() });
-    addToast('info', `Cancelled ${d.runNumber}`);
+    await withBusy(d.id, async () => {
+      let r: 'saved' | 'queued';
+      // Miles + track saved along the way go too, as the dialog says.
+      try { r = await DB.saveDelivery({ id: d.id, status: 'cancelled', endedAt: Date.now(), track: undefined, milesDriven: undefined }); }
+      catch (e) { addToast('error', `Couldn't cancel ${d.runNumber} — ${errText(e)}`); return; }
+      dropGps(d.id);
+      addToast('info', `Cancelled ${d.runNumber}${syncNote(r)}`);
+    });
   };
 
   const deleteRun = async (d: Delivery) => {
     const ok = await confirmDialog({ title: `Delete run ${d.runNumber}?`, message: "Can't be undone. Mileage log entry removed.", tone: 'danger', confirmLabel: 'Delete' });
     if (!ok) return;
-    await DB.deleteDelivery(d.id);
-    addToast('info', 'Deleted');
+    await withBusy(d.id, async () => {
+      let r: unknown;
+      try { r = await DB.deleteDelivery(d.id); }
+      catch (e) { addToast('error', `Couldn't delete ${d.runNumber} — ${errText(e)}`); return; }
+      addToast('info', `Deleted ${d.runNumber}${syncNote(r)}`);
+    });
+  };
+
+  // ── Stop updates ── serialized per run and built from the LATEST run, so
+  // "Received by" (saved on blur) + Done, or a late Arrived GPS answer + Done,
+  // can't drop one another. Only the stops are written.
+  const stopChain = useRef<Record<string, Promise<unknown>>>({});
+  const updateStop = useCallback((runId: string, stopId: string, patch: Partial<DeliveryStop>): Promise<'saved' | 'queued' | 'failed'> => {
+    const run = async (): Promise<'saved' | 'queued' | 'failed'> => {
+      const d = deliveriesRef.current.find(x => x.id === runId);
+      if (!d || !d.stops.some(s => s.id === stopId)) {
+        toastRef.current('error', 'That stop is no longer on this run — it was changed on another device');
+        return 'failed';
+      }
+      const before = d.stops;
+      const stops = before.map(s => (s.id === stopId ? applyStopPatch(s, patch) : s));
+      try {
+        const r = await DB.saveDelivery({ id: runId, stops });
+        // If the live copy hasn't come back yet, the next queued update must still build on this one.
+        deliveriesRef.current = deliveriesRef.current.map(x => (x.id === runId && x.stops === before ? { ...x, stops } : x));
+        return r;
+      } catch (e) {
+        toastRef.current('error', `Couldn't save that stop — ${errText(e)}`);
+        return 'failed';
+      }
+    };
+    const next = (stopChain.current[runId] || Promise.resolve()).then(run, run);
+    stopChain.current[runId] = next;
+    return next;
+  }, []);
+
+  /** Save-back of new customer addresses for auto-fill — secondary to the run, so it never blocks it. */
+  const saveContactsQuietly = async (contacts?: Record<string, CustomerContact>) => {
+    if (!contacts || Object.keys(contacts).length === 0) return;
+    try { await DB.saveClientContacts(contacts); }
+    catch (e) { addToast('info', `Run saved, but the new customer address for auto-fill wasn't (${errText(e)})`); }
+  };
+
+  const createRun = async (d: Delivery, _opened: Delivery | null, contacts?: Record<string, CustomerContact>): Promise<boolean> => {
+    let r: 'saved' | 'queued';
+    try { r = await DB.saveDelivery(d); }
+    catch (e) { addToast('error', `Couldn't create ${d.runNumber} — ${errText(e)}`); return false; }
+    await saveContactsQuietly(contacts);
+    setCreating(false);
+    addToast('success', `Run ${d.runNumber} created — ${d.stops.length} stops${syncNote(r)}`);
+    return true;
+  };
+
+  const saveEditedRun = async (edited: Delivery, opened: Delivery | null, contacts?: Record<string, CustomerContact>): Promise<boolean> => {
+    const live = deliveriesRef.current.find(x => x.id === edited.id);
+    if (!live) { addToast('error', `${edited.runNumber} was deleted on another device — nothing to save it to`); return false; }
+    // Only what the user changed — saving the whole copy undid progress
+    // recorded on the driver's phone while the editor was open.
+    const changes = changedFields<Delivery>(opened, edited, { ignore: ['updatedAt', 'stops'] });
+    if (!sameValue(opened?.stops, edited.stops)) changes.stops = mergeEditedStops(live.stops, opened?.stops || [], edited.stops);
+    if (Object.keys(changes).length === 0) {
+      await saveContactsQuietly(contacts);
+      setEditing(null);
+      addToast('info', 'No changes to save');
+      return true;
+    }
+    let r: 'saved' | 'queued';
+    try { r = await DB.saveDelivery({ id: edited.id, ...changes }); }
+    catch (e) { addToast('error', `Couldn't save ${edited.runNumber} — ${errText(e)}`); return false; }
+    await saveContactsQuietly(contacts);
+    setEditing(null);
+    addToast('success', `Saved ${edited.runNumber}${syncNote(r)}`);
+    return true;
   };
 
   const exportCsv = () => {
@@ -351,13 +656,13 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setEditingId(d.id)}
+                    <button type="button" onClick={() => setEditing(d)}
                       className="text-[11px] text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg font-bold transition-colors">
                       Edit
                     </button>
-                    <button type="button" onClick={() => beginRun(d)}
-                      className="text-[11px] text-emerald-400 hover:text-white bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors">
-                      <Play className="w-3 h-3" /> Start
+                    <button type="button" onClick={() => beginRun(d)} disabled={busyIds.includes(d.id)}
+                      className="text-[11px] text-emerald-400 hover:text-white bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors disabled:opacity-50">
+                      <Play className="w-3 h-3" /> {busyIds.includes(d.id) ? 'Starting…' : 'Start'}
                     </button>
                   </div>
                 </div>
@@ -373,21 +678,25 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           delivery={active}
           liveMiles={liveMiles || active.milesDriven || 0}
           jobs={jobs}
+          busy={busyIds.includes(active.id)}
           onFinish={() => finishRun(active)}
           onCancel={() => cancelRun(active)}
-          onUpdateStop={async (stopId, patch) => {
-            const stops = active.stops.map(s => s.id === stopId ? { ...s, ...patch } : s);
-            try { return await DB.saveDelivery({ ...active, stops }); }
-            catch (e: any) { addToast('error', e?.message || 'Could not save — check connection'); return 'failed'; }
+          onUpdateStop={(stopId, patch) => updateStop(active.id, stopId, patch)}
+          photoBudget={(stopId) => {
+            const run = deliveriesRef.current.find(x => x.id === active.id) || active;
+            return runPhotoBudget(run, stopId);
           }}
-          onEditDetails={() => setEditingId(active.id)}
+          // Only the phone doing the GPS can correct the live figure — another
+          // device's edit would be overwritten by that phone's next save.
+          onSetMiles={gpsRunId === active.id ? (m) => setMilesByHand(active, m) : undefined}
+          onEditDetails={() => setEditing(active)}
           addToast={addToast}
           allJobs={jobs}
         />
       )}
 
       {/* ── History ── */}
-      <HistoryList deliveries={history} jobs={jobs} onDelete={deleteRun} onEdit={(d) => setEditingId(d.id)} addToast={addToast} />
+      <HistoryList deliveries={history} jobs={jobs} onDelete={deleteRun} onEdit={(d) => setEditing(d)} addToast={addToast} />
 
       {/* ── Create modal ── */}
       {creating && (
@@ -395,33 +704,20 @@ export const DeliveriesView: React.FC<Props> = ({ user, addToast }) => {
           existing={null} drivers={users} jobs={jobs} vendors={vendors} allRuns={deliveries}
           settings={settings} allCustomers={allCustomers} currentUser={user} addToast={addToast}
           onCancel={() => setCreating(false)}
-          onSave={async (d, updatedContacts) => {
-            await DB.saveDelivery(d);
-            if (updatedContacts) await DB.saveClientContacts(updatedContacts);
-            setCreating(false);
-            addToast('success', `Run ${d.runNumber} created — ${d.stops.length} stops`);
-          }}
+          onSave={createRun}
         />
       )}
 
-      {/* ── Edit modal ── */}
-      {editingId && (() => {
-        const d = deliveries.find(x => x.id === editingId);
-        if (!d) return null;
-        return (
-          <DeliveryEditor
-            existing={d} drivers={users} jobs={jobs} vendors={vendors} allRuns={deliveries}
-            settings={settings} allCustomers={allCustomers} currentUser={user} addToast={addToast}
-            onCancel={() => setEditingId(null)}
-            onSave={async (updated, updatedContacts) => {
-              await DB.saveDelivery(updated);
-              if (updatedContacts) await DB.saveClientContacts(updatedContacts);
-              setEditingId(null);
-              addToast('success', `Saved ${updated.runNumber}`);
-            }}
-          />
-        );
-      })()}
+      {/* ── Edit modal ── keyed so switching runs re-seeds it */}
+      {editing && (
+        <DeliveryEditor
+          key={editing.id}
+          existing={editing} drivers={users} jobs={jobs} vendors={vendors} allRuns={deliveries}
+          settings={settings} allCustomers={allCustomers} currentUser={user} addToast={addToast}
+          onCancel={() => setEditing(null)}
+          onSave={saveEditedRun}
+        />
+      )}
     </div>
   );
 };
@@ -455,12 +751,24 @@ const ActiveRunCard: React.FC<{
   liveMiles: number;
   jobs: Job[];
   allJobs: Job[];
+  busy: boolean;
   onFinish: () => void;
   onCancel: () => void;
   onUpdateStop: (stopId: string, patch: Partial<DeliveryStop>) => Promise<unknown>;
+  photoBudget: (stopId: string) => number;
+  /** Set only on the phone doing the GPS. */
+  onSetMiles?: (miles: number) => void;
   onEditDetails: () => void;
   addToast: Props['addToast'];
-}> = ({ delivery, liveMiles, jobs, allJobs, onFinish, onCancel, onUpdateStop, onEditDetails, addToast }) => {
+}> = ({ delivery, liveMiles, jobs, allJobs, busy, onFinish, onCancel, onUpdateStop, photoBudget, onSetMiles, onEditDetails, addToast }) => {
+  const [milesDraft, setMilesDraft] = useState<string | null>(null);
+  const submitMiles = (e: React.FormEvent) => {
+    e.preventDefault();
+    const m = parseFloat(milesDraft || '');
+    if (!Number.isFinite(m) || m < 0 || m > 5000) { addToast('error', 'Enter the miles driven so far, e.g. 12.5'); return; }
+    onSetMiles?.(Math.round(m * 10) / 10);
+    setMilesDraft(null);
+  };
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const tick = () => setElapsed(delivery.startedAt ? Date.now() - delivery.startedAt : 0);
@@ -506,7 +814,14 @@ const ActiveRunCard: React.FC<{
       <div className="grid grid-cols-4 gap-2 mb-4">
         <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5 text-center">
           <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Miles</p>
-          <p className="text-lg font-black text-blue-400 tabular">{formatMiles(liveMiles)}</p>
+          {onSetMiles ? (
+            <button type="button" onClick={() => setMilesDraft(liveMiles.toFixed(1))} title="Correct the miles (e.g. GPS lost signal)"
+              className="text-lg font-black text-blue-400 tabular underline decoration-dotted decoration-blue-400/40 underline-offset-4">
+              {formatMiles(liveMiles)}
+            </button>
+          ) : (
+            <p className="text-lg font-black text-blue-400 tabular" title="Counted by the GPS on the driver's phone — fix it after the run if needed">{formatMiles(liveMiles)}</p>
+          )}
         </div>
         <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-2.5 text-center">
           <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">Time</p>
@@ -522,6 +837,20 @@ const ActiveRunCard: React.FC<{
         </div>
       </div>
 
+      {/* Hand-typed miles — GPS lost signal, or the phone was off for part of the run */}
+      {onSetMiles && milesDraft !== null && (
+        <form onSubmit={submitMiles} className="flex items-center gap-2 flex-wrap bg-zinc-950/40 border border-blue-500/20 rounded-xl p-2.5 mb-4">
+          <label htmlFor="live-miles" className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Miles so far</label>
+          <input id="live-miles" type="number" inputMode="decimal" step="0.1" min="0" autoFocus value={milesDraft}
+            onChange={e => setMilesDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setMilesDraft(null); }}
+            className="w-24 bg-zinc-950 border border-white/10 rounded-lg px-2 py-1 text-sm text-white tabular" />
+          <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Set</button>
+          <button type="button" onClick={() => setMilesDraft(null)} className="text-zinc-500 hover:text-white text-xs font-bold px-2 py-1.5">Cancel</button>
+          <p className="w-full text-[10px] text-zinc-500">GPS keeps adding from the figure you enter.</p>
+        </form>
+      )}
+
       {/* Stop list */}
       <div className="space-y-2 mb-4">
         {delivery.stops.map((stop, i) => (
@@ -531,6 +860,7 @@ const ActiveRunCard: React.FC<{
             index={i}
             jobs={jobs}
             onUpdate={(patch) => onUpdateStop(stop.id, patch)}
+            photoBudget={() => photoBudget(stop.id)}
             addToast={addToast}
           />
         ))}
@@ -549,12 +879,12 @@ const ActiveRunCard: React.FC<{
 
       {/* Actions */}
       <div className="flex flex-wrap gap-2 pt-3 border-t border-white/5">
-        <button type="button" onClick={onFinish}
-          className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2">
-          <CheckCircle2 className="w-4 h-4" /> Finish Run
+        <button type="button" onClick={onFinish} disabled={busy}
+          className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2">
+          <CheckCircle2 className="w-4 h-4" /> {busy ? 'Saving…' : 'Finish Run'}
         </button>
-        <button type="button" onClick={onCancel}
-          className="bg-zinc-800 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 text-zinc-400 hover:text-red-400 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2">
+        <button type="button" onClick={onCancel} disabled={busy}
+          className="bg-zinc-800 hover:bg-red-500/20 disabled:opacity-60 border border-white/10 hover:border-red-500/40 text-zinc-400 hover:text-red-400 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2">
           <X className="w-4 h-4" /> Cancel
         </button>
       </div>
@@ -568,11 +898,14 @@ const ActiveStopRow: React.FC<{
   index: number;
   jobs: Job[];
   onUpdate: (p: Partial<DeliveryStop>) => Promise<unknown>;
+  photoBudget: () => number;
   addToast: Props['addToast'];
-}> = ({ stop, index, jobs, onUpdate, addToast }) => {
+}> = ({ stop, index, jobs, onUpdate, photoBudget, addToast }) => {
   const def = stopTypeDef(stop.stopType);
   const arrived = !!stop.arrivedAt;
   const done = !!stop.completedAt;
+  // Arrived waits up to 5 s for a GPS fix — a second tap meanwhile saved twice.
+  const [saving, setSaving] = useState<'arrived' | 'done' | 'photo' | null>(null);
   const [showPhoto, setShowPhoto] = useState(false);
   const [showExceptionPicker, setShowExceptionPicker] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -588,38 +921,47 @@ const ActiveStopRow: React.FC<{
     'Other issue',
   ];
 
-  const markArrived = () => {
-    if (arrived) return;
+  const markArrived = async () => {
+    if (arrived || saving) return;
+    setSaving('arrived');
     const patch: Partial<DeliveryStop> = { arrivedAt: Date.now() };
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => onUpdate({ ...patch, arrivalLat: pos.coords.latitude, arrivalLon: pos.coords.longitude }),
-        () => onUpdate(patch),
-        { timeout: 5000 },
-      );
-    } else {
-      onUpdate(patch);
-    }
+    const pos = await new Promise<GeolocationPosition | null>(res => {
+      if (!navigator.geolocation) { res(null); return; }
+      // Own deadline too: the 5 s timeout doesn't run while a permission prompt is open.
+      const t = setTimeout(() => res(null), 6000);
+      navigator.geolocation.getCurrentPosition(p => { clearTimeout(t); res(p); }, () => { clearTimeout(t); res(null); }, { timeout: 5000 });
+    });
+    if (pos) { patch.arrivalLat = pos.coords.latitude; patch.arrivalLon = pos.coords.longitude; }
+    try { await onUpdate(patch); } finally { setSaving(null); }
   };
 
-  const markDone = () => {
-    if (!arrived || done) return;
-    onUpdate({ completedAt: Date.now() });
+  const markDone = async () => {
+    if (!arrived || done || saving) return;
+    setSaving('done');
+    try { await onUpdate({ completedAt: Date.now() }); } finally { setSaving(null); }
   };
 
   const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
-    // The photo is stored inside the run's record (no cloud storage on the free
-    // plan) — a full-size phone photo pushed it past the 1 MB limit and the
-    // "saved" photo was lost. Shrink it first; only say saved once it is.
+    // The photo is stored inside the run's ONE record with every other stop's
+    // photo (no cloud storage on the free plan, 1 MB cap) — so it gets its
+    // share of the room that's left, not a whole-record budget. Only say saved
+    // once the save resolves.
+    setSaving('photo');
     try {
-      const photoUrl = await shrinkImage(file);
+      const budget = photoBudget();
+      if (budget < MIN_STOP_PHOTO) { addToast('error', "No room left on this run for another photo — its record is full"); return; }
+      const photoUrl = await shrinkImage(file, budget);
       const r = await onUpdate({ photoUrl });
       if (r === 'failed') return;   // the save error is already on screen
       addToast('success', r === 'queued' ? '📸 Photo saved on this phone — will sync' : '📸 Proof of delivery photo saved');
     } catch (err: any) {
       addToast('error', err?.message || 'Could not read that photo');
+    } finally {
+      setSaving(null);
+      input.value = '';   // let the same photo be picked again after a failure
     }
   };
 
@@ -699,15 +1041,15 @@ const ActiveStopRow: React.FC<{
 
         {/* Arrived / Done buttons */}
         {!arrived && !isException && (
-          <button type="button" onClick={markArrived}
-            className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0">
-            Arrived
+          <button type="button" onClick={markArrived} disabled={!!saving}
+            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0">
+            {saving === 'arrived' ? 'Saving…' : 'Arrived'}
           </button>
         )}
         {arrived && !done && !isException && (
-          <button type="button" onClick={markDone}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0">
-            Done ✓
+          <button type="button" onClick={markDone} disabled={!!saving}
+            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0">
+            {saving === 'done' ? 'Saving…' : 'Done ✓'}
           </button>
         )}
       </div>
@@ -741,9 +1083,9 @@ const ActiveStopRow: React.FC<{
               <span className="text-[10px] text-emerald-400 font-bold">📸 Photo on file</span>
             </div>
           ) : (
-            <button type="button" onClick={() => photoRef.current?.click()}
-              className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-1 border border-dashed border-white/10 hover:border-white/20 rounded-lg px-2.5 py-1.5 transition-colors">
-              <Camera className="w-3 h-3" /> Add proof photo
+            <button type="button" onClick={() => photoRef.current?.click()} disabled={saving === 'photo'}
+              className="text-[10px] text-zinc-500 hover:text-zinc-300 disabled:opacity-60 flex items-center gap-1 border border-dashed border-white/10 hover:border-white/20 rounded-lg px-2.5 py-1.5 transition-colors">
+              <Camera className="w-3 h-3" /> {saving === 'photo' ? 'Saving photo…' : 'Add proof photo'}
             </button>
           )}
           {stop.signedBy ? (
@@ -753,7 +1095,8 @@ const ActiveStopRow: React.FC<{
               type="text"
               placeholder="Received by (optional)"
               defaultValue={stop.signedBy || ''}
-              onBlur={e => onUpdate({ signedBy: e.target.value })}
+              // Only a real name — focusing and leaving it blank used to rewrite every stop for nothing.
+              onBlur={e => { const v = e.target.value.trim(); if (v && v !== (stop.signedBy || '')) void onUpdate({ signedBy: v }); }}
               className="flex-1 min-w-0 bg-zinc-950/60 border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
             />
           )}
@@ -917,15 +1260,31 @@ const DeliveryEditor: React.FC<{
   allCustomers: string[];
   currentUser: Props['user'];
   onCancel: () => void;
-  onSave: (d: Delivery, updatedContacts?: Record<string, CustomerContact>) => void;
+  /** Resolves true once saved (the parent closes the editor); false leaves it open to retry. */
+  onSave: (edited: Delivery, opened: Delivery | null, updatedContacts?: Record<string, CustomerContact>) => Promise<boolean>;
   addToast: Props['addToast'];
 }> = ({ existing, drivers, jobs, vendors, allRuns, settings, allCustomers, currentUser, onCancel, onSave, addToast }) => {
-  const [runNumber, setRunNumber] = useState(existing?.runNumber || DB.nextDeliveryRunNumber(allRuns));
-  const [driverId, setDriverId] = useState(existing?.driverId || currentUser.id);
-  const [notes, setNotes] = useState(existing?.notes || '');
-  const [stops, setStops] = useState<DeliveryStop[]>(existing?.stops || []);
+  // What "changed" is measured against: the run as it was when the editor opened.
+  const [opened] = useState(existing);
+  // One id per editor session — a retry after a failed save re-saves the same
+  // run instead of creating a duplicate.
+  const [newId] = useState(() => `del_${Date.now()}`);
+  const [createdAt] = useState(() => Date.now());
+  const [saving, setSaving] = useState(false);
+  const { confirm, ConfirmHost } = useConfirm();
+  const [runNumber, setRunNumber] = useState(opened?.runNumber || DB.nextDeliveryRunNumber(allRuns));
+  const [driverId, setDriverId] = useState(opened?.driverId || currentUser.id);
+  const [notes, setNotes] = useState(opened?.notes || '');
+  const [stops, setStops] = useState<DeliveryStop[]>(opened?.stops || []);
   const [estimating, setEstimating] = useState(false);
-  const [estimatedMiles, setEstimatedMiles] = useState<number | null>(existing?.estimatedMiles || null);
+  const [estimatedMiles, setEstimatedMiles] = useState<number | null>(opened?.estimatedMiles || null);
+  // Miles can be fixed by hand once a run is over (GPS lost, phone died).
+  // A live run's miles belong to the GPS phone — corrected on the run card there.
+  const milesEditable = !!opened && (opened.status === 'delivered' || opened.status === 'cancelled');
+  const initialMilesText = opened?.milesDriven != null ? String(Math.round(opened.milesDriven * 10) / 10) : '';
+  const [milesText, setMilesText] = useState(initialMilesText);
+  const [initialForm] = useState(() => ({ runNumber, driverId, notes, stops, estimatedMiles, milesText }));
+  const isDirty = () => hasChanges(initialForm, { runNumber, driverId, notes, stops, estimatedMiles, milesText });
 
   const driver = drivers.find(u => u.id === driverId);
   const clientContacts = settings.clientContacts || {};
@@ -982,9 +1341,16 @@ const DeliveryEditor: React.FC<{
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;   // a double tap created the run twice
+    if (!runNumber.trim()) { addToast('error', 'The run needs a run #.'); return; }
     if (stops.length === 0) { addToast('error', 'Add at least one stop.'); return; }
     if (stops.some(s => !s.address.trim())) { addToast('error', 'All stops need an address.'); return; }
+    const milesChanged = milesEditable && milesText.trim() !== initialMilesText;
+    const typedMiles = milesText.trim() === '' ? undefined : parseFloat(milesText);
+    if (milesChanged && typedMiles !== undefined && (!Number.isFinite(typedMiles) || typedMiles < 0 || typedMiles > 5000)) {
+      addToast('error', 'Miles driven must be a number, e.g. 42.5'); return;
+    }
 
     // Save-back: persist new addresses into clientContacts for future auto-fill
     // Only the NEW entries — the caller saves each one on its own (re-saving the
@@ -999,26 +1365,38 @@ const DeliveryEditor: React.FC<{
       }
     }
 
-    const now = Date.now();
+    // Everything this form doesn't edit comes from the OPENED copy, so it
+    // compares equal and isn't sent — the caller saves only what the user changed.
     const delivery: Delivery = {
-      id: existing?.id || `del_${now}`,
-      runNumber,
+      ...(opened || {}),
+      id: opened?.id || newId,
+      runNumber: runNumber.trim(),
       driverId,
-      driverName: driver?.name || currentUser.name,
-      status: existing?.status || 'scheduled',
+      driverName: driver?.name || opened?.driverName || currentUser.name,
+      status: opened?.status || 'scheduled',
       stops: stops.map(s => ({ ...s, jobIds: s.jobIds || [] })),
-      startedAt: existing?.startedAt,
-      endedAt: existing?.endedAt,
-      track: existing?.track,
-      milesDriven: existing?.milesDriven,
-      estimatedMiles: estimatedMiles ?? existing?.estimatedMiles,
-      durationMinutes: existing?.durationMinutes,
-      mileageRateCents: existing?.mileageRateCents,
+      milesDriven: milesChanged ? (typedMiles === undefined ? undefined : Math.round(typedMiles * 100) / 100) : opened?.milesDriven,
+      estimatedMiles: estimatedMiles ?? opened?.estimatedMiles,
       notes,
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
+      createdAt: opened?.createdAt || createdAt,
+      updatedAt: Date.now(),
     };
-    onSave(delivery, updatedContacts);
+    setSaving(true);
+    try { await onSave(delivery, opened, updatedContacts); }
+    finally { setSaving(false); }
+  };
+
+  // Backdrop, Esc, ✕ and Cancel all come here — unsaved edits used to vanish silently.
+  const closingRef = useRef(false);
+  const requestClose = async () => {
+    if (saving || closingRef.current) return;
+    if (isDirty()) {
+      closingRef.current = true;
+      const ok = await confirm({ title: 'Discard unsaved changes?', message: `Your changes to ${runNumber || 'this run'} haven't been saved.`, tone: 'warning', confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+      closingRef.current = false;
+      if (!ok) return;
+    }
+    onCancel();
   };
 
   // Stop type quick-add buttons
@@ -1032,25 +1410,26 @@ const DeliveryEditor: React.FC<{
   return (
     <Modal
       open
-      onClose={onCancel}
-      title={existing ? 'Edit Run' : 'New Delivery Run'}
+      onClose={requestClose}
+      title={opened ? 'Edit Run' : 'New Delivery Run'}
       icon={<Truck className="w-4 h-4 text-amber-400" />}
       footer={
         <div className="flex items-center gap-2 w-full">
-          <button type="button" onClick={onCancel} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
+          <button type="button" onClick={requestClose} disabled={saving} className="text-zinc-500 hover:text-white disabled:opacity-50 text-xs font-bold px-3 py-2">Cancel</button>
           <div className="flex-1" />
           {estimatedMiles && (
             <span className="text-[10px] text-zinc-500 flex items-center gap-1">
               <Route className="w-3 h-3" /> {formatMiles(estimatedMiles)} est
             </span>
           )}
-          <button type="button" onClick={handleSave}
-            className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2.5 rounded-lg text-sm font-bold">
-            {existing ? 'Save Changes' : 'Create Run'}
+          <button type="button" onClick={handleSave} disabled={saving}
+            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white px-6 py-2.5 rounded-lg text-sm font-bold">
+            {saving ? 'Saving…' : opened ? 'Save Changes' : 'Create Run'}
           </button>
         </div>
       }
     >
+      {ConfirmHost}
       {/* Run # + Driver */}
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -1066,6 +1445,18 @@ const DeliveryEditor: React.FC<{
           </select>
         </div>
       </div>
+
+      {/* Miles driven — correct a lost / short GPS track after the run */}
+      {milesEditable && (
+        <div>
+          <label htmlFor="run-miles" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">
+            Miles driven <span className="text-zinc-700 normal-case font-normal">(from GPS — fix it here if the track was lost)</span>
+          </label>
+          <input id="run-miles" type="number" inputMode="decimal" step="0.1" min="0" value={milesText}
+            onChange={e => setMilesText(e.target.value)} placeholder="0.0"
+            className="w-32 bg-zinc-950 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white tabular" />
+        </div>
+      )}
 
       {/* Stops */}
       <div>

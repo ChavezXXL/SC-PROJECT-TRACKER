@@ -15,6 +15,8 @@ import { Overlay } from '../components/Overlay';
 import { scanDocument } from '../services/poScanner';
 import { normDate, todayFmt } from '../utils/date';
 import { shrinkImage, PHOTO_BUDGET_BYTES } from '../utils/imageShrink';
+import { changedFields, hasChanges } from '../utils/changedFields';
+import { useConfirm } from '../components/useConfirm';
 import {
   derivePo, resolveStages, matchJobForPo, isJobComplete, readyToInvoiceList, normKey,
 } from '../utils/poOrganizer';
@@ -92,6 +94,27 @@ function compressImage(file: File, maxWidth = 1600, quality = 0.7): Promise<stri
   });
 }
 
+/** A PO's form fields the way they're stored (trimmed, empty → unset, the
+ *  defaults filled in) — applied to both the opened copy and the edited one
+ *  so only real edits count as changes. */
+const normalizePoFields = (d: Partial<CustomerPoFile>): Partial<CustomerPoFile> => ({
+  ...d,
+  customerName: d.customerName?.trim() || '',
+  poNumber: d.poNumber?.trim() || undefined,
+  jobNumber: d.jobNumber?.trim() || undefined,
+  partNumber: d.partNumber?.trim() || undefined,
+  qty: d.qty || undefined,
+  dueDate: d.dueDate?.trim() || undefined,
+  rawText: d.rawText || undefined,
+  notes: d.notes?.trim() || undefined,
+  invoiceStatus: d.invoiceStatus || 'not-invoiced',
+  invoiceNumber: d.invoiceNumber?.trim() || undefined,
+  invoiceAmount: typeof d.invoiceAmount === 'number' ? d.invoiceAmount : undefined,
+  archived: !!d.archived,
+});
+
+const queuedNote = (r: unknown) => (r === 'queued' ? ' — saved on this device, will sync' : '');
+
 function dataUrlToBlob(dataUrl: string): Blob {
   const [header, b64] = dataUrl.split(',');
   const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
@@ -143,6 +166,16 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
   const scanTimer = useRef<any>(null);
   const scanningRef = useRef(false);   // synchronous re-entry guards (state is async)
   const savingRef = useRef(false);
+  // The copy the modal opened with — an edit saves only what differs from it,
+  // so an invoice status set on another device meanwhile isn't reverted.
+  const openedRef = useRef<Partial<CustomerPoFile> | null>(null);
+  // Jobs this session made from a PO (PO id → job id): if linking the PO
+  // fails after the job was saved, a retry links that job instead of making
+  // a second one.
+  const madeJobRef = useRef<Record<string, string>>({});
+  const creatingRef = useRef(false);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
+  const askingRef = useRef(false);
 
   // Clear the scan-timeout if the view unmounts mid-scan.
   useEffect(() => () => { if (scanTimer.current) clearTimeout(scanTimer.current); }, []);
@@ -239,6 +272,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         rawText = result.rawText || '';
       } catch { ocrFailed = true; }
       const matched = matchJobForPo({ poNumber: fields.poNumber, partNumber: fields.partNumber }, jobs).job;
+      openedRef.current = null;   // a new upload is unsaved until it's filed
       setDraft({
         id,
         customerName: fields.customer || matched?.customer || '',
@@ -269,11 +303,31 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
     setEditing(true);
     setNewCustomer(false);
     setChipTarget('po');
+    openedRef.current = { ...po };
     setDraft({ ...po });
     setDraftPreview(po.photoUrl);
   };
 
-  const closeModal = () => { if (!saving) { setDraft(null); setDraftPreview(''); setEditing(false); setNewCustomer(false); setChipTarget('po'); setJobSearch(''); } };
+  const closeModal = () => { if (!saving) { openedRef.current = null; setDraft(null); setDraftPreview(''); setEditing(false); setNewCustomer(false); setChipTarget('po'); setJobSearch(''); } };
+
+  // Esc / X / Cancel / backdrop: a new upload (photo + what was read off it)
+  // or an edited PO isn't dropped without asking.
+  const requestClose = async () => {
+    if (saving || askingRef.current || !draft) return;
+    const dirty = !editing || hasChanges(normalizePoFields(openedRef.current || {}), normalizePoFields(draft));
+    if (dirty) {
+      askingRef.current = true;
+      try {
+        const ok = await askConfirm({
+          title: editing ? 'Discard unsaved changes?' : 'Discard this PO?',
+          message: editing ? 'Your edits to this PO will be lost.' : "It hasn't been filed yet — the photo and details will be lost.",
+          tone: 'warning', confirmLabel: 'Discard', cancelLabel: 'Keep editing',
+        });
+        if (!ok) return;
+      } finally { askingRef.current = false; }
+    }
+    closeModal();
+  };
 
   // Candidate tokens pulled from the raw OCR text — short alphanumeric strings
   // containing a digit (PO/part-shaped). Tapping one drops it into PO# or Part#.
@@ -313,32 +367,35 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
         }
       }
 
+      const now = Date.now();
+      const fields = normalizePoFields(draft);
+      const status = fields.invoiceStatus;
       const rec: CustomerPoFile = {
+        ...(fields as CustomerPoFile),
         id: draft.id!,
-        customerName: draft.customerName!.trim(),
         photoUrl,
-        poNumber: draft.poNumber?.trim() || undefined,
-        jobNumber: draft.jobNumber?.trim() || undefined,
-        partNumber: draft.partNumber?.trim() || undefined,
-        qty: draft.qty || undefined,
-        dueDate: draft.dueDate?.trim() || undefined,
-        rawText: draft.rawText || undefined,
         linkedJobId: matched?.id || undefined,
         linkedJobDisplay: matched ? (matched.jobIdsDisplay || matched.poNumber) : undefined,
         linkConfirmed: (draft.linkConfirmed && matched?.id === draft.linkedJobId) || undefined,
-        notes: draft.notes?.trim() || undefined,
-        invoiceStatus: draft.invoiceStatus || 'not-invoiced',
-        invoicedAt: draft.invoicedAt,
-        paidAt: draft.paidAt,
-        invoiceNumber: draft.invoiceNumber?.trim() || undefined,
-        invoiceAmount: typeof draft.invoiceAmount === 'number' ? draft.invoiceAmount : undefined,
-        archived: !!draft.archived,   // persist false too, so un-archiving sticks (merge-write)
-        uploadedAt: draft.uploadedAt || Date.now(),
+        // Stamp each invoice milestone the first time it's reached (same rule
+        // as the quick buttons) — never wipe one.
+        invoicedAt: (status === 'invoiced' || status === 'paid') ? (draft.invoicedAt || now) : draft.invoicedAt,
+        paidAt: status === 'paid' ? (draft.paidAt || now) : draft.paidAt,
+        uploadedAt: draft.uploadedAt || now,
         uploadedBy: draft.uploadedBy,
-        updatedAt: Date.now(),
+        updatedAt: now,
       };
-      const result = await DB.saveCustomerPo(rec);
-      addToast('success', `${editing ? 'PO updated' : 'PO filed'}${result === 'queued' ? ' — saved on this device, will sync' : ''}`);
+      // New PO → the whole record. Edit → only what changed, so an emptied
+      // field or an Unlink really clears (undefined deletes) and fields
+      // changed on another device meanwhile aren't overwritten.
+      let toSave: Partial<CustomerPoFile> & { id: string } = rec;
+      if (editing) {
+        const diff = changedFields(normalizePoFields(openedRef.current || {}), rec, { ignore: ['id', 'updatedAt'] });
+        if (Object.keys(diff).length === 0) { closeModal(); return; }
+        toSave = { id: rec.id, ...diff, updatedAt: now };
+      }
+      const result = await DB.saveCustomerPo(toSave);
+      addToast('success', `${editing ? 'PO updated' : 'PO filed'}${queuedNote(result)}`);
       closeModal();
     } catch (e: any) {
       addToast('error', `Save failed${e?.message ? ` — ${e.message}` : ''}`);
@@ -354,59 +411,84 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
       const now = Date.now();
       // Timestamp-once: stamp each milestone the first time it's reached and
       // never wipe it (cycling paid → invoiced must not erase the paid date).
-      await DB.saveCustomerPo({
-        ...po,
+      // Only the invoice fields are written — the whole card copy used to go
+      // back and could undo an edit made on another device.
+      const r = await DB.saveCustomerPo({
+        id: po.id,
         invoiceStatus: status,
-        invoicedAt: (status === 'invoiced' || status === 'paid') ? (po.invoicedAt || now) : po.invoicedAt,
-        paidAt: status === 'paid' ? (po.paidAt || now) : po.paidAt,
+        ...((status === 'invoiced' || status === 'paid') && !po.invoicedAt ? { invoicedAt: now } : {}),
+        ...(status === 'paid' && !po.paidAt ? { paidAt: now } : {}),
         updatedAt: now,
       });
-      addToast('success', status === 'invoiced' ? 'Marked invoiced' : status === 'paid' ? 'Marked paid' : 'Updated');
-    } catch { addToast('error', 'Update failed'); }
+      addToast('success', `${status === 'invoiced' ? 'Marked invoiced' : status === 'paid' ? 'Marked paid' : 'Updated'}${queuedNote(r)}`);
+    } catch (e: any) { addToast('error', `Update failed${e?.message ? ` — ${e.message}` : ''}`); }
   };
 
   /** Turn an unmatched PO into a real job on the board, then link them. */
   const createJobFromPo = (po: CustomerPoFile) => {
     const doCreate = async () => {
+      if (creatingRef.current) return;
+      creatingRef.current = true;
       setCreating(po.id);
       try {
-        const id = Date.now().toString();
-        const job: Job = {
-          id,
-          jobIdsDisplay: po.poNumber?.trim() || `J-${id.slice(-4)}`,
-          poNumber: po.poNumber?.trim() || '',
-          partNumber: po.partNumber?.trim() || '',
-          customer: po.customerName?.trim() || '',
-          quantity: Math.max(0, po.qty || 0),
-          dateReceived: todayFmt(),
-          dueDate: normalizeDue(po.dueDate),
-          info: `Created from customer PO photo${po.notes ? ` — ${po.notes}` : ''}`,
-          status: 'pending',
-          createdAt: Date.now(),
-        };
-        await DB.saveJob(job);
-        await DB.saveCustomerPo({
-          ...po,
-          linkedJobId: id,
-          linkedJobDisplay: job.jobIdsDisplay,
-          linkConfirmed: true,
-          updatedAt: Date.now(),
-        });
-        addToast('success', `Job ${job.jobIdsDisplay} created & linked`);
+        let jobId = madeJobRef.current[po.id];
+        let display = jobs.find(j => j.id === jobId)?.jobIdsDisplay || po.poNumber?.trim() || '';
+        let jobQueued = false;
+        if (!jobId) {
+          const id = Date.now().toString();
+          const job: Job = {
+            id,
+            jobIdsDisplay: po.poNumber?.trim() || `J-${id.slice(-4)}`,
+            poNumber: po.poNumber?.trim() || '',
+            partNumber: po.partNumber?.trim() || '',
+            customer: po.customerName?.trim() || '',
+            quantity: Math.max(0, po.qty || 0),
+            dateReceived: todayFmt(),
+            dueDate: normalizeDue(po.dueDate),
+            info: `Created from customer PO photo${po.notes ? ` — ${po.notes}` : ''}`,
+            status: 'pending',
+            createdAt: Date.now(),
+          };
+          jobQueued = (await DB.saveJob(job)) === 'queued';
+          jobId = id;
+          display = job.jobIdsDisplay;
+          madeJobRef.current[po.id] = id;
+        }
+        try {
+          const r = await DB.saveCustomerPo({
+            id: po.id,
+            linkedJobId: jobId,
+            linkedJobDisplay: display,
+            linkConfirmed: true,
+            updatedAt: Date.now(),
+          });
+          delete madeJobRef.current[po.id];
+          addToast('success', `Job ${display} created & linked${queuedNote(jobQueued ? 'queued' : r)}`);
+        } catch (e: any) {
+          // The job exists — say so, and keep its id so trying again links it
+          // rather than creating a duplicate job.
+          addToast('error', `Job ${display} was created, but linking this PO to it failed${e?.message ? ` — ${e.message}` : ''}. Tap "Add to jobs" again to link it.`);
+        }
       } catch (e: any) {
         addToast('error', `Couldn't create job${e?.message ? ` — ${e.message}` : ''}`);
       } finally {
+        creatingRef.current = false;
         setCreating('');
       }
     };
-    if (confirm) confirm({ title: 'Add this PO to the Job Board?', message: `Creates a new job for ${po.customerName}${po.poNumber ? ` · ${po.poNumber}` : ''} and links this PO to it.`, onConfirm: doCreate });
+    const madeId = madeJobRef.current[po.id];
+    const title = madeId ? 'Link this PO to the job made from it?' : 'Add this PO to the Job Board?';
+    const message = madeId
+      ? `A job was already created from this PO (${jobs.find(j => j.id === madeId)?.jobIdsDisplay || po.poNumber || 'new job'}) but the link didn't save. This links them — no second job is made.`
+      : `Creates a new job for ${po.customerName}${po.poNumber ? ` · ${po.poNumber}` : ''} and links this PO to it.`;
+    if (confirm) confirm({ title, message, onConfirm: doCreate });
     else doCreate();
   };
 
   const handleDelete = (po: CustomerPoFile) => {
     const doDelete = async () => {
-      try { await DB.deleteCustomerPo(po.id); addToast('success', 'Deleted'); }
-      catch { addToast('error', 'Delete failed'); }
+      try { const r = await DB.deleteCustomerPo(po.id); addToast('success', `Deleted${queuedNote(r)}`); }
+      catch (e: any) { addToast('error', `Delete failed${e?.message ? ` — ${e.message}` : ''}`); }
     };
     if (confirm) confirm({ title: 'Delete this PO?', message: `${po.poNumber || 'PO'} — ${po.customerName}`, onConfirm: doDelete });
     else doDelete();
@@ -497,6 +579,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      {ConfirmHost}
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-3">
         <div>
@@ -714,11 +797,11 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
 
       {/* Upload / confirm / edit modal */}
       {draft && (
-        <Overlay open onClose={closeModal} ariaLabel="Confirm PO" zIndex={110} backdrop="bg-zinc-950">
+        <Overlay open onClose={requestClose} ariaLabel="Confirm PO" zIndex={110} backdrop="bg-zinc-950">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
               <h3 className="font-bold text-white flex items-center gap-2"><FileText className="w-4 h-4 text-amber-400" /> {editing ? 'Edit PO' : 'File this PO'}</h3>
-              <button onClick={closeModal} className="p-2 rounded-lg hover:bg-white/5"><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
+              <button onClick={requestClose} aria-label="Close" className="p-2 rounded-lg hover:bg-white/5"><X className="w-5 h-5 text-zinc-500 hover:text-white" /></button>
             </div>
             <div className="overflow-y-auto flex-1 p-5 space-y-4">
               {draftPreview && <img src={draftPreview} alt="PO preview" className="w-full max-h-52 object-contain rounded-xl border border-white/10 bg-zinc-950" />}
@@ -864,7 +947,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
               {!editing && <p className="text-[10px] text-zinc-600">We read these off the photo automatically — double-check they're right before saving.</p>}
             </div>
             <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-2 sticky bottom-0">
-              <button onClick={closeModal} className="px-4 py-2 text-zinc-400 hover:text-white font-bold text-sm">Cancel</button>
+              <button onClick={requestClose} className="px-4 py-2 text-zinc-400 hover:text-white font-bold text-sm">Cancel</button>
               <button onClick={saveDraft} disabled={saving || !draft.customerName?.trim()} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-50 text-white px-6 py-2 rounded-xl font-bold text-sm flex items-center gap-2">
                 {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> {editing ? 'Saving…' : 'Filing…'}</> : (editing ? 'Save' : 'File PO')}
               </button>

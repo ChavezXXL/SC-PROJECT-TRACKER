@@ -14,6 +14,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayLayer } from './overlayStack';
 import { CheckCircle, X, Clock } from 'lucide-react';
 import type { Job, TimeLog } from '../types';
 
@@ -49,14 +50,8 @@ export const StopJobModal: React.FC<Props> = ({ log, job, onConfirm, onCancel })
     return () => clearTimeout(t);
   }, []);
 
-  // Escape cancels (timer stays running)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busy) onCancel();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [busy, onCancel]);
+  // Escape cancels (timer stays running) — only while this is the top dialog
+  useOverlayLayer(true, () => { if (!busy) onCancel(); });
 
   const submitQty = async (qty: number | undefined) => {
     if (busy) return;

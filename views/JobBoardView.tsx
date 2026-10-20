@@ -116,6 +116,22 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
     if (!target) return;
     const current = getJobStage(job, stages);
     if (current.id === target.id) return;
+    // Dragging a FINISHED card back to an open column reopens it — clearing
+    // its ship date and locked profit. Ask first, like the editor's stage bar
+    // does (one slip of the mouse used to do it).
+    if (current.isComplete && !target.isComplete && confirm) {
+      confirm({
+        title: 'Reopen this finished job?',
+        message: `Moving PO ${job.poNumber || ''} back to ${target.label} reopens it — its ship date and locked profit are cleared.`,
+        onConfirm: () => applyMove(job, target),
+      });
+      return;
+    }
+    await applyMove(job, target);
+  };
+
+  const applyMove = async (job: Job, target: ReturnType<typeof getStages>[number]) => {
+    const jobId = job.id;
     // Dropping into a complete column asks when it actually shipped (cancel =
     // the card stays put). On-time is judged by that date, not this drag.
     let shippedAt: number | undefined;

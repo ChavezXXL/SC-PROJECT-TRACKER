@@ -8,7 +8,7 @@
 //
 // Shared helper `Avatar` is imported from ../App.
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   AlertTriangle, X, Save, Plus, Info, Search, CheckCircle, Play, Edit2, Trash2,
 } from 'lucide-react';
@@ -17,6 +17,8 @@ import { Job, User, ReworkEntry, ReworkReason, ReworkStatus } from '../types';
 import * as DB from '../services/mockDb';
 import { Avatar } from '../App';
 import { Overlay } from '../components/Overlay';
+import { useConfirm } from '../components/useConfirm';
+import { changedFields, hasChanges } from '../utils/changedFields';
 
 export const REWORK_REASONS: { value: ReworkReason; label: string; color: string }[] = [
   { value: 'finish',       label: 'Finish quality',  color: '#f59e0b' },
@@ -38,55 +40,106 @@ const ROOT_CAUSE_LABELS: Record<NonNullable<import('../types').ReworkEntry['root
   unknown:    'Unknown',
 };
 
+const queuedNote = (r: unknown) => (r === 'queued' ? ' — saved on this device, will sync' : '');
+
 export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: Partial<ReworkEntry>; jobs: Job[]; user: User; onClose: () => void; addToast: any }) => {
   const [form, setForm] = useState<Partial<ReworkEntry>>(entry || { reason: 'finish', quantity: 1, status: 'open' });
+  // The copy this opened with: an edit saves only what differs from it (an
+  // emptied field or a reopen really clears, and a change made on another
+  // device meanwhile isn't overwritten).
+  const openedRef = useRef<Partial<ReworkEntry>>(form);
+  // Id made once per open — a second tap or a retry rewrites the same entry
+  // instead of logging the rework twice.
+  const idRef = useRef(entry?.id || `rw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
+  const askingRef = useRef(false);
   const linkedJob = form.jobId ? jobs.find(j => j.id === form.jobId) : null;
   const isEdit = !!entry?.id;
 
-  const handleSave = async () => {
-    if (!form.reason || !form.quantity || form.quantity < 1) { addToast('error', 'Reason and quantity required'); return; }
-    const now = Date.now();
-    const saved: ReworkEntry = {
-      id: entry?.id || `rw_${now}_${Math.random().toString(36).slice(2, 7)}`,
+  /** The stored shape of a form state (same rules for the opened copy and the edit). */
+  const toRecord = (f: Partial<ReworkEntry>, now: number): ReworkEntry => {
+    const job = f.jobId ? jobs.find(j => j.id === f.jobId) : null;
+    const resolved = f.status === 'resolved';
+    return {
+      id: idRef.current,
       createdAt: entry?.createdAt || now,
-      jobId: form.jobId || undefined,
-      poNumber: linkedJob?.poNumber || form.poNumber || undefined,
-      partNumber: linkedJob?.partNumber || form.partNumber || undefined,
-      customer: linkedJob?.customer || form.customer || undefined,
-      reason: form.reason as ReworkReason,
-      quantity: form.quantity,
+      jobId: f.jobId || undefined,
+      poNumber: job?.poNumber || f.poNumber || undefined,
+      partNumber: job?.partNumber || f.partNumber || undefined,
+      customer: job?.customer || f.customer || undefined,
+      reason: f.reason as ReworkReason,
+      quantity: f.quantity as number,
       reporterUserId: entry?.reporterUserId || user.id,
       reporterName: entry?.reporterName || user.name,
-      status: form.status as ReworkStatus || 'open',
-      notes: form.notes || undefined,
-      photoUrl: form.photoUrl || undefined,
-      resolvedAt: form.status === 'resolved' ? (form.resolvedAt || now) : undefined,
-      resolvedBy: form.status === 'resolved' ? (form.resolvedBy || user.id) : undefined,
-      resolvedByName: form.status === 'resolved' ? (form.resolvedByName || user.name) : undefined,
-      resolutionNotes: form.status === 'resolved' ? form.resolutionNotes : undefined,
-      rootCause: form.rootCause || undefined,
-      scrapCost: form.scrapCost != null && form.scrapCost >= 0 ? form.scrapCost : undefined,
+      status: f.status as ReworkStatus || 'open',
+      notes: f.notes?.trim() || undefined,
+      photoUrl: f.photoUrl || undefined,
+      resolvedAt: resolved ? (f.resolvedAt || now) : undefined,
+      resolvedBy: resolved ? (f.resolvedBy || user.id) : undefined,
+      resolvedByName: resolved ? (f.resolvedByName || user.name) : undefined,
+      resolutionNotes: resolved ? (f.resolutionNotes?.trim() || undefined) : undefined,
+      rootCause: f.rootCause || undefined,
+      scrapCost: f.scrapCost != null && f.scrapCost >= 0 ? f.scrapCost : undefined,
     };
-    try { await DB.saveRework(saved); addToast('success', isEdit ? 'Rework entry updated' : 'Rework logged'); onClose(); }
-    catch { addToast('error', 'Save failed'); }
+  };
+
+  const handleSave = async () => {
+    if (savingRef.current) return;
+    if (!form.reason || !form.quantity || form.quantity < 1) { addToast('error', 'Reason and quantity required'); return; }
+    const now = Date.now();
+    const saved = toRecord(form, now);
+    let toSave: Partial<ReworkEntry> & { id: string } = saved;
+    if (isEdit) {
+      const diff = changedFields(toRecord(openedRef.current, now), saved, { ignore: ['id'] });
+      if (Object.keys(diff).length === 0) { onClose(); return; }
+      toSave = { id: saved.id, ...diff };
+    }
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const r = await DB.saveRework(toSave);
+      addToast('success', `${isEdit ? 'Rework entry updated' : 'Rework logged'}${queuedNote(r)}`);
+      onClose();
+    } catch (e: any) { addToast('error', `Save failed${e?.message ? ` — ${e.message}` : ''}`); }
+    finally { savingRef.current = false; setSaving(false); }
+  };
+
+  // Esc / X / Cancel / backdrop: don't drop edits silently.
+  const requestClose = async () => {
+    if (savingRef.current || askingRef.current) return;
+    if (hasChanges(openedRef.current, form)) {
+      askingRef.current = true;
+      try {
+        const ok = await askConfirm({ title: 'Discard unsaved changes?', message: 'What you entered for this rework will be lost.', tone: 'warning', confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+        if (!ok) return;
+      } finally { askingRef.current = false; }
+    }
+    onClose();
   };
 
   return (
-    <Overlay open onClose={onClose} ariaLabel={isEdit ? 'Edit rework' : 'Report rework'} zIndex={200}>
+    <Overlay open onClose={requestClose} ariaLabel={isEdit ? 'Edit rework' : 'Report rework'} zIndex={200}>
+      {ConfirmHost}
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col my-0 sm:my-4 animate-slide-up" style={{ maxHeight: 'calc(100dvh - 2rem)' }} onClick={e => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-zinc-800/40 to-transparent shrink-0">
           <div>
             <h3 className="font-black text-white text-base tracking-tight flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-400" aria-hidden="true" /> {isEdit ? 'Edit Rework' : 'Report Rework'}</h3>
             <p className="text-[11px] text-zinc-500 mt-0.5">Track parts that came back for re-work so you can spot patterns.</p>
           </div>
-          <button aria-label="Close" onClick={onClose} className="text-zinc-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10"><X className="w-4 h-4" aria-hidden="true" /></button>
+          <button aria-label="Close" onClick={requestClose} className="text-zinc-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10"><X className="w-4 h-4" aria-hidden="true" /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {/* Job link */}
           <div>
             <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">Linked Job (optional)</label>
-            <select value={form.jobId || ''} onChange={e => setForm({ ...form, jobId: e.target.value || undefined })} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white outline-none">
+            {/* Changing the link drops the old job's PO/part/customer copy, so an
+                unlinked entry doesn't keep showing the job it's no longer for. */}
+            <select value={form.jobId || ''} onChange={e => setForm({ ...form, jobId: e.target.value || undefined, poNumber: undefined, partNumber: undefined, customer: undefined })} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white outline-none">
               <option value="">— No specific job —</option>
+              {/* The current link may be older than the 50 listed — keep it selectable. */}
+              {linkedJob && !jobs.slice(0, 50).some(j => j.id === linkedJob.id) && <option value={linkedJob.id}>{linkedJob.poNumber} · {linkedJob.partNumber} · {linkedJob.customer}</option>}
               {jobs.slice(0, 50).map(j => <option key={j.id} value={j.id}>{j.poNumber} · {j.partNumber} · {j.customer}</option>)}
             </select>
           </div>
@@ -151,9 +204,9 @@ export const ReworkModal = ({ entry, jobs, user, onClose, addToast }: { entry?: 
           )}
         </div>
         <div className="px-5 py-4 border-t border-white/10 bg-zinc-950/50 flex items-center justify-between gap-3 shrink-0">
-          <button onClick={onClose} className="px-4 py-2.5 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
-          <button onClick={handleSave} className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-orange-900/40 flex items-center gap-2 transition-all">
-            <Save className="w-4 h-4" aria-hidden="true" /> {isEdit ? 'Save Changes' : 'Log Rework'}
+          <button onClick={requestClose} className="px-4 py-2.5 text-zinc-400 hover:text-white font-medium transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-60 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-orange-900/40 flex items-center gap-2 transition-all">
+            <Save className="w-4 h-4" aria-hidden="true" /> {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Log Rework'}
           </button>
         </div>
       </div>
@@ -179,7 +232,27 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
 
   const openNew = () => { setEditing({ reason: 'finish', quantity: 1, status: 'open' }); setShowModal(true); };
   const openEdit = (e: ReworkEntry) => { setEditing(e); setShowModal(true); };
-  const handleDelete = (id: string) => confirm({ title: 'Delete rework entry', message: 'This cannot be undone.', onConfirm: () => DB.deleteRework(id) });
+  const handleDelete = (id: string) => confirm({
+    title: 'Delete rework entry', message: 'This cannot be undone.',
+    onConfirm: async () => {
+      try { const note = queuedNote(await DB.deleteRework(id)); if (note) addToast('success', `Deleted${note}`); }
+      catch (e: any) { addToast('error', `Delete failed${e?.message ? ` — ${e.message}` : ''}`); }
+    },
+  });
+
+  // Card quick actions write only the status fields (the whole card copy
+  // used to go back), one at a time per entry. Reopen sends the resolution
+  // fields as undefined, which deletes them — it really is unresolved again.
+  const busyRef = useRef<Set<string>>(new Set());
+  const quickStatus = async (id: string, fields: Partial<ReworkEntry>) => {
+    if (busyRef.current.has(id)) return;
+    busyRef.current.add(id);
+    try {
+      const r = await DB.saveRework({ id, ...fields });
+      if (r === 'queued') addToast('success', 'Saved on this device — will sync');
+    } catch (e: any) { addToast('error', `Failed to update${e?.message ? ` — ${e.message}` : ''}`); }
+    finally { busyRef.current.delete(id); }
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -526,7 +599,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                       <div className="flex items-center gap-1 shrink-0">
                         {e.status === 'open' && (
                           <button
-                            onClick={() => DB.saveRework({ ...e, status: 'in-rework' }).catch(() => addToast('error', 'Failed to update'))}
+                            onClick={() => quickStatus(e.id, { status: 'in-rework' })}
                             className="text-[10px] font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
                             title="Start working on it"
                           >
@@ -535,7 +608,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                         )}
                         {e.status !== 'resolved' && (
                           <button
-                            onClick={() => DB.saveRework({ ...e, status: 'resolved', resolvedAt: Date.now(), resolvedBy: user.id, resolvedByName: user.name }).catch(() => addToast('error', 'Failed to update'))}
+                            onClick={() => quickStatus(e.id, { status: 'resolved', resolvedAt: Date.now(), resolvedBy: user.id, resolvedByName: user.name })}
                             className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
                             title="Mark as resolved"
                           >
@@ -544,7 +617,7 @@ export const QualityView = ({ user, addToast, confirm }: any) => {
                         )}
                         {e.status === 'resolved' && (
                           <button
-                            onClick={() => DB.saveRework({ ...e, status: 'open', resolvedAt: undefined, resolvedBy: undefined, resolvedByName: undefined, resolutionNotes: undefined }).catch(() => addToast('error', 'Failed to update'))}
+                            onClick={() => quickStatus(e.id, { status: 'open', resolvedAt: undefined, resolvedBy: undefined, resolvedByName: undefined, resolutionNotes: undefined })}
                             className="text-[10px] font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
                             title="Reopen this issue"
                           >

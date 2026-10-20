@@ -546,7 +546,7 @@ const ShiftAlarmsEditor = ({ settings, setSettings, addToast }: { settings: Syst
   );
 };
 
-const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; setSettings: React.Dispatch<React.SetStateAction<SystemSettings>> }) => {
   const goals = settings.shopGoals || [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -581,7 +581,9 @@ const GoalsSettings = ({ settings, setSettings }: { settings: SystemSettings; se
       confirmLabel: 'Delete',
     });
     if (!ok) return;
-    setSettings({ ...settings, shopGoals: goals.filter((_, i) => i !== idx) });
+    // On the latest settings, matched by the goal itself (not its position):
+    // a list changed while this dialog was open lost the wrong one.
+    setSettings(prev => ({ ...prev, shopGoals: (prev.shopGoals || []).filter(g => !(g.id && goal?.id ? g.id === goal.id : JSON.stringify(g) === JSON.stringify(goal))) }));
   };
   const add = (metric: GoalMetric) => {
     const meta = GOAL_METRIC_META[metric];
@@ -1288,9 +1290,28 @@ const CustomerManager = ({ addToast, settings, onSaveSettings, onSaveNow }: { ad
       if (others.length === 0) { addToast('info', 'Nothing to merge — all selected already use this name'); setMerging(false); return; }
       const count = await DB.renameCustomer(others, canonicalName.trim());
       // Also remove merged aliases from saved clients list if present
+      const final = canonicalName.trim();
       const clients = (settings.clients || []).filter(c => !others.includes(c));
-      if (!clients.includes(canonicalName.trim()) && canonicalName.trim()) clients.push(canonicalName.trim());
-      onSaveSettings({ ...settings, clients });
+      if (!clients.includes(final) && final) clients.push(final);
+      // The merged names' profile, portal link and custom route follow them to
+      // the final name — they used to stay under the old names, so contact
+      // info and routes vanished and the customer's portal link showed no
+      // jobs. The final name's own entries win; an old portal link is moved
+      // only when the final name has none (otherwise it's left, still
+      // resolving to a name variant of the same customer).
+      const contacts = { ...(settings.clientContacts || {}) };
+      const slugs = { ...(settings.clientSlugs || {}) };
+      const pipes = { ...(settings.customerPipelines || {}) };
+      for (const o of others) {
+        if (contacts[o]) { contacts[final] = { ...contacts[o], ...(contacts[final] || {}), name: final }; delete contacts[o]; }
+        if (slugs[o] && !slugs[final]) { slugs[final] = slugs[o]; delete slugs[o]; }
+        if (pipes[o]) { if (!pipes[final]) pipes[final] = pipes[o]; delete pipes[o]; }
+      }
+      const changes = { clients, clientContacts: contacts, clientSlugs: slugs, customerPipelines: pipes };
+      // Saved straight away on top of the LATEST settings (not this screen's
+      // copy from before the long rename).
+      if (onSaveNow) await onSaveNow(changes);
+      else onSaveSettings({ ...settings, ...changes });
       addToast('success', `Merged ${others.length} name${others.length !== 1 ? 's' : ''} → "${canonicalName.trim()}" · ${count} job${count !== 1 ? 's' : ''} updated`);
       setSelected(new Set());
       setCanonicalName('');
@@ -1628,8 +1649,11 @@ const CustomerProfileEditor = ({
         <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Identity</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Company Name *</label>
-            <input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500/40" />
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Company Name</label>
+            {/* Read-only here: renaming only the profile hid it (jobs keep the old
+                name, the list is built from them) and broke the portal link.
+                Merge Customers renames everything together. */}
+            <input value={form.name || ''} readOnly title="To rename a customer, use Merge Customers — it renames their jobs, profile and portal link together" className="w-full bg-zinc-950/60 border border-white/5 rounded-lg px-3 py-2 text-sm text-zinc-400 outline-none cursor-not-allowed" />
           </div>
           <div>
             <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Contact Person</label>
@@ -2057,7 +2081,7 @@ const DEFAULT_PROCESS_SEEDS: Omit<ProcessTemplate, 'id'>[] = [
   { name: 'Passivation', description: 'Stainless steel passivation per AMS 2700', unit: 'lb', setupFee: 150, pricePerUnit: 4.5, minCharge: 250, category: 'Finishing' },
 ];
 
-const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSettings; setSettings: React.Dispatch<React.SetStateAction<SystemSettings>> }) => {
   const processes = settings.processTemplates || [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showSeeds, setShowSeeds] = useState(false);
@@ -2082,7 +2106,9 @@ const ProcessLibraryManager = ({ settings, setSettings }: { settings: SystemSett
       confirmLabel: 'Delete',
     });
     if (!ok) return;
-    setSettings({ ...settings, processTemplates: processes.filter((_, i) => i !== idx) });
+    const target = processes[idx];
+    // On the latest settings, matched by the process itself (see GoalsSettings).
+    setSettings(prev => ({ ...prev, processTemplates: (prev.processTemplates || []).filter(p => !(p.id && target?.id ? p.id === target.id : JSON.stringify(p) === JSON.stringify(target))) }));
   };
   const add = (seed?: Omit<ProcessTemplate, 'id'>) => {
     // Don't create a second template with the same name — expand the existing one instead
@@ -2232,7 +2258,7 @@ const DEFAULT_SNIPPET_SEEDS: Omit<QuoteSnippet, 'id'>[] = [
   { label: 'Customer-Supplied Material', text: 'Customer is responsible for providing material in good condition. We inspect upon receipt but assume no liability for pre-existing defects.', target: 'scope', category: 'Scope' },
 ];
 
-const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSettings; setSettings: (s: SystemSettings) => void }) => {
+const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSettings; setSettings: React.Dispatch<React.SetStateAction<SystemSettings>> }) => {
   const snippets = settings.quoteSnippets || [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showSeeds, setShowSeeds] = useState(false);
@@ -2250,7 +2276,9 @@ const SnippetLibraryManager = ({ settings, setSettings }: { settings: SystemSett
       confirmLabel: 'Delete',
     });
     if (!ok) return;
-    setSettings({ ...settings, quoteSnippets: snippets.filter((_, i) => i !== idx) });
+    const target = snippets[idx];
+    // On the latest settings, matched by the snippet itself (see GoalsSettings).
+    setSettings(prev => ({ ...prev, quoteSnippets: (prev.quoteSnippets || []).filter(q => !(q.id && target?.id ? q.id === target.id : JSON.stringify(q) === JSON.stringify(target))) }));
   };
   const add = (seed?: Omit<QuoteSnippet, 'id'>) => {
     const s: QuoteSnippet = seed
@@ -3489,10 +3517,16 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
   if (baseRef.current === null) baseRef.current = snapshot(settings);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  // Fields the server or another flow owns — this screen never writes them.
+  // A copy of settings held across a confirm dialog wrote an old
+  // recapLastSentDate back after the cron stamped it, and the recap email
+  // went out twice.
+  const SERVER_OWNED = new Set(['recapLastSentDate', 'recapLastError', 'recapRetry']);
   const diffSettings = (base: SystemSettings, cur: SystemSettings): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     const keys = new Set([...Object.keys(base), ...Object.keys(cur)]);
     keys.forEach(k => {
+      if (SERVER_OWNED.has(k)) return;
       const a = (base as any)[k], b = (cur as any)[k];
       if (JSON.stringify(a) !== JSON.stringify(b)) out[k] = b;
     });
@@ -3505,7 +3539,7 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     setSaveState('saving');
     try {
       // 'queued' = offline: kept on this device, syncs by itself (no endless "Saving…")
-      const result = await DB.saveSettingsChanges(changes as any);
+      const result = await DB.saveSettingsChanges(changes as any, { base: baseRef.current });
       const next: any = { ...baseRef.current };
       for (const [k, v] of Object.entries(changes)) { if (v === undefined) delete next[k]; else next[k] = JSON.parse(JSON.stringify(v)); }
       baseRef.current = next;
@@ -3525,6 +3559,43 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
     setSettings(merged);
     return flushSave();
   }, [flushSave]);
+
+  // Logo: everything in Settings shares ONE ~1 MB record, and a 400 px-wide
+  // PNG of a tall or photographic logo could take most of it — then every
+  // later Settings save failed. Both sides are capped and it's stored as WebP
+  // (keeps transparency, a fraction of PNG's size). The toast now says what
+  // really happened, and a logo that can't be saved is dropped so it doesn't
+  // block the next save.
+  const saveLogo = async (file: File | undefined | null) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    try {
+      const img = await new Promise<HTMLImageElement>((res, rej) => {
+        const im = new window.Image();
+        im.onload = () => res(im);
+        im.onerror = () => rej(new Error("Couldn't read that image"));
+        im.src = URL.createObjectURL(file);
+      });
+      let url = '';
+      for (const [maxW, maxH, q] of [[400, 240, 0.9], [300, 180, 0.8], [200, 120, 0.7]] as const) {
+        const scale = Math.min(1, maxW / img.width, maxH / img.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        url = canvas.toDataURL('image/webp', q);
+        if (url.length <= 120_000) break;
+      }
+      if (url.length > 120_000) { addToast('error', 'That logo is too large — try a simpler or smaller image.'); return; }
+      const ok = await saveNow({ companyLogo: url });
+      if (ok) addToast('success', 'Logo saved');
+      else {
+        setSettings(prev => ({ ...prev, companyLogo: (baseRef.current as any).companyLogo }));
+        addToast('error', "The logo didn't save — check the connection and try again.");
+      }
+    } catch (e: any) {
+      addToast('error', e?.message || "Couldn't use that image");
+    }
+  };
 
   useEffect(() => {
     const unsub = DB.subscribeSettings((s) => {
@@ -3853,39 +3924,14 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                 onDrop={e => {
                   e.preventDefault();
                   e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
-                  const file = e.dataTransfer.files[0];
-                  if (file && file.type.startsWith('image/')) {
-                    const img = new window.Image();
-                    img.onload = () => {
-                      const canvas = document.createElement('canvas');
-                      const scale = Math.min(1, 400 / img.width);
-                      canvas.width = img.width * scale;
-                      canvas.height = img.height * scale;
-                      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-                      saveNow({ companyLogo: canvas.toDataURL('image/png', 0.9) });
-                      addToast('success', 'Logo saved');
-                    };
-                    img.src = URL.createObjectURL(file);
-                  }
+                  saveLogo(e.dataTransfer.files[0]);
                 }}
                 onClick={() => {
                   const input = document.createElement('input');
                   input.type = 'file';
                   input.accept = 'image/*';
                   input.onchange = (ev: any) => {
-                    const file = ev.target.files?.[0];
-                    if (!file) return;
-                    const img = new window.Image();
-                    img.onload = () => {
-                      const canvas = document.createElement('canvas');
-                      const scale = Math.min(1, 400 / img.width);
-                      canvas.width = img.width * scale;
-                      canvas.height = img.height * scale;
-                      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-                      saveNow({ companyLogo: canvas.toDataURL('image/png', 0.9) });
-                      addToast('success', 'Logo saved');
-                    };
-                    img.src = URL.createObjectURL(file);
+                    saveLogo(ev.target.files?.[0]);
                   };
                   input.click();
                 }}
@@ -4345,10 +4391,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
                     e.preventDefault(); e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/10');
                     const file = e.dataTransfer.files[0];
                     if (file?.type.startsWith('image/')) {
-                      const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); saveNow({ companyLogo: c.toDataURL('image/png', 0.9) }); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(file);
+                      saveLogo(file);
                     }
                   }}
-                  onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = (ev: any) => { const f = ev.target.files?.[0]; if (f) { const img = new window.Image(); img.onload = () => { const c = document.createElement('canvas'); const s = Math.min(1, 400 / img.width); c.width = img.width * s; c.height = img.height * s; c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height); saveNow({ companyLogo: c.toDataURL('image/png', 0.9) }); addToast('success', 'Logo saved'); }; img.src = URL.createObjectURL(f); } }; i.click(); }}
+                  onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = (ev: any) => { saveLogo(ev.target.files?.[0]); }; i.click(); }}
                 >
                   {settings.companyLogo ? (
                     <div><img src={settings.companyLogo} alt="Logo" className="max-h-16 mx-auto object-contain" /><p className="text-[10px] text-zinc-500 mt-2">Click to change</p></div>

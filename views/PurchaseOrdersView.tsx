@@ -69,7 +69,29 @@ import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/useConfirm';
 import { fmtMoneyK } from '../utils/format';
 import { shrinkImage, FILE_BUDGET_BYTES } from '../utils/imageShrink';
+import { changedFields, hasChanges } from '../utils/changedFields';
 import { printPurchaseOrderPDF } from '../services/pdfService';
+
+/** Toast suffix for a write that's only on this device so far. */
+const queuedNote = (r: unknown) => (r === 'queued' ? ' — saved on this device, will sync' : '');
+
+/** Line items to save from an editor: the editor never changes received
+ *  quantities, so each line keeps what the live PO has (a receipt recorded
+ *  on a tablet while the editor was open stays recorded). */
+function withLiveReceipts(items: POLineItem[], live: PurchaseOrder | undefined): POLineItem[] {
+  if (!live) return items;
+  return items.map(it => {
+    const l = live.items.find(x => x.id === it.id);
+    return l ? { ...it, receivedQty: l.receivedQty } : it;
+  });
+}
+
+/** Status history to save: the live history plus the entries this editor
+ *  added — another device's entries aren't dropped. */
+function withLiveHistory(edited: PurchaseOrder['statusHistory'], opened: PurchaseOrder['statusHistory'], live: PurchaseOrder | undefined) {
+  const added = (edited || []).slice((opened || []).length);
+  return [...((live ? live.statusHistory : opened) || []), ...added];
+}
 
 interface Props {
   user: { id: string; name: string; role: string };
@@ -247,7 +269,20 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       .slice(0, 8);
   }, [pos]);
 
-  const handleDelete = async (p: PurchaseOrder) => {
+  // Latest list, for handlers that must build on what's stored NOW rather
+  // than the row they were rendered with.
+  const posRef = useRef(pos);
+  posRef.current = pos;
+  // One action per PO at a time — a double-tap used to duplicate twice or
+  // add the same status entry twice.
+  const busyRef = useRef<Set<string>>(new Set());
+  const runOnce = async (key: string, fn: () => Promise<void>) => {
+    if (busyRef.current.has(key)) return;
+    busyRef.current.add(key);
+    try { await fn(); } finally { busyRef.current.delete(key); }
+  };
+
+  const handleDelete = (p: PurchaseOrder) => runOnce(p.id, async () => {
     const ok = await confirmDialog({
       title: `Delete ${p.poNumber}?`,
       message: 'Audit history will be lost. This cannot be undone.',
@@ -255,19 +290,27 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       confirmLabel: 'Delete PO',
     });
     if (!ok) return;
-    await DB.deletePurchaseOrder(p.id);
-    addToast('info', `Deleted ${p.poNumber}`);
-  };
+    try {
+      const r = await DB.deletePurchaseOrder(p.id);
+      addToast('info', `Deleted ${p.poNumber}${queuedNote(r)}`);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't delete ${p.poNumber}`); }
+  });
 
-  const handleDuplicate = async (p: PurchaseOrder) => {
-    const newNumber = DB.nextPurchaseOrderNumber(pos);
+  const handleDuplicate = (p: PurchaseOrder) => runOnce(p.id, async () => {
+    const newNumber = DB.nextPurchaseOrderNumber(posRef.current);
+    // A copy is a fresh order: nothing received, shipped or promised yet.
     const copy: PurchaseOrder = {
       ...p,
       id: `po_${Date.now()}`,
       poNumber: newNumber,
       status: 'draft',
+      items: p.items.map(item => ({ ...item, receivedQty: undefined })),
       orderedDate: Date.now(),
+      requiredDate: undefined,
+      expectedDate: undefined,
       receivedDate: undefined,
+      shipVia: undefined,
+      trackingNumber: undefined,
       approvedBy: undefined, approvedByName: undefined, approvedAt: undefined,
       statusHistory: [{ status: 'draft', timestamp: Date.now(), userId: user.id, userName: user.name, note: `Duplicated from ${p.poNumber}` }],
       createdAt: Date.now(),
@@ -276,19 +319,21 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       createdByName: user.name,
       isRework: undefined, reworkOf: undefined, reworkOfNumber: undefined, reworkReason: undefined,
     };
-    await DB.savePurchaseOrder(copy);
-    addToast('success', `Created ${newNumber} (draft copy)`);
-    setEditing(copy);
-  };
+    try {
+      const r = await DB.savePurchaseOrder(copy);
+      addToast('success', `Created ${newNumber} (draft copy)${queuedNote(r)}`);
+      setEditing(copy);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't duplicate ${p.poNumber}`); }
+  });
 
-  const handleRework = async (p: PurchaseOrder) => {
+  const handleRework = (p: PurchaseOrder) => runOnce(p.id, async () => {
     // Ask for a brief reason — keeps it in a single interaction
     const reason = window.prompt(
       `Rework reason for ${p.poNumber}?\n(e.g. "finish off-spec", "wrong dimension", "missed area")\n\nLeave blank to fill in the editor.`,
       ''
     );
     if (reason === null) return; // user cancelled
-    const newNumber = `${DB.nextPurchaseOrderNumber(pos).replace(/PO-(\d+)-(\d+)/, (_, y, n) => `PO-${y}-${n}`)}-RW`;
+    const newNumber = `${DB.nextPurchaseOrderNumber(posRef.current).replace(/PO-(\d+)-(\d+)/, (_, y, n) => `PO-${y}-${n}`)}-RW`;
     // Tag each line item description so the vendor knows it's rework. Priced
     // at $0: a redo is normally on the vendor, and the copy carried the full
     // price — once placed, the same job was charged for the processing twice.
@@ -312,6 +357,8 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       requiredDate: undefined,
       expectedDate: undefined,
       receivedDate: undefined,
+      shipVia: undefined,
+      trackingNumber: undefined,
       approvedBy: undefined, approvedByName: undefined, approvedAt: undefined,
       statusHistory: [{ status: 'draft', timestamp: Date.now(), userId: user.id, userName: user.name, note: `Rework of ${p.poNumber}${reason ? ` — ${reason}` : ''}` }],
       createdAt: Date.now(),
@@ -324,23 +371,28 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       reworkReason: reason || undefined,
       internalNotes: `REWORK of ${p.poNumber}${reason ? ` — Reason: ${reason}` : ''}${p.internalNotes ? `\n\nOriginal notes: ${p.internalNotes}` : ''}`,
     };
-    await DB.savePurchaseOrder(reworkPO);
-    addToast('success', `↩ Rework PO ${newNumber} created at $0 — same vendor, items tagged [REWORK]. Enter a price if the vendor charges.`);
-    setEditing(reworkPO);
-  };
+    try {
+      const r = await DB.savePurchaseOrder(reworkPO);
+      addToast('success', `↩ Rework PO ${newNumber} created at $0 — same vendor, items tagged [REWORK]. Enter a price if the vendor charges.${queuedNote(r)}`);
+      setEditing(reworkPO);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't create the rework PO`); }
+  });
 
-  const quickAdvance = async (p: PurchaseOrder, to: POStatus) => {
+  const quickAdvance = (p: PurchaseOrder, to: POStatus) => runOnce(p.id, async () => {
+    // Only the status fields, built on the stored PO — saving the whole row
+    // copy undid a receipt or edit made on another device.
+    const live = posRef.current.find(x => x.id === p.id) || p;
     const entry = { status: to, timestamp: Date.now(), userId: user.id, userName: user.name };
-    const updated = {
-      ...p,
-      status: to,
-      statusHistory: [...(p.statusHistory || []), entry],
-      ...(to === 'received' ? { receivedDate: Date.now() } : {}),
-      updatedAt: Date.now(),
-    };
-    await DB.savePurchaseOrder(updated);
-    addToast('success', `${p.poNumber} → ${STATUS_META[to].label}`);
-  };
+    try {
+      const r = await DB.savePurchaseOrder({
+        id: p.id,
+        status: to,
+        statusHistory: [...(live.statusHistory || []), entry],
+        ...(to === 'received' ? { receivedDate: Date.now() } : {}),
+      });
+      addToast('success', `${p.poNumber} → ${STATUS_META[to].label}${queuedNote(r)}`);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't update ${p.poNumber}`); }
+  });
 
   return (
     <div className="space-y-5 animate-fade-in w-full">
@@ -434,11 +486,11 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
           settings={settings}
           currentUser={user}
           onClose={() => { setEditing(null); setCreating(false); }}
-          onSave={async (po) => {
+          onSave={async (changes, label) => {
             // Errors used to vanish (unhandled) and the editor just sat there.
             try {
-              const r = await DB.savePurchaseOrder(po);
-              addToast('success', `Saved ${po.poNumber}${r === 'queued' ? ' — on this device, will sync' : ''}`);
+              const r = await DB.savePurchaseOrder(changes);
+              addToast('success', `Saved ${label}${queuedNote(r)}`);
               setEditing(null);
               setCreating(false);
             } catch (e: any) { addToast('error', e?.message || 'Save failed — check connection'); }
@@ -451,12 +503,13 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
       {receiving && (
         <ReceivingModal
           po={receiving}
+          live={pos.find(x => x.id === receiving.id)}
           currentUser={user}
           onClose={() => setReceiving(null)}
-          onSave={async (po) => {
+          onSave={async (changes, label) => {
             try {
-              const r = await DB.savePurchaseOrder(po);
-              addToast('success', `${po.poNumber} receipt recorded${r === 'queued' ? ' — on this device, will sync' : ''}`);
+              const r = await DB.savePurchaseOrder(changes);
+              addToast('success', `${label} receipt recorded${queuedNote(r)}`);
               setReceiving(null);
             } catch (e: any) { addToast('error', e?.message || 'Save failed — check connection'); }
           }}
@@ -598,10 +651,12 @@ const PORow: React.FC<{
 // ══════════════════════════════════════════════════════════════════════
 const ReceivingModal: React.FC<{
   po: PurchaseOrder;
+  /** The PO as stored now (it can change on another device while this is open). */
+  live?: PurchaseOrder;
   currentUser: { id: string; name: string; role: string };
   onClose: () => void;
-  onSave: (po: PurchaseOrder) => void;
-}> = ({ po, currentUser, onClose, onSave }) => {
+  onSave: (changes: Partial<PurchaseOrder> & { id: string }, label: string) => Promise<void>;
+}> = ({ po, live, currentUser, onClose, onSave }) => {
   // Seed unreceived lines to 0 (NOT full qty) so a partial shipment is the safe
   // default — pre-filling full qty silently over-receives if the user doesn't
   // zero out the lines that haven't arrived. The "Mark All Received" button
@@ -610,30 +665,40 @@ const ReceivingModal: React.FC<{
   const [note, setNote] = useState('');
   const [shipVia, setShipVia] = useState(po.shipVia || '');
   const [tracking, setTracking] = useState(po.trackingNumber || '');
+  const [saving, setSaving] = useState(false);
 
   const allFull = items.every(i => (i.receivedQty ?? 0) >= i.quantity);
   const anyReceived = items.some(i => (i.receivedQty ?? 0) > 0);
 
-  const handleSave = () => {
-    const newStatus: POStatus = !anyReceived ? po.status : allFull ? 'received' : 'partially-received';
+  const handleSave = async () => {
+    if (saving) return;
+    // Write only the receiving fields, onto the stored PO's lines — saving
+    // the whole copy this opened with undid edits made meanwhile elsewhere.
+    const base = live || po;
+    const nextItems = base.items.map(it => {
+      const entered = items.find(x => x.id === it.id);
+      return entered ? { ...it, receivedQty: entered.receivedQty } : it;
+    });
+    const full = nextItems.every(i => (i.receivedQty ?? 0) >= i.quantity);
+    const newStatus: POStatus = !anyReceived ? base.status : full ? 'received' : 'partially-received';
     const entry = {
       status: newStatus,
       timestamp: Date.now(),
       userId: currentUser.id,
       userName: currentUser.name,
-      note: note || (allFull ? 'All items received' : 'Partial receipt'),
+      note: note || (full ? 'All items received' : 'Partial receipt'),
     };
-    const updated: PurchaseOrder = {
-      ...po,
-      items,
+    const changes: Partial<PurchaseOrder> & { id: string } = {
+      id: po.id,
+      items: nextItems,
       status: newStatus,
-      statusHistory: [...(po.statusHistory || []), ...(newStatus !== po.status ? [entry] : [])],
-      receivedDate: allFull ? Date.now() : po.receivedDate,
-      shipVia: shipVia || po.shipVia,
-      trackingNumber: tracking || po.trackingNumber,
-      updatedAt: Date.now(),
+      statusHistory: [...(base.statusHistory || []), ...(newStatus !== base.status ? [entry] : [])],
+      ...(full ? { receivedDate: Date.now() } : {}),
+      ...(shipVia.trim() && shipVia !== (po.shipVia || '') ? { shipVia } : {}),
+      ...(tracking.trim() && tracking !== (po.trackingNumber || '') ? { trackingNumber: tracking } : {}),
     };
-    onSave(updated);
+    setSaving(true);
+    try { await onSave(changes, po.poNumber); } finally { setSaving(false); }
   };
 
   const updateReceivedQty = (idx: number, qty: number) => {
@@ -663,10 +728,10 @@ const ReceivingModal: React.FC<{
           <button
             type="button"
             onClick={handleSave}
-            disabled={!anyReceived}
+            disabled={!anyReceived || saving}
             className="flex-1 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white px-4 py-2 rounded-lg text-sm font-bold"
           >
-            {allFull ? 'Mark Fully Received' : 'Save Partial Receipt'}
+            {saving ? 'Saving…' : allFull ? 'Mark Fully Received' : 'Save Partial Receipt'}
           </button>
         </>
       }
@@ -763,13 +828,19 @@ interface EditorProps {
   settings: SystemSettings;
   currentUser: { id: string; name: string; role: string };
   onClose: () => void;
-  onSave: (po: PurchaseOrder) => void;
+  /** `changes` is the whole record for a new PO, else only what changed. */
+  onSave: (changes: Partial<PurchaseOrder> & { id: string }, label: string) => Promise<void>;
   addToast: Props['addToast'];
 }
+
+// Totals follow the lines/tax/shipping (recomputed on open), so on their own
+// they aren't an edit worth a "discard?" prompt.
+const DERIVED_PO_FIELDS = ['subtotal', 'taxAmt', 'total', 'updatedAt'];
 
 const PurchaseOrderEditor: React.FC<EditorProps> = ({
   existing, allPOs, vendors, jobs, settings, currentUser, onClose, onSave, addToast,
 }) => {
+  const { confirm: confirmDiscard, ConfirmHost: DiscardHost } = useConfirm();
   const seed = useMemo<PurchaseOrder>(() => existing || {
     id: `po_${Date.now()}`,
     poNumber: DB.nextPurchaseOrderNumber(allPOs),
@@ -794,7 +865,25 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
   }, [existing, allPOs, vendors, settings, currentUser]);
 
   const [po, setPO] = useState<PurchaseOrder>(seed);
+  // The copy this editor opened with — saves send only what differs from it,
+  // so a receipt or status change made on another device meanwhile survives.
+  const openedRef = useRef<PurchaseOrder>(seed);
   const [jobSearch, setJobSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // Esc / X / Cancel / backdrop all come here: don't drop edits silently.
+  const askingRef = useRef(false);
+  const requestClose = async () => {
+    if (saving || askingRef.current) return;
+    if (hasChanges(openedRef.current, po, { ignore: DERIVED_PO_FIELDS })) {
+      askingRef.current = true;
+      try {
+        const ok = await confirmDiscard({ title: 'Discard unsaved changes?', message: 'Your edits to this purchase order will be lost.', tone: 'warning', confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+        if (!ok) return;
+      } finally { askingRef.current = false; }
+    }
+    onClose();
+  };
 
   // Recompute totals on items / tax / shipping change
   useEffect(() => {
@@ -913,7 +1002,8 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
 
   // statusOverride: pass a new status synchronously from "Save & Mark Sent"
   // so the save captures the correct status without waiting for a React state flush.
-  const handleSave = (statusOverride?: { status: POStatus; historyNote: string }) => {
+  const handleSave = async (statusOverride?: { status: POStatus; historyNote: string }) => {
+    if (saving) return;
     if (!po.vendorId) { addToast('error', 'Pick a vendor before saving'); return; }
     if (po.items.length === 0) { addToast('error', 'Add at least one line item'); return; }
     if (po.items.some(i => !i.description.trim())) { addToast('error', 'Every line item needs a description'); return; }
@@ -923,7 +1013,20 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
       saved.status = statusOverride.status;
       saved.statusHistory = [...(po.statusHistory || []), entry];
     }
-    onSave(saved);
+    let changes: Partial<PurchaseOrder> & { id: string };
+    if (!existing) {
+      changes = saved;
+    } else {
+      const opened = openedRef.current;
+      const live = allPOs.find(x => x.id === po.id);
+      const diff = changedFields(opened, saved, { ignore: ['id', 'updatedAt'] });
+      if (diff.items) diff.items = withLiveReceipts(diff.items, live);
+      if (diff.statusHistory) diff.statusHistory = withLiveHistory(saved.statusHistory, opened.statusHistory, live);
+      changes = { id: po.id, ...diff };
+      if (Object.keys(changes).length === 1) { onClose(); return; }   // nothing changed
+    }
+    setSaving(true);
+    try { await onSave(changes, saved.poNumber); } finally { setSaving(false); }
   };
 
   const overdueWarning = isOverdue(po);
@@ -940,7 +1043,7 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={requestClose}
       maxWidth="sm:max-w-4xl"
       header={
         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -977,7 +1080,7 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
       }
       footer={
         <>
-          <button type="button" onClick={onClose} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
+          <button type="button" onClick={requestClose} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
           <button
             type="button"
             onClick={() => printPurchaseOrderPDF(po, settings)}
@@ -996,16 +1099,17 @@ const PurchaseOrderEditor: React.FC<EditorProps> = ({
             </a>
           )}
           {po.status === 'draft' && (
-            <button type="button" onClick={() => handleSave({ status: 'sent', historyNote: 'Marked as sent' })} className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5">
+            <button type="button" onClick={() => handleSave({ status: 'sent', historyNote: 'Marked as sent' })} disabled={saving} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5">
               <Send className="w-3.5 h-3.5" aria-hidden="true" /> Save & Mark Sent
             </button>
           )}
-          <button type="button" onClick={() => handleSave()} className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
-            {existing ? 'Save Changes' : 'Create Draft'}
+          <button type="button" onClick={() => handleSave()} disabled={saving} className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-bold">
+            {saving ? 'Saving…' : existing ? 'Save Changes' : 'Create Draft'}
           </button>
         </>
       }
     >
+      {DiscardHost}
       {/* Overdue warning */}
       {overdueWarning && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-300 flex items-center gap-2">

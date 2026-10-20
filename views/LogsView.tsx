@@ -14,6 +14,7 @@ import { Job, User, TimeLog, SystemSettings } from '../types';
 import * as DB from '../services/mockDb';
 import { fmt, toDateTimeLocal, formatDuration, getLogDurationMins } from '../utils/date';
 import { Overlay } from '../components/Overlay';
+import { useConfirm } from '../components/useConfirm';
 import { JobTimeline } from '../components/JobTimeline';
 import { resolveJobStage } from '../utils/stageRouting';
 import { shopLocalTimeMs } from '../utils/timezone';
@@ -52,6 +53,16 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const [bfOp, setBfOp] = useState('');
   const [bfStart, setBfStart] = useState('');
   const [bfEnd, setBfEnd] = useState('');
+  // One id per opened backfill form: a second tap (or a retry after a slow
+  // save) rewrites the same entry instead of adding duplicate payroll hours.
+  const [bfId, setBfId] = useState('');
+  const [bfSaving, setBfSaving] = useState(false);
+  const bfSavingRef = useRef(false);
+  // The log as the editor opened it — only what the admin changed is
+  // written, so a worker's clock-out made meanwhile isn't undone.
+  const editOriginalRef = useRef<TimeLog | null>(null);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
+  const askingRef = useRef(false);
 
   // "active" = job not yet marked complete | "completed" = job marked complete
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'completed'>('active');
@@ -130,7 +141,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     setShowRepair(true);
   };
 
-  const applyRepair = async (log: TimeLog, endStr: string): Promise<boolean> => {
+  const applyRepair = async (log: TimeLog, endStr: string): Promise<'saved' | 'queued' | false> => {
     const endTs = endStr ? new Date(endStr).getTime() : NaN;
     if (Number.isNaN(endTs) || endTs < log.startTime) {
       addToast('error', `Skipped ${log.userName}: end must be after start`);
@@ -138,7 +149,9 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     }
     const durSeconds = Math.max(0, Math.floor((endTs - log.startTime) / 1000));
     try {
-      await DB.updateTimeLog({
+      // `original` = the row as listed: only the end time and the anomaly
+      // flag are written, nothing else from this copy.
+      const r = await DB.updateTimeLog({
         ...log,
         endTime: endTs,
         durationSeconds: durSeconds,
@@ -146,23 +159,25 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
         status: 'completed',
         durationAnomaly: false,
         updatedAt: Date.now(),
-      } as TimeLog);
-      return true;
-    } catch {
-      addToast('error', `Failed to fix ${log.userName}'s entry`);
+      } as TimeLog, { original: log });
+      return r === 'queued' ? 'queued' : 'saved';
+    } catch (e: any) {
+      addToast('error', `Failed to fix ${log.userName}'s entry${e?.message ? ` — ${e.message}` : ''}`);
       return false;
     }
   };
 
   const fixAll = async () => {
+    if (repairBusy) return;
     setRepairBusy(true);
-    let fixed = 0;
+    let fixed = 0, queued = 0;
     for (const l of badLogs) {
-      const ok = await applyRepair(l, repairEnds[l.id]);
-      if (ok) fixed++;
+      const r = await applyRepair(l, repairEnds[l.id]);
+      if (r) fixed++;
+      if (r === 'queued') queued++;
     }
     setRepairBusy(false);
-    addToast('success', `Fixed ${fixed} time ${fixed === 1 ? 'entry' : 'entries'}`);
+    addToast(fixed ? 'success' : 'error', `Fixed ${fixed} time ${fixed === 1 ? 'entry' : 'entries'}${queued ? ' — saved on this device, will sync' : ''}`);
     if (fixed === badLogs.length) setShowRepair(false);
   };
 
@@ -196,6 +211,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
 
   const handleEditLog = (log: TimeLog) => {
     savedScrollRef.current = document.querySelector('main')?.scrollTop ?? 0;
+    editOriginalRef.current = { ...log };
     setEditingLog({ ...log });
     setEditStartStr(toDateTimeLocal(log.startTime));
     setEditEndStr(toDateTimeLocal(log.endTime));
@@ -205,6 +221,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
   const closeEditModal = () => {
     setShowEditModal(false);
     setEditingLog(null);
+    editOriginalRef.current = null;
     setEditStartStr('');
     setEditEndStr('');
     requestAnimationFrame(() => {
@@ -213,16 +230,42 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     });
   };
 
+  /** Anything in the editor that differs from what it opened with. */
+  const editIsDirty = (): boolean => {
+    const o = editOriginalRef.current;
+    if (!o || !editingLog) return false;
+    return editingLog.userId !== o.userId || editingLog.operation !== o.operation
+      || editStartStr !== toDateTimeLocal(o.startTime) || editEndStr !== toDateTimeLocal(o.endTime);
+  };
+
+  // Esc / X / Cancel / backdrop: don't drop an edited time entry silently.
+  const requestCloseEdit = async () => {
+    if (savingLog || askingRef.current) return;
+    if (editIsDirty()) {
+      askingRef.current = true;
+      try {
+        const ok = await askConfirm({ title: 'Discard unsaved changes?', message: 'Your edits to this time entry will be lost.', tone: 'warning', confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+        if (!ok) return;
+      } finally { askingRef.current = false; }
+    }
+    closeEditModal();
+  };
+
   const handleSaveLog = async () => {
     if (!editingLog || savingLog) return;
+    const original = editOriginalRef.current || editingLog;
     // Convert the string state to timestamps NOW, at save time, after the
-    // user is done typing. Empty end = still-running timer.
-    const startTs = new Date(editStartStr).getTime();
+    // user is done typing. Empty end = still-running timer. A field left as
+    // it opened keeps its exact stored time — the minute-only input would
+    // otherwise shave the seconds off and count as an edit.
+    const startTs = editStartStr === toDateTimeLocal(original.startTime) ? original.startTime : new Date(editStartStr).getTime();
     if (!editStartStr || Number.isNaN(startTs)) {
       addToast('error', 'Start time is required and must be valid');
       return;
     }
-    const endTs = editEndStr ? new Date(editEndStr).getTime() : null;
+    const endTs = !editEndStr ? null
+      : editEndStr === toDateTimeLocal(original.endTime) && original.endTime ? original.endTime
+      : new Date(editEndStr).getTime();
     if (editEndStr && Number.isNaN(endTs as number)) {
       addToast('error', 'End time must be valid or empty');
       return;
@@ -246,12 +289,15 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
     };
     setSavingLog(true);
     try {
-      await DB.updateTimeLog(updated);
-      addToast('success', 'Log updated');
+      // `original`: only fields changed in this editor are written — an
+      // untouched empty End no longer restarts a timer the worker stopped
+      // while the editor was open.
+      const r = await DB.updateTimeLog(updated, { original });
+      addToast('success', `Log updated${r === 'queued' ? ' — saved on this device, will sync' : ''}`);
       closeEditModal();
-    } catch (e) {
+    } catch (e: any) {
       console.error('[LogsView] updateTimeLog failed:', e);
-      addToast('error', 'Failed to update log');
+      addToast('error', `Failed to update log${e?.message ? ` — ${e.message}` : ''}`);
     } finally {
       setSavingLog(false);
     }
@@ -687,6 +733,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
 
   return (
     <div className="space-y-6">
+      {ConfirmHost}
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 no-print">
         <div>
@@ -694,7 +741,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
           <p className="text-zinc-500 text-sm mt-1">Time entries grouped by job. Filter by date, status, or search.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={() => { setShowBackfill(true); setBfJob(''); setBfJobSearch(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-all shadow shadow-amber-900/20">
+          <button onClick={() => { setShowBackfill(true); setBfId(`bf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`); setBfJob(''); setBfJobSearch(''); setBfWorker(''); setBfOp(''); setBfStart(''); setBfEnd(''); }} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-all shadow shadow-amber-900/20">
             <Plus className="w-4 h-4" /> Backfill Entry
           </button>
           <button onClick={openExportModal} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors shadow-lg shadow-emerald-900/20">
@@ -1028,11 +1075,11 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
 
       {/* Edit Modal */}
       {showEditModal && editingLog && (
-        <Overlay open onClose={closeEditModal} ariaLabel="Edit time log" zIndex={200}>
+        <Overlay open onClose={requestCloseEdit} ariaLabel="Edit time log" zIndex={200}>
           <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
             <div className="p-4 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10">
               <h3 className="font-bold text-white flex items-center gap-2"><Edit2 className="w-4 h-4 text-amber-500" /> Edit Time Log</h3>
-              <button aria-label="Close dialog" onClick={closeEditModal} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
+              <button aria-label="Close dialog" onClick={requestCloseEdit} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
             </div>
             {/* Job context strip — always shows WHICH job this log belongs to
                 so the user can confirm they're editing the right row. */}
@@ -1110,7 +1157,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             <div className="p-4 border-t border-white/10 bg-zinc-800/50 flex justify-between items-center sticky bottom-0 z-10">
               <button onClick={handleDeleteLog} className="text-red-500 hover:text-red-400 text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /> Delete Log</button>
               <div className="flex gap-2">
-                <button onClick={closeEditModal} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
+                <button onClick={requestCloseEdit} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
                 <button onClick={handleSaveLog} disabled={savingLog} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-bold transition-all flex items-center gap-2 min-w-[120px] justify-center">
                   {savingLog ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Saving…</span></> : 'Save Changes'}
                 </button>
@@ -1169,7 +1216,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                       </div>
                       <button
                         disabled={repairBusy}
-                        onClick={async () => { if (await applyRepair(log, repairEnds[log.id])) addToast('success', 'Entry fixed'); }}
+                        onClick={async () => { const r = await applyRepair(log, repairEnds[log.id]); if (r) addToast('success', `Entry fixed${r === 'queued' ? ' — saved on this device, will sync' : ''}`); }}
                         className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-bold"
                       >
                         Fix
@@ -1308,25 +1355,30 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
             <div className="px-5 py-4 border-t border-white/5 flex gap-3">
               <button onClick={() => setShowBackfill(false)} className="flex-1 py-3 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-sm">Cancel</button>
               <button
-                disabled={!bfJob || !bfWorker || !bfOp || !bfStart || !bfEnd || new Date(bfEnd) <= new Date(bfStart)}
+                disabled={bfSaving || !bfJob || !bfWorker || !bfOp || !bfStart || !bfEnd || new Date(bfEnd) <= new Date(bfStart)}
                 onClick={async () => {
+                  if (bfSavingRef.current) return;   // synchronous double-tap guard
+                  const job = jobs.find(j => j.id === bfJob);
+                  const worker = users.find(u => u.id === bfWorker);
+                  if (!job || !worker) { addToast('error', 'Pick the job and worker again'); return; }
+                  bfSavingRef.current = true;
+                  setBfSaving(true);
                   try {
-                    const job = jobs.find(j => j.id === bfJob);
-                    const worker = users.find(u => u.id === bfWorker);
-                    if (!job || !worker) return;
-                    await DB.createBackfillLog(
+                    const r = await DB.createBackfillLog(
                       bfJob, bfWorker, worker.name, bfOp,
                       new Date(bfStart).getTime(), new Date(bfEnd).getTime(),
-                      job.partNumber, job.customer, job.jobIdsDisplay
+                      job.partNumber, job.customer, job.jobIdsDisplay,
+                      bfId || undefined,
                     );
-                    addToast('success', `Backfill logged: ${worker.name} → ${job.poNumber} (${bfOp})`);
+                    addToast('success', `Backfill logged: ${worker.name} → ${job.poNumber} (${bfOp})${r === 'queued' ? ' — saved on this device, will sync' : ''}`);
                     setShowBackfill(false);
                     setRefreshKey(k => k + 1);
                   } catch (e: any) { addToast('error', e?.message || 'Failed to create backfill'); }
+                  finally { bfSavingRef.current = false; setBfSaving(false); }
                 }}
                 className="flex-1 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:opacity-30 text-white font-bold text-sm transition-all"
               >
-                Save Entry
+                {bfSaving ? 'Saving…' : 'Save Entry'}
               </button>
             </div>
           </div>

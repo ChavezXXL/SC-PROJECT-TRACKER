@@ -24,6 +24,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useOverlayLayer } from './overlayStack';
 
 export interface PromptOptions {
   title: string;
@@ -74,21 +75,15 @@ export function usePrompt() {
     close(trimmed);
   }, [pending, value, close]);
 
-  // Esc cancels, Enter submits, autofocus the input on open
+  // Esc cancels — this dialog only, never the editor underneath it. (Also
+  // locks page scroll while open.)
+  useOverlayLayer(!!pending, () => close(null));
+
+  // Enter submits (the form); autofocus the input on open
   useEffect(() => {
     if (!pending) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); close(null); }
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 50);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [pending, close]);
+  }, [pending]);
 
   const PromptHost: React.ReactNode = pending
     ? createPortal(
@@ -96,7 +91,7 @@ export function usePrompt() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="prompt-title"
-          className="fixed inset-0 z-[400] overflow-y-auto bg-zinc-950/90 backdrop-blur-md animate-fade-in"
+          className="fixed inset-0 z-[1200] overflow-y-auto bg-zinc-950/90 backdrop-blur-md animate-fade-in"
           onClick={() => close(null)}
         >
           <div className="min-h-full flex items-center justify-center p-4">

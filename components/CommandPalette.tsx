@@ -18,6 +18,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayLayer } from './overlayStack';
 import {
   Search, Briefcase, Columns3, Calendar, Activity, History, FileText,
   Camera, AlertTriangle, Calculator, Users, Settings as SettingsIcon,
@@ -150,11 +151,13 @@ export const CommandPalette: React.FC<Props> = ({ open, onClose, onNavigate, job
     if (cursor >= results.length) setCursor(Math.max(0, results.length - 1));
   }, [results.length, cursor]);
 
+  // Esc closes only the palette (shared overlay stack — it opens over editors)
+  useOverlayLayer(open, onClose);
+
   // Key handling
   useEffect(() => {
     if (!open) return;
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(results.length - 1, c + 1)); }
       if (e.key === 'ArrowUp')   { e.preventDefault(); setCursor(c => Math.max(0, c - 1)); }
       if (e.key === 'Enter') {

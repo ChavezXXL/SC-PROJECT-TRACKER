@@ -29,7 +29,7 @@ import * as DB from './services/mockDb';
 import { ShopFlowMap } from './components/ShopFlowMap';
 import { countByCustomer } from './utils/customers';
 import { useConfirm } from './components/useConfirm';
-import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds } from './services/shiftAlarms';
+import { watchShiftAlarms, playAlarmSound, preloadAlarmSounds, lunchWindow } from './services/shiftAlarms';
 import { computeJobETA, RISK_COLORS } from './utils/jobETA';
 import type { JobETA, JobRiskLevel } from './utils/jobETA';
 import { getPartHistory } from './utils/partHistory';
@@ -521,7 +521,6 @@ const WorkerCard: React.FC<{
 // fires only when this screen's clock actually crosses lunch start, so a tab
 // opened mid-lunch no longer re-pauses someone who chose to keep working.
 const SS_PAUSED   = 'auto-lunch-paused-';        // + local YYYY-MM-DD
-const SS_RESUMED  = 'auto-lunch-resumed-';       // + local YYYY-MM-DD
 
 function ssGet(key: string): boolean {
   try { return !!sessionStorage.getItem(key); } catch { return false; }
@@ -560,15 +559,19 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
   useEffect(() => {
     if (!enabled) return;
     let lastHhmm: string | null = null;   // null until the first check — never act on load
+    let resuming = false;
     const check = () => {
       const settings = DB.getSettings();
       const { today, hhmm } = shopDateAndTime(settings.recapTimezone);
       const prev = lastHhmm;
       lastHhmm = hhmm;
 
-      if (!settings.autoLunchPauseEnabled) return;
-      const lunchStart = settings.lunchStart || '12:00';
-      const lunchEnd = settings.lunchEnd || '12:30';
+      // Lunch comes from the shift alarms ("Pause Timers" → "Resume Timers"),
+      // the same window every worker's own device uses.
+      const lunch = lunchWindow(settings);
+      if (!lunch) return;
+      const lunchStart = lunch.start;
+      const lunchEnd = lunch.end;
       const inLunch = hhmm >= lunchStart && hhmm < lunchEnd;
       const crossedStart = prev !== null && prev < lunchStart && hhmm >= lunchStart;
 
@@ -579,16 +582,18 @@ export function useAutoLunch(addToast: (type: 'success' | 'error' | 'info', mess
         });
       }
 
-      // Resume after lunch — driven off SHARED log state, NOT the per-tab
-      // SS_PAUSED flag. Previously this only ran if THIS tab recorded the pause,
-      // so a refreshed/closed tab (or a different device) left every timer
-      // frozen all afternoon. resumeAllPaused('auto-lunch') only revives timers
-      // we auto-paused, never a worker's own manual pause.
-      if (!inLunch && hhmm >= lunchEnd && !ssGet(SS_RESUMED + today)) {
-        ssSet(SS_RESUMED + today);
-        DB.resumeAllPaused('auto-lunch').then((count) => {
+      // Resume after lunch — driven off SHARED log state, NOT a per-tab flag:
+      // a refreshed/closed tab (or a different device) used to leave every
+      // timer frozen all afternoon. Tried on every check until nothing is
+      // left paused for lunch (a Wi-Fi blip at 12:30 used to end the attempt
+      // for the day). Only timers paused FOR lunch, never a worker's own
+      // pause. Each pause counts as the lunch length at most, so a screen
+      // first opened at 1:15 doesn't take 45 more minutes off everyone.
+      if (!inLunch && hhmm >= lunchEnd && !resuming) {
+        resuming = true;
+        DB.resumeAllPaused('auto-lunch', lunch.ms || undefined).then((count) => {
           if (count > 0) addToast('success', `Auto-resumed ${count} timer${count > 1 ? 's' : ''} after lunch`);
-        });
+        }).finally(() => { resuming = false; });
       }
     };
     check();

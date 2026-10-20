@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayLayer } from './overlayStack';
 import { X, Truck } from 'lucide-react';
 
 export type ShipChoice =
@@ -69,12 +70,9 @@ export function useShipDate() {
     setPending(null);
   }, [pending]);
 
-  useEffect(() => {
-    if (!pending) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close(null); } };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [pending, close]);
+  // Esc cancels only this question — it opens over the job editor, and its
+  // own window listener used to close the editor too (shared overlay stack).
+  useOverlayLayer(!!pending, () => close(null));
 
   const confirm = () => {
     if (mode === 'date') {

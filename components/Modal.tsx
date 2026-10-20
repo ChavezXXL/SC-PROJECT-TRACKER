@@ -5,7 +5,7 @@
 //   • Header is always visible — sticky at top, never clipped on tall forms
 //   • Footer is always reachable — sticky at bottom, actions never hide
 //   • Backdrop click closes (unless `dismissable={false}`)
-//   • Esc key closes
+//   • Esc key closes (topmost dialog only)
 //   • Mobile: full-screen (no side margins, rounded top only)
 //   • Desktop: centered, max-width, rounded, 4px top/bottom margin
 //   • Content scrolls naturally inside the modal, viewport never jumps
@@ -17,9 +17,10 @@
 // pattern so fixes land everywhere at once.
 // ═════════════════════════════════════════════════════════════════════
 
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useOverlayLayer } from './overlayStack';
 
 export interface ModalProps {
   open: boolean;
@@ -59,24 +60,11 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   zIndex = 200,
 }) => {
-  // Esc to close — only attach while open so multiple modals don't fight
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && dismissable) onClose();
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [open, onClose, dismissable]);
-
-  // Lock body scroll while open — otherwise the background page scrolls
-  // behind the modal on some mobile browsers.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  // Esc closes only the topmost dialog, so a confirm or picker opened on top
+  // of this modal doesn't close it too. Also locks body scroll while open
+  // (the background page scrolled behind the modal on some mobile browsers),
+  // shared across dialogs so nested ones restore it correctly.
+  useOverlayLayer(open, () => { if (dismissable) onClose(); });
 
   const backdropRef = useRef<HTMLDivElement>(null);
   const onBackdropClick = (e: React.MouseEvent) => {

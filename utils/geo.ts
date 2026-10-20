@@ -50,14 +50,23 @@ export function polylineMiles(points: GeoPoint[]): number {
   return total;
 }
 
-/** Simple decimation — keep every Nth point so a 4hr trip isn't 500 breadcrumbs. */
-export function decimate(points: GeoPoint[], targetCount: number = 200): GeoPoint[] {
+/** Simple decimation — keep every Nth point so a 4hr trip isn't 500 breadcrumbs.
+ *  Can return targetCount + 1 (the last point is always kept) — use thinTrack for a hard cap. */
+export function decimate<T extends GeoPoint>(points: T[], targetCount: number = 200): T[] {
   if (points.length <= targetCount) return points;
   const step = Math.ceil(points.length / targetCount);
-  const out: GeoPoint[] = [];
+  const out: T[] = [];
   for (let i = 0; i < points.length; i += step) out.push(points[i]);
   if (out[out.length - 1] !== points[points.length - 1]) out.push(points[points.length - 1]);
   return out;
+}
+
+/** At most `max` points, first and last kept. The track is stored inside the
+ *  run's record next to the proof photos, so it needs a hard cap. */
+export function thinTrack<T extends GeoPoint>(points: T[], max: number): T[] {
+  if (points.length <= max) return points;
+  if (max < 2) return max < 1 ? [] : [points[points.length - 1]];
+  return decimate(points, max - 1);
 }
 
 /** Build a platform-native Maps app URL. Works on both iOS (maps.apple.com)

@@ -7,7 +7,7 @@
 //
 //   • Portal to document.body — escapes parent stacking contexts
 //   • Scroll-lock on the page behind while open
-//   • Esc-to-close (unless `dismissable={false}`)
+//   • Esc-to-close (unless `dismissable={false}`) — topmost dialog only
 //   • Backdrop-click closes (unless `dismissable={false}`)
 //   • Natural-height pattern — outer backdrop scrolls, inner card
 //     stays centered. Header and footer never clip on tall forms /
@@ -21,8 +21,9 @@
 // fixes land everywhere at once.
 // ═════════════════════════════════════════════════════════════════════
 
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayLayer } from './overlayStack';
 
 export interface OverlayProps {
   open: boolean;
@@ -57,21 +58,10 @@ export const Overlay: React.FC<OverlayProps> = ({
 }) => {
   const backdropRef = useRef<HTMLDivElement>(null);
 
-  // Esc to close — only attached while open.
-  useEffect(() => {
-    if (!open || !dismissable) return;
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [open, dismissable, onClose]);
-
-  // Lock page scroll while open so background doesn't move on iOS.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  // Esc closes only the topmost dialog — a picker's Esc used to close the
+  // editor under it too. Also locks page scroll while open (iOS background
+  // movement), shared across dialogs so nested ones restore it correctly.
+  useOverlayLayer(open, () => { if (dismissable) onClose(); });
 
   const onBackdropClick = (e: React.MouseEvent) => {
     if (!dismissable) return;

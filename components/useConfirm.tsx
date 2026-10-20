@@ -16,14 +16,17 @@
 //
 // The dialog:
 //   • Portals to document.body (escapes any parent stacking context)
-//   • Sits at z-[400] so it stacks ABOVE every modal in the app
-//   • Esc cancels, Enter confirms (focuses the destructive button by default)
+//   • Sits at z-[1200] — above every modal, including the quote editor
+//     (z 1000) and its pickers (z 1100); only toasts (1300) sit higher
+//   • Esc cancels (this dialog only), Enter confirms (focuses the
+//     destructive button by default)
 //   • Backdrop click cancels
 // ═════════════════════════════════════════════════════════════════════
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, X } from 'lucide-react';
+import { useOverlayLayer } from './overlayStack';
 
 export interface ConfirmOptions {
   title: string;
@@ -55,24 +58,21 @@ export function useConfirm() {
     setPending(null);
   }, [pending]);
 
-  // Esc / Enter shortcuts
+  // Esc cancels — this dialog only, never the editor underneath it. (Also
+  // locks page scroll while open.)
+  const isTop = useOverlayLayer(!!pending, () => close(false));
+
+  // Enter confirms (while this is the topmost dialog)
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); close(false); }
-      else if (e.key === 'Enter') { e.preventDefault(); close(true); }
+      if (e.key === 'Enter' && isTop()) { e.preventDefault(); close(true); }
     };
     window.addEventListener('keydown', onKey);
-    // Lock page scroll
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     // Auto-focus the destructive button so Enter confirms
     setTimeout(() => confirmBtnRef.current?.focus(), 50);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [pending, close]);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pending, close, isTop]);
 
   const ConfirmHost: React.ReactNode = pending
     ? createPortal(
@@ -80,7 +80,7 @@ export function useConfirm() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-title"
-          className="fixed inset-0 z-[400] overflow-y-auto bg-zinc-950/90 backdrop-blur-md animate-fade-in"
+          className="fixed inset-0 z-[1200] overflow-y-auto bg-zinc-950/90 backdrop-blur-md animate-fade-in"
           onClick={() => close(false)}
         >
           <div className="min-h-full flex items-center justify-center p-4">

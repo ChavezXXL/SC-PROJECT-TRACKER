@@ -9,6 +9,9 @@ import type { Vendor } from '../types';
 import * as DB from '../services/mockDb';
 import { Modal } from './Modal';
 import { useConfirm } from './useConfirm';
+import { changedFields } from '../utils/changedFields';
+
+const queuedNote = (r: unknown) => (r === 'queued' ? ' — saved on this device, will sync' : '');
 
 interface Props {
   addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
@@ -43,11 +46,15 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
     });
   }, [vendors, search, showArchived]);
 
-  const handleSave = async (v: Vendor) => {
-    await DB.saveVendor(v);
-    addToast('success', `Saved ${v.name}`);
-    setEditing(null);
-    setCreating(false);
+  // Every write reports its outcome — these used to fail silently (no catch)
+  // and the editor just closed as if it had saved.
+  const handleSave = async (changes: Partial<Vendor> & { id: string }, name: string) => {
+    try {
+      const r = await DB.saveVendor(changes);
+      addToast('success', `Saved ${name}${queuedNote(r)}`);
+      setEditing(null);
+      setCreating(false);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't save ${name}`); }
   };
 
   const handleDelete = async (v: Vendor) => {
@@ -58,13 +65,18 @@ export const VendorsManager: React.FC<Props> = ({ addToast }) => {
       confirmLabel: 'Delete vendor',
     });
     if (!ok) return;
-    await DB.deleteVendor(v.id);
-    addToast('info', `Deleted ${v.name}`);
+    try {
+      const r = await DB.deleteVendor(v.id);
+      addToast('info', `Deleted ${v.name}${queuedNote(r)}`);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't delete ${v.name}`); }
   };
 
   const toggleArchive = async (v: Vendor) => {
-    await DB.saveVendor({ ...v, archived: !v.archived });
-    addToast('info', v.archived ? `${v.name} restored` : `${v.name} archived`);
+    try {
+      // Only the flag — the row copy may be older than what's stored.
+      const r = await DB.saveVendor({ id: v.id, archived: !v.archived });
+      addToast('info', `${v.archived ? `${v.name} restored` : `${v.name} archived`}${queuedNote(r)}`);
+    } catch (e: any) { addToast('error', e?.message || `Couldn't update ${v.name}`); }
   };
 
   return (
@@ -194,7 +206,7 @@ const VendorEditor: React.FC<{
   existing: Vendor | null;
   vendors: Vendor[];
   onClose: () => void;
-  onSave: (v: Vendor) => void;
+  onSave: (changes: Partial<Vendor> & { id: string }, name: string) => Promise<void>;
   addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
 }> = ({ existing, vendors, onClose, onSave, addToast }) => {
   const [v, setV] = useState<Vendor>(() => existing || {
@@ -203,6 +215,7 @@ const VendorEditor: React.FC<{
     categories: [],
     createdAt: Date.now(),
   });
+  const [saving, setSaving] = useState(false);
   const [zipInput, setZipInput] = useState('');
   const [zipResult, setZipResult] = useState<ZipResult | null>(null);
   const [zipLoading, setZipLoading] = useState(false);
@@ -238,13 +251,21 @@ const VendorEditor: React.FC<{
     setZipResult(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     if (!v.name.trim()) { addToast('error', 'Vendor name is required'); return; }
     // Block duplicate names — duplicate vendors split one supplier's spend,
     // on-time %, and lead-time history across separate performance cards.
     const dupe = vendors.some(x => x.id !== v.id && x.name.trim().toLowerCase() === v.name.trim().toLowerCase());
     if (dupe) { addToast('error', `A vendor named "${v.name.trim()}" already exists`); return; }
-    onSave(v);
+    // An edit sends only what changed (an emptied field is cleared); the rest
+    // — e.g. an archive done elsewhere meanwhile — is left as stored.
+    const changes = existing
+      ? { id: v.id, ...changedFields(existing, v, { ignore: ['id', 'updatedAt'] }) }
+      : v;
+    if (existing && Object.keys(changes).length === 1) { onClose(); return; }
+    setSaving(true);
+    try { await onSave(changes, v.name.trim()); } finally { setSaving(false); }
   };
 
   return (
@@ -256,8 +277,8 @@ const VendorEditor: React.FC<{
       footer={
         <>
           <button type="button" onClick={onClose} className="text-zinc-500 hover:text-white text-xs font-bold px-3 py-2">Cancel</button>
-          <button type="button" onClick={handleSave} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-bold">
-            {existing ? 'Save Changes' : 'Create Vendor'}
+          <button type="button" onClick={handleSave} disabled={saving} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-bold">
+            {saving ? 'Saving…' : existing ? 'Save Changes' : 'Create Vendor'}
           </button>
         </>
       }

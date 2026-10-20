@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, FileText, Send, Check, X, Trash2, Copy, Download, Edit2, Save, ChevronDown, User, MapPin, Phone, Mail, Package, CheckCircle2, Link2, Zap, AlertTriangle, TrendingUp, Clock } from 'lucide-react';
 import type { Quote, QuoteLineItem, QuoteStatus, SystemSettings, CustomerContact, ProcessTemplate, QuoteSnippet, QuoteTemplate } from './types';
 import * as DB from './services/mockDb';
@@ -9,6 +9,7 @@ import { daysUntilDue } from './utils/dueDates';
 import { Overlay } from './components/Overlay';
 import { useConfirm } from './components/useConfirm';
 import { usePrompt } from './components/usePrompt';
+import { changedFields, hasChanges } from './utils/changedFields';
 
 interface QuotesViewProps {
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
@@ -41,6 +42,29 @@ const STATUS_STYLES: Record<QuoteStatus, { bg: string; text: string; label: stri
 const UNITS = ['ea', 'hr', 'ft', 'lb', 'lot', 'pcs', 'set'];
 const emptyLine = (): QuoteLineItem => ({ description: '', qty: 1, unit: 'ea', unitPrice: 0, total: 0 });
 const emptyContact = (): CustomerContact => ({ name: '', contactPerson: '', email: '', phone: '', address: '' });
+const DEFAULT_EMAIL_BODY = 'Thank you for your business. Please review the attached quote and let us know if you have any questions.';
+
+/** Quantities can be fractional ("2.5 hr") — parseInt saved that as 2. */
+const parseQty = (v: string): number => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+type QuoteForm = { jobDescription: string; notes: string; terms: string; validUntil: string; markupPct: number; discountPct: number; taxRate: number; quoteNumber: string };
+/** Everything the quote editor holds — compared with the copy it opened with
+ *  to know whether there are unsaved changes. */
+interface EditorSnap { items: QuoteLineItem[]; billTo: CustomerContact; shipTo: CustomerContact; shipToDifferent: boolean; form: QuoteForm; projectFields: Record<string, string> }
+
+/** The quote fields the editor writes. Everything else — status, the
+ *  customer's answer, views, the linked job, deposit, creator — belongs to
+ *  other flows, so an edit never touches it. */
+const EDITOR_FIELDS = ['quoteNumber', 'customer', 'billTo', 'shipTo', 'projectFields', 'items', 'subtotal', 'markupPct', 'discountPct', 'discountAmt', 'taxRate', 'taxAmt', 'total', 'validUntil', 'jobDescription', 'notes', 'terms', 'revisions'] as const;
+/** Saved together whenever any one changes: a total written without the line
+ *  items it came from (changed on another device meanwhile) wouldn't add up. */
+const PRICING_FIELDS = ['items', 'subtotal', 'markupPct', 'discountPct', 'discountAmt', 'taxRate', 'taxAmt', 'total'] as const;
+/** History a duplicate must not inherit — a copy is a fresh, unsent draft. */
+const QUOTE_HISTORY_FIELDS = ['sentAt', 'acceptedAt', 'declinedAt', 'declineReason', 'declineNotes', 'linkedJobId', 'viewedAt', 'lastViewedAt', 'viewCount', 'viewHistory', 'revisions', 'validUntil'] as const;
+const pickFields = (o: any, keys: readonly string[]): Record<string, any> => Object.fromEntries(keys.map(k => [k, o?.[k]]));
 
 // ── Snippet Inserter ─ dropdown that inserts reusable text blocks into a textarea.
 // Filters snippets by target (scope/notes/terms) or shows all when target === 'all'.
@@ -212,11 +236,28 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   const [billTo, setBillTo] = useState<CustomerContact>(emptyContact());
   const [shipTo, setShipTo] = useState<CustomerContact>(emptyContact());
   const [shipToDifferent, setShipToDifferent] = useState(false);
-  const [form, setForm] = useState({ jobDescription: '', notes: '', terms: '', validUntil: '', markupPct: 25, discountPct: 0, taxRate: 0, quoteNumber: '' });
+  const [form, setForm] = useState<QuoteForm>({ jobDescription: '', notes: '', terms: '', validUntil: '', markupPct: 25, discountPct: 0, taxRate: 0, quoteNumber: '' });
   const [projectFields, setProjectFields] = useState<Record<string, string>>({});
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const [modalTab, setModalTab] = useState<'edit' | 'preview' | 'send'>('edit');
-  const [sendEmail, setSendEmail] = useState({ to: '', subject: '', body: 'Thank you for your business. Please review the attached quote and let us know if you have any questions.' });
+  // To / Subject stay empty until typed, so they follow the form's Bill To
+  // email and quote number (and never keep the previous quote's customer).
+  const [sendEmail, setSendEmail] = useState({ to: '', subject: '', body: DEFAULT_EMAIL_BODY });
+  // Editor session: the id a NEW quote gets (made once — a second Save click
+  // used to create a second quote), the form as opened / last saved (for
+  // "discard unsaved changes?"), and a save in flight.
+  const newQuoteIdRef = useRef('');
+  const [openedSnap, setOpenedSnap] = useState<EditorSnap | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const closingRef = useRef(false);
+  // One status change / job creation / duplicate at a time per quote — a
+  // double click used to create two jobs or two copies.
+  const statusBusy = useRef(new Set<string>());
+  const jobBusy = useRef(new Set<string>());
+  const jobsMade = useRef(new Map<string, string>());   // quoteId → job made this session
+  const dupBusy = useRef(false);
+  const [declineBusy, setDeclineBusy] = useState(false);
   // UI state for the Process Library picker (Round 1 #2)
   const [showProcessPicker, setShowProcessPicker] = useState(false);
   const [processSearch, setProcessSearch] = useState('');
@@ -228,6 +269,14 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     const u2 = DB.subscribeSettings(setSettings);
     return () => { u1(); u2(); };
   }, []);
+
+  // Latest copies for async handlers — the copy a click captured can be stale
+  // (approved in the portal, linked to a job a moment ago).
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const liveQuote = (id: string) => quotesRef.current.find(x => x.id === id);
 
   // Auto-lapse quotes whose validUntil has passed. Runs once when quotes/settings load.
   // Flips status from 'sent' or 'draft' → 'expired' so the Quotes list reflects reality
@@ -262,34 +311,73 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
   const pendingTotal = quotes.filter(q => q.status === 'sent').reduce((a, q) => a + q.total, 0);
 
   // ── Form Handlers ──
-  const openNew = () => {
-    setEditing(null);
-    setItems([emptyLine()]);
-    setBillTo(emptyContact());
-    setShipTo(emptyContact());
-    setShipToDifferent(false);
-    const nextNum = DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber);
-    // Defaults come from Settings → Documents. A 0 / blank markup means "use 25%"
-    // — an accidental 0 must never quietly price every new quote at cost.
-    setForm({ jobDescription: '', notes: '', terms: settings.defaultPaymentTerms || 'Net 30', validUntil: '', markupPct: settings.defaultMarkup || 25, discountPct: settings.defaultDiscount || 0, taxRate: settings.taxRate || 0, quoteNumber: nextNum });
-    const pf: Record<string, string> = {};
-    (settings.customProjectFields || ['Purchase Order', 'Part No.']).forEach(f => pf[f] = '');
-    setProjectFields(pf);
+  // Load the editor and remember what it opened with.
+  const loadEditor = (snap: EditorSnap) => {
+    setItems(snap.items);
+    setBillTo(snap.billTo);
+    setShipTo(snap.shipTo);
+    setShipToDifferent(snap.shipToDifferent);
+    setForm(snap.form);
+    setProjectFields(snap.projectFields);
+    setOpenedSnap(snap);
+    // Empty To / Subject follow this quote's Bill To and number — the last
+    // quote's customer email used to stay in To.
+    setSendEmail({ to: '', subject: '', body: DEFAULT_EMAIL_BODY });
     setModalTab('edit');
     setShowModal(true);
   };
 
+  const openNew = () => {
+    setEditing(null);
+    newQuoteIdRef.current = `QT-${Date.now()}`;
+    const nextNum = DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber);
+    const pf: Record<string, string> = {};
+    (settings.customProjectFields || ['Purchase Order', 'Part No.']).forEach(f => pf[f] = '');
+    loadEditor({
+      items: [emptyLine()],
+      billTo: emptyContact(),
+      shipTo: emptyContact(),
+      shipToDifferent: false,
+      // Defaults come from Settings → Documents. A 0 / blank markup means "use 25%"
+      // — an accidental 0 must never quietly price every new quote at cost.
+      form: { jobDescription: '', notes: '', terms: settings.defaultPaymentTerms || 'Net 30', validUntil: '', markupPct: settings.defaultMarkup || 25, discountPct: settings.defaultDiscount || 0, taxRate: settings.taxRate || 0, quoteNumber: nextNum },
+      projectFields: pf,
+    });
+  };
+
   const openEdit = (q: Quote) => {
     setEditing(q);
-    setItems(q.items.length > 0 ? q.items : [emptyLine()]);
-    setBillTo(q.billTo || { name: q.customer, contactPerson: '', email: '', phone: '', address: '' });
-    setShipTo(q.shipTo || emptyContact());
-    setShipToDifferent(!!q.shipTo?.name);
-    setForm({ jobDescription: q.jobDescription || '', notes: q.notes || '', terms: q.terms || '', validUntil: q.validUntil || '', markupPct: q.markupPct, discountPct: q.discountPct || 0, taxRate: q.taxRate || 0, quoteNumber: q.quoteNumber });
-    setProjectFields(q.projectFields || {});
-    setSendEmail({ to: q.billTo?.email || '', subject: `Quote ${q.quoteNumber} from ${settings.companyName || 'Our Company'}`, body: 'Thank you for your business. Please review the attached quote and let us know if you have any questions.' });
-    setModalTab('edit');
-    setShowModal(true);
+    newQuoteIdRef.current = '';
+    loadEditor({
+      items: q.items.length > 0 ? q.items : [emptyLine()],
+      billTo: q.billTo || { name: q.customer, contactPerson: '', email: '', phone: '', address: '' },
+      shipTo: q.shipTo || emptyContact(),
+      shipToDifferent: !!q.shipTo?.name,
+      form: { jobDescription: q.jobDescription || '', notes: q.notes || '', terms: q.terms || '', validUntil: q.validUntil || '', markupPct: q.markupPct, discountPct: q.discountPct || 0, taxRate: q.taxRate || 0, quoteNumber: q.quoteNumber },
+      projectFields: q.projectFields || {},
+    });
+  };
+
+  const editorSnap = (): EditorSnap => ({ items, billTo, shipTo, shipToDifferent, form, projectFields });
+  /** Unsaved edits in the open editor. */
+  const isDirty = () => hasChanges(openedSnap, editorSnap());
+
+  // Closing (Esc, backdrop, Close) with unsaved edits asks first — they used
+  // to be dropped without a word.
+  const requestClose = async () => {
+    if (savingRef.current || closingRef.current) return;   // a save in flight finishes (or reports its error) first
+    if (!isDirty()) { setShowModal(false); return; }
+    closingRef.current = true;
+    try {
+      const ok = await confirmDialog({
+        title: 'Discard unsaved changes?',
+        message: 'Your edits to this quote haven’t been saved.',
+        tone: 'warning',
+        confirmLabel: 'Discard changes',
+        cancelLabel: 'Keep editing',
+      });
+      if (ok) setShowModal(false);
+    } finally { closingRef.current = false; }
   };
 
   // ── Quantity-break tier helper (Round 2 #3) ──
@@ -387,10 +475,17 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       jobDescription: form.jobDescription || undefined,
       createdAt: Date.now(),
     };
-    const templates = [...(settings.quoteTemplates || []), template];
-    setSettings({ ...settings, quoteTemplates: templates });
-    DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
-    addToast('success', `Template "${label}" saved`);
+    // The latest list (the name prompt was open a while) plus this one.
+    const templates = [...(settingsRef.current.quoteTemplates || []), template];
+    setSettings(s => ({ ...s, quoteTemplates: templates }));
+    try {
+      // Just this field — never re-saves the rest. "Saved" only once it is.
+      const r = await DB.saveSettingsChanges({ quoteTemplates: templates });
+      addToast('success', r === 'queued' ? `Template "${label}" saved on this device — will sync` : `Template "${label}" saved`);
+    } catch {
+      setSettings(s => ({ ...s, quoteTemplates: (s.quoteTemplates || []).filter(t => t.id !== template.id) }));
+      addToast('error', `Couldn't save template "${label}" — try again`);
+    }
   };
 
   const loadTemplate = (tpl: QuoteTemplate) => {
@@ -405,9 +500,11 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       jobDescription: tpl.jobDescription ?? prev.jobDescription,
     }));
     // Bump lastUsedAt so the most-used templates float to the top
-    const templates = (settings.quoteTemplates || []).map(t => t.id === tpl.id ? { ...t, lastUsedAt: Date.now() } : t);
-    setSettings({ ...settings, quoteTemplates: templates });
-    DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
+    const templates = (settingsRef.current.quoteTemplates || []).map(t => t.id === tpl.id ? { ...t, lastUsedAt: Date.now() } : t);
+    setSettings(s => ({ ...s, quoteTemplates: templates }));
+    // Just this field. A failure only loses the "recently used" order — the
+    // template itself is already in the editor.
+    DB.saveSettingsChanges({ quoteTemplates: templates }).catch(e => console.warn('[quotes] template last-used not saved', e));
     setShowTemplatePicker(false);
     addToast('success', `Loaded template "${tpl.label}"`);
   };
@@ -421,9 +518,16 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       confirmLabel: 'Delete template',
     });
     if (!ok) return;
-    const templates = (settings.quoteTemplates || []).filter(t => t.id !== id);
-    setSettings({ ...settings, quoteTemplates: templates });
-    DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
+    const templates = (settingsRef.current.quoteTemplates || []).filter(t => t.id !== id);
+    setSettings(s => ({ ...s, quoteTemplates: templates }));
+    try {
+      const r = await DB.saveSettingsChanges({ quoteTemplates: templates });   // just this field — never re-saves the rest
+      addToast('info', r === 'queued' ? 'Template deleted on this device — will sync' : 'Template deleted');
+    } catch {
+      // Put it back so the list shows what's really saved.
+      if (tpl) setSettings(s => (s.quoteTemplates || []).some(t => t.id === id) ? s : { ...s, quoteTemplates: [...(s.quoteTemplates || []), tpl] });
+      addToast('error', "Couldn't delete the template — try again");
+    }
   };
 
   // Add a line item from a saved Process Template — pre-fills description, unit,
@@ -469,9 +573,14 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     return { subtotal, afterMarkup, discountAmt, afterDiscount, taxAmt, total };
   };
 
-  const handleSave = async () => {
-    if (!billTo.name) { addToast('error', 'Customer name is required'); return; }
-    if (items.every(i => !i.description)) { addToast('error', 'Add at least one line item'); return; }
+  /**
+   * Save the editor's form without closing it. Resolves the quote as now
+   * stored, or null (invalid, already saving, or the write failed — each
+   * says why). Save, and the Send tab's "Save changes", both go through here.
+   */
+  const persistForm = async (): Promise<Quote | null> => {
+    if (savingRef.current) return null;
+    if (!billTo.name) { addToast('error', 'Customer name is required'); return null; }
     // Resolve the EFFECTIVE (tier-aware) price per line, then derive every total
     // from it — so the saved subtotal/total, the line items, the PDF, and the
     // email all bill the same active quantity-break price.
@@ -479,6 +588,11 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       const ep = resolveTierPrice(i.qty, i.priceTiers, i.unitPrice);
       return { ...i, unitPrice: ep, total: i.qty * ep };
     });
+    if (validItems.length === 0) { addToast('error', 'Add at least one line item'); return null; }
+    const snapAtSave = editorSnap();
+    // The server copy, for its status (it may have been answered in the
+    // portal since this editor opened). Missing = deleted elsewhere.
+    const live = editing ? liveQuote(editing.id) : undefined;
     const subtotal = validItems.reduce((a, i) => a + i.total, 0);
     const afterMarkup = subtotal * (1 + form.markupPct / 100);
     const discountAmt = afterMarkup * (form.discountPct / 100);
@@ -489,9 +603,10 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     // ── Revision history (Round 2 #11) ──
     // If this is an EDIT of a quote that was already sent/accepted/declined, snapshot
     // the prior state into revisions[] so we can show a change log to the customer.
-    let revisions = editing?.revisions || [];
+    const current = live || editing;
+    let revisions = current?.revisions || [];
     const shouldSnapshot = editing
-      && (editing.status === 'sent' || editing.status === 'accepted' || editing.status === 'declined')
+      && (current.status === 'sent' || current.status === 'accepted' || current.status === 'declined')
       && (
         editing.total !== total ||
         editing.items.length !== validItems.length ||
@@ -523,7 +638,9 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     }
 
     const quote: Quote = {
-      id: editing?.id || `QT-${Date.now()}`,
+      // A new quote's id was made when the editor opened, so a retry after a
+      // failed or double-clicked save writes the same quote, not a second one.
+      id: editing?.id || newQuoteIdRef.current || (newQuoteIdRef.current = `QT-${Date.now()}`),
       quoteNumber: form.quoteNumber || editing?.quoteNumber || DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber),
       customer: billTo.name,
       billTo,
@@ -543,30 +660,67 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
       notes: form.notes || undefined,
       terms: form.terms || undefined,
       createdAt: editing?.createdAt || Date.now(),
-      createdBy: user.id,
-      createdByName: user.name,
+      // The creator stays the creator — an edit used to rewrite it to
+      // whoever saved last.
+      createdBy: editing ? editing.createdBy : user.id,
+      createdByName: editing ? editing.createdByName : user.name,
       ...(revisions.length > 0 ? { revisions } : {}),
     };
-    // On an edit, the fields other flows own — the customer's answer, views,
-    // the linked job — are left out, so this editor's copy (opened a while
-    // ago) can't put them back the way they were. And fields emptied here are
-    // deleted (a merge save would keep the old discount, tax, date, notes…).
+
+    // What to write. New quote: all of it. Edit: only the editor's fields the
+    // user changed (emptied ones are deleted), so this copy — opened a while
+    // ago — can't undo the customer's answer, a view, the linked job, or
+    // another device's edit to a field not touched here.
+    let toWrite: Quote = quote;
     let clear: string[] = [];
-    if (editing) {
-      for (const k of ['status', 'sentAt', 'acceptedAt', 'declinedAt', 'linkedJobId', 'viewedAt', 'lastViewedAt', 'viewCount', 'viewHistory'] as const) delete (quote as any)[k];
-      clear = (['shipTo', 'projectFields', 'discountPct', 'discountAmt', 'taxRate', 'taxAmt', 'validUntil', 'jobDescription', 'notes', 'terms'] as const)
-        .filter(k => (editing as any)[k] !== undefined && (editing as any)[k] !== null && (editing as any)[k] !== '' && (quote as any)[k] === undefined);
+    let stored: Quote = quote;
+    if (editing && live) {
+      const changes: Record<string, any> = changedFields(pickFields(editing, EDITOR_FIELDS), pickFields(quote, EDITOR_FIELDS));
+      if (PRICING_FIELDS.some(k => k in changes)) for (const k of PRICING_FIELDS) changes[k] = (quote as any)[k];
+      if (Object.keys(changes).length === 0) {
+        setOpenedSnap(snapAtSave);   // nothing that gets saved differs (e.g. only a blank line added)
+        addToast('info', 'No changes to save');
+        return editing;
+      }
+      clear = Object.keys(changes).filter(k => changes[k] === undefined);
+      toWrite = { id: editing.id, ...changes } as Quote;
+      stored = { ...live, ...changes } as Quote;
+    } else if (editing) {
+      // Deleted on another device while open: save it whole again rather
+      // than lose these edits (a partial write would leave a broken quote).
+      toWrite = stored = { ...editing, ...quote };
     }
+
+    savingRef.current = true;
+    setSaving(true);
     try {
-      await DB.saveQuote(quote, { clear });
+      const result = await DB.saveQuote(toWrite, { clear });
       // Auto-save client contact info for next time
       if (billTo.name && (billTo.email || billTo.phone || billTo.address || billTo.contactPerson)) {
         // Just this customer's entry — never re-save the whole contact book.
-        DB.saveClientContacts({ [billTo.name]: billTo }).catch(() => {});
+        // Best-effort: the quote itself carries the contact either way.
+        DB.saveClientContacts({ [billTo.name]: billTo }).catch(e => console.warn('[quotes] contact not saved', e));
       }
-      addToast('success', editing ? 'Quote updated' : `Quote ${quote.quoteNumber} created`);
-      setShowModal(false);
-    } catch { addToast('error', 'Failed to save quote'); }
+      const what = editing ? 'Quote changes' : `Quote ${quote.quoteNumber}`;
+      addToast('success', result === 'queued'
+        ? `${what} saved on this device — will sync`
+        : (editing ? 'Quote updated' : `Quote ${quote.quoteNumber} created`));
+      // The editor now holds a saved quote: later saves are edits of it, and
+      // Send / PDF use it.
+      setEditing(stored);
+      setOpenedSnap(snapAtSave);
+      return stored;
+    } catch (e: any) {
+      addToast('error', `Failed to save quote${e?.message ? ` — ${e.message}` : ''}`);
+      return null;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (await persistForm()) setShowModal(false);
   };
 
   // ── Match a quote line item to a process template by fuzzy name match (Round 2 #7) ──
@@ -583,57 +737,50 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
     return match;
   };
 
-  const updateStatus = async (q: Quote, status: QuoteStatus) => {
-    // Intercept declined — show reason picker first
-    if (status === 'declined') {
-      setPendingDeclineQuote(q);
-      setSelectedDeclineReason('');
-      setDeclineNoteText('');
-      return;
-    }
-    const updates: Partial<Quote> = { status };
-    if (status === 'sent') updates.sentAt = Date.now();
-    if (status === 'accepted' && !q.acceptedAt) updates.acceptedAt = Date.now();
+  /**
+   * Make the job for an accepted quote — once. Reads the live quote first
+   * (the caller's copy may predate a job made a moment ago), and remembers
+   * jobs made this session in case linking one to its quote failed.
+   */
+  const createJobFromQuote = async (quote: Quote): Promise<'created' | 'exists' | 'busy' | 'failed'> => {
+    const q = liveQuote(quote.id) || quote;
+    if (q.linkedJobId || jobsMade.current.has(q.id)) return 'exists';
+    if (jobBusy.current.has(q.id)) return 'busy';
+    jobBusy.current.add(q.id);
     try {
-      // Status fields only — never this list's copy of the whole quote.
-      await DB.updateQuoteFields(q.id, updates);
-      addToast('success', `Quote marked as ${status}`);
-      // Spawn the job once: until the quote has a linked job. (It used to also
-      // require no acceptedAt — so a quote the CUSTOMER approved in the portal,
-      // which sets acceptedAt, never became a job.) Re-accepting can't
-      // duplicate: linkedJobId is recorded right after the job is created.
-      if (status === 'accepted' && !q.linkedJobId) {
-        // Build a rich job description from the quote — processes detected + line items
-        const matchedProcesses: ProcessTemplate[] = [];
-        q.items.forEach(item => {
-          const m = matchProcessFromLine(item.description);
-          if (m && !matchedProcesses.some(p => p.id === m.id)) matchedProcesses.push(m);
-        });
-        const routingText = matchedProcesses.length > 0
-          ? `Routing: ${matchedProcesses.map(p => p.name).join(' → ')}`
-          : '';
-        const itemsText = q.items.map(i => `• ${i.qty} ${i.unit || 'ea'} × ${i.description}`).join('\n');
-        const info = [routingText, '', itemsText].filter(Boolean).join('\n');
+      // Build a rich job description from the quote — processes detected + line items
+      const matchedProcesses: ProcessTemplate[] = [];
+      q.items.forEach(item => {
+        const m = matchProcessFromLine(item.description);
+        if (m && !matchedProcesses.some(p => p.id === m.id)) matchedProcesses.push(m);
+      });
+      const routingText = matchedProcesses.length > 0
+        ? `Routing: ${matchedProcesses.map(p => p.name).join(' → ')}`
+        : '';
+      const itemsText = q.items.map(i => `• ${i.qty} ${i.unit || 'ea'} × ${i.description}`).join('\n');
+      const info = [routingText, '', itemsText].filter(Boolean).join('\n');
 
-        // Pick initial stage: first category-matching stage in the pipeline, else default
-        const stages = settings.jobStages || [];
-        let initialStageId: string | undefined;
-        if (matchedProcesses.length > 0 && stages.length > 0) {
-          const firstCat = matchedProcesses[0].category?.toLowerCase() || '';
-          const matchingStage = stages.find(s =>
-            s.label.toLowerCase().includes(firstCat) ||
-            firstCat.includes(s.label.toLowerCase())
-          );
-          if (matchingStage) initialStageId = matchingStage.id;
-        }
+      // Pick initial stage: first category-matching stage in the pipeline, else default
+      const stages = settings.jobStages || [];
+      let initialStageId: string | undefined;
+      if (matchedProcesses.length > 0 && stages.length > 0) {
+        const firstCat = matchedProcesses[0].category?.toLowerCase() || '';
+        const matchingStage = stages.find(s =>
+          s.label.toLowerCase().includes(firstCat) ||
+          firstCat.includes(s.label.toLowerCase())
+        );
+        if (matchingStage) initialStageId = matchingStage.id;
+      }
 
-        // The customer's PO and part number come from the quote's project
-        // fields when it has them (the quote number and a line description
-        // made the customer's real PO impossible to match later). Pieces count
-        // only per-piece lines — not the setup lot or hourly lines.
-        const field = (re: RegExp) => Object.entries(q.projectFields || {}).find(([k, v]) => re.test(k) && (v || '').trim())?.[1]?.trim();
-        const pieceLines = q.items.filter(i => !i.unit || /^(ea|each|pc|pcs|piece|pieces|part|parts)$/i.test(i.unit.trim()));
-        const newJobId = await onJobCreate({
+      // The customer's PO and part number come from the quote's project
+      // fields when it has them (the quote number and a line description
+      // made the customer's real PO impossible to match later). Pieces count
+      // only per-piece lines — not the setup lot or hourly lines.
+      const field = (re: RegExp) => Object.entries(q.projectFields || {}).find(([k, v]) => re.test(k) && (v || '').trim())?.[1]?.trim();
+      const pieceLines = q.items.filter(i => !i.unit || /^(ea|each|pc|pcs|piece|pieces|part|parts)$/i.test(i.unit.trim()));
+      let newJobId: string | void;
+      try {
+        newJobId = await onJobCreate({
           poNumber: field(/purchase\s*order|^p\.?o\.?\s*(#|no\.?|number)?$/i) || q.quoteNumber,
           partNumber: field(/part\s*(no|#|number)/i) || q.items[0]?.description?.slice(0, 60) || 'See quote',
           customer: q.customer,
@@ -647,16 +794,73 @@ export const QuotesView: React.FC<QuotesViewProps> = ({ addToast, user, onJobCre
           initialStageId,
           processRouting: matchedProcesses.map(p => p.name),
         });
-        // Record the spawned job on the quote so we never create a second one.
-        if (typeof newJobId === 'string') {
-          try { await DB.updateQuoteFields(q.id, { linkedJobId: newJobId }); } catch {}
-        }
-        addToast('success', matchedProcesses.length > 0
-          ? `Job created — routing: ${matchedProcesses.map(p => p.name).join(' → ')}`
-          : 'Job auto-created from accepted quote');
+      } catch {
+        addToast('error', `Couldn't create the job for ${q.quoteNumber} — use "Create job" on the quote to try again`);
+        return 'failed';
       }
-    } catch { addToast('error', 'Failed to update'); }
+      // Record the spawned job on the quote so we never create a second one.
+      if (typeof newJobId === 'string') {
+        jobsMade.current.set(q.id, newJobId);
+        try { await DB.updateQuoteFields(q.id, { linkedJobId: newJobId }); }
+        catch {
+          // The job exists (it points back at this quote) — say so, so nobody
+          // makes another one thinking it failed.
+          addToast('error', `Job created, but linking it to quote ${q.quoteNumber} failed — find it in Jobs; don't create another`);
+          return 'created';
+        }
+      }
+      addToast('success', matchedProcesses.length > 0
+        ? `Job created — routing: ${matchedProcesses.map(p => p.name).join(' → ')}`
+        : 'Job created from accepted quote');
+      return 'created';
+    } finally {
+      jobBusy.current.delete(q.id);
+    }
+  };
+
+  /** "Create job" on an accepted quote that has none — e.g. one the customer
+   *  approved in the portal, which never went through an office status change. */
+  const createJobNow = async (q: Quote) => {
     setActionMenuId(null);
+    const r = await createJobFromQuote(q);
+    if (r === 'exists') addToast('info', `Quote ${q.quoteNumber} already has a job`);
+  };
+
+  const updateStatus = async (quote: Quote, status: QuoteStatus) => {
+    // Intercept declined — show reason picker first
+    if (status === 'declined') {
+      setPendingDeclineQuote(quote);
+      setSelectedDeclineReason('');
+      setDeclineNoteText('');
+      return;
+    }
+    if (statusBusy.current.has(quote.id)) return;   // a double click
+    statusBusy.current.add(quote.id);
+    try {
+      // The live copy, not the caller's (an editor or menu opened a while ago).
+      const q = liveQuote(quote.id) || quote;
+      const updates: Partial<Quote> = { status };
+      if (status === 'sent') updates.sentAt = Date.now();
+      if (status === 'accepted' && !q.acceptedAt) updates.acceptedAt = Date.now();
+      let result: 'saved' | 'queued' | void;
+      try {
+        // Status fields only — never this list's copy of the whole quote.
+        result = await DB.updateQuoteFields(q.id, updates);
+      } catch {
+        addToast('error', `Couldn't mark quote ${q.quoteNumber} as ${status} — try again`);
+        return;
+      }
+      addToast('success', result === 'queued'
+        ? `Quote marked as ${status} on this device — will sync`
+        : `Quote marked as ${status}`);
+      // Spawn the job once: until the quote has a linked job. (It used to also
+      // require no acceptedAt — so a quote the CUSTOMER approved in the portal,
+      // which sets acceptedAt, never became a job.)
+      if (status === 'accepted') await createJobFromQuote(q);
+    } finally {
+      statusBusy.current.delete(quote.id);
+      setActionMenuId(null);
+    }
   };
 
   const getPortalLink = (q: Quote) => {
@@ -709,16 +913,85 @@ ${settings.companyPhone || ''}`.trim()
       addToast('info', 'Approval link copied to clipboard');
     } catch { /* clipboard may fail in some browsers */ }
 
-    // Mark as sent
-    await updateStatus(q, 'sent');
+    // Mark as sent — unless the customer answered meanwhile (a resend must
+    // not flip an approval back to "sent").
+    const live = liveQuote(q.id) || q;
+    if (live.status === 'draft' || live.status === 'sent') await updateStatus(live, 'sent');
     setActionMenuId(null);
   };
 
   const duplicateQuote = async (q: Quote) => {
-    const dup: Quote = { ...q, id: `QT-${Date.now()}`, quoteNumber: DB.getNextQuoteNumber(quotes, settings.quotePrefix, settings.quoteNextNumber), status: 'draft', createdAt: Date.now(), sentAt: undefined, acceptedAt: undefined, declinedAt: undefined, linkedJobId: undefined };
-    await DB.saveQuote(dup);
-    addToast('success', `Duplicated as ${dup.quoteNumber}`);
+    if (dupBusy.current) return;   // a double click made two copies
+    dupBusy.current = true;
+    try {
+      // A copy is a fresh draft by this user: not the original's views,
+      // revisions, answer, linked job, sent date or offer date (a past
+      // valid-until expired the copy at once).
+      const dup = { ...q } as Quote;
+      for (const k of QUOTE_HISTORY_FIELDS) delete (dup as any)[k];
+      Object.assign(dup, {
+        id: `QT-${Date.now()}`,
+        quoteNumber: DB.getNextQuoteNumber(quotesRef.current, settings.quotePrefix, settings.quoteNextNumber),
+        status: 'draft',
+        createdAt: Date.now(),
+        createdBy: user.id,
+        createdByName: user.name,
+      });
+      const r = await DB.saveQuote(dup);
+      addToast('success', r === 'queued' ? `Duplicated as ${dup.quoteNumber} on this device — will sync` : `Duplicated as ${dup.quoteNumber}`);
+    } catch {
+      addToast('error', `Couldn't duplicate quote ${q.quoteNumber} — try again`);
+    } finally {
+      dupBusy.current = false;
+      setActionMenuId(null);
+    }
+  };
+
+  const deleteQuoteAsk = async (q: Quote) => {
     setActionMenuId(null);
+    const ok = await confirmDialog({
+      title: `Delete quote ${q.quoteNumber}?`,
+      message: q.linkedJobId
+        ? `${q.customer} · $${q.total.toFixed(2)}. Its job stays; only the quote is removed. This can't be undone.`
+        : `${q.customer} · $${q.total.toFixed(2)}. This can't be undone.`,
+      tone: 'danger',
+      confirmLabel: 'Delete quote',
+    });
+    if (!ok) return;
+    try {
+      await DB.deleteQuote(q.id);
+      addToast('info', `Quote ${q.quoteNumber} deleted`);
+    } catch {
+      addToast('error', `Couldn't delete quote ${q.quoteNumber} — try again`);
+    }
+  };
+
+  // ── Send tab (in the editor) ──
+  // The email, approval link and PDF come from the SAVED quote, so they're
+  // only offered once the form is saved — on a new quote "Send" used to email
+  // an empty link and never save; on an edited one it sent the old version.
+  const sendFromEditor = async () => {
+    if (!editing || isDirty()) return;
+    const q = editing;
+    const to = sendEmail.to || billTo.email || '';
+    const subj = encodeURIComponent(sendEmail.subject || `Quote ${q.quoteNumber} from ${settings.companyName || 'Company'}`);
+    const body = encodeURIComponent(`${sendEmail.body}\n\nView & Approve Online:\n${getPortalLink(q)}\n\nThank you,\n${settings.companyName || ''}\n${settings.companyPhone || ''}`);
+    window.open(`mailto:${to}?subject=${subj}&body=${body}`, '_blank');
+    const live = liveQuote(q.id) || q;
+    if (live.status === 'draft') await updateStatus(live, 'sent');
+  };
+
+  /** The saved quote with its live status — what the PDF prints. */
+  const editorQuoteForPrint = (): Quote | null => {
+    if (!editing) return null;
+    const live = liveQuote(editing.id);
+    return live ? { ...editing, status: live.status } : editing;
+  };
+
+  const copyEditorLink = async () => {
+    if (!editing || isDirty()) return;
+    try { await navigator.clipboard.writeText(getPortalLink(editing)); addToast('success', 'Link copied!'); }
+    catch { addToast('error', "Couldn't copy — select the link and copy it by hand"); }
   };
 
   return (
@@ -928,6 +1201,11 @@ ${settings.companyPhone || ''}`.trim()
                             {(q.revisions?.length || 0) > 0 && (
                               <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1 py-0.5 rounded">v{q.revisions!.length + 1}</span>
                             )}
+                            {q.status === 'accepted' && !q.linkedJobId && (
+                              <button type="button" onClick={(e) => { e.stopPropagation(); createJobNow(q); }} className="text-[9px] font-black text-white bg-emerald-600 hover:bg-emerald-500 px-1.5 py-0.5 rounded" title="Accepted but no job yet">
+                                + Create job
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -936,7 +1214,7 @@ ${settings.companyPhone || ''}`.trim()
                 );
               })}
             </div>
-            <p className="text-[10px] text-zinc-600 text-center italic">💡 Drag quotes between columns to change status. Moving to "Won" auto-creates a job.</p>
+            <p className="text-[10px] text-zinc-600 text-center italic">💡 Drag quotes between columns to change status. Moving to "Won" auto-creates a job; quotes approved in the portal show "Create job".</p>
           </div>
         );
       })()}
@@ -982,6 +1260,12 @@ ${settings.companyPhone || ''}`.trim()
                           📝 v{q.revisions!.length + 1}
                         </div>
                       )}
+                      {/* Approved (e.g. by the customer in the portal) but no job yet */}
+                      {q.status === 'accepted' && !q.linkedJobId && (
+                        <button type="button" onClick={() => createJobNow(q)} className="inline-flex items-center gap-1 text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-500 px-2 py-0.5 rounded" title="This quote is accepted but has no job yet">
+                          <Plus className="w-3 h-3" aria-hidden="true" /> Create job
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -998,6 +1282,7 @@ ${settings.companyPhone || ''}`.trim()
                         {q.status === 'draft' && <button onClick={() => { sendQuoteToCustomer(q); }} className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-white/5 flex items-center gap-2"><Send className="w-3.5 h-3.5" /> Send to Customer</button>}
                         {q.status === 'draft' && <button onClick={() => updateStatus(q, 'sent')} className="w-full text-left px-4 py-2.5 text-sm text-zinc-400 hover:bg-white/5 flex items-center gap-2"><Check className="w-3.5 h-3.5" /> Mark as Sent (no email)</button>}
                         {q.status === 'sent' && <button onClick={() => updateStatus(q, 'accepted')} className="w-full text-left px-4 py-2.5 text-sm text-emerald-400 hover:bg-white/5 flex items-center gap-2"><Check className="w-3.5 h-3.5" /> Accept & Create Job</button>}
+                        {q.status === 'accepted' && !q.linkedJobId && <button onClick={() => createJobNow(q)} className="w-full text-left px-4 py-2.5 text-sm text-emerald-400 hover:bg-white/5 flex items-center gap-2"><Package className="w-3.5 h-3.5" /> Create Job</button>}
                         {q.status === 'sent' && <button onClick={() => updateStatus(q, 'declined')} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/5 flex items-center gap-2"><X className="w-3.5 h-3.5" /> Mark Declined</button>}
                         {q.status === 'sent' && <button onClick={() => { sendQuoteToCustomer(q); }} className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-white/5 flex items-center gap-2"><Send className="w-3.5 h-3.5" /> Resend to Customer</button>}
                         <button onClick={async () => { try { await navigator.clipboard.writeText(getPortalLink(q)); addToast('success', 'Share link copied!'); } catch {} setActionMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Copy className="w-3.5 h-3.5" /> Copy Share Link</button>
@@ -1005,7 +1290,7 @@ ${settings.companyPhone || ''}`.trim()
                         <button onClick={() => { printQuotePDF(q, settings); setActionMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Download className="w-3.5 h-3.5" /> Print / Save as PDF</button>
                         <button onClick={() => duplicateQuote(q)} className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 flex items-center gap-2"><Copy className="w-3.5 h-3.5" /> Duplicate</button>
                         <div className="border-t border-white/5 my-1" />
-                        <button onClick={async () => { await DB.deleteQuote(q.id); addToast('info', 'Quote deleted'); setActionMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/5 flex items-center gap-2"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+                        <button onClick={() => deleteQuoteAsk(q)} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/5 flex items-center gap-2"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                       </div>
                     )}
                   </div>
@@ -1052,7 +1337,7 @@ ${settings.companyPhone || ''}`.trim()
         const currentIdx = stepperSteps.findIndex(s => !s.done);
         const activeIdx = currentIdx === -1 ? stepperSteps.length - 1 : currentIdx;
         return (
-        <Overlay open onClose={() => setShowModal(false)} ariaLabel={editing ? 'Edit quote' : 'Create quote'} zIndex={1000} backdrop="bg-zinc-950" padding="p-2 sm:p-4">
+        <Overlay open onClose={requestClose} ariaLabel={editing ? 'Edit quote' : 'Create quote'} zIndex={1000} backdrop="bg-zinc-950" padding="p-2 sm:p-4">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col my-2 sm:my-4" style={{ maxHeight: 'calc(100dvh - 1rem)' }} onClick={e => e.stopPropagation()}>
             {/* ── Modal Header + Tabs ── */}
             <div className="border-b border-white/10 bg-zinc-800/50">
@@ -1082,9 +1367,9 @@ ${settings.companyPhone || ''}`.trim()
                   >
                     💾 Save as Template
                   </button>
-                  <button onClick={() => setShowModal(false)} className="text-zinc-400 hover:text-white text-sm px-2">Close</button>
-                  <button onClick={handleSave} className={`${completedCount >= 4 ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 shadow-lg shadow-amber-900/40' : 'bg-amber-600 hover:bg-amber-500'} text-white px-4 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all`}>
-                    <Save className="w-3.5 h-3.5" aria-hidden="true" /> Save
+                  <button onClick={requestClose} disabled={saving} className="text-zinc-400 hover:text-white text-sm px-2 disabled:opacity-40">Close</button>
+                  <button onClick={handleSave} disabled={saving} className={`${completedCount >= 4 ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 shadow-lg shadow-amber-900/40' : 'bg-amber-600 hover:bg-amber-500'} text-white px-4 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all disabled:opacity-60 disabled:cursor-wait`}>
+                    <Save className="w-3.5 h-3.5" aria-hidden="true" /> {saving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </div>
@@ -1114,12 +1399,14 @@ ${settings.companyPhone || ''}`.trim()
                     onChange={setBillTo}
                     clients={clients}
                     savedContacts={settings.clientContacts}
-                    onSaveContact={(c) => {
+                    onSaveContact={async (c) => {
                       if (!c.name) return;
-                      const updatedContacts = { ...(settings.clientContacts || {}), [c.name]: c };
-                      setSettings({ ...settings, clientContacts: updatedContacts });
-                      DB.saveClientContacts({ [c.name]: c }).catch(() => addToast('error', "Couldn't save the contact — try again"));
-                      addToast('success', `Saved contact info for ${c.name}`);
+                      try {
+                        await DB.saveClientContacts({ [c.name]: c });
+                        // "Saved" (and the auto-fill badge) only once it is.
+                        setSettings(s => ({ ...s, clientContacts: { ...(s.clientContacts || {}), [c.name]: c } }));
+                        addToast('success', `Saved contact info for ${c.name}`);
+                      } catch { addToast('error', "Couldn't save the contact — try again"); }
                     }}
                   />
                   <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
@@ -1192,7 +1479,7 @@ ${settings.companyPhone || ''}`.trim()
                         </div>
                         <input value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm outline-none" placeholder="Description" />
                         <div className="grid grid-cols-[70px_70px_1fr] gap-2">
-                          <input type="number" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseInt(e.target.value) || 0)} className="bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" placeholder="Qty" />
+                          <input type="number" min={0} step="any" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseQty(e.target.value))} className="bg-black/40 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" placeholder="Qty" />
                           <select value={item.unit || 'ea'} onChange={e => updateItem(i, 'unit', e.target.value)} className="bg-black/40 border border-white/10 rounded-lg p-2 text-white text-xs outline-none">
                             {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                           </select>
@@ -1206,7 +1493,7 @@ ${settings.companyPhone || ''}`.trim()
                       {/* Desktop grid row */}
                       <div className="hidden sm:grid grid-cols-[1fr_60px_60px_80px_70px_24px] gap-2 items-center">
                         <input value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none min-w-0" placeholder="Item description" />
-                        <input type="number" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseInt(e.target.value) || 0)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" />
+                        <input type="number" min={0} step="any" value={item.qty || ''} onChange={e => updateItem(i, 'qty', parseQty(e.target.value))} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-sm outline-none text-center" />
                         <select value={item.unit || 'ea'} onChange={e => updateItem(i, 'unit', e.target.value)} className="bg-zinc-950 border border-white/10 rounded-lg p-2 text-white text-xs outline-none">
                           {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                         </select>
@@ -1227,7 +1514,7 @@ ${settings.companyPhone || ''}`.trim()
                               return (
                                 <div key={tIdx} className={`flex items-center gap-2 rounded p-1.5 border ${isActive ? 'bg-emerald-500/15 border-emerald-500/40' : 'bg-zinc-900/40 border-white/5'}`}>
                                   <span className="text-[10px] text-zinc-500 font-bold">Qty ≥</span>
-                                  <input type="number" min={1} value={tier.minQty} onChange={e => updateTier(i, tIdx, 'minQty', parseInt(e.target.value) || 1)} className="w-16 bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white outline-none text-center" />
+                                  <input type="number" min={0} step="any" value={tier.minQty} onChange={e => updateTier(i, tIdx, 'minQty', parseQty(e.target.value) || 1)} className="w-16 bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white outline-none text-center" />
                                   <span className="text-[10px] text-zinc-500">@</span>
                                   <span className="text-zinc-500 text-xs">$</span>
                                   <input type="number" step="0.01" value={tier.unitPrice} onChange={e => updateTier(i, tIdx, 'unitPrice', parseFloat(e.target.value) || 0)} className="w-20 bg-zinc-950 border border-white/10 rounded px-2 py-1 text-xs text-white outline-none text-right font-mono" />
@@ -1528,8 +1815,25 @@ ${settings.companyPhone || ''}`.trim()
             )}
 
             {/* ══ SEND TAB — Invoice2go style ══ */}
-            {modalTab === 'send' && (
+            {modalTab === 'send' && (() => {
+              // Send / PDF / link use the saved quote — only offered once the
+              // form is saved (see sendFromEditor).
+              const sendReady = !!editing && !isDirty();
+              const live = editing ? (liveQuote(editing.id) || editing) : null;
+              const liveStatus = live?.status || 'draft';
+              return (
               <div className="flex-1 overflow-y-auto">
+                {!sendReady && (
+                  <div className="m-5 mb-0 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-center gap-3 flex-wrap">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
+                    <p className="text-xs text-amber-200 flex-1 min-w-[12rem]">
+                      {editing ? 'You have unsaved changes.' : 'This quote isn’t saved yet.'} Save first — the email, approval link and PDF use the saved quote.
+                    </p>
+                    <button type="button" onClick={() => { persistForm(); }} disabled={saving} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0">
+                      <Save className="w-3.5 h-3.5" aria-hidden="true" /> {saving ? 'Saving…' : 'Save changes'}
+                    </button>
+                  </div>
+                )}
                 <div className="flex flex-col md:flex-row h-full">
                   {/* Left — Email Composer */}
                   <div className="flex-1 p-5 space-y-4 border-r border-white/5">
@@ -1546,13 +1850,22 @@ ${settings.companyPhone || ''}`.trim()
                     <div>
                       <textarea value={sendEmail.body} onChange={e => setSendEmail({ ...sendEmail, body: e.target.value })} className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white text-sm outline-none min-h-[140px]" />
                     </div>
-                    <div className="text-center text-xs text-zinc-500 py-2">Already approved? <button className="text-amber-400 hover:text-amber-300 underline" onClick={() => { if (editing) updateStatus(editing, 'accepted'); }}>Click here</button> to mark as accepted.</div>
+                    {liveStatus === 'accepted' ? (
+                      <div className="text-center text-xs text-zinc-500 py-2">
+                        Accepted.{' '}
+                        {live && !live.linkedJobId
+                          ? <button type="button" className="text-emerald-400 hover:text-emerald-300 underline font-bold" onClick={() => { if (live) createJobNow(live); }}>Create the job</button>
+                          : 'Its job has been created.'}
+                      </div>
+                    ) : (
+                      <div className="text-center text-xs text-zinc-500 py-2">Already approved? <button type="button" disabled={!sendReady} className="text-amber-400 hover:text-amber-300 underline disabled:text-zinc-600 disabled:no-underline" onClick={() => { if (sendReady && live) updateStatus(live, 'accepted'); }}>Click here</button> to mark as accepted.</div>
+                    )}
                     {/* Approval Link */}
                     <div className="bg-zinc-800/30 rounded-xl p-3">
                       <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1.5">Approval Link</p>
                       <div className="flex gap-2">
-                        <input readOnly value={editing ? getPortalLink(editing) : '(save first)'} className="flex-1 bg-zinc-950 border border-white/10 rounded-lg p-2 text-zinc-400 text-[11px] font-mono outline-none" />
-                        <button onClick={async () => { if (editing) { try { await navigator.clipboard.writeText(getPortalLink(editing)); addToast('success', 'Link copied!'); } catch {} } }} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold shrink-0"><Copy className="w-3 h-3" /></button>
+                        <input readOnly value={sendReady && editing ? getPortalLink(editing) : '(save first)'} className="flex-1 bg-zinc-950 border border-white/10 rounded-lg p-2 text-zinc-400 text-[11px] font-mono outline-none" />
+                        <button type="button" aria-label="Copy approval link" disabled={!sendReady} onClick={copyEditorLink} className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg text-xs font-bold shrink-0"><Copy className="w-3 h-3" /></button>
                       </div>
                     </div>
                   </div>
@@ -1561,7 +1874,7 @@ ${settings.companyPhone || ''}`.trim()
                     <div>
                       <p className="text-white font-bold">Quote</p>
                       <p className="text-amber-400 font-mono text-lg font-bold">#{form.quoteNumber}</p>
-                      <span className="text-[10px] font-bold text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded mt-1 inline-block">{editing?.status?.toUpperCase() || 'DRAFT'}</span>
+                      <span className="text-[10px] font-bold text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded mt-1 inline-block">{liveStatus.toUpperCase()}</span>
                     </div>
                     <div className="space-y-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-zinc-500">Date</span><span className="text-zinc-300">{new Date().toLocaleDateString()}</span></div>
@@ -1570,20 +1883,15 @@ ${settings.companyPhone || ''}`.trim()
                       {form.discountPct > 0 && <div className="flex justify-between"><span className="text-zinc-500">Discount</span><span className="text-red-400 font-mono">-${calcTotals().discountAmt.toFixed(2)}</span></div>}
                       <div className="flex justify-between font-bold border-t border-white/10 pt-2"><span className="text-white">Total</span><span className="text-emerald-400 font-mono">${calcTotals().total.toFixed(2)}</span></div>
                     </div>
-                    <button onClick={() => {
-                      const to = sendEmail.to || billTo.email || '';
-                      const subj = encodeURIComponent(sendEmail.subject || `Quote ${form.quoteNumber} from ${settings.companyName}`);
-                      const portalLink = editing ? getPortalLink(editing) : '';
-                      const body = encodeURIComponent(`${sendEmail.body}\n\nView & Approve Online:\n${portalLink}\n\nThank you,\n${settings.companyName || ''}\n${settings.companyPhone || ''}`);
-                      window.open(`mailto:${to}?subject=${subj}&body=${body}`, '_blank');
-                      if (editing && editing.status === 'draft') updateStatus(editing, 'sent');
-                    }} className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"><Send className="w-4 h-4" /> Send Quote</button>
-                    <button onClick={() => { if (editing) printQuotePDF(editing, settings); }} className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"><Download className="w-4 h-4" /> Download PDF</button>
-                    <button onClick={async () => { if (editing) { try { await navigator.clipboard.writeText(getPortalLink(editing)); addToast('success', 'Link copied!'); } catch {} } }} className="w-full border border-white/10 text-zinc-400 hover:text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"><Copy className="w-4 h-4" /> Copy Share Link</button>
+                    <button type="button" disabled={!sendReady} onClick={sendFromEditor} title={sendReady ? undefined : 'Save the quote first'} className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 disabled:from-zinc-700 disabled:to-zinc-700 disabled:text-zinc-400 disabled:shadow-none text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"><Send className="w-4 h-4" /> Send Quote</button>
+                    <button type="button" disabled={!sendReady} onClick={() => { const q = editorQuoteForPrint(); if (q && sendReady) printQuotePDF(q, settings); }} title={sendReady ? undefined : 'Save the quote first'} className="w-full bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"><Download className="w-4 h-4" /> Download PDF</button>
+                    <button type="button" disabled={!sendReady} onClick={copyEditorLink} title={sendReady ? undefined : 'Save the quote first'} className="w-full border border-white/10 text-zinc-400 hover:text-white disabled:opacity-40 disabled:hover:text-zinc-400 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"><Copy className="w-4 h-4" /> Copy Share Link</button>
+                    {!sendReady && <p className="text-[10px] text-zinc-500 text-center">Save the quote to send it, copy its link or print it.</p>}
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         </Overlay>
         );
@@ -1650,6 +1958,7 @@ ${settings.companyPhone || ''}`.trim()
           { key: 'other',        label: 'Other' },
         ];
         const confirmDecline = async () => {
+          if (declineBusy) return;   // a double click
           const q = pendingDeclineQuote;
           const updates: Partial<Quote> = {
             status: 'declined',
@@ -1657,18 +1966,24 @@ ${settings.companyPhone || ''}`.trim()
             ...(selectedDeclineReason ? { declineReason: selectedDeclineReason as Quote['declineReason'] } : {}),
             ...(declineNoteText.trim() ? { declineNotes: declineNoteText.trim() } : {}),
           };
+          setDeclineBusy(true);
           try {
-            await DB.updateQuoteFields(q.id, updates);
-            addToast('success', 'Quote marked as declined');
-          } catch { addToast('error', 'Failed to update'); }
+            const r = await DB.updateQuoteFields(q.id, updates);
+            addToast('success', r === 'queued' ? 'Quote marked as declined on this device — will sync' : 'Quote marked as declined');
+          } catch {
+            // Stay open with the reason still filled in, so it can be retried.
+            addToast('error', "Couldn't mark the quote declined — try again");
+            return;
+          } finally { setDeclineBusy(false); }
           setPendingDeclineQuote(null);
           setSelectedDeclineReason('');
           setDeclineNoteText('');
           setActionMenuId(null);
         };
+        const cancelDecline = () => { if (!declineBusy) setPendingDeclineQuote(null); };
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setPendingDeclineQuote(null)}>
-            <div className="bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+          <Overlay open onClose={cancelDecline} ariaLabel="Why was this declined?" zIndex={1100} backdrop="bg-black/60 backdrop-blur-sm">
+            <div className="bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4 my-auto" onClick={e => e.stopPropagation()}>
               <div>
                 <h3 className="font-bold text-white text-base">Why was this declined?</h3>
                 <p className="text-[11px] text-zinc-500 mt-0.5">{pendingDeclineQuote.quoteNumber} · {pendingDeclineQuote.customer}</p>
@@ -1700,20 +2015,22 @@ ${settings.companyPhone || ''}`.trim()
                 <button
                   type="button"
                   onClick={confirmDecline}
-                  className="flex-1 bg-red-600 hover:bg-red-500 text-white py-2 rounded-xl font-bold text-sm transition-colors"
+                  disabled={declineBusy}
+                  className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white py-2 rounded-xl font-bold text-sm transition-colors"
                 >
-                  Confirm Decline
+                  {declineBusy ? 'Saving…' : 'Confirm Decline'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPendingDeclineQuote(null)}
-                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-xl font-bold text-sm transition-colors"
+                  onClick={cancelDecline}
+                  disabled={declineBusy}
+                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-zinc-300 py-2 rounded-xl font-bold text-sm transition-colors"
                 >
                   Cancel
                 </button>
               </div>
             </div>
-          </div>
+          </Overlay>
         );
       })()}
 

@@ -25,6 +25,8 @@ import { Sample, SampleWorkEntry } from './types';
 import * as DB from './services/mockDb';
 import { Overlay } from './components/Overlay';
 import { useConfirm } from './components/useConfirm';
+import { shrinkImage, PHOTO_BUDGET_BYTES } from './utils/imageShrink';
+import { changedFields, hasChanges } from './utils/changedFields';
 
 // ── Compress image ──────────────────────────────────────────────
 function compressImage(file: File, maxWidth = 1200, quality = 0.85): Promise<string> {
@@ -147,7 +149,8 @@ const PhotoViewer = ({ url, onClose }: { url: string; onClose: () => void }) => 
 const EditEntryModal: React.FC<{
   entry: SampleWorkEntry;
   operations: string[];
-  onSave: (updates: Partial<SampleWorkEntry>) => void;
+  /** Resolves true once saved — the editor stays open (with its error) otherwise. */
+  onSave: (updates: Partial<SampleWorkEntry>) => Promise<boolean>;
   onClose: () => void;
 }> = ({ entry, operations, onSave, onClose }) => {
   const toLocalInput = (ts: number) => {
@@ -159,16 +162,31 @@ const EditEntryModal: React.FC<{
   const [endStr, setEndStr] = useState(entry.endTime ? toLocalInput(entry.endTime) : '');
   const [op, setOp] = useState(entry.operation);
   const [notes, setNotes] = useState(entry.notes || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSave = () => {
-    const startTime = new Date(startStr).getTime();
-    const endTime = endStr ? new Date(endStr).getTime() : entry.endTime;
-    onSave({
-      startTime,
-      endTime,
-      operation: op,
-      ...(notes.trim() ? { notes: notes.trim() } : {}),
-    });
+  const handleSave = async () => {
+    if (saving) return;
+    // A time left as it opened keeps its exact stored value (the input drops
+    // the seconds). A cleared or half-typed Start used to save as NaN.
+    const startTime = startStr === toLocalInput(entry.startTime) ? entry.startTime : new Date(startStr).getTime();
+    if (!startStr || !Number.isFinite(startTime)) { setError('Enter a valid start time'); return; }
+    const endTime = !endStr ? entry.endTime
+      : entry.endTime && endStr === toLocalInput(entry.endTime) ? entry.endTime
+      : new Date(endStr).getTime();
+    if (endStr && !Number.isFinite(endTime as number)) { setError('Enter a valid end time'); return; }
+    if (endTime && endTime < startTime) { setError('The end time is before the start time'); return; }
+    setError('');
+    setSaving(true);
+    try {
+      const ok = await onSave({
+        startTime,
+        endTime,
+        operation: op,
+        notes: notes.trim() || undefined,   // undefined clears notes the admin emptied
+      });
+      if (!ok) setError('Not saved — check the times and try again');
+    } finally { setSaving(false); }
   };
 
   return (
@@ -203,12 +221,17 @@ const EditEntryModal: React.FC<{
             <textarea className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white min-h-[60px] outline-none resize-y"
               value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes..." />
           </div>
+          {error && (
+            <p className="text-[11px] text-red-400 font-semibold flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> {error}
+            </p>
+          )}
         </div>
         <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3">
           <button onClick={onClose} className="px-6 py-3 text-zinc-400 hover:text-white font-medium">Cancel</button>
-          <button onClick={handleSave}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2">
-            <Save className="w-4 h-4" /> Save
+          <button onClick={handleSave} disabled={saving}
+            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2">
+            <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
@@ -220,7 +243,7 @@ const EditEntryModal: React.FC<{
 const WorkHistoryModal: React.FC<{
   sample: Sample;
   operations: string[];
-  onEditEntry: (entryId: string, updates: Partial<SampleWorkEntry>) => void;
+  onEditEntry: (entryId: string, updates: Partial<SampleWorkEntry>) => Promise<boolean>;
   onDeleteEntry: (entryId: string) => void;
   onClose: () => void;
 }> = ({ sample, operations, onEditEntry, onDeleteEntry, onClose }) => {
@@ -360,9 +383,12 @@ const WorkHistoryModal: React.FC<{
         <EditEntryModal
           entry={editingEntry}
           operations={operations}
-          onSave={(updates) => {
-            onEditEntry(editingEntry.id, updates);
-            setEditingEntry(null);
+          onSave={async (updates) => {
+            // Close only once it saved — it used to close first, so a failed
+            // save looked like it worked.
+            const ok = await onEditEntry(editingEntry.id, updates);
+            if (ok) setEditingEntry(null);
+            return ok;
           }}
           onClose={() => setEditingEntry(null)}
         />
@@ -474,16 +500,23 @@ const SampleModal = ({
   existingCompanies: string[];
   clients: string[];
   operations: string[];
-  onSave: (s: Sample) => Promise<void>;
+  onSave: (s: Partial<Sample> & { id: string }) => Promise<void>;
   onClose: () => void;
 }) => {
   const [form, setForm] = useState<Partial<Sample>>(sample || {});
   const [photoPreview, setPhotoPreview] = useState<string>(sample?.photoUrl || '');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  // The copy this opened with (edits save only what changed from it) and an
+  // id made once — a double-tap on Save used to file two samples.
+  const openedRef = useRef<Partial<Sample>>(sample || {});
+  const idRef = useRef(sample?.id || `sample_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`);
+  const { confirm: askConfirm, ConfirmHost } = useConfirm();
+  const askingRef = useRef(false);
 
   const handlePhoto = async (file: File) => {
     if (!file.type.startsWith('image/')) { setPhotoError('That file is not an image — pick a photo.'); return; }
@@ -498,8 +531,8 @@ const SampleModal = ({
       // 600px @ 65% → typically 30-80 KB base64, well inside Firestore's 1 MB limit
       const smallUrl = await compressImage(file, 600, 0.65);
 
-      // Generate a stable ID for the storage path
-      const tempId = form.id || `sample_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      // Stable ID for the storage path — the same one the sample saves under
+      const tempId = idRef.current;
 
       try {
         // Upload the compressed blob to Firebase Storage (not the raw camera file)
@@ -510,8 +543,10 @@ const SampleModal = ({
         console.warn('Storage upload failed, falling back to base64:', uploadErr);
         // Fallback: store the small compressed base64 directly in Firestore.
         // At 600px/65% this is ~30-80 KB — safely under Firestore's 1 MB limit.
-        // The photo still saves and syncs — no user-facing failure.
-        setForm(f => ({ ...f, photoUrl: smallUrl }));
+        // The photo still saves and syncs — no user-facing failure. shrinkImage
+        // is the backstop for an odd image that comes out larger.
+        const fitted = await shrinkImage(smallUrl, PHOTO_BUDGET_BYTES);
+        setForm(f => ({ ...f, photoUrl: fitted }));
       }
     } catch (e) {
       // compressImage failed — unreadable/corrupt image (some HEIC variants,
@@ -524,41 +559,66 @@ const SampleModal = ({
     }
   };
 
+  /** Just the fields this editor owns, the way they're stored. Timer data
+   *  (workEntries / activeEntry / totalWorkedMs) and the locked price are
+   *  never part of it: writing the copy taken when the editor opened undid
+   *  any timer started or stopped meanwhile. */
+  const editable = (f: Partial<Sample>): Partial<Sample> => ({
+    companyName: f.companyName?.trim() || '',
+    partNumber: f.partNumber?.trim() || '',
+    partName: f.partName?.trim() || '',
+    photoUrl: f.photoUrl || '',
+    difficulty: (f.difficulty as any) || 'medium',
+    notes: f.notes?.trim() || '',
+    // undefined (not left out) when emptied, so clearing Qty or every planned
+    // operation actually clears it on save.
+    qty: f.qty || undefined,
+    plannedOperations: f.plannedOperations?.length ? f.plannedOperations : undefined,
+  });
+
   const handleSave = async () => {
+    if (savingRef.current) return;
     if (!form.companyName?.trim() || !form.partNumber?.trim()) return;
-    setSaving(true);
     const now = Date.now();
-    const s: Sample = {
-      id: form.id || `sample_${now}_${Math.random().toString(36).slice(2, 9)}`,
-      companyName: form.companyName.trim(),
-      partNumber: form.partNumber.trim(),
-      partName: form.partName?.trim() || '',
-      photoUrl: form.photoUrl || '',
-      difficulty: (form.difficulty as any) || 'medium',
-      notes: form.notes?.trim() || '',
-      ...(form.qty ? { qty: form.qty } : {}),
-      ...(form.plannedOperations && form.plannedOperations.length ? { plannedOperations: form.plannedOperations } : {}),
-      createdAt: form.createdAt || now,
-      updatedAt: now,
-      createdBy: form.createdBy || 'admin',
-      // Timer data (workEntries / activeEntry / totalWorkedMs) is left out on
-      // purpose: the save merges, so the live values stay. Writing the copy
-      // taken when this editor opened undid any timer started or stopped
-      // meanwhile — a stopped timer came back running, a finished entry vanished.
-    };
+    const isEdit = !!openedRef.current.id;
+    let s: Partial<Sample> & { id: string };
+    if (isEdit) {
+      const diff = changedFields(editable(openedRef.current), editable(form));
+      if (Object.keys(diff).length === 0) { onClose(); return; }
+      s = { id: idRef.current, ...diff, updatedAt: now };
+    } else {
+      s = { id: idRef.current, ...editable(form), createdAt: now, updatedAt: now, createdBy: form.createdBy || 'admin' };
+    }
+    savingRef.current = true;
+    setSaving(true);
     try {
       await onSave(s);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
+  // Esc / X / Cancel / backdrop: don't drop edits silently.
+  const requestClose = async () => {
+    if (savingRef.current || askingRef.current) return;
+    if (hasChanges(editable(openedRef.current), editable(form))) {
+      askingRef.current = true;
+      try {
+        const ok = await askConfirm({ title: 'Discard unsaved changes?', message: 'What you entered for this sample will be lost.', tone: 'warning', confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+        if (!ok) return;
+      } finally { askingRef.current = false; }
+    }
+    onClose();
+  };
+
   return (
-    <Overlay open onClose={onClose} ariaLabel={form.id ? 'Edit sample' : 'Add sample'} zIndex={100} backdrop="bg-zinc-950">
+    <Overlay open onClose={requestClose} ariaLabel={form.id ? 'Edit sample' : 'Add sample'} zIndex={100} backdrop="bg-zinc-950">
+      {ConfirmHost}
       <div className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col my-4" style={{ maxHeight: 'calc(100dvh - 2rem)' }}>
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-zinc-800/50 sticky top-0 z-10 shrink-0">
           <h3 className="font-bold text-white text-lg">{form.id ? 'Edit Sample' : 'Add Sample'}</h3>
-          <button aria-label="Close dialog" onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
+          <button aria-label="Close dialog" onClick={requestClose} className="p-2 rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5 text-zinc-500 hover:text-white" aria-hidden="true" /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
           {/* Photo */}
@@ -696,7 +756,7 @@ const SampleModal = ({
           </div>
         </div>
         <div className="p-5 border-t border-white/10 bg-zinc-800/50 flex justify-end gap-3">
-          <button onClick={onClose} className="px-6 py-3 text-zinc-400 hover:text-white font-medium">Cancel</button>
+          <button onClick={requestClose} className="px-6 py-3 text-zinc-400 hover:text-white font-medium">Cancel</button>
           <button onClick={handleSave} disabled={saving || photoUploading || !form.companyName?.trim() || !form.partNumber?.trim()}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2">
             <Save className="w-4 h-4" /> {saving ? 'Saving...' : photoUploading ? 'Uploading Photo…' : 'Save Sample'}
@@ -791,7 +851,8 @@ const SamplePricingCard: React.FC<{
   sample: Sample;
   shopRate: number;
   markup: number;
-  onSavePrice: (sampleId: string, price: number) => Promise<void>;
+  /** Resolves true once the price is saved. */
+  onSavePrice: (sampleId: string, price: number) => Promise<boolean>;
 }> = ({ sample, shopRate, markup, onSavePrice }) => {
   const math = computeSampleMath(sample, shopRate, markup);
   const saved = sample.pricePerPart;
@@ -801,9 +862,14 @@ const SamplePricingCard: React.FC<{
     : (math ? math.suggestedPerPc.toFixed(2) : '');
   const [input, setInput] = React.useState<string>(initialInput);
   const [busy, setBusy] = React.useState(false);
+  // True while the admin has typed a price that isn't saved yet.
+  const typedRef = React.useRef(false);
 
-  // Re-sync if upstream sample changes (e.g. another tab edits, or a new work entry recomputes the suggestion)
+  // Re-sync if upstream sample changes (e.g. another tab edits, or a new work
+  // entry recomputes the suggestion) — but never over a price being typed: a
+  // timer finishing elsewhere used to reset the box mid-entry.
   React.useEffect(() => {
+    if (typedRef.current) return;
     setInput(saved != null ? String(saved) : (math ? math.suggestedPerPc.toFixed(2) : ''));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved, math?.suggestedPerPc]);
@@ -819,7 +885,7 @@ const SamplePricingCard: React.FC<{
     if (!validInput || busy) return;
     setBusy(true);
     try {
-      await onSavePrice(sample.id, parsed);
+      if (await onSavePrice(sample.id, parsed)) typedRef.current = false;
     } finally {
       setBusy(false);
     }
@@ -852,7 +918,7 @@ const SamplePricingCard: React.FC<{
             type="number" step="0.01" min="0"
             className="w-full bg-zinc-950 border border-amber-500/30 rounded-md pl-6 pr-2 py-1.5 text-white text-xs font-mono font-bold focus:outline-none focus:border-amber-400/60"
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => { typedRef.current = true; setInput(e.target.value); }}
             onKeyDown={e => { if (e.key === 'Enter' && isDirty) save(); }}
             placeholder="0.00"
             aria-label="Price per piece"
@@ -1048,7 +1114,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
     }
   }, [samples, histSample]);
 
-  const handleSave = async (sample: Sample) => {
+  const handleSave = async (sample: Partial<Sample> & { id: string }) => {
     try {
       const r = await DB.saveSample(sample);
       addToast('success', r === 'queued' ? 'Sample saved on this device — will sync' : 'Sample saved');
@@ -1071,7 +1137,7 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
     });
     if (!ok) return;
     try { await DB.deleteSample(id); addToast('success', 'Sample deleted'); }
-    catch { addToast('error', 'Failed to delete'); }
+    catch (e: any) { addToast('error', `Failed to delete${e?.message ? ` — ${e.message}` : ''}`); }
   };
 
   const handleStartWork = async (sampleId: string, operation: string, qty?: number) => {
@@ -1081,8 +1147,10 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
       await DB.startSampleWork(sampleId, userId, userName, operation, qty);
       addToast('success', 'Timer started');
       setStartWorkSample(null);
-    } catch {
-      addToast('error', 'Failed to start work');
+    } catch (e: any) {
+      // Show the real reason — e.g. a timer is already running on this sample
+      // (started on another device), which would otherwise be overwritten.
+      addToast('error', e?.message || 'Failed to start work');
     }
   };
 
@@ -1110,8 +1178,8 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
           addToast('info', `Next operation: ${next}`);
         }
       }
-    } catch {
-      addToast('error', 'Failed to stop');
+    } catch (e: any) {
+      addToast('error', `Failed to stop${e?.message ? ` — ${e.message}` : ''}`);
     } finally {
       setStopping(null);
     }
@@ -1119,34 +1187,38 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
 
   const handlePause = async (sampleId: string) => {
     try { await DB.pauseSampleWork(sampleId); }
-    catch { addToast('error', 'Failed to pause'); }
+    catch (e: any) { addToast('error', `Failed to pause${e?.message ? ` — ${e.message}` : ''}`); }
   };
 
   const handleResume = async (sampleId: string) => {
     try { await DB.resumeSampleWork(sampleId); }
-    catch { addToast('error', 'Failed to resume'); }
+    catch (e: any) { addToast('error', `Failed to resume${e?.message ? ` — ${e.message}` : ''}`); }
   };
 
-  const handleEditEntry = async (entryId: string, updates: Partial<SampleWorkEntry>) => {
-    if (!histSample) return;
+  const handleEditEntry = async (entryId: string, updates: Partial<SampleWorkEntry>): Promise<boolean> => {
+    if (!histSample) return false;
     try {
       await DB.editSampleWorkEntry(histSample.id, entryId, updates);
       addToast('success', 'Entry updated');
-    } catch {
-      addToast('error', 'Failed to update entry');
+      return true;
+    } catch (e: any) {
+      addToast('error', `Failed to update entry${e?.message ? ` — ${e.message}` : ''}`);
+      return false;
     }
   };
 
-  const handleSavePrice = async (sampleId: string, price: number) => {
+  const handleSavePrice = async (sampleId: string, price: number): Promise<boolean> => {
     const sample = samples.find(s => s.id === sampleId);
-    if (!sample) return;
+    if (!sample) return false;
     try {
-      // Price fields only (merge) — the whole sample would rewrite timer data
-      await DB.saveSample({ id: sample.id, pricePerPart: price, quotedAt: Date.now(), updatedAt: Date.now() } as Sample);
-      addToast('success', `Locked $${price.toFixed(2)}/pc for ${sample.partNumber}`);
-    } catch (e) {
+      // Price fields only — the whole sample would rewrite timer data
+      const r = await DB.saveSample({ id: sample.id, pricePerPart: price, quotedAt: Date.now(), updatedAt: Date.now() });
+      addToast('success', `Locked $${price.toFixed(2)}/pc for ${sample.partNumber}${r === 'queued' ? ' — saved on this device, will sync' : ''}`);
+      return true;
+    } catch (e: any) {
       console.error('[SamplesView] save price failed:', e);
-      addToast('error', 'Failed to save price.');
+      addToast('error', `Failed to save price${e?.message ? ` — ${e.message}` : ''}`);
+      return false;
     }
   };
 
@@ -1155,8 +1227,8 @@ export const SamplesView: React.FC<SamplesViewProps> = ({ addToast, currentUser 
     try {
       await DB.deleteSampleWorkEntry(histSample.id, entryId);
       addToast('success', 'Entry deleted');
-    } catch {
-      addToast('error', 'Failed to delete entry');
+    } catch (e: any) {
+      addToast('error', `Failed to delete entry${e?.message ? ` — ${e.message}` : ''}`);
     }
   };
 
