@@ -440,21 +440,9 @@ function playSynthesizedFallback(sound: ShiftAlarmSound) {
 
 // ── Public API ────────────────────────────────────────────────────────
 
-export function getActiveAlarms(settings: SystemSettings): ShiftAlarm[] {
-  // Master switch — when off, nothing fires.
-  if (settings.shiftAlarmsEnabled === false) return [];
-  // Prefer explicit shiftAlarms array. When absent, synthesize from legacy fields.
-  if (settings.shiftAlarms && settings.shiftAlarms.length > 0) return settings.shiftAlarms;
-  const legacy: ShiftAlarm[] = [];
-  if (settings.autoLunchPauseEnabled) {
-    if (settings.lunchStart) legacy.push({ id: 'legacy-lunch-start', label: 'Lunch starts', time: settings.lunchStart, enabled: true, sound: 'bell', pauseTimers: true });
-    if (settings.lunchEnd)   legacy.push({ id: 'legacy-lunch-end',   label: 'Back to work', time: settings.lunchEnd,   enabled: true, sound: 'chime', resumeTimers: true });
-  }
-  if (settings.autoClockOutEnabled && settings.autoClockOutTime) {
-    legacy.push({ id: 'legacy-clockout', label: 'Shift ends — clock out', time: settings.autoClockOutTime, enabled: true, sound: 'bell', clockOut: true });
-  }
-  return legacy;
-}
+// Pure rules (also used by the server cron) live in utils/shiftRules.
+export { lunchWindow, getActiveAlarms } from '../utils/shiftRules';
+import { getActiveAlarms } from '../utils/shiftRules';
 
 /**
  * Catch-up check — fires any alarm whose time was "now or within the last

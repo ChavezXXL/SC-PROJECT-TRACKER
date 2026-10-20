@@ -47,12 +47,23 @@ const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.s
  * the editor, e.g. End Time cleared to put the timer back on the clock.
  * Durations always follow the start/end times and the pauses.
  */
-export function timeLogEditPatch(cur: TimeLog, next: Partial<TimeLog>, now: number): { set: Record<string, unknown>; clear: string[] } {
+export function timeLogEditPatch(
+  cur: TimeLog, next: Partial<TimeLog>, now: number,
+  // The copy the editor OPENED with. Fields the user didn't change from it are
+  // skipped: an editor opened on a running timer used to send End = empty,
+  // which cleared a clock-out the worker made meanwhile and restarted it.
+  original?: Partial<TimeLog>,
+): { set: Record<string, unknown>; clear: string[] } {
   const set: Record<string, unknown> = {};
   const clear: string[] = [];
+  const isEmpty = (x: unknown) => x === undefined || x === null || x === '';
   for (const k of Object.keys(next)) {
     if (DERIVED.has(k) || (PAUSE_FIELDS.has(k) && !next.isSample)) continue;
     const v = (next as Record<string, unknown>)[k];
+    if (original) {
+      const o = (original as Record<string, unknown>)[k];
+      if ((isEmpty(v) && isEmpty(o)) || same(v, o)) continue;   // untouched in the editor
+    }
     const was = (cur as unknown as Record<string, unknown>)[k];
     if (v === undefined || v === null || v === '') {
       if (was !== undefined && was !== null && was !== '') clear.push(k);
@@ -87,6 +98,12 @@ export function timeLogEditPatch(cur: TimeLog, next: Partial<TimeLog>, now: numb
     for (const k of ['durationSeconds', 'durationMinutes', 'stopReason'] as const) {
       if (cur[k] !== undefined && cur[k] !== null && !clear.includes(k)) clear.push(k);
     }
+    // endTime is written as null, not deleted: "open timer" lookups query
+    // endTime == null, which never matches a missing field — a reopened log
+    // was invisible to them (it could run alongside the worker's next timer,
+    // paid twice, and the sweep never closed it).
+    clear.splice(clear.indexOf('endTime'), 1);
+    set.endTime = null;
     set.status = 'in_progress';
   }
   set.updatedAt = now;
@@ -95,7 +112,8 @@ export function timeLogEditPatch(cur: TimeLog, next: Partial<TimeLog>, now: numb
 
 /** A log being written for the first time: durations worked out from its times. */
 export function newTimeLogRecord(log: TimeLog, now: number): TimeLog {
-  if (!log.endTime) return { ...log, status: 'in_progress', updatedAt: now };
+  // A running record carries endTime: null so the open-timer queries find it.
+  if (!log.endTime) return { ...log, endTime: null as any, status: 'in_progress', updatedAt: now };
   const f = finalizeDuration({ startTime: log.startTime, totalPausedMs: log.totalPausedMs || 0 }, log.endTime);
   return {
     ...log,

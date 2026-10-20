@@ -14,7 +14,8 @@ const done = (o: any = {}): any => ({
 
 // Clearing End Time puts the timer back on the clock (a merge save used to keep the old end).
 { const cur = done(); const p = timeLogEditPatch(cur, { ...cur, endTime: null as any, durationSeconds: undefined, durationMinutes: null as any }, NOW);
-  ok('cleared end time is deleted', p.clear.includes('endTime'));
+  // Written as null (not deleted) so the endTime == null "open timer" queries see it.
+  ok('cleared end time is set to null', p.set.endTime === null && !p.clear.includes('endTime'));
   ok('durations and stop reason go with it', p.clear.includes('durationSeconds') && p.clear.includes('durationMinutes') && p.clear.includes('stopReason'));
   ok('log is running again', p.set.status === 'in_progress'); }
 
@@ -55,6 +56,14 @@ const done = (o: any = {}): any => ({
 { const r = newTimeLogRecord({ ...done(), durationSeconds: 1, durationMinutes: 0.01, startTime: T0, endTime: T0 + 90 * 1000 } as any, NOW);
   ok('new record: 90 s → 1.5 min', r.durationSeconds === 90 && r.durationMinutes === 1.5 && r.status === 'completed'); }
 ok('runaway session capped at 14 h', finalizeDuration({ startTime: T0 }, T0 + 30 * H).durationSeconds === 14 * 3600);
+
+// The editor opened on a RUNNING timer; the worker pressed Stop meanwhile; the
+// admin only fixed the operation. Their save must not restart the timer.
+{ const opened: any = { ...done(), endTime: undefined, durationSeconds: undefined, durationMinutes: undefined, status: 'in_progress', stopReason: undefined };
+  const server = done({ stopReason: 'manual', sessionQty: 40 });          // stopped meanwhile
+  const p = timeLogEditPatch(server, { ...opened, operation: 'Tumble' }, NOW, opened);
+  ok('only the edited field is written', Object.keys(p.set).filter(k => k !== 'updatedAt').join() === 'operation' && p.set.operation === 'Tumble');
+  ok("the worker's clock-out survives", !p.clear.includes('endTime') && !('endTime' in p.set) && !p.clear.includes('sessionQty') && !p.clear.includes('stopReason')); }
 
 console.log(`${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

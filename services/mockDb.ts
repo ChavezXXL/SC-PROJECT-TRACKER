@@ -20,6 +20,8 @@ import {
   serverTimestamp,
   Timestamp,
   FieldPath,
+  writeBatch,
+  increment,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -96,6 +98,8 @@ function handleError(e: any) {
         msg = "Permission Denied: Check Firestore Rules.";
     } else if (msg.includes("offline") || msg.includes("client is offline")) {
         msg = "Network Offline";
+    } else if (msg.includes("No document to update")) {
+        msg = "That record was deleted on another device";
     } else if (msg.includes("not found")) {
         msg = "Database Not Found (Check Project ID)";
     } else if (msg.includes("Invalid data") || msg.includes("undefined")) {
@@ -218,7 +222,11 @@ function readLS<T>(key: string, fallback: T): T {
 // This makes pause/resume/edit feel instant in localStorage mode instead of waiting for the 2s poll.
 const localSubscribers = new Set<() => void>();
 function writeLS<T>(key: string, value: T) {
-  localStorage.setItem(key, JSON.stringify(value));
+  // A full localStorage (QuotaExceeded) is only this device's backup copy —
+  // it must not fail a save that already reached Firestore, or stop a
+  // subscription from delivering data.
+  try { localStorage.setItem(key, JSON.stringify(value)); }
+  catch (e) { console.warn('[storage] could not keep a local copy of', key, e); }
   // Notify in a microtask so writes complete before reads
   queueMicrotask(() => localSubscribers.forEach(n => { try { n(); } catch {} }));
 }
@@ -516,6 +524,7 @@ export async function setJobPhoto(jobId: string, partImage: string | null): Prom
     const fields = partImage
       ? { partImage, partImageAt: Date.now() }
       : { partImage: deleteField(), partImageAt: deleteField() };
+    if (partImage) await assertJobFits(jobId, { partImage });
     try {
       await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), fields as any));
       firebaseStatus = { connected: true };
@@ -658,6 +667,7 @@ export async function saveJob(job: Job, opts: { clear?: string[] } = {}): Promis
   }
   const clear = (opts.clear || []).filter(f => (job as any)[f] === undefined);
   if (dbInstance) {
+      await assertJobFits(job.id, { ...job, ...Object.fromEntries(clear.map(f => [f, undefined])) });
       try {
         const payload = sanitize(job);
         for (const f of clear) payload[f] = deleteField();
@@ -688,10 +698,19 @@ export async function saveJob(job: Job, opts: { clear?: string[] } = {}): Promis
  * to saveJob({ ...job, field }) — re-saving a whole job from a copy that may be
  * stale reverted edits made elsewhere meanwhile (and re-sent its photo).
  */
+/** Job docs carry embedded photos/attachments; refuse an edit that would
+ *  push one past Firestore's limit (the server would reject it later, after
+ *  the user was told it saved). */
+async function assertJobFits(jobId: string, fields: Record<string, unknown>) {
+  if (!dbInstance) return;
+  await assertMergedFits(doc(dbInstance, COL.jobs, jobId), fields, 'job');
+}
+
 export async function updateJobFields(jobId: string, changes: Partial<Job>): Promise<'saved' | 'queued'> {
   const keys = Object.keys(changes);
   if (!keys.length) return 'saved';
   if (dbInstance) {
+    await assertJobFits(jobId, changes as Record<string, unknown>);
     const payload: Record<string, unknown> = {};
     for (const k of keys) {
       const v = (changes as any)[k];
@@ -720,20 +739,26 @@ export async function updateJobFields(jobId: string, changes: Partial<Job>): Pro
 // Rename customer on every matching job. Case-sensitive match for `oldNames`.
 // Used by Settings → Customers merge tool.
 export async function renameCustomer(oldNames: string[], newName: string): Promise<number> {
-  const oldSet = new Set(oldNames);
+  const oldSet = new Set(oldNames.filter(n => n && n !== newName));
   let count = 0;
   if (dbInstance) {
     try {
-      const snap = await getDocs(collection(dbInstance, COL.jobs));
-      const writes: Promise<any>[] = [];
-      snap.forEach((d: any) => {
-        const j = d.data() as Job;
-        if (j.customer && oldSet.has(j.customer) && j.customer !== newName) {
-          writes.push(setDoc(doc(dbInstance, COL.jobs, j.id), { ...j, customer: newName }, { merge: true }));
-          count++;
-        }
-      });
-      await Promise.all(writes);
+      // Only the jobs with those names (it read every job — ~28 MB with
+      // photos), and only the customer field changes (it rewrote each whole
+      // job, photos and all, and hung offline).
+      const names = [...oldSet];
+      const ids = new Set<string>();
+      for (let i = 0; i < names.length; i += 30) {
+        const snap = await queryDocs(query(collection(dbInstance, COL.jobs), where('customer', 'in', names.slice(i, i + 30))));
+        snap.forEach((d: any) => ids.add(d.id));
+      }
+      const all = [...ids];
+      for (let i = 0; i < all.length; i += 400) {
+        const batch = writeBatch(dbInstance);
+        all.slice(i, i + 400).forEach(id => batch.update(doc(dbInstance, COL.jobs, id), { customer: newName }));
+        await settleWrite(batch.commit());
+      }
+      count = all.length;
       firebaseStatus = { connected: true };
     } catch (e) {
       throw handleError(e);
@@ -742,7 +767,7 @@ export async function renameCustomer(oldNames: string[], newName: string): Promi
   }
   const jobs = readLS<Job[]>(LS.jobs, []);
   const updated = jobs.map(j => {
-    if (j.customer && oldSet.has(j.customer) && j.customer !== newName) { count++; return { ...j, customer: newName }; }
+    if (j.customer && oldSet.has(j.customer)) { count++; return { ...j, customer: newName }; }
     return j;
   });
   writeLS(LS.jobs, updated);
@@ -871,7 +896,16 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
   };
   if (isComplete) {
     updates.status = 'completed';
-    updates.completedAt = Date.now();
+    // Already finished (e.g. Shipped → Invoiced): keep the real completion
+    // date — it moved the job into this month's numbers.
+    let alreadyDone = false;
+    if (dbInstance) {
+      try { const snap = await getDocFromCache(doc(dbInstance, COL.jobs, id)); alreadyDone = snap.exists() && (snap.data() as Job).status === 'completed' && !!(snap.data() as Job).completedAt; } catch { /* not cached */ }
+    } else {
+      const cur = readLS<Job[]>(LS.jobs, []).find(j => j.id === id);
+      alreadyDone = !!(cur && cur.status === 'completed' && cur.completedAt);
+    }
+    if (!alreadyDone) updates.completedAt = Date.now();
     // Keep a ship date already recorded by a Shipped stage unless the user
     // just told us a different one.
     if (shippedAt) updates.shippedAt = shippedAt;
@@ -903,7 +937,7 @@ export async function advanceJobStage(id: string, stageId: string, userId: strin
     jobs[idx] = {
       ...j, currentStage: stageId, stageHistory: history,
       ...(isComplete
-        ? { status: 'completed', completedAt: Date.now(), ...(shippedAt ? { shippedAt } : {}) }
+        ? { status: 'completed', completedAt: updates.completedAt ?? j.completedAt ?? Date.now(), ...(shippedAt ? { shippedAt } : {}) }
         : {
             status: stageId === 'pending' ? 'pending' : 'in-progress', completedAt: null, profitSnapshot: null,
             shippedAt: isShippedStageId(stageId) ? (shippedAt || Date.now()) : null,
@@ -1102,21 +1136,58 @@ const READ_WAIT_MS = 2500;
 /** Wait for the server to confirm a write, up to SERVER_WAIT_MS. 'saved' =
  *  confirmed; 'queued' = kept on this device, synced when the connection is
  *  back. Rejects only when the write fails fast (e.g. permission denied). */
+// Writes this device has sent that the server hasn't confirmed yet. The sync
+// indicator said "synced" as soon as the settings doc came from the server,
+// even with changes still waiting to upload.
+let pendingWrites = 0;
+const pendingListeners = new Set<() => void>();
+function trackPending(p: Promise<unknown>) {
+  pendingWrites++;
+  if (pendingWrites === 1) pendingListeners.forEach(f => f());
+  const done = () => { pendingWrites = Math.max(0, pendingWrites - 1); if (pendingWrites === 0) pendingListeners.forEach(f => f()); };
+  p.then(done, done);
+}
+
 async function settleWrite(p: Promise<unknown>, ms = SERVER_WAIT_MS): Promise<'saved' | 'queued'> {
-  p.catch(e => console.warn('[sync] a change saved on this device failed to sync:', e));
+  trackPending(p);
+  let toldQueued = false;
+  p.catch(e => {
+    console.warn('[sync] a change saved on this device failed to sync:', e);
+    // The caller already told the user "saved on this device"; the server has
+    // now refused it and Firestore rolls the change back. Say so (App shows a
+    // toast) instead of letting the edit silently disappear.
+    if (toldQueued) notifySyncFailed(e);
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const r = await Promise.race([
       p.then(() => 'saved' as const),
       new Promise<'queued'>(res => { timer = setTimeout(() => res('queued'), ms); }),
     ]);
+    if (r === 'queued') toldQueued = true;
+    return r;
   } finally { clearTimeout(timer); }
+}
+
+/** Event App listens to: a change queued on this device was refused later. */
+export const SYNC_FAILED_EVENT = 'fabtrack:sync-failed';
+function notifySyncFailed(e: any) {
+  const code = String(e?.code || '');
+  const msg = String(e?.message || e || '');
+  const reason = /invalid-argument|exceeds the maximum|too large|longer than/i.test(code + ' ' + msg)
+    ? 'it was too big to save (a large photo or file)'
+    : /not-found|No document/i.test(code + ' ' + msg)
+      ? 'the record was deleted on another device'
+      : /permission/i.test(code + ' ' + msg)
+        ? 'the database refused it'
+        : 'the server rejected it';
+  try { window.dispatchEvent(new CustomEvent(SYNC_FAILED_EVENT, { detail: { reason } })); } catch { /* no window (tests) */ }
 }
 
 /** Firestore rejects a document over 1 MiB — but only on the server, after a
  *  queued write already "saved" on the device, so the change was silently
  *  lost (big delivery photos, PO attachments). Check before writing. */
-const DOC_LIMIT_BYTES = 1_000_000;
+const DOC_LIMIT_BYTES = 1_030_000;   // Firestore: 1 MiB incl. field names — keep a little room
 export class TooBigError extends Error {}
 function assertFitsInDoc(data: unknown, what: string) {
   let size = 0;
@@ -1124,6 +1195,59 @@ function assertFitsInDoc(data: unknown, what: string) {
   if (size > DOC_LIMIT_BYTES) {
     throw new TooBigError(`This ${what} is too big to save (${(size / 1_000_000).toFixed(1)} MB, limit 1 MB) — remove or shrink a photo or file`);
   }
+}
+
+/** Size check on what the record will look like after this write: the
+ *  stored copy on this device with the given top-level fields applied
+ *  (`undefined` = deleted). Checking only the payload missed a small edit
+ *  to a record that was already nearly full. */
+async function assertMergedFits(ref: any, fields: Record<string, unknown>, what: string) {
+  let base: Record<string, unknown> = {};
+  try { const snap = await getDocFromCache(ref); if (snap.exists()) base = snap.data() as Record<string, unknown>; } catch { /* not cached */ }
+  const merged: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(fields)) { if (v === undefined) delete merged[k]; else merged[k] = v; }
+  assertFitsInDoc(merged, what);
+}
+
+/**
+ * The editor-save rule. Writes the given top-level fields of one record:
+ *  • each field given replaces the stored value WHOLE — maps included (a
+ *    merge kept a removed vendor's email, an old Bill To phone number);
+ *  • a field set to `undefined` is DELETED (a merge kept it: an unlinked
+ *    customer PO stayed linked, a reopened rework stayed "resolved");
+ *  • fields left out are untouched, so saving only what the user changed
+ *    can't undo another device's change.
+ * Checks the size first, resolves 'queued' offline, throws on failure.
+ */
+async function saveFields(colName: string, lsKey: string, rec: { id: string } & Record<string, any>, what: string): Promise<'saved' | 'queued'> {
+  if (!rec?.id) throw new Error(`Can't save this ${what}: it has no id`);
+  if (dbInstance) {
+    const ref = doc(dbInstance, colName, rec.id);
+    await assertMergedFits(ref, rec, what);
+    const payload: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rec)) payload[k] = v === undefined ? deleteField() : sanitize(v);
+    try {
+      const r = await settleWrite(setDoc(ref, payload, { mergeFields: Object.keys(payload) }));
+      if (r === 'saved') firebaseStatus = { connected: true };
+      return r;
+    } catch (e) { throw handleError(e); }
+  }
+  const list = readLS<any[]>(lsKey, []);
+  const idx = list.findIndex(x => x.id === rec.id);
+  const merged: any = idx >= 0 ? { ...list[idx] } : {};
+  for (const [k, v] of Object.entries(rec)) { if (v === undefined) delete merged[k]; else merged[k] = v; }
+  if (idx >= 0) list[idx] = merged; else list.push(merged);
+  writeLS(lsKey, list);
+  return 'saved';
+}
+
+/** Delete one doc — resolves 'queued' offline instead of hanging. */
+async function deleteRecord(colName: string, id: string): Promise<'saved' | 'queued'> {
+  try {
+    const r = await settleWrite(deleteDoc(doc(dbInstance, colName, id)));
+    if (r === 'saved') firebaseStatus = { connected: true };
+    return r;
+  } catch (e) { throw handleError(e); }
 }
 
 const SLOW = 'server-slow';
@@ -1279,7 +1403,9 @@ function markJobInProgress(jobId: string) {
   const ref = doc(dbInstance, COL.jobs, jobId);
   getDocFromCache(ref).catch(() => readDoc(ref)).then((snap: any) => {
     const status = snap?.exists?.() ? (snap.data() as Job).status : undefined;
-    if (status === 'hold' || status === 'in-progress') return;
+    // Completed too: flipping only the status left a job "completed" (date,
+    // snapshot, stage) AND "in progress" at once.
+    if (status === 'hold' || status === 'in-progress' || status === 'completed') return;
     return settleWrite(updateDoc(ref, { status: 'in-progress' } as any));
   }).catch(() => { /* the clock-in itself is what matters */ });
 }
@@ -1293,7 +1419,17 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
   if (dbInstance) {
       try {
         const ref = doc(dbInstance, COL.logs, logId);
-        const snap = await readDoc(ref);
+        // Automatic stops (sweep, alarm, auto clock-out) must see the SERVER
+        // copy: an offline TV's cached "still running" would otherwise end a
+        // log the worker already clocked out of — at a later time (extra pay).
+        // Offline → skip; the server cron covers auto clock-out.
+        const automatic = /^(sweep:|alarm:|auto:)/.test(stopReason || '');
+        let snap: any;
+        if (automatic) {
+          try { snap = await getDocFromServer(ref); } catch { return; }
+        } else {
+          snap = await readDoc(ref);
+        }
         if (!snap.exists()) throw new Error("Log not found.");
 
         const existing = snap.data() as TimeLog;
@@ -1368,7 +1504,12 @@ export async function stopTimeLog(logId: string, sessionQty?: number, notes?: st
  *     the editor was open;
  *   • durations always follow the times and pauses (utils/timeLogEdit).
  */
-export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | void> {
+/**
+ * Save an edited log. Pass `opts.original` — the copy the editor opened
+ * with — and only the fields the user changed are written (see
+ * timeLogEditPatch); without it, every field that differs from the server is.
+ */
+export async function updateTimeLog(log: TimeLog, opts: { original?: Partial<TimeLog> } = {}): Promise<'saved' | 'queued' | void> {
   const now = Date.now();
   if (dbInstance) {
       try {
@@ -1380,7 +1521,7 @@ export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | 
           return result;
         }
         const cur = snap.data() as TimeLog;
-        const { set, clear } = timeLogEditPatch(cur, log, now);
+        const { set, clear } = timeLogEditPatch(cur, log, now, opts.original);
         const payload: Record<string, unknown> = sanitize(set);
         for (const k of clear) payload[k] = deleteField();
         const result = await settleWrite(updateDoc(ref, payload as any));
@@ -1399,7 +1540,7 @@ export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | 
   if (idx < 0) {
     logs.push(newTimeLogRecord(log, now));
   } else {
-    const { set, clear } = timeLogEditPatch(logs[idx], log, now);
+    const { set, clear } = timeLogEditPatch(logs[idx], log, now, opts.original);
     const merged: any = { ...logs[idx], ...set };
     for (const k of clear) delete merged[k];
     logs[idx] = merged;
@@ -1407,19 +1548,20 @@ export async function updateTimeLog(log: TimeLog): Promise<'saved' | 'queued' | 
   writeLS(LS.logs, logs);
 }
 
-export async function deleteTimeLog(logId: string) {
+export async function deleteTimeLog(logId: string): Promise<'saved' | 'queued'> {
   if (dbInstance) {
       try {
-        await settleWrite(deleteDoc(doc(dbInstance, COL.logs, logId)));
+        const r = await settleWrite(deleteDoc(doc(dbInstance, COL.logs, logId)));
         patchCachedHistory(logId, null);
-        firebaseStatus = { connected: true };
+        if (r === 'saved') firebaseStatus = { connected: true };
+        return r;
       } catch (e) {
         throw handleError(e);
       }
-      return;
   }
   const logs = readLS<TimeLog[]>(LS.logs, []).filter(l => l.id !== logId);
   writeLS(LS.logs, logs);
+  return 'saved';
 }
 
 // --------------------
@@ -1623,10 +1765,19 @@ export function subscribeSettings(cb: (settings: SystemSettings) => void): () =>
  * settings another device changed in the meantime. Each changed top-level
  * field is replaced whole (nested maps included), so removed map keys stick.
  */
-export async function saveSettingsChanges(changes: Partial<Record<keyof SystemSettings, unknown>>): Promise<'saved' | 'queued'> {
+export async function saveSettingsChanges(
+  changes: Partial<Record<keyof SystemSettings, unknown>>,
+  // The settings the editor started from. Keyed maps are diffed against it
+  // entry by entry, so an entry another device added meanwhile (absent from
+  // both) is left alone instead of deleted.
+  opts: { base?: Partial<SystemSettings> } = {},
+): Promise<'saved' | 'queued'> {
   const keys = Object.keys(changes);
   if (keys.length === 0) return 'saved';
   const cached = readLS<any>(LS.settings, {});
+  // The settings as this device last knew them — keyed maps are diffed
+  // against this, entry by entry (below).
+  const before: any = opts.base ? { ...opts.base } : { ...cached };
   for (const k of keys) {
     const v = (changes as any)[k];
     if (v === undefined) delete cached[k]; else cached[k] = v;
@@ -1634,12 +1785,28 @@ export async function saveSettingsChanges(changes: Partial<Record<keyof SystemSe
   let result: 'saved' | 'queued' = 'saved';
   if (dbInstance) {
     const ref = doc(dbInstance, COL.settings, 'system');
-    const payload: Record<string, unknown> = {};
+    // Keyed maps (customer contacts, portal slugs, per-customer routes…) are
+    // written ENTRY by entry: replacing the whole map from this device's copy
+    // erased entries another device added meanwhile (e.g. a contact saved
+    // from Deliveries while Settings was open, or edited offline).
+    const isMap = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+    const pairs: unknown[] = [];
     for (const k of keys) {
       const v = (changes as any)[k];
-      payload[k] = v === undefined ? deleteField() : sanitize(v);
+      const was = before[k];
+      if (isMap(v) && isMap(was)) {
+        for (const sub of new Set([...Object.keys(was), ...Object.keys(v)])) {
+          const nv = v[sub], ov = was[sub];
+          if (JSON.stringify(nv) === JSON.stringify(ov)) continue;
+          pairs.push(new FieldPath(k, sub), nv === undefined ? deleteField() : sanitize(nv));
+        }
+      } else {
+        pairs.push(new FieldPath(k), v === undefined ? deleteField() : sanitize(v));
+      }
     }
-    const write = updateDoc(ref, payload).catch(async (e: any) => {
+    if (pairs.length === 0) { writeLS(LS.settings, cached); return 'saved'; }
+    await assertMergedFits(ref, changes as Record<string, unknown>, 'settings change');
+    const write = (updateDoc as any)(ref, ...pairs).catch(async (e: any) => {
       if (!/not-found|No document/i.test(String(e?.code || '') + String(e?.message || ''))) throw e;
       // First save for a brand-new shop — create the doc (deletes are moot).
       const created: Record<string, unknown> = {};
@@ -1748,12 +1915,20 @@ export function subscribeUserProgress(userId: string, cb: (data: any) => void): 
 // --------------------
 // PAUSE / RESUME
 // --------------------
-export async function pauseTimeLog(logId: string, reason?: string): Promise<void> {
+/** `opts.system`: a shared screen pausing everyone's timers (lunch) — reads
+ *  the server copy and skips offline, since a stale cache could mark a log
+ *  already stopped elsewhere as paused. A worker's own device uses its copy. */
+export async function pauseTimeLog(logId: string, reason?: string, opts: { system?: boolean } = {}): Promise<void> {
   const now = Date.now();
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.logs, logId);
-      const snap = await readDoc(ref);
+      let snap: any;
+      if (opts.system) {
+        try { snap = await getDocFromServer(ref); } catch { return; }
+      } else {
+        snap = await readDoc(ref);
+      }
       if (!snap.exists()) throw new Error("Log not found.");
       const existing = snap.data() as TimeLog;
       if (existing.pausedAt || existing.endTime) return; // already paused or stopped
@@ -1779,18 +1954,31 @@ export async function pauseTimeLog(logId: string, reason?: string): Promise<void
   }
 }
 
-export async function resumeTimeLog(logId: string): Promise<void> {
+/**
+ * Resume a paused log. `opts.at` ends the pause at that moment instead of
+ * now (the lunch auto-resume passes lunch end: a screen first opened at 1:15
+ * used to count a 12:30 lunch end as 45 more unpaid minutes). `opts.system`
+ * makes it read the server copy and skip offline.
+ */
+export async function resumeTimeLog(logId: string, opts: { at?: number; system?: boolean } = {}): Promise<boolean> {
   const now = Date.now();
+  const endPause = (pausedAt: number) => Math.min(now, Math.max(pausedAt, opts.at ?? now));
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.logs, logId);
-      const snap = await readDoc(ref);
+      let snap: any;
+      if (opts.system) {
+        try { snap = await getDocFromServer(ref); } catch { return false; }
+      } else {
+        snap = await readDoc(ref);
+      }
       if (!snap.exists()) throw new Error("Log not found.");
       const existing = snap.data() as TimeLog;
-      if (!existing.pausedAt) return; // not paused
+      // Not paused, or already stopped (a stale copy must not revive it).
+      if (!existing.pausedAt || existing.endTime) return false;
       // Clamp ≥ 0 — clock skew (now < pausedAt) must not write a negative
       // pause total to Firestore (finalizeDuration guards reads, not writes).
-      const pausedDuration = Math.max(0, now - existing.pausedAt);
+      const pausedDuration = Math.max(0, endPause(existing.pausedAt) - existing.pausedAt);
       const totalPausedMs = (existing.totalPausedMs || 0) + pausedDuration;
       await settleWrite(updateDoc(ref, sanitize({
         pausedAt: null,
@@ -1803,46 +1991,63 @@ export async function resumeTimeLog(logId: string): Promise<void> {
     } catch (e) {
       throw handleError(e);
     }
-    return;
+    return true;
   }
   const logs = readLS<TimeLog[]>(LS.logs, []);
   const idx = logs.findIndex(l => l.id === logId);
   if (idx >= 0) {
     const l = logs[idx];
-    if (!l.pausedAt) return;
-    const pausedDuration = Math.max(0, now - l.pausedAt); // clamp — see Firestore branch
+    if (!l.pausedAt || l.endTime) return false;
+    const pausedDuration = Math.max(0, endPause(l.pausedAt) - l.pausedAt); // clamp — see Firestore branch
     const totalPausedMs = (l.totalPausedMs || 0) + pausedDuration;
     logs[idx] = { ...l, pausedAt: null, pauseReason: null, totalPausedMs, status: 'in_progress', updatedAt: now };
     writeLS(LS.logs, logs);
+    return true;
   }
+  return false;
 }
 
 export async function pauseAllActive(reason: string): Promise<number> {
   return new Promise((resolve) => {
-    const unsub = subscribeLogs(async (all) => {
-      unsub();
+    // The local store calls back synchronously — before `unsub` exists.
+    let done = false;
+    let unsub: (() => void) | null = null;
+    unsub = subscribeLogs(async (all) => {
+      if (done) return;
+      done = true;
+      queueMicrotask(() => unsub?.());
       const active = all.filter(l => !l.endTime && !l.pausedAt);
       for (const l of active) {
-        try { await pauseTimeLog(l.id, reason); } catch {}
+        try { await pauseTimeLog(l.id, reason, { system: true }); } catch {}
       }
       resolve(active.length);
     });
+    if (done) unsub();
   });
 }
 
 /** Resume paused timers. When `reason` is given, ONLY resume logs paused with
  *  that exact pauseReason — so the lunch-end auto-resume never force-resumes a
  *  worker's own manual pause (machine down, personal break). */
-export async function resumeAllPaused(reason?: string): Promise<number> {
+/** Resume timers paused for `reason`. `pauseMs` (the lunch length) caps
+ *  each pause at that long, so a late resume doesn't add unpaid time. */
+export async function resumeAllPaused(reason?: string, pauseMs?: number): Promise<number> {
   return new Promise((resolve) => {
-    const unsub = subscribeLogs(async (all) => {
-      unsub();
+    let done = false;
+    let unsub: (() => void) | null = null;
+    unsub = subscribeLogs(async (all) => {
+      if (done) return;
+      done = true;
+      queueMicrotask(() => unsub?.());
       const paused = all.filter(l => !l.endTime && l.pausedAt && (!reason || l.pauseReason === reason));
+      let resumed = 0;   // the real number — "Auto-resumed 5" used to show even when none went through
       for (const l of paused) {
-        try { await resumeTimeLog(l.id); } catch {}
+        const at = pauseMs && pauseMs > 0 ? (l.pausedAt as number) + pauseMs : undefined;
+        try { if (await resumeTimeLog(l.id, { at, system: !!reason })) resumed++; } catch {}
       }
-      resolve(paused.length);
+      resolve(resumed);
     });
+    if (done) unsub();
   });
 }
 
@@ -1855,9 +2060,12 @@ export async function createBackfillLog(
   endTime: number,
   partNumber?: string,
   customer?: string,
-  jobIdsDisplay?: string
-) {
-  const id = 'bf_' + Date.now().toString();
+  jobIdsDisplay?: string,
+  // Pass the same id on a retry (the form makes it once) — a second tap used
+  // to create a second entry and double the hours.
+  fixedId?: string,
+): Promise<'saved' | 'queued'> {
+  const id = fixedId || 'bf_' + Date.now().toString();
   const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
   const durationMinutes = Math.round((durationSeconds / 60) * 100) / 100; // 2-decimal, matches finalizeDuration/updateTimeLog
   const log: TimeLog = {
@@ -1873,13 +2081,13 @@ export async function createBackfillLog(
 
   if (dbInstance) {
     try {
-      await setDoc(doc(dbInstance, COL.logs, id), sanitize(log), { merge: true });
+      return await settleWrite(setDoc(doc(dbInstance, COL.logs, id), sanitize(log), { merge: true }));
     } catch (e) { throw handleError(e); }
-    return;
   }
   const logs = readLS<TimeLog[]>(LS.logs, []);
-  logs.push(log);
+  if (!logs.some(l => l.id === id)) logs.push(log);
   writeLS(LS.logs, logs);
+  return 'saved';
 }
 
 export async function stopAllActive(reason: string = 'admin:force-stop'): Promise<number> {
@@ -1967,15 +2175,16 @@ export async function sweepStaleLogs(): Promise<number> {
       if (mm) cutoffs.push({ h: +mm[1], m: +mm[2] });
     }
 
-    // Pick up any alarm flagged as a clock-out alarm (e.g. "Shift Ends")
-    for (const alarm of (settings.shiftAlarms || []) as any[]) {
+    // Pick up any alarm flagged as a clock-out alarm (e.g. "Shift Ends") —
+    // unless the alarms are switched off (overtime days): the server cron and
+    // the in-app watcher already honored that switch, this sweep didn't.
+    for (const alarm of (settings.shiftAlarmsEnabled === false ? [] : settings.shiftAlarms || []) as any[]) {
       if (!alarm.clockOut || alarm.enabled === false) continue;
       const mm = (alarm.time || '').match(/^(\d{1,2}):(\d{2})$/);
       if (mm) cutoffs.push({ h: +mm[1], m: +mm[2], days: alarm.days });
     }
 
     const SAFETY_MS = 14 * 3600000;
-    const todayDow = shopDayOfWeek(tz, nowMs);
 
     let stopped = 0;
     for (const log of activeLogs) {
@@ -1996,8 +2205,6 @@ export async function sweepStaleLogs(): Promise<number> {
       // multiple alarms are configured.
       let stopAt: number | null = null;
       for (const c of cutoffs) {
-        // Day gate — alarm restricted to specific weekdays only fires on them.
-        if (c.days && c.days.length > 0 && !c.days.includes(todayDow)) continue;
         let cutoffMs = shopLocalTimeMs(log.startTime, tz, c.h, c.m);
         // Overnight shift: an early-morning (AM) cutoff for an evening clock-in
         // lands before the clock-in → roll to the next morning. Only roll for
@@ -2005,6 +2212,9 @@ export async function sweepStaleLogs(): Promise<number> {
         // 6pm after a 5:30pm cutoff) must NOT roll a full day — let the safety
         // net / next cutoff handle it instead of running ~14h.
         if (cutoffMs <= log.startTime && c.h < 12) cutoffMs = shopLocalTimeMs(log.startTime + 86400000, tz, c.h, c.m);
+        // Day gate — on the day of that cutoff, not today: a Friday shift
+        // still open on Saturday skipped its Mon–Fri cut-off and ran to 14 h.
+        if (c.days && c.days.length > 0 && !c.days.includes(shopDayOfWeek(tz, cutoffMs))) continue;
         if (log.startTime < cutoffMs && nowMs > cutoffMs) {
           if (stopAt === null || cutoffMs < stopAt) stopAt = cutoffMs;
         }
@@ -2174,7 +2384,12 @@ export async function saveQuote(quote: Quote, opts: { clear?: string[] } = {}): 
     try {
       const payload: Record<string, unknown> = sanitize(quote);
       for (const f of clear) payload[f] = deleteField();
-      const result = await settleWrite(setDoc(doc(dbInstance, COL.quotes, quote.id), payload, { merge: true }));
+      const ref = doc(dbInstance, COL.quotes, quote.id);
+      await assertMergedFits(ref, { ...quote, ...Object.fromEntries(clear.map(f => [f, undefined])) }, 'quote');
+      // mergeFields: each field written replaces the stored value whole — a
+      // plain merge deep-merged Bill To / Ship To and kept the previous
+      // customer's phone or email when the new contact had none.
+      const result = await settleWrite(setDoc(ref, payload, { mergeFields: Object.keys(payload) }));
       firebaseStatus = { connected: true };
       return result;
     }
@@ -2275,13 +2490,10 @@ export async function expireQuote(quoteId: string, validUntilSeen: string | unde
   });
 }
 
-export async function deleteQuote(id: string) {
-  if (dbInstance) {
-    try { await deleteDoc(doc(dbInstance, COL.quotes, id)); firebaseStatus = { connected: true }; }
-    catch (e) { throw handleError(e); }
-    return;
-  }
-  writeLS(LS.quotes, readLS<Quote[]>(LS.quotes, []).filter(q => q.id !== id));
+export async function deleteQuote(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.quotes, id);
+  writeLS(LS.quotes, readLS<Quote[]>(LS.quotes, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 /** Next quote number: one past the highest so far, but never below `startAt`
@@ -2313,50 +2525,36 @@ export function subscribeSamples(cb: (samples: Sample[]) => void): () => void {
   return localSubscribe(() => readLS<Sample[]>(LS_SAMPLES, []), cb);
 }
 
-export async function saveSample(sample: Sample): Promise<'saved' | 'queued'> {
+/** Saves the given fields of a sample (see saveFields: undefined deletes,
+ *  left-out fields — e.g. the live timer data — stay as they are). */
+export async function saveSample(sample: Partial<Sample> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.samples, LS_SAMPLES, sample, 'sample');
+}
+
+export async function deleteSample(id: string): Promise<'saved' | 'queued'> {
   if (dbInstance) {
-    const data = sanitize(sample);
-    assertFitsInDoc(data, 'sample');
     try {
-      // settleWrite: offline the sample timers sat on a spinner until the server answered
-      const r = await settleWrite(setDoc(doc(dbInstance, COL.samples, sample.id), data, { merge: true }));
+      // Remove the bridged rate-learning logs for every work entry first,
+      // so a deleted sample's timing stops feeding estimates.
+      try {
+        const snap = await readDoc(doc(dbInstance, COL.samples, id));
+        if (snap.exists()) {
+          const s = snap.data() as Sample;
+          await Promise.all((s.workEntries || []).map(e => deleteTimeLog(`sample-tl-${e.id}`).catch(() => {})));
+        }
+      } catch {}
+      const r = await settleWrite(deleteDoc(doc(dbInstance, COL.samples, id)));
       if (r === 'saved') firebaseStatus = { connected: true };
       return r;
     } catch (e) {
       throw handleError(e);
     }
   }
-  const samples = readLS<Sample[]>(LS_SAMPLES, []);
-  const idx = samples.findIndex(s => s.id === sample.id);
-  if (idx >= 0) samples[idx] = { ...samples[idx], ...sample };   // merge, like the Firestore path
-  else samples.push(sample);
-  writeLS(LS_SAMPLES, samples);
-  return 'saved';
-}
-
-export async function deleteSample(id: string): Promise<void> {
-  if (dbInstance) {
-    try {
-      // Remove the bridged rate-learning logs for every work entry first,
-      // so a deleted sample's timing stops feeding estimates.
-      try {
-        const snap = await getDoc(doc(dbInstance, COL.samples, id));
-        if (snap.exists()) {
-          const s = snap.data() as Sample;
-          await Promise.all((s.workEntries || []).map(e => deleteTimeLog(`sample-tl-${e.id}`).catch(() => {})));
-        }
-      } catch {}
-      await deleteDoc(doc(dbInstance, COL.samples, id));
-      firebaseStatus = { connected: true };
-    } catch (e) {
-      throw handleError(e);
-    }
-    return;
-  }
   const all = readLS<Sample[]>(LS_SAMPLES, []);
   const gone = all.find(s => s.id === id);
   if (gone) (gone.workEntries || []).forEach(e => { deleteTimeLog(`sample-tl-${e.id}`).catch(() => {}); });
   writeLS(LS_SAMPLES, all.filter(s => s.id !== id));
+  return 'saved';
 }
 
 // ── CUSTOMER PO FILES ────────────────────────────────────────────────
@@ -2376,31 +2574,16 @@ export function subscribeCustomerPos(cb: (pos: CustomerPoFile[]) => void): () =>
   return localSubscribe(() => readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []), cb);
 }
 
-export async function saveCustomerPo(po: CustomerPoFile): Promise<'saved' | 'queued'> {
-  if (dbInstance) {
-    const data = sanitize(po);
-    assertFitsInDoc(data, 'customer PO');
-    try {
-      // settleWrite: offline, "Filing…" spun until the server answered
-      const r = await settleWrite(setDoc(doc(dbInstance, COL.customerPos, po.id), data, { merge: true }));
-      if (r === 'saved') firebaseStatus = { connected: true };
-      return r;
-    } catch (e) { throw handleError(e); }
-  }
-  const list = readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []);
-  const idx = list.findIndex(p => p.id === po.id);
-  if (idx >= 0) list[idx] = po; else list.push(po);
-  writeLS(LS_CUSTOMER_POS, list);
-  return 'saved';
+/** Saves the given fields of a customer PO (see saveFields — e.g.
+ *  `linkedJobId: undefined` really unlinks it). */
+export async function saveCustomerPo(po: Partial<CustomerPoFile> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.customerPos, LS_CUSTOMER_POS, po, 'customer PO');
 }
 
-export async function deleteCustomerPo(id: string): Promise<void> {
-  if (dbInstance) {
-    try { await deleteDoc(doc(dbInstance, COL.customerPos, id)); firebaseStatus = { connected: true }; }
-    catch (e) { throw handleError(e); }
-    return;
-  }
-  writeLS(LS_CUSTOMER_POS, readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []).filter(p => p.id !== id));
+export async function deleteCustomerPo(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.customerPos, id);
+  writeLS(LS_CUSTOMER_POS, readLS<CustomerPoFile[]>(LS_CUSTOMER_POS, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 // ── SHOP ACTIONS ─────────────────────────────────────────────────────
@@ -2422,27 +2605,15 @@ export function subscribeShopActions(cb: (actions: ShopAction[]) => void): () =>
   return localSubscribe(() => readLS<ShopAction[]>(LS_SHOP_ACTIONS, []), cb);
 }
 
-export async function saveShopAction(action: ShopAction): Promise<void> {
-  if (dbInstance) {
-    try {
-      await setDoc(doc(dbInstance, COL.shopActions, action.id), sanitize(action), { merge: true });
-      firebaseStatus = { connected: true };
-    } catch (e) { throw handleError(e); }
-    return;
-  }
-  const list = readLS<ShopAction[]>(LS_SHOP_ACTIONS, []);
-  const idx = list.findIndex(a => a.id === action.id);
-  if (idx >= 0) list[idx] = action; else list.push(action);
-  writeLS(LS_SHOP_ACTIONS, list);
+/** Saves the given fields of a shop action (see saveFields). */
+export async function saveShopAction(action: Partial<ShopAction> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.shopActions, LS_SHOP_ACTIONS, action, 'action');
 }
 
-export async function deleteShopAction(id: string): Promise<void> {
-  if (dbInstance) {
-    try { await deleteDoc(doc(dbInstance, COL.shopActions, id)); firebaseStatus = { connected: true }; }
-    catch (e) { throw handleError(e); }
-    return;
-  }
-  writeLS(LS_SHOP_ACTIONS, readLS<ShopAction[]>(LS_SHOP_ACTIONS, []).filter(a => a.id !== id));
+export async function deleteShopAction(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.shopActions, id);
+  writeLS(LS_SHOP_ACTIONS, readLS<ShopAction[]>(LS_SHOP_ACTIONS, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 // ── TV DISPLAYS ───────────────────────────────────────────────────────
@@ -2458,9 +2629,11 @@ export async function deleteShopAction(id: string): Promise<void> {
  */
 export function subscribeSyncStatus(cb: (s: { online: boolean; synced: boolean }) => void): () => void {
   let synced = !dbInstance;   // local-only mode has nothing to sync
-  const emit = () => cb({ online: typeof navigator === 'undefined' || navigator.onLine !== false, synced });
+  // Synced = live server data AND nothing of ours still waiting to upload.
+  const emit = () => cb({ online: typeof navigator === 'undefined' || navigator.onLine !== false, synced: synced && pendingWrites === 0 });
   window.addEventListener('online', emit);
   window.addEventListener('offline', emit);
+  pendingListeners.add(emit);
   let unsub = () => {};
   if (dbInstance) {
     try {
@@ -2470,7 +2643,7 @@ export function subscribeSyncStatus(cb: (s: { online: boolean; synced: boolean }
     } catch { synced = false; }
   }
   emit();
-  return () => { unsub(); window.removeEventListener('online', emit); window.removeEventListener('offline', emit); };
+  return () => { unsub(); pendingListeners.delete(emit); window.removeEventListener('online', emit); window.removeEventListener('offline', emit); };
 }
 
 // Times written for TVs come from the SERVER clock (serverTimestamp). TV
@@ -2846,21 +3019,10 @@ export function subscribeRework(cb: (entries: ReworkEntry[]) => void): () => voi
   );
 }
 
-export async function saveRework(entry: ReworkEntry): Promise<void> {
-  if (dbInstance) {
-    try {
-      await setDoc(doc(dbInstance, COL.rework, entry.id), sanitize(entry), { merge: true });
-      firebaseStatus = { connected: true };
-    } catch (e) {
-      throw handleError(e);
-    }
-    return;
-  }
-  const list = readLS<ReworkEntry[]>(LS_REWORK, []);
-  const idx = list.findIndex(r => r.id === entry.id);
-  if (idx >= 0) list[idx] = entry;
-  else list.push(entry);
-  writeLS(LS_REWORK, list);
+/** Saves the given fields of a rework entry (see saveFields — reopening
+ *  with resolvedAt: undefined really clears the resolution). */
+export async function saveRework(entry: Partial<ReworkEntry> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.rework, LS_REWORK, entry, 'rework entry');
 }
 
 // ── DELIVERIES ────────────────────────────────────────────────────
@@ -2890,33 +3052,15 @@ export function subscribeDeliveries(cb: (deliveries: Delivery[]) => void): () =>
   );
 }
 
-export async function saveDelivery(d: Delivery): Promise<'saved' | 'queued'> {
-  const withUpdated: Delivery = { ...d, updatedAt: Date.now() };
-  if (dbInstance) {
-    const data = sanitize(withUpdated);
-    assertFitsInDoc(data, 'delivery run');
-    try {
-      const r = await settleWrite(setDoc(doc(dbInstance, COL.deliveries, d.id), data, { merge: true }));
-      if (r === 'saved') firebaseStatus = { connected: true };
-      return r;
-    } catch (e) { throw handleError(e); }
-  }
-  const list = readLS<Delivery[]>(LS_DELIVERIES, []);
-  const idx = list.findIndex(x => x.id === d.id);
-  if (idx >= 0) list[idx] = withUpdated; else list.push(withUpdated);
-  writeLS(LS_DELIVERIES, list);
-  return 'saved';
+/** Saves the given fields of a delivery run (see saveFields). */
+export async function saveDelivery(d: Partial<Delivery> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.deliveries, LS_DELIVERIES, { ...d, updatedAt: Date.now() }, 'delivery run');
 }
 
-export async function deleteDelivery(id: string): Promise<void> {
-  if (dbInstance) {
-    try {
-      await deleteDoc(doc(dbInstance, COL.deliveries, id));
-      firebaseStatus = { connected: true };
-    } catch (e) { throw handleError(e); }
-    return;
-  }
-  writeLS(LS_DELIVERIES, readLS<Delivery[]>(LS_DELIVERIES, []).filter(d => d.id !== id));
+export async function deleteDelivery(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.deliveries, id);
+  writeLS(LS_DELIVERIES, readLS<Delivery[]>(LS_DELIVERIES, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 /** Auto-generate the next run number — "DEL-001", "DEL-002" etc.
@@ -2956,30 +3100,15 @@ export function subscribeVendors(cb: (vendors: Vendor[]) => void): () => void {
   );
 }
 
-export async function saveVendor(v: Vendor): Promise<void> {
-  const stamped: Vendor = { ...v, updatedAt: Date.now() };
-  if (dbInstance) {
-    try {
-      await setDoc(doc(dbInstance, COL.vendors, v.id), sanitize(stamped), { merge: true });
-      firebaseStatus = { connected: true };
-    } catch (e) { throw handleError(e); }
-    return;
-  }
-  const list = readLS<Vendor[]>(LS_VENDORS, []);
-  const idx = list.findIndex(x => x.id === v.id);
-  if (idx >= 0) list[idx] = stamped; else list.push(stamped);
-  writeLS(LS_VENDORS, list);
+/** Saves the given fields of a vendor (see saveFields). */
+export async function saveVendor(v: Partial<Vendor> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.vendors, LS_VENDORS, { ...v, updatedAt: Date.now() }, 'vendor');
 }
 
-export async function deleteVendor(id: string): Promise<void> {
-  if (dbInstance) {
-    try {
-      await deleteDoc(doc(dbInstance, COL.vendors, id));
-      firebaseStatus = { connected: true };
-    } catch (e) { throw handleError(e); }
-    return;
-  }
-  writeLS(LS_VENDORS, readLS<Vendor[]>(LS_VENDORS, []).filter(v => v.id !== id));
+export async function deleteVendor(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.vendors, id);
+  writeLS(LS_VENDORS, readLS<Vendor[]>(LS_VENDORS, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 // ── PURCHASE ORDERS ───────────────────────────────────────────────
@@ -3010,33 +3139,15 @@ export function subscribePurchaseOrders(cb: (pos: PurchaseOrder[]) => void): () 
   );
 }
 
-export async function savePurchaseOrder(po: PurchaseOrder): Promise<'saved' | 'queued'> {
-  const stamped: PurchaseOrder = { ...po, updatedAt: Date.now() };
-  if (dbInstance) {
-    const data = sanitize(stamped);
-    assertFitsInDoc(data, 'purchase order');
-    try {
-      const r = await settleWrite(setDoc(doc(dbInstance, COL.purchaseOrders, po.id), data, { merge: true }));
-      if (r === 'saved') firebaseStatus = { connected: true };
-      return r;
-    } catch (e) { throw handleError(e); }
-  }
-  const list = readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []);
-  const idx = list.findIndex(x => x.id === po.id);
-  if (idx >= 0) list[idx] = stamped; else list.push(stamped);
-  writeLS(LS_PURCHASE_ORDERS, list);
-  return 'saved';
+/** Saves the given fields of a purchase order (see saveFields). */
+export async function savePurchaseOrder(po: Partial<PurchaseOrder> & { id: string }): Promise<'saved' | 'queued'> {
+  return saveFields(COL.purchaseOrders, LS_PURCHASE_ORDERS, { ...po, updatedAt: Date.now() }, 'purchase order');
 }
 
-export async function deletePurchaseOrder(id: string): Promise<void> {
-  if (dbInstance) {
-    try {
-      await deleteDoc(doc(dbInstance, COL.purchaseOrders, id));
-      firebaseStatus = { connected: true };
-    } catch (e) { throw handleError(e); }
-    return;
-  }
-  writeLS(LS_PURCHASE_ORDERS, readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []).filter(p => p.id !== id));
+export async function deletePurchaseOrder(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.purchaseOrders, id);
+  writeLS(LS_PURCHASE_ORDERS, readLS<PurchaseOrder[]>(LS_PURCHASE_ORDERS, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 /** PO numbers format: "PO-YYYY-NNNN". Year-prefixed so new fiscal year
@@ -3084,30 +3195,17 @@ export async function lastWorkEndForJob(jobId: string): Promise<number | null> {
 export async function getLogsForJob(jobId: string): Promise<TimeLog[]> {
   if (dbInstance) {
     try {
-      const snap = await getDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', jobId)));
+      const snap = await queryDocs(query(collection(dbInstance, COL.logs), where('jobId', '==', jobId)));
       return snap.docs.map((d: any) => d.data() as TimeLog);
-    } catch {
-      try {
-        const snap = await getDocs(collection(dbInstance, COL.logs));
-        return snap.docs.map((d: any) => d.data() as TimeLog).filter((l: TimeLog) => l.jobId === jobId);
-      } catch { return []; }
-    }
+    } catch { return []; }
   }
   return readLS<TimeLog[]>(LS.logs, []).filter(l => l.jobId === jobId);
 }
 
-export async function deleteRework(id: string): Promise<void> {
-  if (dbInstance) {
-    try {
-      await deleteDoc(doc(dbInstance, COL.rework, id));
-      firebaseStatus = { connected: true };
-    } catch (e) {
-      throw handleError(e);
-    }
-    return;
-  }
-  const list = readLS<ReworkEntry[]>(LS_REWORK, []).filter(r => r.id !== id);
-  writeLS(LS_REWORK, list);
+export async function deleteRework(id: string): Promise<'saved' | 'queued'> {
+  if (dbInstance) return deleteRecord(COL.rework, id);
+  writeLS(LS_REWORK, readLS<ReworkEntry[]>(LS_REWORK, []).filter(x => x.id !== id));
+  return 'saved';
 }
 
 export async function startSampleWork(
@@ -3135,6 +3233,9 @@ export async function startSampleWork(
       const ref = doc(dbInstance, COL.samples, sampleId);
       const snap = await readDoc(ref);   // offline: this device's copy, not a hang
       if (!snap.exists()) throw new Error("Sample not found.");
+      // Someone else's running session would be replaced and its time lost.
+      const running = (snap.data() as Sample).activeEntry;
+      if (running && !running.endTime) throw new Error(`${running.userName || 'Someone'} is already timing this sample — stop that timer first`);
       await settleWrite(updateDoc(ref, sanitize({
         activeEntry: entry,
         updatedAt: now,
@@ -3223,15 +3324,14 @@ export async function stopSampleWork(sampleId: string, notes?: string): Promise<
         notes: notes || entry.notes,
       };
 
-      const existingEntries = sample.workEntries || [];
-      const newTotalWorked = (sample.totalWorkedMs || 0) + workingMs;
-
-      await settleWrite(updateDoc(ref, sanitize({
+      // Append + add, not a rewrite of the whole list read a moment ago — a
+      // concurrent edit or delete of another entry used to be undone.
+      await settleWrite(updateDoc(ref, {
         activeEntry: null,
-        workEntries: [...existingEntries, completed],
-        totalWorkedMs: newTotalWorked,
+        workEntries: arrayUnion(sanitize(completed)),
+        totalWorkedMs: increment(workingMs),
         updatedAt: now,
-      })));
+      } as any));
       // ── Bridge to rate-learning engine ──
       await _bridgeSampleWorkToTimeLog(sample, completed, durationSeconds);
       firebaseStatus = { connected: true };
@@ -3348,13 +3448,19 @@ export async function editSampleWorkEntry(
   sampleId: string,
   entryId: string,
   updates: Partial<SampleWorkEntry>
-): Promise<void> {
+): Promise<'saved' | 'queued' | void> {
   const now = Date.now();
+  // A cleared/garbled time arrives as NaN — refuse it instead of saving a
+  // session with no start or end.
+  for (const k of ['startTime', 'endTime'] as const) {
+    if (k in updates && updates[k] != null && !Number.isFinite(updates[k] as number)) throw new Error('Enter a valid start and end time');
+  }
+  if (updates.startTime && updates.endTime && updates.endTime < updates.startTime) throw new Error('The end time is before the start time');
 
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.samples, sampleId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
       const entries = sample.workEntries || [];
@@ -3374,15 +3480,15 @@ export async function editSampleWorkEntry(
       entries[idx] = updated;
       const totalWorkedMs = Math.max(0, (sample.totalWorkedMs || 0) - oldMs + newMs);
 
-      await updateDoc(ref, sanitize({ workEntries: entries, totalWorkedMs, updatedAt: now }));
+      const r = await settleWrite(updateDoc(ref, sanitize({ workEntries: entries, totalWorkedMs, updatedAt: now })));
       // Re-sync the bridged rate-learning log so a corrected time actually
       // updates estimates (the bridge id is deterministic → overwrites in place).
       try { await _bridgeSampleWorkToTimeLog(sample, updated, updated.durationSeconds || 0); } catch {}
-      firebaseStatus = { connected: true };
+      if (r === 'saved') firebaseStatus = { connected: true };
+      return r;
     } catch (e) {
       throw handleError(e);
     }
-    return;
   }
 
   const samples = readLS<Sample[]>(LS_SAMPLES, []);
@@ -3419,7 +3525,7 @@ export async function deleteSampleWorkEntry(sampleId: string, entryId: string): 
   if (dbInstance) {
     try {
       const ref = doc(dbInstance, COL.samples, sampleId);
-      const snap = await getDoc(ref);
+      const snap = await readDoc(ref);
       if (!snap.exists()) throw new Error("Sample not found.");
       const sample = snap.data() as Sample;
       const entries = sample.workEntries || [];
@@ -3429,7 +3535,7 @@ export async function deleteSampleWorkEntry(sampleId: string, entryId: string): 
       const filtered = entries.filter(e => e.id !== entryId);
       const totalWorkedMs = Math.max(0, (sample.totalWorkedMs || 0) - removedMs);
 
-      await updateDoc(ref, sanitize({ workEntries: filtered, totalWorkedMs, updatedAt: now }));
+      await settleWrite(updateDoc(ref, sanitize({ workEntries: filtered, totalWorkedMs, updatedAt: now })));
       // Remove the bridged rate-learning log so deleted timing stops polluting estimates.
       try { await deleteTimeLog(`sample-tl-${entryId}`); } catch {}
       firebaseStatus = { connected: true };
