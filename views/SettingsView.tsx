@@ -39,6 +39,7 @@ import { VAPID_KEY, vapidKeyToUint8 } from '../utils/vapid';
 import { customerKey } from '../utils/customers';
 import { computeGoalProgress as computeGoalProgressForGoal, formatGoalValue as formatGoalDisplay } from '../utils/goals';
 import { getActiveAlarms, playAlarmSound, alarmDays, alarmOnDay } from '../services/shiftAlarms';
+import { weeklyShiftHours } from '../utils/shiftRules';
 import { isDeveloper } from '../utils/devMode';
 import { planSessionQtyBackfill } from '../utils/jobMemory';
 import { sendTestEmail, getEmailJsConfig } from '../services/emailNotify';
@@ -5181,7 +5182,10 @@ export function ProgressView({ userId, userName, recentLogs = [] }: { userId: st
   // Streak calc — compare local calendar-day keys (year/month/date) instead of
   // ms boundary math so DST shifts and timezone offsets can't misfile a log
   // into the wrong day.
-  const WEEKLY_GOAL_HRS = 54;
+  // The week the shop's alarms describe (47.5 h for 5:00–3:00 with a
+  // half-hour break) — a fixed 54 h left everyone "behind" after the
+  // schedule changed.
+  const WEEKLY_GOAL_HRS = weeklyShiftHours(DB.getSettings()) || 40;
   const dayKey = (t: number | Date) => {
     const d = t instanceof Date ? t : new Date(t);
     return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;

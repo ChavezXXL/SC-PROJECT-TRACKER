@@ -39,6 +39,38 @@ export function lunchWindow(settings: SystemSettings): { start: string; end: str
   return { start: pad(pause.time), end: pad(resume.time), ms: (toMin(resume.time) - toMin(pause.time)) * 60_000 };
 }
 
+/**
+ * Hours in the shop's working week, from its own alarms: clock-in to
+ * clock-out each day both apply, minus the lunch break. The 2026-10 schedule
+ * (5:00 → 3:00, 9:30–10:00 break, Mon–Fri) gives 47.5. An optional early
+ * finish is a reminder, not a clock-out, so it doesn't shorten the day.
+ * Null when the alarms don't say when the day starts and ends.
+ */
+export function weeklyShiftHours(settings: SystemSettings): number | null {
+  const mins = shiftMinutesByDay(settings).reduce((a, m) => a + m, 0);
+  return mins > 0 ? Math.round(mins / 30) / 2 : null;
+}
+
+/** Hours in one working day (9.5 for 5:00–3:00 with a half-hour break). Null when unknown. */
+export function workdayHours(settings: SystemSettings): number | null {
+  const days = shiftMinutesByDay(settings).filter(m => m > 0);
+  return days.length ? Math.round(days.reduce((a, m) => a + m, 0) / days.length / 30) / 2 : null;
+}
+
+/** Paid minutes of each weekday (0 = Sunday), from the alarms; 0 = no shift. */
+function shiftMinutesByDay(settings: SystemSettings): number[] {
+  const toMin = (t?: string) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
+  const alarms = getActiveAlarms(settings).filter(a => a.enabled !== false && toMin(a.time) !== null);
+  const lunch = lunchWindow(settings);
+  return [0, 1, 2, 3, 4, 5, 6].map(dow => {
+    const today = alarms.filter(a => alarmOnDay(a.days, dow));
+    const start = Math.min(...today.filter(a => a.clockIn).map(a => toMin(a.time)!));
+    const end = Math.max(...today.filter(a => a.clockOut).map(a => toMin(a.time)!));
+    if (!isFinite(start) || !isFinite(end) || end <= start) return 0;
+    return Math.max(0, end - start - (lunch ? lunch.ms / 60_000 : 0));
+  });
+}
+
 export function getActiveAlarms(settings: SystemSettings): ShiftAlarm[] {
   // Master switch — when off, nothing fires.
   if (settings.shiftAlarmsEnabled === false) return [];

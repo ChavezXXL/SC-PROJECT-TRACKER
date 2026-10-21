@@ -18,8 +18,7 @@ import { computeOperationRates, estimateJobMinutes } from '../utils/rateLearning
 import { getAggregatedSampleEstimate, suggestHoursFromAggregated } from '../utils/sampleEstimate';
 import { computeJobETA } from '../utils/jobETA';
 import { getPartHistory } from '../utils/partHistory';
-
-const WORKDAY_HOURS = 8;
+import { workdayHours } from '../utils/shiftRules';
 
 /** Count Mon–Fri workdays from today through `end` (inclusive). Min 1 when end >= today. */
 function workdaysUntil(end: Date): number {
@@ -71,10 +70,20 @@ export const CanWeTakeIt: React.FC<Props> = ({ jobs, allLogs, activeLogs, worker
     return total;
   }, [jobs, allLogs, activeLogs]);
 
-  const workerCount = useMemo(
-    () => Math.max(1, workers.filter(w => w.isActive !== false && w.role !== 'admin').length || workers.length || 1),
-    [workers],
-  );
+  // A worker's day as the shop's alarms set it (9.5 h for 5:00–3:00 with a
+  // half-hour break) — a fixed 8 h under-counted capacity by ~16%.
+  const dayHours = workdayHours(settings) || 8;
+
+  // People who actually run parts: anyone (not an admin) who logged time in
+  // the last two weeks. Counting every non-admin account also counted office
+  // logins and people who no longer come in.
+  const workerCount = useMemo(() => {
+    const since = Date.now() - 14 * 86_400_000;
+    const recent = new Set([...allLogs, ...activeLogs].filter(l => l.startTime >= since).map(l => l.userId));
+    const team = workers.filter(w => w.isActive !== false && w.role !== 'admin');
+    const working = team.filter(w => recent.has(w.id)).length;
+    return Math.max(1, working || team.length || workers.length || 1);
+  }, [workers, allLogs, activeLogs]);
 
   const result = useMemo(() => {
     if (!part.trim() || qty <= 0 || !needBy) return null;
@@ -107,7 +116,7 @@ export const CanWeTakeIt: React.FC<Props> = ({ jobs, allLogs, activeLogs, worker
     }
 
     const days = workdaysUntil(due);
-    const capacityHours = workerCount * WORKDAY_HOURS * days;
+    const capacityHours = workerCount * dayHours * days;
     const availableHours = capacityHours - queueHours;
     const hasEstimate = estHours > 0;
     const spare = availableHours - estHours;
@@ -115,15 +124,15 @@ export const CanWeTakeIt: React.FC<Props> = ({ jobs, allLogs, activeLogs, worker
     let verdict: 'yes' | 'tight' | 'no' | 'no-data';
     if (!hasEstimate) verdict = 'no-data';
     else if (days === 0) verdict = 'no';
-    else if (spare >= WORKDAY_HOURS) verdict = 'yes';
+    else if (spare >= dayHours) verdict = 'yes';
     else if (spare >= 0) verdict = 'tight';
     else verdict = 'no';
 
     // What it would take when the answer is NO
-    const extraDays = spare < 0 ? Math.ceil(Math.abs(spare) / (workerCount * WORKDAY_HOURS)) : 0;
+    const extraDays = spare < 0 ? Math.ceil(Math.abs(spare) / (workerCount * dayHours)) : 0;
 
     return { estHours, source, days, capacityHours, availableHours, spare, verdict, extraDays, hasEstimate };
-  }, [part, qty, needBy, manualHours, allLogs, samples, settings.rateBuffer, workerCount, queueHours]);
+  }, [part, qty, needBy, manualHours, allLogs, samples, settings.rateBuffer, workerCount, queueHours, dayHours]);
 
   const V = result?.verdict;
   const verdictStyle =
@@ -240,7 +249,7 @@ export const CanWeTakeIt: React.FC<Props> = ({ jobs, allLogs, activeLogs, worker
                     <div className="flex justify-between"><span className="text-zinc-500">This job needs</span><span className="font-black text-white">{result.estHours.toFixed(1)}h</span></div>
                     <div className="flex justify-between gap-4"><span className="text-zinc-500 truncate">Based on</span><span className="font-semibold text-zinc-300 text-right">{result.source}</span></div>
                     <div className="flex justify-between"><span className="text-zinc-500">Already queued</span><span className="font-black text-white">{queueHours.toFixed(1)}h</span></div>
-                    <div className="flex justify-between"><span className="text-zinc-500">Capacity by then</span><span className="font-black text-white">{result.capacityHours.toFixed(0)}h <span className="text-zinc-500 font-semibold">({workerCount} worker{workerCount !== 1 ? 's' : ''} × {WORKDAY_HOURS}h × {result.days}d)</span></span></div>
+                    <div className="flex justify-between"><span className="text-zinc-500">Capacity by then</span><span className="font-black text-white">{result.capacityHours.toFixed(0)}h <span className="text-zinc-500 font-semibold">({workerCount} worker{workerCount !== 1 ? 's' : ''} × {dayHours}h × {result.days}d)</span></span></div>
                     <div className="flex justify-between"><span className="text-zinc-500">Free after queue</span><span className={`font-black ${result.availableHours >= 0 ? 'text-white' : 'text-red-400'}`}>{result.availableHours.toFixed(1)}h</span></div>
                   </div>
                 </>

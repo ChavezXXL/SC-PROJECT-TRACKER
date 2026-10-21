@@ -10,6 +10,7 @@ import { parseHeartbeat, heartbeatIssue, heartbeatHasFailures } from '../utils/c
 import { createFirestoreRest, toFsValue, fromFsValue, buildWhereQuery } from '../utils/firestoreRest';
 import { createResendSender } from '../utils/cronEmail';
 import { shopLocalTimeMs } from '../utils/timezone';
+import { weeklyShiftHours, workdayHours } from '../utils/shiftRules';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { if (cond) pass++; else { fail++; console.log('FAIL:', name); } };
@@ -266,6 +267,23 @@ async function main() {
   const badSend = createResendSender('rk', undefined, (async () => new Response('{"message":"domain not verified"}', { status: 403 })) as any);
   const res2 = await badSend({ to: ['x@y.z'], subject: 'S', html: '' });
   ok('email: failure comes back with the reason', !res2.ok && String(res2.error).includes('403') && String(res2.error).includes('domain not verified'));
+
+  // ── Weekly goal from the shop's alarms ───────────────────────────
+  const wk = [1, 2, 3, 4, 5];
+  const shop = { shiftAlarms: [
+    { id: 'a', label: 'Shift starts', time: '05:00', enabled: true, sound: 'bell', clockIn: true, days: wk },
+    { id: 'b', label: 'Lunch break starts', time: '09:30', enabled: true, sound: 'bell', pauseTimers: true, days: wk },
+    { id: 'c', label: 'Break over', time: '10:00', enabled: true, sound: 'chime', resumeTimers: true, days: wk },
+    { id: 'd', label: 'Early finish (optional)', time: '13:30', enabled: true, sound: 'chime', days: wk },
+    { id: 'e', label: 'Shift ends', time: '15:00', enabled: true, sound: 'bell', clockOut: true, days: wk },
+  ] } as any;
+  ok('week: 5:00–3:00 less a 30 min break, Mon–Fri = 47.5 h', weeklyShiftHours(shop) === 47.5);
+  ok('week: the optional early finish does not shorten the day', weeklyShiftHours(shop) === 47.5);
+  ok('week: weekdays saved as text still count', weeklyShiftHours({ shiftAlarms: shop.shiftAlarms.map((a: any) => ({ ...a, days: a.days.map(String) })) } as any) === 47.5);
+  ok('week: no clock-in alarm → unknown', weeklyShiftHours({ shiftAlarms: shop.shiftAlarms.filter((a: any) => !a.clockIn) } as any) === null);
+  ok('day: one working day is 9.5 h', workdayHours(shop) === 9.5);
+  ok('day: unknown without a schedule', workdayHours({} as any) === null);
+  ok('week: alarms switched off → unknown', weeklyShiftHours({ ...shop, shiftAlarmsEnabled: false }) === null);
 
   console.log(`${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
