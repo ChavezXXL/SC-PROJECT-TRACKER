@@ -90,6 +90,19 @@ export async function runDailyRecapCron(deps: RecapCronDeps): Promise<RecapOutco
     return 'failed';
   }
 
+  // Mark today sent BEFORE reading or sending. If that can't be saved — the
+  // database refusing writes, e.g. the free daily quota used up — a sent
+  // email couldn't be recorded either, and every later run would send it
+  // again: on 2026-10-20 that meant the recap every 10 minutes until
+  // midnight, ~350 reads each. So skip; the next run tries again. A send
+  // that fails afterwards takes the mark back off (recordFailure).
+  const claimed = await fs.write('settings', 'system', { recapLastSentDate: today }, { merge: true });
+  if (!claimed) {
+    console.error(`${TAG} can't save to the database right now (${fs.stats.lastError || 'unknown error'}) — not sending, so it can't go out twice`);
+    return 'failed';
+  }
+  const unclaim = { prevSentDate: settings.recapLastSentDate as string | undefined };
+
   console.log(`${TAG} Recap due (${settings.recapTime} ${tz}) — fetching data…`);
 
   // 4. Fetch only what the recap uses
@@ -103,7 +116,7 @@ export async function runDailyRecapCron(deps: RecapCronDeps): Promise<RecapOutco
     fs.where('logs', 'status', 'in', ['in_progress', 'paused']),
   ]);
   if (!jobs || !users || !reworkDocs || !weekLogs || !openLogs) {
-    await recordFailure(fs, settings, today, now, `couldn't read the shop data (${fs.stats.lastError || 'unknown error'})`, true);
+    await recordFailure(fs, settings, today, now, `couldn't read the shop data (${fs.stats.lastError || 'unknown error'})`, true, unclaim);
     return 'failed';
   }
 
@@ -118,7 +131,7 @@ export async function runDailyRecapCron(deps: RecapCronDeps): Promise<RecapOutco
   }
   const historyLogs = await logsForJobs(fs, recapInsightJobIds(jobs as any, todayJobIds));
   if (!historyLogs) {
-    await recordFailure(fs, settings, today, now, `couldn't read job history (${fs.stats.lastError || 'unknown error'})`, true);
+    await recordFailure(fs, settings, today, now, `couldn't read job history (${fs.stats.lastError || 'unknown error'})`, true, unclaim);
     return 'failed';
   }
   const byId = new Map<string, FsDoc>();
@@ -159,16 +172,15 @@ export async function runDailyRecapCron(deps: RecapCronDeps): Promise<RecapOutco
   const to = [settings.recapEmail.trim(), ...ccEmails];
   const r = await deps.sendEmail({ to, subject, html, text });
   if (!r.ok) {
-    await recordFailure(fs, settings, today, now, r.error || 'send failed', true);
+    await recordFailure(fs, settings, today, now, r.error || 'send failed', true, unclaim);
     return 'failed';
   }
   console.log(`${TAG} ✓ Sent${r.id ? ` (id=${r.id})` : ''} to: ${to.join(', ')}`);
-  // Stamp today so later runs won't send a second email; clear any error.
-  const stamped = await fs.write('settings', 'system', { recapLastSentDate: today }, {
-    merge: true,
-    deleteFields: ['recapLastError', 'recapRetry'],
-  });
-  if (!stamped) console.error(`${TAG} sent, but couldn't stamp recapLastSentDate — a second copy may go out`);
+  // Today was marked before sending; just clear an earlier error, if any
+  // (every settings write makes every open screen re-read the settings doc).
+  if (settings.recapLastError !== undefined || settings.recapRetry !== undefined) {
+    await fs.write('settings', 'system', {}, { merge: true, deleteFields: ['recapLastError', 'recapRetry'] });
+  }
   return 'sent';
 }
 
@@ -188,7 +200,7 @@ async function logsForJobs(fs: FirestoreRest, jobIds: string[]): Promise<FsDoc[]
  * it sent, so a later run retries. `countAttempt` = this try read the day's
  * data; those are capped (RECAP_MAX_ATTEMPTS) and spaced out.
  */
-async function recordFailure(fs: FirestoreRest, settings: Settings, today: string, now: number, message: string, countAttempt: boolean) {
+async function recordFailure(fs: FirestoreRest, settings: Settings, today: string, now: number, message: string, countAttempt: boolean, unclaim?: { prevSentDate?: string }) {
   const prev = settings.recapRetry as RecapRetryState | undefined;
   const failuresBefore = prev?.date === today ? (prev.failures || 0) : 0;
   const failures = countAttempt ? failuresBefore + 1 : failuresBefore;
@@ -200,8 +212,14 @@ async function recordFailure(fs: FirestoreRest, settings: Settings, today: strin
   if (countAttempt) data.recapRetry = { date: today, failures, lastAttemptMs: now };
   // Same error as last time and nothing new to count → don't rewrite settings
   // (every write makes every open screen re-read the settings doc).
-  else if (settings.recapLastError === recapLastError) return;
-  await fs.write('settings', 'system', data, { merge: true });
+  else if (settings.recapLastError === recapLastError && !unclaim) return;
+  // Today was marked sent before trying — take that back so a later run retries.
+  const deleteFields: string[] = [];
+  if (unclaim) {
+    if (unclaim.prevSentDate) data.recapLastSentDate = unclaim.prevSentDate;
+    else deleteFields.push('recapLastSentDate');
+  }
+  await fs.write('settings', 'system', data, { merge: true, ...(deleteFields.length ? { deleteFields } : {}) });
 }
 
 // ── Scheduled entry point ─────────────────────────────────────────────

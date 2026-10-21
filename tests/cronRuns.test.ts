@@ -556,6 +556,36 @@ async function main() {
     ok('recap no key: settings not rewritten every run', !r2.calls.some(c => c.kind === 'write'));
   }
 
+  // 5. Database refusing writes (2026-10-20: free daily quota used up). The
+  //    recap was sent but couldn't be marked, so every run sent it again.
+  //    Now nothing is read or sent until "sent today" can be saved first.
+  {
+    const fake = createFakeFirestore();
+    seedRecapDay(fake);
+    const email = fakeEmail();
+    fake.failWhen(c => c.kind === 'write');
+    const runs = [];
+    for (let t = at(17, 50); t < at(19, 0); t += 10 * MIN) runs.push(await recapRun(fake, t, email));
+    ok('recap no writes: never sent (it could not be recorded)', email.emails.length === 0 && runs.every(r => r.outcome === 'failed'));
+    ok('recap no writes: reads only settings each run', runs.every(r => r.reads === 1));
+    fake.failWhen(null);
+    const back = await recapRun(fake, at(19, 0), email);
+    const again = await recapRun(fake, at(19, 10), email);
+    ok('recap no writes: sent once writes work again', back.outcome === 'sent' && again.outcome === 'not-due' && email.emails.length === 1);
+  }
+
+  // 6. A send that fails after today was marked takes the mark back off.
+  {
+    const fake = createFakeFirestore();
+    seedRecapDay(fake);
+    fake.set('settings', 'system', { ...fake.get('settings', 'system')!, recapLastSentDate: '2026-10-19' });
+    const email = fakeEmail([false, true]);
+    await recapRun(fake, at(17, 50), email);
+    ok('recap unmark: yesterday restored after a failed send', fake.get('settings', 'system')?.recapLastSentDate === '2026-10-19');
+    const r2 = await recapRun(fake, at(18, 0), email);
+    ok('recap unmark: next run retries and sends', r2.outcome === 'sent' && email.emails.length === 2);
+  }
+
   console.log(`${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }
