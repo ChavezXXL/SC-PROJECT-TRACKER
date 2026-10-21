@@ -2540,6 +2540,14 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
   }, [reportsIn, deviceId]);
   const slideLabelRef = useRef('');
   const isNewDevice = deviceDoc === null;
+  // The check-in reports the connection state but must NOT re-run when it
+  // changes: a save counts as "not synced" until it lands, so re-running on
+  // every change saved, flipped the state, saved again… nonstop — on
+  // 2026-10-20 the wall TV used up the shop's whole daily write quota by
+  // 12:30. Read the state from a ref instead.
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+  const checkInRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     // Wait until our row has loaded, so a name set in the office isn't
     // overwritten by this TV's old local name.
@@ -2559,7 +2567,7 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       ...(isNewDevice ? { name: getSavedTvName() } : {}),
       startedAt: startedAtRef.current,
       online: navigator.onLine !== false,
-      synced: sync.synced,
+      synced: syncRef.current.synced,
       screen: `${window.screen?.width || window.innerWidth}×${window.screen?.height || window.innerHeight}`,
       agent: describeDevice(),
       model: deviceModel() || undefined,
@@ -2581,11 +2589,19 @@ export const LiveFloorMonitor: React.FC<LiveFloorMonitorProps> = ({ user, onBack
       lastError: lastErrorRef.current || undefined,
       startsToday: startsTodayRef.current || undefined,
     });
+    checkInRef.current = checkIn;
     checkIn();
     const id = window.setInterval(checkIn, 5 * 60_000);
-    return () => window.clearInterval(id);
+    return () => { window.clearInterval(id); checkInRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportsIn, deviceDoc === undefined, isNewDevice, deviceDoc?.revoked, sync.online, sync.synced]);
+  }, [reportsIn, deviceDoc === undefined, isNewDevice, deviceDoc?.revoked]);
+  // Back online after a drop → check in right away (going online is the
+  // browser's own signal, so this can't feed itself).
+  const wasOnlineRef = useRef(sync.online);
+  useEffect(() => {
+    if (sync.online && !wasOnlineRef.current) checkInRef.current?.();
+    wasOnlineRef.current = sync.online;
+  }, [sync.online]);
 
   // ── TV look: text size (rem scale for screens read from across the shop).
   useEffect(() => {

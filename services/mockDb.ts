@@ -2665,9 +2665,16 @@ function readTvDevice(snap: any): TvDevice {
   } as TvDevice;
 }
 
-/** TV check-in (merge) — creates the device row on first call. */
+/** TV check-in (merge) — creates the device row on first call. At most one
+ *  a minute per TV, whatever calls it: a loop in the caller once wrote this
+ *  row nonstop and used up the shop's daily write quota (2026-10-20). */
+const lastTvCheckIn = new Map<string, number>();
+export const TV_CHECKIN_MIN_GAP_MS = 60_000;
 export async function tvCheckIn(device: Partial<TvDevice> & { id: string }): Promise<void> {
   if (!dbInstance) return;
+  const now = Date.now();
+  if (now - (lastTvCheckIn.get(device.id) || 0) < TV_CHECKIN_MIN_GAP_MS) return;
+  lastTvCheckIn.set(device.id, now);
   try {
     await settleWrite(setDoc(doc(dbInstance, COL.tvDevices, device.id), { ...sanitize(device), lastSeen: serverTimestamp() }, { merge: true }));
   } catch { /* a missed check-in only makes the office view stale */ }
