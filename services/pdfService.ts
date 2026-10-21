@@ -1,6 +1,7 @@
 import type { Job, Quote, SystemSettings, PurchaseOrder } from '../types';
 import type { PartHistory } from '../utils/partHistory';
-import { printTraveler } from './travelerPrint';
+import { printTraveler, printTravelers } from './travelerPrint';
+import { printHtmlDocument } from '../utils/printFrame';
 
 // ── Shared PDF Utilities ──
 
@@ -119,11 +120,8 @@ function docShell(html: string, title: string): string {
 }
 
 function openPrintWindow(html: string, title: string) {
-  const win = window.open('', '_blank', 'width=850,height=1100');
-  if (!win) return;
-  win.document.write(docShell(html, title));
-  win.document.close();
-  setTimeout(() => { win.print(); }, 400);
+  // A frame on this page, not a pop-up — phones block pop-ups (utils/printFrame).
+  void printHtmlDocument(docShell(html, title));
 }
 
 function formatDate(ts?: number | string): string {
@@ -380,6 +378,14 @@ export function printJobTravelerPDF(
   rateBreakdown?: import('./travelerPrint').TravelerOptions['_rateBreakdown']
 ): void {
   void printTraveler(job, settings, { _rateBreakdown: rateBreakdown ?? null });
+}
+
+/** Several jobs' travelers in one print job (Jobs list → select → Print Travelers). */
+export function printJobTravelersPDF(
+  items: { job: Job; rateBreakdown?: import('./travelerPrint').TravelerOptions['_rateBreakdown'] }[],
+  settings: SystemSettings,
+): void {
+  void printTravelers(items.map(i => ({ job: i.job, options: { _rateBreakdown: i.rateBreakdown ?? null } })), settings);
 }
 
 // ── Invoice PDF ──

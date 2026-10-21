@@ -128,7 +128,7 @@ class ViewErrorBoundary extends React.Component<{ children: React.ReactNode }, {
   }
 }
 import { POScanner } from './components/POScanner';
-import { printPackingSlipPDF, printJobTravelerPDF } from './services/pdfService';
+import { printPackingSlipPDF, printJobTravelerPDF, printJobTravelersPDF } from './services/pdfService';
 import { printTraveler } from './services/travelerPrint';
 import { businessDaysUntilSync, isHolidaySync, getHolidays } from './services/holidays';
 // ── Tier-gated feature wrapper ──
@@ -5101,8 +5101,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       let partImage = await shrinkImage(await compressImage(file, 800, 0.6), 200_000);
       // Upload to Storage when available (base64 fallback) — keeps job docs tiny
       try { const b = dataUrlToBlobApp(partImage); if (b) partImage = await DB.uploadJobPartImage(b, jobId); } catch {}
-      await DB.setJobPhoto(jobId, partImage);
-      addToast('success', 'Photo added');
+      // "Added" only once the server has it — a photo that's still on this
+      // phone shows here but not on the office PC yet.
+      const result = await DB.setJobPhoto(jobId, partImage);
+      if (result === 'queued') addToast('info', 'Photo saved on this phone — other screens get it once it uploads.');
+      else addToast('success', 'Photo added');
     } catch (e: any) {
       addToast('error', `Could not save photo${e?.message ? ` — ${e.message}` : ''}`);
     }
@@ -5855,21 +5858,17 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
           <button
             type="button"
             onClick={() => {
-              const ids: string[] = Array.from(selectedJobIds);
-              ids.forEach(id => {
-                const job = jobs.find(x => x.id === id);
-                if (job) {
-                  const buf = shopSettings.rateBuffer ?? 1.15;
+              // One print job, a page per traveler — not a print dialog per job.
+              const buf = shopSettings.rateBuffer ?? 1.15;
+              const items = Array.from(selectedJobIds)
+                .map(id => jobs.find(x => x.id === id))
+                .filter((j): j is Job => !!j)
+                .map(job => {
                   const enriched = enrichJobForPrint(job, jobs, allLogs, buf);
-                  printJobTravelerPDF(
-                    enriched,
-                    shopSettings,
-                    getPartHistory(job.partNumber || '', jobs, allLogs),
-                    getRateBreakdownForJob(enriched, allLogs, buf),
-                  );
-                }
-              });
-              addToast('info', `Generated ${ids.length} traveler${ids.length > 1 ? 's' : ''}`);
+                  return { job: enriched, rateBreakdown: getRateBreakdownForJob(enriched, allLogs, buf) };
+                });
+              printJobTravelersPDF(items, shopSettings);
+              addToast('info', `Printing ${items.length} traveler${items.length !== 1 ? 's' : ''}`);
             }}
             className="text-[11px] font-bold text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-lg flex items-center gap-1"
           >
@@ -5998,14 +5997,16 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           onClick={(e) => { e.stopPropagation(); setLightboxImg(j.partImage!); }}
                         />
                       ) : (
-                        // Empty "add photo" slot hidden on phones — it cost the Due column its
-                        // room; the job editor has the photo button.
+                        // Empty "add photo" slot on tablets. Phones get the 📷 Photo
+                        // button in the badge line below instead — a box here pushed
+                        // the Due date off a phone screen.
                         <label
-                          className="hidden sm:flex md:hidden w-12 h-12 sm:w-14 sm:h-14 rounded-lg border border-dashed border-white/10 items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all flex-shrink-0 group/cam"
+                          aria-label={`Take a photo of ${j.partNumber || 'this part'}`}
+                          className="hidden sm:flex md:hidden w-14 h-14 rounded-lg border border-dashed border-cyan-500/30 bg-cyan-500/5 items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/10 transition-all flex-shrink-0 group/cam"
                           title="Add part photo"
                           onClick={e => e.stopPropagation()}
                         >
-                          <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-600 group-hover/cam:text-cyan-400" aria-hidden="true" />
+                          <Camera className="w-5 h-5 text-cyan-400/70 group-hover/cam:text-cyan-400" aria-hidden="true" />
                           <input
                             type="file"
                             accept="image/*"
@@ -6059,6 +6060,18 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             </span>
                           );
                         })()}
+                        {/* Phones: tap, snap the part, done — no trip into the job
+                            editor. It wraps onto its own line, so the row doesn't widen. */}
+                        {!j.partImage && (
+                          <label
+                            aria-label={`Take a photo of ${j.partNumber || 'this part'}`}
+                            className="sm:hidden inline-flex items-center gap-1 h-7 px-2 rounded-md border border-dashed border-cyan-500/40 bg-cyan-500/10 text-cyan-300 text-[11px] font-bold cursor-pointer active:scale-95"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <Camera className="w-3.5 h-3.5" aria-hidden="true" /> Photo
+                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => addRowPhoto(j.id, e.currentTarget)} />
+                          </label>
+                        )}
                         {/* Live worker indicators — who's clocked in right now */}
                         {activeLogs.filter(l => l.jobId === j.id).map(l => (
                           <span key={l.id} className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full" title={`${l.userName} — ${l.operation}`}>
@@ -6503,9 +6516,25 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         );
                       })}
                     </div>
-                    {/* Share with Customer */}
+                    {/* Print + share. Print is here because on a phone the job
+                        list's print icon is hidden and its ⋯ menu sits off the
+                        right edge of the screen. */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button type="button" onClick={() => {
+                        const buf = shopSettings.rateBuffer ?? 1.15;
+                        const enriched = enrichJobForPrint(editingJob as Job, jobs, allLogs, buf);
+                        void printTraveler(enriched, shopSettings, { _rateBreakdown: getRateBreakdownForJob(enriched, allLogs, buf) }).then(() => {
+                          try {
+                            const list: string[] = JSON.parse(localStorage.getItem('printed_jobs') || '[]');
+                            if (!list.includes(enriched.id)) { list.push(enriched.id); localStorage.setItem('printed_jobs', JSON.stringify(list)); }
+                          } catch { /* the ✓ is a convenience */ }
+                          window.dispatchEvent(new Event('printed-update'));
+                        });
+                      }} className="flex items-center gap-1.5 text-[11px] font-bold text-orange-300 hover:text-white bg-orange-500/15 hover:bg-orange-500/30 px-3 py-1.5 rounded-lg transition-all">
+                        <Printer className="w-3.5 h-3.5" aria-hidden="true" /> {printed.includes((editingJob as Job).id) ? 'Reprint Traveler' : 'Print Traveler'}
+                      </button>
                     {(editingJob as Job).customer && (
-                      <div className="flex items-center gap-2 pt-1">
+                      <>
                         <button onClick={() => {
                           const url = buildPortalUrl((editingJob as Job).customer!, shopSettings);
                           navigator.clipboard.writeText(url).then(() => addToast('success', 'Customer portal link copied!')).catch(() => {
@@ -6520,8 +6549,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                         }} className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-all">
                           <ExternalLink className="w-3.5 h-3.5" /> Preview
                         </button>
-                      </div>
+                      </>
                     )}
+                    </div>
                   </div>
                 );
               })()}

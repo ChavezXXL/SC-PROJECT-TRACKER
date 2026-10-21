@@ -520,21 +520,21 @@ export async function setChecklistTick(jobId: string, itemId: string, tick: Chec
   }
 }
 
-export async function setJobPhoto(jobId: string, partImage: string | null): Promise<void> {
+export async function setJobPhoto(jobId: string, partImage: string | null): Promise<'saved' | 'queued'> {
   if (dbInstance) {
     const fields = partImage
       ? { partImage, partImageAt: Date.now() }
       : { partImage: deleteField(), partImageAt: deleteField() };
     if (partImage) await assertJobFits(jobId, { partImage });
     try {
-      await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), fields as any));
+      const result = await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), fields as any));
       firebaseStatus = { connected: true };
+      return result;
     } catch (e) { throw handleError(e); }
-    return;
   }
   const jobs = readLS<Job[]>(LS.jobs, []);
   const idx = jobs.findIndex(j => j.id === jobId);
-  if (idx < 0) return;
+  if (idx < 0) return 'saved';
   if (partImage) {
     jobs[idx] = { ...jobs[idx], partImage, partImageAt: Date.now() };
   } else {
@@ -542,6 +542,7 @@ export async function setJobPhoto(jobId: string, partImage: string | null): Prom
     jobs[idx] = rest as Job;
   }
   writeLS(LS.jobs, jobs);
+  return 'saved';
 }
 
 export function subscribeJobs(cb: (jobs: Job[]) => void) {

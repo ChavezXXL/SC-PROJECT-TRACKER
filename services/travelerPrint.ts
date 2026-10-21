@@ -20,6 +20,7 @@ import type { Job, SystemSettings } from '../types';
 import type { RateEstimate } from '../utils/rateLearning';
 import { formatRate } from '../utils/rateLearning';
 import QRCode from 'qrcode';
+import { printHtmlDocument } from '../utils/printFrame';
 
 const TRAVELER_CSS = `
   @page { size: letter portrait; margin: 0.45in; }
@@ -673,6 +674,30 @@ export async function printTraveler(
   settings: SystemSettings,
   options: TravelerOptions = {}
 ): Promise<void> {
+  await printTravelers([{ job, options }], settings);
+}
+
+/** Several travelers in ONE print job, one per page (the Jobs list's
+ *  "Print Travelers" used to open a window and a print dialog per job). */
+export async function printTravelers(
+  items: { job: Job; options?: TravelerOptions }[],
+  settings: SystemSettings,
+): Promise<void> {
+  if (!items.length) return;
+  const pages = await Promise.all(items.map(({ job, options }) => travelerBody(job, settings, options || {})));
+  const first = items[0].job;
+  const title = items.length === 1
+    ? `Traveler — ${first.poNumber || first.jobIdsDisplay || first.id.slice(-8)}`
+    : `Travelers — ${items.length} jobs`;
+  await printHtmlDocument(
+    `<!DOCTYPE html><html><head>` +
+    `<meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
+    `<style>${TRAVELER_CSS}</style>` +
+    `</head><body>${pages.map((p, i) => i < pages.length - 1 ? `<div style="break-after:page;page-break-after:always">${p}</div>` : p).join('')}</body></html>`
+  );
+}
+
+async function travelerBody(job: Job, settings: SystemSettings, options: TravelerOptions): Promise<string> {
   let qrDataUrl = '';
   const wantQr = flag(options.showQr, settings.traveler?.showQrCode ?? true);
   if (wantQr) {
@@ -688,48 +713,7 @@ export async function printTraveler(
     }
   }
 
-  const win = window.open('', '_blank', 'width=850,height=1100');
-  if (!win) {
-    alert('Pop-up blocked — allow pop-ups for this site to print travelers.');
-    return;
-  }
-
-  const title = `Traveler — ${job.poNumber || job.jobIdsDisplay || job.id.slice(-8)}`;
-  const body  = renderTravelerHtml(job, settings, { ...options, _qrDataUrl: qrDataUrl });
-
-  win.document.write(
-    `<!DOCTYPE html><html><head>` +
-    `<meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
-    `<style>${TRAVELER_CSS}</style>` +
-    `</head><body>${body}</body></html>`
-  );
-  win.document.close();
-
-  // Wait for the logo / part photo / QR images to actually finish loading, THEN
-  // print — a fixed delay could fire before large images render (blank page).
-  // Resolve only after print() is triggered so callers' onPrinted is accurate.
-  await new Promise<void>((resolve) => {
-    let fired = false;
-    const doPrint = () => {
-      if (fired) return;
-      fired = true;
-      try { win.focus(); win.print(); } catch { /* popup closed or print blocked */ }
-      resolve();
-    };
-    try {
-      const imgs = Array.from(win.document.images || []);
-      let pending = imgs.filter(im => !im.complete).length;
-      if (pending === 0) {
-        setTimeout(doPrint, 250);   // small settle for layout/fonts
-      } else {
-        const tick = () => { if (--pending <= 0) doPrint(); };
-        imgs.forEach(im => {
-          if (!im.complete) { im.addEventListener('load', tick); im.addEventListener('error', tick); }
-        });
-      }
-    } catch { doPrint(); }
-    setTimeout(doPrint, 3000);      // hard cap — never hang if an image stalls
-  });
+  return renderTravelerHtml(job, settings, { ...options, _qrDataUrl: qrDataUrl });
 }
 
 /** Returns a blob: URL — useful for iframe preview or batch download. */
