@@ -410,7 +410,7 @@ export const JobBoardView = ({ user, addToast, confirm, onEditStages }: any) => 
                           <button
                             aria-label={`Advance ${j.poNumber} to ${next.label}`}
                             onClick={() => confirm ? confirm({ title: `Advance to ${next.label}?`, message: `Move ${j.poNumber} forward?`, onConfirm: () => moveJob(j.id, next.id) }) : moveJob(j.id, next.id)}
-                            className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
+                            className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex items-center gap-1"
                             style={{ color: next.color, background: `${next.color}15`, border: `1px solid ${next.color}30` }}
                             title={`Move to ${next.label}`}
                           >

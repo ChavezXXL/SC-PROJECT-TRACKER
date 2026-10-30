@@ -986,10 +986,13 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
               </div>
             </div>
 
-            {/* Logs Table */}
+            {/* Logs Table — on phones (< 640px) each entry is a small card
+                (grid on the <tr>): who + time, the operation, then date and
+                start → end, with the edit button in view. As a table the edit
+                button sat off the right edge (and only showed on mouse hover). */}
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-black/20 text-zinc-500 uppercase tracking-wide">
+              <table className="w-full text-xs text-left max-sm:block">
+                <thead className="bg-black/20 text-zinc-500 uppercase tracking-wide max-sm:hidden">
                   <tr>
                     <th className="p-3 pl-6">Date</th>
                     <th className="p-3">Employee</th>
@@ -1000,14 +1003,14 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                     <th className="p-3 text-right pr-6 no-print"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-white/5 max-sm:block">
                   {group.logs.map(log => (
                     <React.Fragment key={log.id}>
-                    <tr className="hover:bg-white/5 transition-colors group/row">
-                      <td className="p-3 pl-6 text-zinc-400 whitespace-nowrap">{new Date(log.startTime).toLocaleDateString()}</td>
-                      <td className="p-3 text-white font-semibold">{log.userName}</td>
-                      <td className="p-3 text-amber-400 font-medium">{log.operation}</td>
-                      <td className="p-3 font-mono text-zinc-400 whitespace-nowrap">
+                    <tr className="hover:bg-white/5 transition-colors group/row max-sm:grid max-sm:grid-cols-[auto_minmax(0,1fr)_auto] max-sm:items-center max-sm:gap-x-2 max-sm:gap-y-0.5 max-sm:px-4 max-sm:py-2.5">
+                      <td className="p-3 pl-6 text-zinc-400 whitespace-nowrap max-sm:p-0 max-sm:col-start-1 max-sm:row-start-3">{new Date(log.startTime).toLocaleDateString()}</td>
+                      <td className="p-3 text-white font-semibold max-sm:p-0 max-sm:col-span-2 max-sm:row-start-1 max-sm:text-sm">{log.userName}</td>
+                      <td className="p-3 text-amber-400 font-medium max-sm:p-0 max-sm:col-span-2 max-sm:row-start-2">{log.operation}</td>
+                      <td className="p-3 font-mono text-zinc-400 whitespace-nowrap max-sm:p-0 max-sm:col-start-2 max-sm:row-start-3">
                         {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         <span className="text-zinc-600 mx-1.5" aria-hidden="true">→</span>
                         {log.endTime
@@ -1015,7 +1018,7 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                           : <span className="text-emerald-400 font-bold">Running</span>
                         }
                       </td>
-                      <td className="p-3">
+                      <td className="p-3 max-sm:hidden">
                         {log.endTime
                           ? <span className="text-[10px] font-bold text-zinc-400 bg-zinc-800 border border-white/10 px-2 py-0.5 rounded-full">Stopped</span>
                           : <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Live</span>
@@ -1028,19 +1031,19 @@ export const LogsView = ({ addToast, confirm }: { addToast: any; confirm?: (cfg:
                           (log as any).durationAnomaly === true
                         );
                         return (
-                          <td className={`p-3 text-right pr-6 font-mono font-bold ${isBad ? 'text-red-400' : 'text-zinc-300'}`}>
+                          <td className={`p-3 text-right pr-6 font-mono font-bold max-sm:p-0 max-sm:col-start-3 max-sm:row-start-1 max-sm:text-sm ${isBad ? 'text-red-400' : 'text-zinc-300'}`}>
                             {isBad && <AlertTriangle className="w-3 h-3 inline mr-1 mb-0.5" aria-hidden="true" />}
                             {formatDuration(getLogDurationMins(log) ?? log.durationMinutes)}
                           </td>
                         );
                       })()}
-                      <td className="p-3 text-right pr-6 no-print opacity-0 group-hover/row:opacity-100 transition-opacity">
-                        <button aria-label="Edit log entry" onClick={() => handleEditLog(log)} className="text-zinc-500 hover:text-white p-1.5 rounded hover:bg-white/10 transition-colors" title="Edit log"><Edit2 className="w-3 h-3" aria-hidden="true" /></button>
+                      <td className="p-3 text-right pr-6 no-print opacity-0 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity max-sm:p-0 max-sm:col-start-3 max-sm:row-start-2 max-sm:row-span-2">
+                        <button aria-label="Edit log entry" onClick={() => handleEditLog(log)} className="text-zinc-500 hover:text-white p-1.5 max-sm:p-2.5 max-sm:bg-white/5 rounded hover:bg-white/10 transition-colors" title="Edit log"><Edit2 className="w-3 h-3 max-sm:w-4 max-sm:h-4" aria-hidden="true" /></button>
                       </td>
                     </tr>
                     {log.notes && (
-                      <tr className="bg-amber-500/5 border-l-2 border-amber-500/40">
-                        <td colSpan={7} className="px-6 py-2">
+                      <tr className="bg-amber-500/5 border-l-2 border-amber-500/40 max-sm:block">
+                        <td colSpan={7} className="px-6 py-2 max-sm:block max-sm:px-4">
                           <div className="flex items-start gap-2 text-sm">
                             <span className="text-amber-500 mt-0.5">📝</span>
                             <div>

@@ -435,7 +435,7 @@ export const PurchaseOrdersView: React.FC<Props> = ({ user, addToast }) => {
             className="w-full bg-zinc-900/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none"
           />
         </div>
-        <div className="inline-flex gap-1 p-1 bg-zinc-900/60 border border-white/5 rounded-lg overflow-x-auto">
+        <div className="inline-flex flex-wrap gap-1 p-1 bg-zinc-900/60 border border-white/5 rounded-lg">
           <FilterBtn label="All" count={statusCounts.all} active={filter === 'all'} onClick={() => setFilter('all')} />
           {statusCounts.overdue > 0 && (
             <FilterBtn label="🔴 Overdue" count={statusCounts.overdue} active={filter === 'overdue'} onClick={() => setFilter('overdue')} danger />
@@ -604,7 +604,7 @@ const PORow: React.FC<{
       </div>
 
       {/* Quick actions — visible on hover */}
-      <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
         {quickAction && (
           <button
             type="button"

@@ -1500,7 +1500,7 @@ const CustomerManager = ({ addToast, settings, onSaveSettings, onSaveNow }: { ad
                             if (!ok) return;
                             onSaveSettings({ ...settings, clients: (settings.clients || []).filter(c => c !== r.name) });
                           }}
-                          className="text-zinc-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="text-zinc-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
                           title="Delete (no jobs)"
                         >
                           <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -3871,7 +3871,10 @@ export const SettingsView = ({ addToast, userId }: { addToast: any; userId?: str
           <div className="mb-2">
             <SettingsSearchBox onJump={jumpToSetting} />
           </div>
-          <div className="flex gap-1 overflow-x-auto no-scrollbar">
+          {/* Wraps instead of scrolling sideways: with the scrollbar hidden, a
+              phone showed 4 tabs and no hint that Production, Financial, Goals,
+              Documents and TV Display existed. */}
+          <div className="flex flex-wrap gap-1">
             {sideItems.map(item => (
               <button key={item.id} onClick={() => setSettingsTab(item.id)}
                 aria-current={settingsTab === item.id ? 'page' : undefined}

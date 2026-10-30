@@ -2895,7 +2895,7 @@ const ShopBrainPanel = ({ insights, setView, onMakeTask }: { insights: ShopInsig
               >
                 <button
                   onClick={() => dismiss(insight.id)}
-                  className="absolute top-2 right-2 text-zinc-600 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
+                  className="absolute top-2 right-2 text-zinc-600 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                   title="Dismiss"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -7616,7 +7616,7 @@ const AdminEmployees = ({ addToast, confirm, currentUser }: { addToast: any, con
                       </div>
                     </div>
                     {canManage(u) && (
-                      <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
+                      <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity shrink-0">
                         <button aria-label={`Edit ${u.name}`} onClick={() => openEdit(u)} className="p-1.5 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Edit"><Edit2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
                         {u.id !== currentUser?.id && (
                           <button aria-label={`Remove ${u.name}`} onClick={() => handleDelete(u)} className="p-1.5 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Remove"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>

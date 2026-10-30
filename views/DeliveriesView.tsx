@@ -1202,7 +1202,7 @@ const HistoryList: React.FC<{
               </button>
 
               <button type="button" onClick={() => onDelete(d)} aria-label={`Delete ${d.runNumber}`}
-                className="shrink-0 text-zinc-600 hover:text-red-400 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                className="shrink-0 text-zinc-600 hover:text-red-400 p-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>

@@ -741,7 +741,7 @@ export const CustomerPosView = ({ addToast, confirm, user }: any) => {
                       <div key={po.id} className={`bg-zinc-950/60 border rounded-xl overflow-hidden group ${d.readyToInvoice ? 'border-orange-500/40' : 'border-white/10'} ${po.archived ? 'opacity-60' : ''}`}>
                         <div className="relative aspect-[4/3] bg-zinc-900 cursor-pointer" onClick={() => setLightbox(po.photoUrl)}>
                           <img src={po.photoUrl} alt={po.poNumber || 'PO'} className="w-full h-full object-cover" loading="lazy" />
-                          <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                             <button onClick={e => { e.stopPropagation(); openEdit(po); }} className="bg-black/60 hover:bg-amber-500/80 text-white p-1 rounded-lg" title="Edit / invoice"><Edit3 className="w-3.5 h-3.5" /></button>
                             <button onClick={e => { e.stopPropagation(); handleDelete(po); }} className="bg-black/60 hover:bg-red-500/80 text-white p-1 rounded-lg" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
