@@ -5985,7 +5985,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     />
                   </td>
                   <td className="p-2 sm:p-4">
-                    <div className="flex items-start gap-2.5">
+                    {/* Phones: never wider than the screen minus the checkbox and Due
+                        columns (~170px). A table column grows to fit its longest line,
+                        so without this cap a long part number + customer pushed the
+                        Due date off the screen; with it, that line truncates. */}
+                    <div className="flex items-start gap-2.5 max-w-[calc(100vw-170px)] sm:max-w-none">
                       {/* Part Photo thumbnail — phones/tablets only; from md up the
                           Part Details column has it (two camera slots per row before).
                           Tap to enlarge. Camera icon placeholder → tap to add. */}
@@ -6088,14 +6092,17 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           all hidden, so surface all three inline in the PO cell. Without
                           this, mobile users can't see quantity without opening details.
                           Qty sits in its own chip that never shrinks: inside the
-                          truncated line, a long part number cut it off. */}
-                      <span className="sm:hidden flex items-center gap-1.5 min-w-0 max-w-full text-xs">
+                          truncated line, a long part number cut it off. The part
+                          number wraps rather than truncating (the cell is capped to
+                          the screen so Due stays visible — "NAS1764W08…" was useless),
+                          and the customer gets its own line. */}
+                      <span className="sm:hidden flex items-start gap-1.5 min-w-0 max-w-full text-xs">
                         {j.quantity ? <span className="shrink-0 font-bold text-zinc-200 font-mono tabular bg-zinc-800 px-1.5 py-0.5 rounded">Qty {Number(j.quantity).toLocaleString()}</span> : null}
-                        <span className="text-zinc-400 truncate min-w-0">
-                          {j.partNumber}
-                          {user.role === 'admin' && j.customer ? <> · {j.customer}</> : null}
-                        </span>
+                        <span className="text-zinc-300 font-semibold min-w-0 break-words py-0.5">{j.partNumber}</span>
                       </span>
+                      {user.role === 'admin' && j.customer && (
+                        <span className="sm:hidden text-zinc-500 text-[11px] truncate min-w-0">{j.customer}</span>
+                      )}
                       {/* Between sm and md (640–768px): Qty column is visible now, but
                           the Part Details column (which has customer) is still hidden.
                           Show part number + customer inline. */}
@@ -6313,7 +6320,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                     })()}
                   </td>
                   <td className="p-1.5 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
-                    <div className="flex justify-end gap-1 sm:gap-2 flex-wrap sm:flex-nowrap">
+                    {/* One line, never wrapped: on a phone this narrow column stacked
+                        its 4 buttons, making every job row ~160px tall. */}
+                    <div className="flex justify-end gap-1 sm:gap-2 flex-nowrap">
                       <button aria-label="Start operation" onClick={() => setStartJobModal(j)} className="p-2 bg-amber-500/10 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" aria-hidden="true" /></button>
                       {activeTab === 'active' && (() => {
                         const stages = getStages(shopSettings);
