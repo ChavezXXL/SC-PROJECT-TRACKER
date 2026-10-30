@@ -6086,11 +6086,15 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       )}
                       {/* Below sm (< 640px): Qty + Customer + Part Details columns are
                           all hidden, so surface all three inline in the PO cell. Without
-                          this, mobile users can't see quantity without opening details. */}
-                      <span className="sm:hidden text-zinc-400 text-xs truncate max-w-[220px]">
-                        {j.partNumber}
-                        {j.quantity ? <> · <span className="font-bold text-zinc-300">Qty {j.quantity}</span></> : null}
-                        {user.role === 'admin' && j.customer ? <> · {j.customer}</> : null}
+                          this, mobile users can't see quantity without opening details.
+                          Qty sits in its own chip that never shrinks: inside the
+                          truncated line, a long part number cut it off. */}
+                      <span className="sm:hidden flex items-center gap-1.5 min-w-0 max-w-full text-xs">
+                        {j.quantity ? <span className="shrink-0 font-bold text-zinc-200 font-mono tabular bg-zinc-800 px-1.5 py-0.5 rounded">Qty {Number(j.quantity).toLocaleString()}</span> : null}
+                        <span className="text-zinc-400 truncate min-w-0">
+                          {j.partNumber}
+                          {user.role === 'admin' && j.customer ? <> · {j.customer}</> : null}
+                        </span>
                       </span>
                       {/* Between sm and md (640–768px): Qty column is visible now, but
                           the Part Details column (which has customer) is still hidden.
