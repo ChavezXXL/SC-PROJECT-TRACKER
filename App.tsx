@@ -5897,9 +5897,13 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       )}
 
       <div className="bg-zinc-900/30 border border-white/5 rounded-2xl overflow-x-auto shadow-sm">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-[10px] sm:text-xs">
-            <tr>
+        {/* Phones (< 640px): each row is a card — the due date on top, the job
+            at full width under it, then one row of action buttons. As a squeezed
+            table the buttons sat off the right edge and a Due column took a
+            third of the width, so every line wrapped. */}
+        <table className="w-full text-sm text-left max-sm:block">
+          <thead className="bg-zinc-950/50 text-zinc-500 uppercase tracking-wider font-bold text-[10px] sm:text-xs max-sm:block">
+            <tr className="max-sm:flex max-sm:items-center">
               <th className="p-2 sm:p-3 w-8">
                 <input
                   type="checkbox"
@@ -5917,11 +5921,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               <th className="p-3 sm:p-4 hidden md:table-cell">Part Details</th>
               <th className="p-3 sm:p-4 hidden sm:table-cell">Qty</th>
               <th className="p-3 sm:p-4 hidden md:table-cell">Status</th>
-              <th className="p-2 sm:p-4">Due</th>
-              <th className="p-1.5 sm:p-4 text-right">Actions</th>
+              <th className="p-2 sm:p-4 max-sm:ml-auto">Due</th>
+              <th className="p-1.5 sm:p-4 text-right max-sm:hidden">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-y divide-white/5 max-sm:block">
             {filteredJobs.map(j => {
               const _due = dueState(j);
               const isOverdue = _due === 'overdue';
@@ -5969,8 +5973,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const hasQuote = (j.quoteAmount || 0) > 0;
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
-                <tr key={j.id} className={`hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-amber-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
-                  <td className="p-2 sm:p-3 w-8" onClick={e => e.stopPropagation()}>
+                <tr key={j.id} className={`max-sm:grid max-sm:grid-cols-[auto_minmax(0,1fr)] max-sm:items-start hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-amber-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
+                  <td className="p-2 sm:p-3 w-8 max-sm:row-span-2 max-sm:pt-3" onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       aria-label={`Select ${j.poNumber}`}
@@ -5984,12 +5988,11 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
                     />
                   </td>
-                  <td className="p-2 sm:p-4">
-                    {/* Phones: never wider than the screen minus the checkbox and Due
-                        columns (~170px). A table column grows to fit its longest line,
-                        so without this cap a long part number + customer pushed the
-                        Due date off the screen; with it, that line truncates. */}
-                    <div className="flex items-start gap-2.5 max-w-[calc(100vw-170px)] sm:max-w-none">
+                  <td className="p-2 sm:p-4 max-sm:col-start-2 max-sm:row-start-2 max-sm:pt-0">
+                    {/* Phones lay the row out as a card (grid on the <tr>), so this
+                        cell gets the card's full width and its lines wrap inside it —
+                        they can't push anything off screen. */}
+                    <div className="flex items-start gap-2.5">
                       {/* Part Photo thumbnail — phones/tablets only; from md up the
                           Part Details column has it (two camera slots per row before).
                           Tap to enlarge. Camera icon placeholder → tap to add. */}
@@ -6295,8 +6298,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                   </td>
                   <td className="p-3 sm:p-4 font-mono text-zinc-300 hidden sm:table-cell">{j.quantity}</td>
                   <td className="p-3 sm:p-4 hidden md:table-cell"><StatusBadge status={j.status} job={j} stages={getStages(shopSettings)} /></td>
-                  <td className={`p-2 sm:p-4 sm:whitespace-nowrap text-[11px] sm:text-sm ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
-                    <div className="font-mono font-bold">{fmt(j.dueDate)}</div>
+                  <td className={`p-2 sm:p-4 sm:whitespace-nowrap text-[11px] sm:text-sm max-sm:col-start-2 max-sm:row-start-1 max-sm:flex max-sm:items-baseline max-sm:gap-2 max-sm:pt-3 max-sm:pb-1 max-sm:text-xs ${isOverdue ? 'text-red-400' : isDueSoon ? 'text-orange-400' : 'text-zinc-400'}`}>
+                    <div className="font-mono font-bold"><span className="sm:hidden font-sans font-black uppercase tracking-wider text-[10px] opacity-70">Due </span>{fmt(j.dueDate)}</div>
                     {j.dueDate && _due !== 'closed' && _due !== 'none' && (() => {
                       // Late/today come from the shared rule (calendar days). Business
                       // days are only for the countdown: a due date that fell on a
@@ -6304,8 +6307,8 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       const bizDays = _due === 'overdue' || _due === 'today' ? null : businessDaysUntilSync(j.dueDate);
                       const isHol = j.dueDate ? isHolidaySync(j.dueDate) : false;
                       return (
-                        <div className="flex flex-col gap-0.5 mt-0.5">
-                          {_due === 'overdue' && <span className="text-[9px] font-bold text-red-500">{dueLabel(j.dueDate)}</span>}
+                        <div className="flex flex-col gap-0.5 mt-0.5 max-sm:flex-row max-sm:gap-2 max-sm:mt-0">
+                          {_due === 'overdue' && <span className="text-[9px] font-bold text-red-500 max-sm:text-[11px]">{dueLabel(j.dueDate)}</span>}
                           {_due === 'today' && <span className="text-[9px] font-bold text-orange-400">due today</span>}
                           {bizDays !== null && (
                             <span className={`text-[9px] font-bold ${bizDays <= 2 ? 'text-orange-400' : 'text-zinc-600'}`}>
@@ -6319,11 +6322,12 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                       );
                     })()}
                   </td>
-                  <td className="p-1.5 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
-                    {/* One line, never wrapped: on a phone this narrow column stacked
-                        its 4 buttons, making every job row ~160px tall. */}
-                    <div className="flex justify-end gap-1 sm:gap-2 flex-nowrap">
-                      <button aria-label="Start operation" onClick={() => setStartJobModal(j)} className="p-2 bg-amber-500/10 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" aria-hidden="true" /></button>
+                  <td className="p-1.5 sm:p-4 text-right max-sm:col-span-2 max-sm:px-3 max-sm:pt-1 max-sm:pb-3" onClick={e => e.stopPropagation()}>
+                    {/* Phones: a full-width bar of labelled buttons under the job.
+                        Table: one line of icons, never wrapped (wrapped in a narrow
+                        column they stacked and made every row ~160px tall). */}
+                    <div className="flex sm:justify-end gap-1.5 sm:gap-2 flex-nowrap">
+                      <button aria-label="Start operation" onClick={() => setStartJobModal(j)} className="flex items-center justify-center gap-1.5 p-2 max-sm:flex-1 max-sm:min-w-0 bg-amber-500/10 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white transition-colors" title="Start Operation"><Play className="w-4 h-4" aria-hidden="true" /><span className="sm:hidden text-xs font-bold">Start</span></button>
                       {activeTab === 'active' && (() => {
                         const stages = getStages(shopSettings);
                         const nextStage = getNextStage(j, stages);
@@ -6346,19 +6350,21 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                                         addToast('success', `Job advanced to ${nextStage.label}`);
                                       }
                                     })}
-                                className="p-2 rounded-lg transition-colors hover:text-white"
+                                className="flex items-center justify-center gap-1.5 p-2 max-sm:flex-1 max-sm:min-w-0 rounded-lg transition-colors hover:text-white"
                                 style={{ background: `${nextStage.color}15`, color: nextStage.color }}
                                 title={`Advance to ${nextStage.label}`}>
                                 <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                                <span className="sm:hidden text-xs font-bold min-w-0 truncate">{nextStage.label}</span>
                               </button>
                             )}
                             {!isAlreadyComplete && completedStage && (
                               <button
                                 aria-label={`Complete job ${j.poNumber || ''}`}
                                 onClick={() => handleCompleteWithSnapshot(j)}
-                                className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors"
+                                className="flex items-center justify-center gap-1.5 p-2 max-sm:flex-1 max-sm:min-w-0 bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors"
                                 title="Complete Job">
                                 <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                                <span className="sm:hidden text-xs font-bold">Done</span>
                               </button>
                             )}
                           </>
@@ -6374,7 +6380,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                           <>
                             <button
                               aria-label={printed.includes(j.id) ? `Reprint traveler for ${j.poNumber || ''}` : `Print traveler for ${j.poNumber || ''}`}
-                              onClick={printJob} className={`hidden sm:flex p-2 rounded-lg transition-colors ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
+                              onClick={printJob} className={`flex items-center p-2 rounded-lg transition-colors shrink-0 ${printed.includes(j.id) ? 'bg-emerald-500/10 text-emerald-400' : 'max-sm:bg-white/5 hover:bg-zinc-800 text-zinc-400 hover:text-white'}`} title={printed.includes(j.id) ? 'Printed ✓ — click to reprint' : 'Print Traveler'}><Printer className="w-4 h-4" aria-hidden="true" /></button>
                             {/* Open rework stays visible — it's a signal, not just an action */}
                             {openReworkCount > 0 && (
                               <button aria-label={`Report rework for ${j.poNumber || ''} — ${openReworkCount} open`} onClick={openRework} className="p-2 hover:bg-amber-500/10 rounded-lg text-amber-400 transition-colors relative" title={`${openReworkCount} open rework — report another`}>
@@ -6384,7 +6390,6 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
                             )}
                             <RowMenu label={`More actions for ${j.poNumber || 'job'}`} items={[
                               { label: 'Edit job', icon: <Edit2 className="w-4 h-4" />, onSelect: () => { setEditingJob(j); setShowModal(true); } },
-                              { label: printed.includes(j.id) ? 'Reprint traveler' : 'Print traveler', icon: <Printer className="w-4 h-4" />, onSelect: printJob, hidden: window.innerWidth >= 640 },
                               { label: 'Report rework', icon: <AlertTriangle className="w-4 h-4" />, onSelect: openRework },
                               {
                                 label: calAdded.includes(j.id) ? 'In Google Calendar ✓' : 'Add to Google Calendar', icon: <Calendar className="w-4 h-4" />, hidden: !j.dueDate,

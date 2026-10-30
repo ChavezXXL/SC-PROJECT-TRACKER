@@ -20,13 +20,13 @@ them from undoing each other's fixes. Read before changing anything.
 
 ## The owner runs the shop from a phone
 - Check every screen you change at 375–430px wide.
-- **Jobs list: the Due column must stay on screen.** Table columns grow to
-  their longest line; the PO cell is capped on phones
-  (`max-w-[calc(100vw-170px)]`) for this. Don't remove the cap, and don't add
-  unwrapped text that widens the row.
+- **Jobs list on phones is a card per job** (`max-sm:grid` on each <tr>): due
+  date on top, the job at full width, then one row of action buttons (Start /
+  next stage / Done / Print / ⋯). Keep the due date and the buttons visible
+  without sideways scrolling. A squeezed table hid both off the right edge.
 - Don't hide a control on phones (`hidden sm:flex`) without giving it a
-  phone-sized home elsewhere. The ⋯ row menu sits off the right edge on a
-  phone, so it doesn't count.
+  phone-sized home elsewhere. Burying an everyday action in the ⋯ menu
+  doesn't count.
 - Printing goes through `utils/printFrame` (a hidden frame). Never
   `window.open` to print: phones block it.
 
