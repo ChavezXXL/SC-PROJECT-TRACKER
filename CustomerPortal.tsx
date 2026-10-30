@@ -118,12 +118,31 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ customerFilter: 
   // only for job status (no quote, or the customer opens that tab). Every
   // visit used to read every job and every quote the shop has.
   const needJobs = !quoteId || tab === 'jobs';
-  useEffect(() => DB.subscribeSettings(setSettings), []);
+  const [settingsReady, setSettingsReady] = useState(false);
+  useEffect(() => DB.subscribeSettings(s => { setSettings(s); setSettingsReady(true); }), []);
   useEffect(() => (quoteId ? DB.subscribeQuote(quoteId, q => { setLinkedQuote(q); setQuoteMissing(!q); }) : undefined), [quoteId]);
+
+  // The customer's name before any job is loaded: the link's ?portal= name,
+  // or a slug the shop's customer list knows. With it, only that customer's
+  // jobs are read (DB.subscribeCustomerJobs) — every visit used to read every
+  // job the shop has, ≈28 MB with photos. The full list is the fallback: a
+  // slug only a job knows, a PO-number link, or no match by name.
+  const nameWithoutJobs = useMemo(() => {
+    if (!slug) return filterFromUrl;
+    for (const [name, s] of Object.entries(settings.clientSlugs || {})) if (s === slug) return name;
+    const known = [...(settings.clients || []), ...Object.keys(settings.clientContacts || {})];
+    return known.find(n => makeClientSlug(n) === slug) || '';
+  }, [slug, filterFromUrl, settings.clientSlugs, settings.clients, settings.clientContacts]);
+  const [needFullList, setNeedFullList] = useState(false);
   useEffect(() => {
-    if (!needJobs) return;
+    if (!needJobs || !settingsReady) return;
+    if (!needFullList && nameWithoutJobs) {
+      return DB.subscribeCustomerJobs(nameWithoutJobs, list => {
+        if (list) { setJobs(list); setJobsLoaded(true); } else setNeedFullList(true);
+      });
+    }
     return DB.subscribeJobs(list => { setJobs(list); setJobsLoaded(true); });
-  }, [needJobs]);
+  }, [needJobs, settingsReady, nameWithoutJobs, needFullList]);
 
   const stages = (settings.jobStages?.length) ? [...settings.jobStages].sort((a, b) => a.order - b.order) : DEFAULT_STAGES;
 

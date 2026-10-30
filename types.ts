@@ -180,6 +180,9 @@ export interface Job {
    *  analytics fall back to scanning `info` for a "REV x" callout. */
   revision?: string;
   customer?: string;
+  /** customerKey(customer) — written with every customer change so the
+   *  customer portal can load one customer's jobs instead of every job. */
+  customerKey?: string;
   priority?: JobPriority;
   quantity: number;
   dateReceived: string;

@@ -30,6 +30,7 @@ import { shopLocalTimeMs, shopDayOfWeek } from "../utils/timezone";
 import { photoPartKey } from "../utils/partKey";
 import { setShopStages, isShippedStageId } from "../utils/dueDates";
 import { alarmOnDay } from "../utils/shiftRules";
+import { customerKey } from "../utils/customers";
 import {
   initFirebaseFromLocalStorage,
   saveFirebaseConfig as saveCfg,
@@ -560,6 +561,44 @@ export function subscribeJobs(cb: (jobs: Job[]) => void) {
 }
 
 /**
+ * One customer's jobs, for the customer portal — read through the
+ * customerKey field. The portal used to load every job the shop has (≈28 MB
+ * with photos) to show a customer their own. Calls back null when the
+ * server has none for that name, so the portal can fall back to the full
+ * list (a link that's a PO number, or jobs from before customerKey existed).
+ */
+export function subscribeCustomerJobs(name: string, cb: (jobs: Job[] | null) => void): () => void {
+  const key = customerKey(name);
+  if (!dbInstance || !key) { cb(null); return () => {}; }
+  return retryingSnapshot(
+    () => query(collection(dbInstance!, COL.jobs), where('customerKey', '==', key)),
+    (snap: any) => {
+      if (snap.empty && snap.metadata?.fromCache) return;   // wait for the server before saying "none"
+      firebaseStatus = { connected: true };
+      cb(snap.empty ? null : enrichJobsWithPartPhotos(snap.docs.map((d: any) => d.data() as Job)));
+    },
+    () => cb(null),
+  );
+}
+
+/**
+ * Give every job its customerKey (jobs saved before the field existed).
+ * Works from the job list an office screen already has loaded, writes only
+ * that one field, and only for jobs that are missing or out of date — so
+ * it's a no-op once done. Returns how many jobs it updated.
+ */
+export async function backfillJobCustomerKeys(jobs: Job[]): Promise<number> {
+  if (!dbInstance) return 0;
+  const todo = jobs.filter(j => j.customer && j.customerKey !== customerKey(j.customer));
+  for (let i = 0; i < todo.length; i += 400) {
+    const batch = writeBatch(dbInstance);
+    todo.slice(i, i + 400).forEach(j => batch.update(doc(dbInstance!, COL.jobs, j.id), { customerKey: customerKey(j.customer) }));
+    await settleWrite(batch.commit());
+  }
+  return todo.length;
+}
+
+/**
  * The wall TV's jobs: everything still open, plus jobs finished since `since`
  * (enough for its Today / week / month numbers). Loading every job ever —
  * 325 for this shop, ~200 photos stored inside them (≈28 MB) — was heavy for
@@ -673,6 +712,7 @@ export async function saveJob(job: Job, opts: { clear?: string[] } = {}): Promis
       try {
         const payload = sanitize(job);
         for (const f of clear) payload[f] = deleteField();
+        if (job.customer !== undefined) payload.customerKey = customerKey(job.customer);
         const result = await settleWrite(setDoc(doc(dbInstance, COL.jobs, job.id), payload, { merge: true }));
         firebaseStatus = { connected: true };
         return result;
@@ -718,6 +758,7 @@ export async function updateJobFields(jobId: string, changes: Partial<Job>): Pro
       const v = (changes as any)[k];
       payload[k] = v === undefined ? deleteField() : sanitize(v);
     }
+    if ('customer' in changes) payload.customerKey = changes.customer === undefined ? deleteField() : customerKey(changes.customer);
     try {
       const result = await settleWrite(updateDoc(doc(dbInstance, COL.jobs, jobId), payload as any));
       firebaseStatus = { connected: true };
@@ -757,7 +798,7 @@ export async function renameCustomer(oldNames: string[], newName: string): Promi
       const all = [...ids];
       for (let i = 0; i < all.length; i += 400) {
         const batch = writeBatch(dbInstance);
-        all.slice(i, i + 400).forEach(id => batch.update(doc(dbInstance, COL.jobs, id), { customer: newName }));
+        all.slice(i, i + 400).forEach(id => batch.update(doc(dbInstance, COL.jobs, id), { customer: newName, customerKey: customerKey(newName) }));
         await settleWrite(batch.commit());
       }
       count = all.length;

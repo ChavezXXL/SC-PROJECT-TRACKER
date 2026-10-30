@@ -8199,6 +8199,17 @@ export default function App() {
     return () => { unsub1(); unsub2(); };
   }, [user]);
 
+  // ── customerKey on every job (one pass, office screens only) ──────────
+  // The customer portal loads one customer's jobs by this field. Jobs saved
+  // before it existed get it here, from the list already loaded — once per
+  // session, and it writes nothing when every job already has it.
+  const customerKeysDoneRef = useRef(false);
+  useEffect(() => {
+    if (customerKeysDoneRef.current || !user || (user.role !== 'admin' && user.role !== 'manager') || allJobs.length === 0) return;
+    customerKeysDoneRef.current = true;
+    DB.backfillJobCustomerKeys(allJobs).then(n => { if (n) console.log(`[FabTrack] customerKey added to ${n} job(s)`); }).catch(() => { /* next session tries again — never retried in a loop */ });
+  }, [allJobs, user]);
+
   // ── One-time photo migration ─────────────────────────────────────────
   // Recovers sample photos that were saved as base64 in localStorage during
   // the period when dbInstance was incorrectly nulled on startup (now fixed).
