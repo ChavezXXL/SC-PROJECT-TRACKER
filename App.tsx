@@ -59,6 +59,7 @@ const CustomerPosView = lazyView(() => import('./views/CustomerPosView').then(m 
 import { calcJobProfit, buildProfitSnapshot } from './utils/jobProfit';
 import { groupLogsByJob, jobBudgets, jobMoney, type JobBudget } from './utils/jobBudget';
 import { RowMenu } from './components/RowMenu';
+import { JobView } from './components/JobView';
 import { changedFields, hasChanges } from './utils/changedFields';
 import { shrinkImage, FILE_BUDGET_BYTES } from './utils/imageShrink';
 import { DateInput } from './components/DateInput';
@@ -4711,6 +4712,9 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
   const [showScanner, setShowScanner] = useState(false);
   const [showClientUpdate, setShowClientUpdate] = useState(false);
   const [startJobModal, setStartJobModal] = useState<Job | null>(null);
+  // Tapping a job opens its read-only view (JobView); "Edit job" there opens
+  // the editor. Kept as an id so the view always shows the live job.
+  const [viewingJobId, setViewingJobId] = useState<string | null>(null);
   const [ops, setOps] = useState<string[]>([]);
   const [clients, setClients] = useState<string[]>([]);
   const [partSuggestions, setPartSuggestions] = useState<Job[]>([]);
@@ -5973,7 +5977,7 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
               const hasQuote = (j.quoteAmount || 0) > 0;
               const profit = hasQuote ? (j.quoteAmount || 0) - totalCost : null;
               return (
-                <tr key={j.id} className={`max-sm:grid max-sm:grid-cols-[auto_minmax(0,1fr)] max-sm:items-start hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-amber-500/5' : ''}`} onClick={() => { setEditingJob(j); setShowModal(true); }}>
+                <tr key={j.id} className={`max-sm:grid max-sm:grid-cols-[auto_minmax(0,1fr)] max-sm:items-start hover:bg-white/5 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-500/5' : ''} ${selectedJobIds.has(j.id) ? 'bg-amber-500/5' : ''}`} onClick={() => setViewingJobId(j.id)}>
                   <td className="p-2 sm:p-3 w-8 max-sm:row-span-2 max-sm:pt-3" onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -7406,6 +7410,55 @@ const JobsView = ({ user, addToast, setPrintable, confirm, onOpenPOScanner, init
       )}
 
       {/* Part Image Lightbox */}
+      {viewingJobId && (() => {
+        const vj = jobs.find(x => x.id === viewingJobId);
+        if (!vj) return null;
+        const stages = getStages(shopSettings);
+        const nextStage = getNextStage(vj, stages);
+        const buf = shopSettings.rateBuffer ?? 1.15;
+        return (
+          <JobView
+            job={vj}
+            stages={stages}
+            currentStage={getJobStage(vj, stages)}
+            nextStage={nextStage}
+            canComplete={vj.status !== 'completed' && stages.some(s => s.isComplete)}
+            logs={allLogs}
+            activeLogs={activeLogs}
+            showCustomer={user.role === 'admin'}
+            printed={printed.includes(vj.id)}
+            openRework={reworkByJob.get(vj.id)?.open || 0}
+            onClose={() => setViewingJobId(null)}
+            onEdit={() => { setViewingJobId(null); setEditingJob(vj); setShowModal(true); }}
+            onStart={() => { setViewingJobId(null); setStartJobModal(vj); }}
+            onAdvance={() => {
+              if (!nextStage) return;
+              if (nextStage.isComplete) { handleCompleteWithSnapshot(vj); return; }
+              confirm({
+                title: `Advance to ${nextStage.label}`,
+                message: `Move this job to "${nextStage.label}"?`,
+                onConfirm: async () => {
+                  await DB.advanceJobStage(vj.id, nextStage.id, user.id, user.name, false);
+                  addToast('success', `Job advanced to ${nextStage.label}`);
+                },
+              });
+            }}
+            onComplete={() => handleCompleteWithSnapshot(vj)}
+            onPrint={() => {
+              const enriched = enrichJobForPrint(vj, jobs, allLogs, buf);
+              void printTraveler(enriched, shopSettings, { _rateBreakdown: getRateBreakdownForJob(enriched, allLogs, buf) }).then(() => {
+                try {
+                  const list: string[] = JSON.parse(localStorage.getItem('printed_jobs') || '[]');
+                  if (!list.includes(enriched.id)) { list.push(enriched.id); localStorage.setItem('printed_jobs', JSON.stringify(list)); }
+                } catch { /* the ✓ is a convenience */ }
+                window.dispatchEvent(new Event('printed-update'));
+              });
+            }}
+            onPhoto={input => addRowPhoto(vj.id, input)}
+            onOpenPhoto={url => setLightboxImg(url)}
+          />
+        );
+      })()}
       {lightboxImg && <PartImageLightbox src={lightboxImg} onClose={() => setLightboxImg(null)} />}
 
       {/* Rework modal — opened from the row's AlertTriangle button */}
