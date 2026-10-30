@@ -27,6 +27,10 @@ them from undoing each other's fixes. Read before changing anything.
 - Don't hide a control on phones (`hidden sm:flex`) without giving it a
   phone-sized home elsewhere. Burying an everyday action in the ⋯ menu
   doesn't count.
+- No hover-only buttons: phones have no hover. If a control fades in with
+  `opacity-0 group-hover:opacity-100`, also add `[@media(hover:none)]:opacity-100`.
+- Wide tables become cards on phones (`max-sm:grid` on the `<tr>`; see the
+  Jobs and Logs lists) rather than scrolling sideways.
 - Printing goes through `utils/printFrame` (a hidden frame). Never
   `window.open` to print: phones block it.
 
